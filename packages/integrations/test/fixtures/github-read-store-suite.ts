@@ -131,6 +131,129 @@ export const describeGithubReadStore = (
       expect((await store.reconciliation('c1')).deferredUntil).toBe(5000)
     })
 
+    it('[unit] restored access revives items only through a successful read', async () => {
+      const store = await make()
+      await store.applyItem(item())
+      await store.setResourceState('c1', '77', 'access_lost')
+      await store.setResourceState('c1', '77', 'active')
+      const report = await store.reconciliation('c1')
+      expect(report.resources[0]?.state).toBe('active')
+      expect((await store.getItem('c1', '1001'))?.status).toBe('unavailable')
+      expect(await store.applyItem(item())).toBe('updated')
+      expect((await store.getItem('c1', '1001'))?.status).toBe('visible')
+      expect((await store.reconciliation('c1')).itemsUnavailable).toBe(0)
+      await store.setResourceState('c1', '77', 'access_lost')
+      expect(await store.applyItem(item({ remoteUpdatedAt: '2026-09-01T00:00:00Z' }))).toBe('stale')
+      expect((await store.getItem('c1', '1001'))?.status).toBe('unavailable')
+    })
+
+    it('[security] state, names and checkpoints never cross connections', async () => {
+      const store = await make()
+      await store.applyItem(item())
+      await store.applyItem(item({ connectionId: 'c2' }))
+      await store.setResourceState('c1', '77', 'deleted')
+      await store.recordRepositoryName('c1', '77', 'acme/other')
+      expect((await store.getItem('c2', '1001'))?.status).toBe('visible')
+      expect(await store.getItemByAlias('c2', 'acme/other#5')).toBeNull()
+      const next = { cursor: '2', watermark: null, status: 'running' as const }
+      await store.applyBatch({
+        connectionId: 'c1',
+        repositoryId: '77',
+        expectedVersion: 0,
+        items: [],
+        next,
+      })
+      expect(await store.getCheckpoint('c2', '77')).toBeNull()
+      expect((await store.reconciliation('c2')).resources[0]?.state).toBe('active')
+    })
+
+    it('[security] a batch refuses items of another repository or connection', async () => {
+      const store = await make()
+      const next = { cursor: '2', watermark: null, status: 'running' as const }
+      for (const foreign of [
+        item({ issueId: '2', repositoryId: '99' }),
+        item({ issueId: '3', connectionId: 'c2' }),
+      ]) {
+        await expect(
+          store.applyBatch({
+            connectionId: 'c1',
+            repositoryId: '77',
+            expectedVersion: 0,
+            items: [item({ issueId: '1' }), foreign],
+            next,
+          }),
+        ).rejects.toThrow(RangeError)
+      }
+      expect(await store.getItem('c1', '1')).toBeNull()
+      expect(await store.getCheckpoint('c1', '77')).toBeNull()
+    })
+
+    it('[security] an alias shared by two repositories resolves to neither', async () => {
+      const store = await make()
+      await store.applyItem(item())
+      await store.applyItem(
+        item({
+          issueId: '2002',
+          repositoryId: '88',
+          canonicalUrl: 'https://github.com/acme/other/issues/5',
+          aliases: ['acme/other#5'],
+        }),
+      )
+      expect((await store.getItemByAlias('c1', 'acme/other#5'))?.issueId).toBe('2002')
+      await store.recordRepositoryName('c1', '77', 'acme/other')
+      expect(await store.getItemByAlias('c1', 'acme/other#5')).toBeNull()
+      expect((await store.getItemByAlias('c1', 'acme/app#5'))?.issueId).toBe('1001')
+    })
+
+    it('[unit] a complete checkpoint is stored and still guarded by version', async () => {
+      const store = await make()
+      const done = { cursor: null, watermark: '2026-10-01T10:00:00Z', status: 'complete' as const }
+      expect(
+        await store.applyBatch({
+          connectionId: 'c1',
+          repositoryId: '77',
+          expectedVersion: 0,
+          items: [item()],
+          next: done,
+        }),
+      ).toMatchObject({ outcome: 'applied', checkpoint: { status: 'complete', version: 1 } })
+      expect(
+        await store.applyBatch({
+          connectionId: 'c1',
+          repositoryId: '77',
+          expectedVersion: 0,
+          items: [item({ issueId: '2' })],
+          next: { ...done, status: 'complete' },
+        }),
+      ).toEqual({ outcome: 'conflict' })
+      expect(await store.getItem('c1', '2')).toBeNull()
+      expect((await store.getCheckpoint('c1', '77'))?.version).toBe(1)
+    })
+
+    it('[security] fencing also refuses state, name and cooldown writes, before any version', async () => {
+      const store = await make()
+      await store.applyItem(item())
+      await store.fence('c1', 'revoked')
+      await expect(store.setResourceState('c1', '77', 'deleted')).rejects.toBeInstanceOf(
+        GithubStoreFencedError,
+      )
+      await expect(store.recordRepositoryName('c1', '77', 'acme/x')).rejects.toBeInstanceOf(
+        GithubStoreFencedError,
+      )
+      await expect(store.setCooldown('c1', 9)).rejects.toBeInstanceOf(GithubStoreFencedError)
+      await expect(
+        store.applyBatch({
+          connectionId: 'c1',
+          repositoryId: '77',
+          expectedVersion: 41,
+          items: [],
+          next: { cursor: null, watermark: null, status: 'complete' },
+        }),
+      ).rejects.toBeInstanceOf(GithubStoreFencedError)
+      expect((await store.getItem('c1', '1001'))?.status).toBe('visible')
+      expect((await store.reconciliation('c1')).deferredUntil).toBeNull()
+    })
+
     it('[security] fencing refuses new deliveries, items and batches, idempotently', async () => {
       const store = await make()
       await store.fence('c1', 'disconnecting')

@@ -34,6 +34,12 @@ export const githubAliasFor = (fullName: string, number: number): string =>
 
 const fullNamePattern = /^[A-Za-z0-9](?:[A-Za-z0-9-]{0,38})\/[A-Za-z0-9._-]{1,100}$/u
 
+const validFullName = (fullName: string): boolean => {
+  if (!fullNamePattern.test(fullName)) return false
+  const name = fullName.slice(fullName.indexOf('/') + 1)
+  return name !== '.' && name !== '..'
+}
+
 /**
  * Parses an untrusted reference (`owner/repo#123` or a github.com issue URL) into
  * an alias. Anything else, including other hosts, userinfo and ports, is null.
@@ -63,7 +69,7 @@ export const parseGithubIssueReference = (
     numberText = match[3] ?? ''
   }
   const number = Number(numberText)
-  if (!fullNamePattern.test(fullName) || !Number.isSafeInteger(number) || number < 1) return null
+  if (!validFullName(fullName) || !Number.isSafeInteger(number) || number < 1) return null
   return { fullName, number, alias: githubAliasFor(fullName, number) }
 }
 
@@ -105,12 +111,20 @@ const isoPattern = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?Z$/u
 /**
  * Converts a wire issue to a stored item, or null for a pull request or any
  * object that does not look like an issue of the approved repository. The
- * canonical URL must be on github.com; a response naming another origin is
- * refused rather than stored.
+ * canonical URL must be on github.com and name the scope's repository
+ * (case-insensitive); another origin, number or repository is refused rather
+ * than stored. A repository renamed or transferred since `fullName` was
+ * recorded is accepted only when the caller lists its new name in
+ * `acceptedFullNames`, which it does after a verified rename for that
+ * repository id. The immutable repository id is never taken from the wire.
  */
 export const githubIssueToRemoteItem = (
   wire: unknown,
-  scope: { readonly connectionId: string; readonly repository: GithubRepositoryRef },
+  scope: {
+    readonly connectionId: string
+    readonly repository: GithubRepositoryRef
+    readonly acceptedFullNames?: readonly string[]
+  },
 ): GithubRemoteItem | null => {
   if (typeof wire !== 'object' || wire === null) return null
   const w = wire as Record<string, unknown>
@@ -140,6 +154,11 @@ export const githubIssueToRemoteItem = (
   if (parsed.origin !== githubWebOrigin) return null
   const issuePath = /^\/([^/]+)\/([^/]+)\/issues\/(\d+)$/u.exec(parsed.pathname)
   if (issuePath === null || Number(issuePath[3]) !== number) return null
+  const urlFullName = `${issuePath[1]}/${issuePath[2]}`.toLowerCase()
+  const accepted = [scope.repository.fullName, ...(scope.acceptedFullNames ?? [])].map((n) =>
+    n.toLowerCase(),
+  )
+  if (!accepted.includes(urlFullName)) return null
   return {
     connectionId: scope.connectionId,
     issueId: String(id),
@@ -152,7 +171,7 @@ export const githubIssueToRemoteItem = (
     aliases: [
       ...new Set([
         githubAliasFor(scope.repository.fullName, number),
-        githubAliasFor(`${issuePath[1]}/${issuePath[2]}`, number),
+        githubAliasFor(urlFullName, number),
       ]),
     ],
     status: 'visible',
@@ -165,7 +184,10 @@ export type GithubMergeOutcome = 'inserted' | 'updated' | 'unchanged' | 'stale'
  * The one merge rule for backfill and webhooks alike. A revision older than, or
  * equal to but different from, the stored one is `stale` and changes nothing, so
  * an out-of-order delivery cannot restore old state. Aliases only ever grow.
- * An `unavailable` row is revived only by a strictly newer visible revision.
+ * An `unavailable` row is revived by a visible revision at least as new as the
+ * stored one: an incoming item is always a fresh authenticated read, so after
+ * access is restored the same `updated_at` is proof enough. Restoring a
+ * resource state alone never revives items; only a successful read does.
  */
 export const mergeGithubRemoteItem = (
   existing: GithubRemoteItem | null,
@@ -180,12 +202,13 @@ export const mergeGithubRemoteItem = (
   if (incoming.remoteUpdatedAt < existing.remoteUpdatedAt) {
     return { item: grew ? { ...existing, aliases } : existing, outcome: 'stale' }
   }
+  if (existing.status === 'unavailable')
+    return { item: { ...incoming, aliases }, outcome: 'updated' }
   const same =
     incoming.remoteUpdatedAt === existing.remoteUpdatedAt &&
     incoming.title === existing.title &&
     incoming.state === existing.state &&
-    incoming.canonicalUrl === existing.canonicalUrl &&
-    existing.status === 'visible'
+    incoming.canonicalUrl === existing.canonicalUrl
   if (same) return { item: grew ? { ...existing, aliases } : existing, outcome: 'unchanged' }
   if (incoming.remoteUpdatedAt === existing.remoteUpdatedAt) {
     return { item: grew ? { ...existing, aliases } : existing, outcome: 'stale' }
@@ -220,6 +243,7 @@ export const verifyGithubDelivery = async (
   if (request.body.byteLength > maximumGithubWebhookBodyBytes) {
     return { verified: false, reason: 'too_large' }
   }
+  if (secret === '') return { verified: false, reason: 'bad_signature' }
   const header = request.headers['x-hub-signature-256']
   if (header === undefined || header === '') return { verified: false, reason: 'missing_signature' }
   const match = /^sha256=([0-9a-f]{64})$/u.exec(header)
@@ -257,7 +281,12 @@ export const signGithubBody = async (
   return `sha256=${hex(new Uint8Array(await crypto.subtle.sign('HMAC', key, body)))}`
 }
 
-/** What a verified delivery means for eZacto. Everything not listed is `ignored`. */
+/**
+ * What a verified delivery means for eZacto. Everything not listed is `ignored`,
+ * including `installation` `unsuspend` and `installation_repositories` `added`:
+ * restored access is learned by the next successful read, which revives items
+ * through the merge rule, not by trusting an event.
+ */
 export type GithubEventEffect =
   | { readonly kind: 'issue'; readonly repositoryId: string; readonly wire: unknown }
   | { readonly kind: 'issue_removed'; readonly repositoryId: string; readonly issueId: string }
@@ -270,6 +299,12 @@ export type GithubEventEffect =
       readonly kind: 'repository_lost'
       readonly repositoryId: string
       readonly why: 'deleted' | 'transferred' | 'access_removed'
+    }
+  | {
+      /** One effect for an `installation_repositories` removal; every id loses access. */
+      readonly kind: 'repositories_lost'
+      readonly repositoryIds: readonly string[]
+      readonly why: 'access_removed'
     }
   | {
       readonly kind: 'installation_lost'
@@ -341,14 +376,19 @@ export const interpretGithubEvent = (event: string, payload: unknown): GithubEve
       return { kind: 'ignored' }
     }
     case 'installation_repositories': {
-      // The first removed repository stands for the event; a store handles each by id.
+      // Every removed repository loses access, not just the first. `added` is ignored.
       const removed = p.repositories_removed
-      if (action !== 'removed' || !Array.isArray(removed) || removed.length === 0)
-        return { kind: 'ignored' }
-      const first = idOf((removed[0] as Record<string, unknown> | undefined)?.id)
-      return first === null
+      if (action !== 'removed' || !Array.isArray(removed)) return { kind: 'ignored' }
+      const repositoryIds = [
+        ...new Set(
+          removed
+            .map((r) => idOf((r as Record<string, unknown> | null)?.id))
+            .filter((id): id is string => id !== null),
+        ),
+      ]
+      return repositoryIds.length === 0
         ? { kind: 'ignored' }
-        : { kind: 'repository_lost', repositoryId: first, why: 'access_removed' }
+        : { kind: 'repositories_lost', repositoryIds, why: 'access_removed' }
     }
     default:
       return { kind: 'ignored' }
@@ -472,12 +512,17 @@ export class GithubStoreFencedError extends Error {
 /**
  * What a real SQLite/D1 store must provide. Provider I/O never happens inside
  * these calls; each is one transaction. The reusable suite in
- * `test/support/github-read-store-suite.ts` is the acceptance test for an
+ * `test/fixtures/github-read-store-suite.ts` is the acceptance test for an
  * implementation.
  */
 export interface GithubReadStore {
   /** Journals `(connection, delivery)` once. `duplicate` on any replay. Throws when fenced. */
   recordDelivery(connectionId: string, deliveryId: string): Promise<'new' | 'duplicate'>
+  /**
+   * Case-insensitive, per connection. A name can be reused by another
+   * repository after a rename, so an alias matching items of more than one
+   * repository is ambiguous and resolves to null; resolve those by repository id.
+   */
   getItemByAlias(connectionId: string, alias: string): Promise<GithubRemoteItem | null>
   getItem(connectionId: string, issueId: string): Promise<GithubRemoteItem | null>
   /** Applies one item through `mergeGithubRemoteItem`. Throws when fenced. */
@@ -486,7 +531,9 @@ export interface GithubReadStore {
    * Applies a whole backfill page and advances the checkpoint in the same
    * transaction, only if `expectedVersion` still matches. `conflict` leaves
    * everything unchanged. A page that throws midway applies nothing and does not
-   * advance. Throws when fenced.
+   * advance. Every item must belong to `connectionId` and `repositoryId`; a
+   * foreign item throws `RangeError` and applies nothing. Fencing is checked
+   * before the version. Throws when fenced.
    */
   applyBatch(input: {
     readonly connectionId: string
@@ -506,15 +553,20 @@ export interface GithubReadStore {
     connectionId: string,
     repositoryId: string,
   ): Promise<GithubBackfillCheckpoint | null>
-  /** Marks a repository's items `unavailable` (state change) without deleting links or local time. */
+  /**
+   * Records the resource state. `access_lost`, `transferred` and `deleted` mark
+   * the repository's items `unavailable` without deleting links or local time;
+   * `active` and `renamed` leave item status alone (a later successful read
+   * revives). Scoped to the connection. Throws when fenced.
+   */
   setResourceState(
     connectionId: string,
     repositoryId: string,
     state: GithubResourceState,
   ): Promise<void>
-  /** Adds an alias spelling to every item of a repository (rename/transfer). */
+  /** Adds an alias spelling to every item of a repository (rename/transfer). Throws when fenced. */
   recordRepositoryName(connectionId: string, repositoryId: string, fullName: string): Promise<void>
-  /** Persists a rate-limit or backoff cooldown (epoch ms). Never shortens an existing one. */
+  /** Persists a rate-limit or backoff cooldown (epoch ms). Never shortens an existing one. Throws when fenced. */
   setCooldown(connectionId: string, notBefore: number): Promise<void>
   /** Fences first: after this resolves no new delivery or batch is accepted. Idempotent. */
   fence(connectionId: string, state: 'disconnecting' | 'disconnected' | 'revoked'): Promise<void>

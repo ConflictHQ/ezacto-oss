@@ -70,9 +70,25 @@ describe('github reference and issue mapping', () => {
   it('[unit] keeps both spellings after a repository rename', () => {
     const item = githubIssueToRemoteItem(
       wire({ html_url: 'https://github.com/acme/renamed/issues/5' }),
-      scope,
+      { ...scope, acceptedFullNames: ['Acme/Renamed'] },
     )
     expect(item?.aliases).toEqual(['acme/app#5', 'acme/renamed#5'])
+  })
+
+  it('[security] refuses an issue of another repository unless its name was accepted', () => {
+    const foreign = wire({ html_url: 'https://github.com/evil/other/issues/5' })
+    expect(githubIssueToRemoteItem(foreign, scope)).toBeNull()
+    expect(githubIssueToRemoteItem(foreign, { ...scope, acceptedFullNames: ['acme/x'] })).toBeNull()
+    expect(
+      githubIssueToRemoteItem(wire({ html_url: 'https://github.com/ACME/APP/issues/5' }), scope),
+    ).toMatchObject({ aliases: ['acme/app#5'] })
+  })
+
+  it('[security] rejects dot repository names', () => {
+    expect(parseGithubIssueReference('owner/..#1')).toBeNull()
+    expect(parseGithubIssueReference('owner/.#1')).toBeNull()
+    expect(parseGithubIssueReference('https://github.com/owner/../issues/1')).toBeNull()
+    expect(parseGithubIssueReference('owner/.github#1')?.number).toBe(1)
   })
 
   it('[unit] merge rule: newer wins, older and same-revision conflict are stale, aliases grow', () => {
@@ -86,6 +102,16 @@ describe('github reference and issue mapping', () => {
     expect(() => mergeGithubRemoteItem(base, { ...base, issueId: '9' })).toThrow(RangeError)
     const revived = mergeGithubRemoteItem({ ...base, status: 'unavailable' }, newer)
     expect(revived.item.status).toBe('visible')
+    const gone = { ...base, status: 'unavailable' as const }
+    expect(mergeGithubRemoteItem(gone, base)).toMatchObject({
+      outcome: 'updated',
+      item: { status: 'visible' },
+    })
+    const older = { ...base, remoteUpdatedAt: '2026-09-01T00:00:00Z' }
+    expect(mergeGithubRemoteItem(gone, older)).toMatchObject({
+      outcome: 'stale',
+      item: { status: 'unavailable' },
+    })
   })
 })
 
@@ -132,6 +158,43 @@ describe('github webhook verification', () => {
     ).toEqual({ verified: false, reason: 'too_large' })
   })
 
+  it('[unit] a multi-repository removal reports every repository once', () => {
+    expect(
+      interpretGithubEvent('installation_repositories', {
+        action: 'removed',
+        repositories_removed: [{ id: 77 }, { id: 78 }, { id: 77 }, { id: 'x' }, null, { id: 79 }],
+      }),
+    ).toEqual({
+      kind: 'repositories_lost',
+      repositoryIds: ['77', '78', '79'],
+      why: 'access_removed',
+    })
+    for (const payload of [
+      { action: 'added', repositories_added: [{ id: 1 }] },
+      { action: 'removed', repositories_removed: [] },
+      { action: 'removed', repositories_removed: [{ id: 'x' }] },
+    ]) {
+      expect(interpretGithubEvent('installation_repositories', payload)).toEqual({
+        kind: 'ignored',
+      })
+    }
+    expect(
+      interpretGithubEvent('installation', { action: 'unsuspend', installation: { id: 9 } }),
+    ).toEqual({
+      kind: 'ignored',
+    })
+  })
+
+  it('[security] an empty secret is a verdict, not a throw', async () => {
+    const body = bytes('{}')
+    expect(
+      await verifyGithubDelivery('', {
+        headers: headers(await signGithubBody('x', body)),
+        body,
+      }),
+    ).toEqual({ verified: false, reason: 'bad_signature' })
+  })
+
   it('[unit] interprets only the events the contract names', () => {
     const repository = { id: 77, full_name: 'acme/new' }
     expect(
@@ -159,7 +222,7 @@ describe('github webhook verification', () => {
         action: 'removed',
         repositories_removed: [{ id: 77 }],
       }),
-    ).toMatchObject({ kind: 'repository_lost', why: 'access_removed' })
+    ).toEqual({ kind: 'repositories_lost', repositoryIds: ['77'], why: 'access_removed' })
     expect(interpretGithubEvent('push', {})).toEqual({ kind: 'ignored' })
     expect(interpretGithubEvent('issues', 'nope')).toEqual({ kind: 'ignored' })
   })

@@ -23,7 +23,9 @@ its SQLite and D1 backings. The same suite must pass on both.
 1. **Fixed origin.** Requests go to `https://api.github.com` only. A user-supplied
    reference is parsed into an alias (`owner/repo#n`); a URL on any other host,
    scheme, port or with userinfo is rejected. A response whose `html_url` is not
-   `github.com`, or whose number differs, is discarded, not stored.
+   `github.com`, whose number differs, or which names a repository other than the
+   approved one, is discarded, not stored. A renamed or transferred repository is
+   accepted only when the caller lists its new name for that repository id.
 2. **Immutable identity.** An item is keyed by connection and GitHub issue id.
    Names are aliases that only grow, so rename, case change and transfer cannot
    duplicate or reinterpret a link. Lookup by alias is per connection.
@@ -32,9 +34,10 @@ its SQLite and D1 backings. The same suite must pass on both.
    open/closed, GitHub `updated_at`, aliases, visibility. No body, comments,
    labels, users. No field touches seconds, rates, invoices or project billing.
 5. **One merge rule** for backfill and webhooks: a strictly newer `updated_at`
-   wins; older, or equal-but-different, is `stale` and changes nothing. A refetch
-   is authoritative for ties. An `unavailable` row revives only on a strictly
-   newer visible revision.
+   wins; older, or equal-but-different, is `stale` and changes nothing. An
+   `unavailable` row is revived by any visible revision at least as new (a
+   successful read after restored access, undelete or transfer back). Restoring
+   a resource to `active` alone does not revive items; a read does.
 6. **Webhook order of operations:** size bound, then HMAC-SHA256 over the raw
    bytes (`X-Hub-Signature-256`, constant-time `crypto.subtle.verify`), then
    parse, then bind installation and repository to the connection allowlist
@@ -52,14 +55,20 @@ its SQLite and D1 backings. The same suite must pass on both.
    shortens it. 401 stops as `invalid_credentials`, other 403 as `lost_scope`,
    404/410 marks the item `unavailable`.
 10. **Fence before revoke.** `fence` makes every later delivery, item and batch
-    throw `GithubStoreFencedError`; it is idempotent and per connection. Items,
-    links and local time are retained.
+    throw `GithubStoreFencedError`, as do resource-state, rename and cooldown
+    writes; it is idempotent and per connection and is checked before any
+    version. Items, links and local time are retained.
 11. **Explicit states, not silent failure.** Resource: `active`, `renamed`,
     `transferred`, `deleted`, `access_lost`. Connection: `active`,
     `disconnecting`, `disconnected`, `revoked`. `reconciliation()` returns these,
     counts, `deferredUntil` and closed-vocabulary failure codes only; never
     provider text, tokens or issue bodies.
-12. **Visibility.** The store holds provider facts for the connection. Whether a
+12. **Scoping.** A batch holds only items of its own connection and repository.
+    An alias shared by items of more than one repository (a reused name) is
+    ambiguous and resolves to nothing. `installation_repositories` removal yields
+    one `repositories_lost` effect listing every repository. `unsuspend` and
+    `added` are ignored; recovery comes from the next successful read.
+13. **Visibility.** The store holds provider facts for the connection. Whether a
     member may see an item's title stays decided by local project permissions at
     the API layer, independent of this port.
 

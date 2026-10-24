@@ -34,10 +34,13 @@ export class FakeGithubReadStore implements GithubReadStore {
 
   async getItemByAlias(connectionId: string, alias: string): Promise<GithubRemoteItem | null> {
     const wanted = alias.toLowerCase()
+    const matches: GithubRemoteItem[] = []
     for (const item of this.items.values()) {
-      if (item.connectionId === connectionId && item.aliases.includes(wanted)) return item
+      if (item.connectionId === connectionId && item.aliases.includes(wanted)) matches.push(item)
     }
-    return null
+    return matches.length === 1 && new Set(matches.map((i) => i.repositoryId)).size === 1
+      ? (matches[0] ?? null)
+      : null
   }
 
   async getItem(connectionId: string, issueId: string): Promise<GithubRemoteItem | null> {
@@ -54,6 +57,11 @@ export class FakeGithubReadStore implements GithubReadStore {
 
   async applyBatch(input: Parameters<GithubReadStore['applyBatch']>[0]) {
     this.fenced(input.connectionId)
+    for (const item of input.items) {
+      if (item.connectionId !== input.connectionId || item.repositoryId !== input.repositoryId) {
+        throw new RangeError('A batch holds only items of its own connection and repository.')
+      }
+    }
     const cpKey = `${input.connectionId}\u0000${input.repositoryId}`
     const current = this.checkpoints.get(cpKey)
     if ((current?.version ?? 0) !== input.expectedVersion) return { outcome: 'conflict' as const }
@@ -82,6 +90,7 @@ export class FakeGithubReadStore implements GithubReadStore {
   }
 
   async setResourceState(connectionId: string, repositoryId: string, state: GithubResourceState) {
+    this.fenced(connectionId)
     this.resources.set(`${connectionId}\u0000${repositoryId}`, state)
     for (const [key, item] of this.items) {
       if (item.connectionId !== connectionId || item.repositoryId !== repositoryId) continue
@@ -93,6 +102,7 @@ export class FakeGithubReadStore implements GithubReadStore {
   }
 
   async recordRepositoryName(connectionId: string, repositoryId: string, fullName: string) {
+    this.fenced(connectionId)
     for (const [key, item] of this.items) {
       if (item.connectionId !== connectionId || item.repositoryId !== repositoryId) continue
       const alias = `${fullName.toLowerCase()}#${item.number}`
@@ -103,6 +113,7 @@ export class FakeGithubReadStore implements GithubReadStore {
   }
 
   async setCooldown(connectionId: string, notBefore: number) {
+    this.fenced(connectionId)
     this.cooldowns.set(connectionId, Math.max(this.cooldowns.get(connectionId) ?? 0, notBefore))
   }
 
