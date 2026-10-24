@@ -2917,6 +2917,9 @@
 .expense-workspace {
   width: 100%;
 }
+.expense-intro {
+  max-width: 64ch;
+}
 .expense-intro,
 .expense-page-status,
 .expense-lock-message {
@@ -3117,6 +3120,7 @@
   min-height: auto;
 }
 .expense-filter-form {
+  align-items: end;
   margin-bottom: 14px;
 }
 /*
@@ -3370,7 +3374,7 @@
   color: var(--ez-muted);
 }
 .approval-filters select {
-  min-height: 36px;
+  min-height: 44px;
   padding: 0 8px;
   border: 1px solid var(--ez-border);
   border-radius: var(--ez-radius);
@@ -3378,7 +3382,7 @@
   color: var(--ez-ink);
 }
 .approval-filters .filter-apply {
-  min-height: 36px;
+  min-height: 44px;
   padding: 0 16px;
   border: 1px solid var(--ez-action-edge);
   border-radius: var(--ez-radius);
@@ -3648,6 +3652,7 @@
     align-items: stretch;
     flex-direction: column;
   }
+  .org-timezone-form,
   .lock-policy-form,
   .manual-lock-form,
   .timesheet-lock-card {
@@ -3802,7 +3807,7 @@ a {
 .command-trigger,
 .menu-trigger {
   align-self: center;
-  min-height: 36px;
+  min-height: 44px;
   border: 1px solid var(--ez-border);
   border-radius: var(--ez-radius);
   background: var(--ez-surface);
@@ -3891,7 +3896,7 @@ a {
  * at all -- there is no keyboard there to take the shortcut.
  */
 .money-toggle {
-  min-width: 36px;
+  min-width: 44px;
 }
 /*
  * Pressed means the amounts are off, which is the state worth marking: the
@@ -4074,7 +4079,7 @@ dialog h2,
   text-transform: uppercase;
 }
 .primary-action {
-  min-height: 36px;
+  min-height: 44px;
   padding: 0 16px;
   border: 1px solid var(--ez-action-edge);
   border-radius: var(--ez-radius);
@@ -4537,7 +4542,7 @@ button.primary-action.primary-action {
 /* Settings sits beside Sign out because that is where a person looks for their
    own account, and it is the only route into either half. */
 .identity-settings {
-  min-height: 28px;
+  min-height: 44px;
   padding: 0 10px;
   border: 1px solid var(--ez-border);
   border-radius: var(--ez-radius);
@@ -5454,7 +5459,7 @@ button.primary-action.primary-action {
 }
 
 .identity-signout {
-  min-height: 28px;
+  min-height: 44px;
   padding: 0 10px;
   border: 1px solid var(--ez-border);
   border-radius: var(--ez-radius);
@@ -5466,6 +5471,9 @@ button.primary-action.primary-action {
    how the bar announced it had run out of room, and it is a control, not copy. */
 .identity-settings,
 .identity-signout {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   flex: none;
   white-space: nowrap;
 }
@@ -5609,11 +5617,11 @@ button.primary-action.primary-action {
   }
   [data-ez-nav='sidebar'] .nav-collapse {
     position: absolute;
-    top: 22px;
+    top: 16px;
     right: 20px;
     display: grid;
-    width: 32px;
-    height: 32px;
+    width: 44px;
+    height: 44px;
     place-items: center;
     padding: 0;
     border: 0;
@@ -5687,7 +5695,7 @@ button.primary-action.primary-action {
     grid-column: 1 / -1;
     width: 100%;
     min-width: 0;
-    min-height: 40px;
+    min-height: 44px;
     justify-content: flex-start;
     padding: 0 6px 0 10px;
   }
@@ -5783,8 +5791,8 @@ button.primary-action.primary-action {
   [data-ez-nav='sidebar'][data-ez-sidebar='collapsed'] .identity-signout {
     display: grid;
     flex: none;
-    width: 36px;
-    min-height: 36px;
+    width: 44px;
+    min-height: 44px;
     place-items: center;
     padding: 0;
   }
@@ -5968,7 +5976,7 @@ button[data-auth-action]:disabled {
 }
 .week-actions button,
 .day-switcher button {
-  min-height: 36px;
+  min-height: 44px;
   padding: 0 10px;
   border: 1px solid var(--ez-border);
   border-radius: var(--ez-radius);
@@ -6357,7 +6365,7 @@ button[data-auth-action]:disabled {
   display: none;
 }
 .time-person select {
-  min-height: 36px;
+  min-height: 44px;
   padding: 0 8px;
   border: 1px solid var(--ez-border);
   border-radius: var(--ez-radius);
@@ -9928,4 +9936,10 @@ th[aria-sort="descending"] .table-sort [data-part="ascending"] { opacity: 0.15; 
 
 button[data-first-run-help] {
   min-height: 44px;
+}
+
+/* Keep the policy action readable beside the timezone field on a phone. */
+[data-org-timezone-submit] {
+  min-width: max-content;
+  white-space: nowrap;
 }
