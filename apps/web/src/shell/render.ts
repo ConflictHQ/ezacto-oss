@@ -672,6 +672,7 @@ ${instancePalette ? `  <link rel="stylesheet" href="${INSTANCE_THEME_STYLESHEET_
     root. The collapse toggle only shows in the sidebar, and only at desktop
     width; below 900px both layouts fold into the Menu drawer.
   -->
+  <a class="app-skip-link" href="#app-content" data-app-skip-link>Skip navigation</a>
   <header class="topbar" id="ez-app-nav" data-app-nav>
     <a class="brand" href="/dashboard" aria-label="${escapeHtml(brand)} home" data-home-link><span class="brand-wordmark">${wordmark(b.wordmarkDark, brand)}</span><span class="brand-glyph">${brand === defaultBrand.name && (b.wordmarkDark ?? '') === '' ? productLogo : iconMarkup('home')}</span></a>
     <button class="nav-collapse" type="button" data-sidebar-toggle aria-controls="ez-app-nav" aria-pressed="${sidebar === 'collapsed' ? 'true' : 'false'}" aria-label="Collapse sidebar">${iconMarkup('sidebar')}</button>

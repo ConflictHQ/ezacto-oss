@@ -1,3 +1,4 @@
+import { bindSkipNavigation } from './skip-navigation.js'
 import { createFirstRunController } from '../first-run/browser.js'
 import { wirePayoutDefaultSelf } from './payout-default-self.js'
 import { createScheduledRunController } from '../scheduled-runs/browser.js'
@@ -1359,6 +1360,7 @@ export const mountShell = async (
   const authChecking = required<HTMLElement>('[data-auth-checking]')
   const sessionCheckOverlay = required<HTMLElement>('[data-session-check-overlay]')
   const authenticatedShell = required<HTMLElement>('[data-authenticated-shell]')
+  bindSkipNavigation(authenticatedShell)
   const invoiceGenerationPage =
     document.documentElement.dataset.appView === 'invoice-generation'
   // The week grid also mounts behind the invoice wizard and normalizes its own
