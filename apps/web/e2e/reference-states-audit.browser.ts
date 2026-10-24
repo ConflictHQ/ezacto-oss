@@ -1,4 +1,6 @@
 import { expect, test, type Route } from '@playwright/test'
+import type { TimeEntry } from '@conflict-hq/ezacto-client'
+import { formatDuration, weekDates } from '../src/week-grid/model.js'
 
 const control = '/__ezacto_browser_fixture__/start-end'
 const controlHeaders = { 'x-ezacto-browser-fixture-control': 'start-end-round-trip' }
@@ -15,7 +17,14 @@ for (const width of [390, 1280]) {
         expect(result.status()).toBe(204)
       }
       await fixture('sign-in-rate-reset')
-      await fixture('client-360-seed')
+      await fixture('client-360-cleanup')
+      const parts = new Intl.DateTimeFormat('en-CA', {
+        timeZone: process.env.EZACTO_BROWSER_FIXTURE_TIME_ZONE!,
+        year: 'numeric', month: '2-digit', day: '2-digit',
+      }).formatToParts(new Date(process.env.EZACTO_BROWSER_FIXTURE_INSTANT!))
+      const part = (type: string) => parts.find(value => value.type === type)!.value
+      const spentDate = `${part('year')}-${part('month')}-${part('day')}`
+      const weekPath = `/?week=${spentDate}`
       let submitted = false
       const expenses = /\/api\/v1\/expenses(?:\?.*)?$/
       let release!: () => void
@@ -35,12 +44,57 @@ for (const width of [390, 1280]) {
         await page.screenshot({ path: info.outputPath(`${screen}-${width}.png`), fullPage: true })
       }
       try {
-        await page.goto('/')
+        await page.goto(weekPath)
         await page.locator('[data-sign-in-form]').getByLabel('Email').fill(process.env.EZACTO_BROWSER_FIXTURE_EMAIL!)
         await page.getByLabel('Password', { exact: true }).fill(process.env.EZACTO_BROWSER_FIXTURE_PASSWORD!)
         await page.getByRole('button', { name: 'Sign in', exact: true }).click()
-        // Two baseline entries (0.75h) plus the three 360 fixtures (1.75h).
-        await expect(page.locator('[data-week-total]')).toHaveText('2.5')
+        await expect(page.locator('[data-authenticated-shell]:not([inert])')).toBeVisible()
+        const whoami = await page.request.get('/api/v1/whoami')
+        expect(whoami.status()).toBe(200)
+        const { data: identity } = await whoami.json()
+        const settingsResponse = await page.request.get('/api/v1/time-entry-settings')
+        expect(settingsResponse.status()).toBe(200)
+        const { data: settings } = await settingsResponse.json()
+        const dates = weekDates(spentDate, settings.week_start_day)
+        const readWeek = async () => {
+          const entries: TimeEntry[] = []
+          const seenCursors = new Set<string>()
+          let cursor: string | null = null
+          do {
+            const query = new URLSearchParams({
+              user_id: String(identity.user_id), from: dates[0]!, to: dates[6]!, per_page: '200',
+            })
+            if (cursor !== null) query.set('cursor', cursor)
+            const response = await page.request.get(`/api/v1/time-entries?${query}`)
+            expect(response.status()).toBe(200)
+            const body = await response.json()
+            expect(Array.isArray(body.data)).toBe(true)
+            entries.push(...body.data)
+            expect(body).toHaveProperty('next_cursor')
+            cursor = body.next_cursor
+            if (cursor !== null) {
+              expect(typeof cursor).toBe('string')
+              expect(seenCursors.has(cursor)).toBe(false)
+              seenCursors.add(cursor)
+            }
+          } while (cursor !== null)
+          return entries.sort((left, right) => left.id - right.id)
+        }
+        // Earlier cases own additional legitimate entries in this shared native D1.
+        // Preserve them and prove the audit adds exactly its three entries (1.75h).
+        const baseline = await readWeek()
+        await fixture('client-360-seed')
+        const populated = await readWeek()
+        const ownedIds = new Set([9300, 9301, 9302])
+        const owned = populated.filter(entry => ownedIds.has(entry.id))
+        expect(owned.map(entry => entry.id)).toEqual([9300, 9301, 9302])
+        expect(owned.reduce((total, entry) => total + entry.seconds, 0)).toBe(6300)
+        expect(populated.filter(entry => !ownedIds.has(entry.id))).toEqual(baseline)
+        const expectedSeconds = baseline.reduce((total, entry) => total + entry.seconds, 6300)
+        await page.goto(weekPath)
+        await expect(page.locator('[data-week-total]')).toHaveText(
+          formatDuration(expectedSeconds, settings.time_format),
+        )
         await capture('populated-week')
 
         await page.locator('[data-submit-timesheet]').click()
@@ -88,7 +142,7 @@ for (const width of [390, 1280]) {
         release()
         await page.unroute(expenses, failExpenseRead)
         if (submitted) {
-          await page.goto('/')
+          await page.goto(weekPath)
           await expect(page.locator('[data-unsubmit-timesheet]')).toBeVisible()
           await page.locator('[data-unsubmit-timesheet]').click()
           await expect(page.locator('[data-unsubmit-timesheet]')).toBeHidden()
