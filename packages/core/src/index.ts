@@ -55,6 +55,7 @@ export * from './scheduled-runs.js'
 
 export * from './payment-actuals.js'
 export * from './payment-reconciliation.js'
+export * from './bank-deposit-matching.js'
 
 export * from './account-retention.js'
 
