@@ -1,3 +1,4 @@
+export { createManagedQuickBooksGrantCommands, type ManagedQuickBooksGrantOptions } from './managed-quickbooks.js'
 export { installScheduledJobRoutes } from './scheduled-jobs.js'
 export { createApiApp } from './app.js'
 export { createApiIdempotencyAuthorization } from './idempotency-auth.js'
