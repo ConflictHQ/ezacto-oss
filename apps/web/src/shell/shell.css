@@ -9929,3 +9929,30 @@ th[aria-sort="descending"] .table-sort [data-part="ascending"] { opacity: 0.15; 
 button[data-first-run-help] {
   min-height: 44px;
 }
+
+/* The setup guide joins the compact account controls in the header bands.
+   Its accessible name stays complete when only its icon fits. */
+@media (max-width: 1699px) {
+  button[data-first-run-help] {
+    display: grid;
+    width: 44px;
+    padding: 0;
+    place-items: center;
+  }
+  button[data-first-run-help] .ez-icon {
+    display: block;
+  }
+  button[data-first-run-help] .identity-action-label {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip-path: inset(50%);
+    white-space: nowrap;
+  }
+}
+
+[data-ez-nav='sidebar'][data-ez-sidebar='collapsed'] button[data-first-run-help] {
+  width: 44px;
+  min-height: 44px;
+}
