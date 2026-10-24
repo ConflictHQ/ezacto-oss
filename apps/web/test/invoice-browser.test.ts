@@ -193,6 +193,32 @@ const submit = (selector: string): void => {
 }
 
 describe('invoice payment controller', () => {
+  it('[browser] makes no attachment requests when storage is disabled on the instance', async () => {
+    renderDetail()
+    document.documentElement.setAttribute('data-attachments-unavailable', '')
+    const api: Partial<InvoicePaymentApi> = {
+      getInvoice: vi.fn(async () => invoice('NO-STORAGE')),
+      listInvoiceMessages: vi.fn(async () => []),
+      listInvoicePayments: vi.fn(async () => []),
+      listInvoiceAttachments: vi.fn(async () => []),
+      uploadInvoiceAttachment: vi.fn(),
+    }
+    await createInvoicePaymentController(api).activate(identity(1), new AbortController().signal, () => false)
+    expect(api.getInvoice).toHaveBeenCalled()
+    expect(api.listInvoiceAttachments).not.toHaveBeenCalled()
+    expect(document.querySelector('[data-invoice-attachment-status]')?.textContent).toBe(
+      'File attachments are not enabled on this instance.',
+    )
+    expect(document.querySelector<HTMLElement>('[data-invoice-attachment-form]')!.hidden).toBe(true)
+    expect(document.querySelector<HTMLElement>('[data-invoice-attachment-readonly]')!.hidden).toBe(true)
+    expect(document.querySelector<HTMLElement>('[data-invoice-attachment-demo]')!.hidden).toBe(true)
+    const input = document.querySelector<HTMLInputElement>('[data-invoice-attachment-form] input[name="file"]')!
+    Object.defineProperty(input, 'files', { value: [new File(['owned'], 'owned.txt', { type: 'text/plain' })] })
+    submit('[data-invoice-attachment-form]')
+    expect(api.uploadInvoiceAttachment).not.toHaveBeenCalled()
+    expect(api.listInvoiceAttachments).not.toHaveBeenCalled()
+  })
+
   it('[browser] gives Send back once an upload settles, even if a side read repainted the controls during it', async () => {
     // Issue 745. The detail page reads QuickBooks, reminders and attachments
     // beside the invoice and repaints the controls as each answers. One that
