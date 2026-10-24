@@ -67,7 +67,9 @@ A red `verify` job is compared against known causes before it is investigated
 |---|---|---|
 | `miniflare-proxy-heap` | `proxy.worker.ts:150` | Upstream; the narrow retry in the migrate resume test covers it |
 | `miniflare-fetch-sync` | `fetch-sync.ts:147` | Upstream; no retry, re-run the job and record it |
+| `kdf-overload` | `PasswordDerivationOverloadedError` | Load on the runner queueing password derivations; the limiter caps are a memory decision, so rerun the test alone before touching them |
 | `vitest-timeout` | `Test timed out in Nms`, `Hook timed out in Nms` | Budget against a loaded runner; compare the green duration before touching it |
+| `request-abort-timeout` | `TimeoutError: The operation was aborted due to timeout` | A per-request AbortSignal budget lost to a cold runtime; size it for migrations if it recurs |
 | `registry-reset` | `ECONNRESET` and similar network errors | Infrastructure; not ours, re-run the job |
 
 Anything else is `unclassified`: investigate it, and add a row here and a
