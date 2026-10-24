@@ -183,6 +183,17 @@ export {
   type SignInMethodState,
 } from './sign-in-methods.js'
 export {
+  installModuleGate,
+  moduleAvailability,
+  moduleDisabled,
+  moduleForPath,
+  OPERATOR_MODULE_FLAGS,
+  OPERATOR_MODULES,
+  type ModuleAvailability,
+  type OperatorModule,
+  type OperatorModuleEnv,
+} from './module-availability.js'
+export {
   installTwoFactorChallengeRoutes,
   issueSessionOrChallenge,
   TWO_FACTOR_CHALLENGE_COOKIE,
