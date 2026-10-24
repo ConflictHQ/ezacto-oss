@@ -32,26 +32,39 @@ same rows.
    daily proration; disjoint ranges in one week add.
 3. `plannedSeconds`, `availableSeconds` (current capacity minus leave and
    holidays, once per day, never negative) and `trackedSeconds` (stored rounded
-   seconds by `spent_date`) are separate fields. `overAllocated` is
-   `planned > available`, including zero capacity.
+   seconds by `spent_date`) are separate fields. `plannedSeconds` and
+   `trackedSeconds` share one project scope: the requested project in the
+   project view, all of the person's work in the team view. `availableSeconds`
+   and `personPlannedSeconds` are always whole-person, and `overAllocated` is
+   `personPlannedSeconds > availableSeconds` in both views, including zero
+   capacity, so a small project is never called over-allocated by comparing it
+   with whole-person availability.
 4. Placeholder demand is returned only in `unassigned`, never in a person total
    or capacity denominator.
 5. Archived people are omitted; plans and placeholders on archived projects are
    omitted; tracked time for included people is unchanged.
 6. Hidden scope: planned hours on projects the caller cannot see are included in
    `plannedSeconds` and reported as `otherScopePlannedSeconds` with
-   `hasOtherScope`; no hidden project id or name, and no hidden placeholder, is
-   ever emitted. Leave appears only as availability seconds, never kind or note.
-7. `revision` changes whenever a contributing allocation or placeholder revision
-   changes. People are paged by ascending id; `nextCursor` is null on the last
-   page.
+   `hasOtherScope`; tracked time on hidden projects is likewise included in
+   `trackedSeconds` and reported as `otherScopeTrackedSeconds`; a hidden
+   placeholder sets `hasOtherScope` but no hidden project id, name or
+   placeholder is ever emitted. Leave appears only as availability seconds, never kind or note.
+7. `revision` is a SHA-256 of the canonical projection (everything but
+   `context`). It changes exactly when the returned data changes, whatever input
+   caused it (allocations, placeholders, leave, holidays, capacity, tracked
+   time), and not when rows outside the caller's scope or page change. People
+   are paged by ascending id; `nextCursor` is null on the last page.
+   `unassigned` is returned on the first page only (no `cursor`), never with a
+   `personId` filter, holds at most `maximumResourceCalendarPlaceholders`
+   placeholders (lowest ids first, `unassignedTruncated` says more matched),
+   and so at most 100 x 53 rows.
 8. The projection never writes actual time, rates, invoices or staffing.
 
 ## Not settled here
 
 - The placeholder row shape is provisional until #1191 lands; only
   `CalendarPlaceholder` changes if it differs.
-- The `revision` digest is a reference; the real read may use a database
-  watermark if it changes exactly when a contributing row changes.
+- The real read may compute `revision` another way (for example a database
+  watermark) only if it moves exactly when this digest would.
 - The public API path, scope, OpenAPI entry and generated client are left to the
   implementation slice.

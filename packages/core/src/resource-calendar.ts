@@ -25,6 +25,8 @@ import { TrackedResourceInputError } from "./tracked-state.js";
 
 export const maximumResourceCalendarPeople = 100;
 export const defaultResourceCalendarPeople = 50;
+/** Placeholders returned per read (lowest ids first); at most 53 weeks each. */
+export const maximumResourceCalendarPlaceholders = 100;
 
 /** Where the calendar was asked for: one project, or the whole visible team. */
 export type ResourceCalendarView = "project" | "team";
@@ -137,6 +139,7 @@ export interface CalendarTimeOff {
 
 export interface CalendarTracked {
   readonly personId: number;
+  readonly projectId: number;
   readonly spentDate: string;
   readonly roundedSeconds: number;
 }
@@ -163,12 +166,18 @@ export interface ResourceCalendarPersonWeek {
   readonly weekStart: string;
   readonly plannedSeconds: number;
   readonly availableSeconds: number;
+  /** Same project scope as plannedSeconds: the project in the project view, all of the person's work in the team view. */
   readonly trackedSeconds: number;
+  /** Whole-person planned seconds on every project; the numerator of overAllocated and the same scope as availableSeconds. */
+  readonly personPlannedSeconds: number;
+  /** personPlannedSeconds > availableSeconds, in both views. */
   readonly overAllocated: boolean;
   /** Visible projects only. */
   readonly projects: readonly ResourceCalendarProjectHours[];
   /** Planned seconds on projects the caller cannot see; included in plannedSeconds, never named. */
   readonly otherScopePlannedSeconds: number;
+  /** Tracked seconds on projects the caller cannot see; included in trackedSeconds, never named. */
+  readonly otherScopeTrackedSeconds: number;
 }
 
 export interface ResourceCalendarPerson {
@@ -188,24 +197,102 @@ export interface ResourceCalendarUnassignedWeek {
 export interface ResourceCalendarProjection {
   readonly context: ResourceCalendarContext;
   readonly view: ResourceCalendarView;
-  /** Changes whenever any contributing row or its revision changes. */
+  /**
+   * SHA-256 of the canonical projection (everything but `context`). It changes
+   * exactly when the returned data changes, so rows that never reach this
+   * output (other projects, filtered people, hidden plans) cannot move it.
+   */
   readonly revision: string;
   readonly weekStarts: readonly string[];
   readonly people: readonly ResourceCalendarPerson[];
   /** Demand with no person, kept apart from every person total. */
   readonly unassigned: readonly ResourceCalendarUnassignedWeek[];
-  /** Whether some planned hours belong to projects hidden from this caller. */
+  /** More placeholders matched than `maximumResourceCalendarPlaceholders`. */
+  readonly unassignedTruncated: boolean;
+  /** Whether planned or tracked hours, or a placeholder, belong to projects hidden from this caller. */
   readonly hasOtherScope: boolean;
   readonly nextCursor: number | null;
 }
 
-const fnv = (text: string): string => {
-  let hash = 0x811c9dc5;
-  for (let index = 0; index < text.length; index += 1) {
-    hash ^= text.charCodeAt(index);
-    hash = Math.imul(hash, 0x01000193) >>> 0;
+const sha256K = Array.from({ length: 64 }, (_, index) => {
+  let candidate = 2;
+  for (let found = 0; ; candidate += 1) {
+    let prime = true;
+    for (let divisor = 2; divisor * divisor <= candidate; divisor += 1) {
+      if (candidate % divisor === 0) prime = false;
+    }
+    if (prime && found++ === index) break;
   }
-  return hash.toString(16).padStart(8, "0");
+  return Math.floor((Math.cbrt(candidate) % 1) * 2 ** 32) >>> 0;
+});
+
+/** Synchronous SHA-256 of a UTF-8 string, hex encoded. */
+const sha256 = (text: string): string => {
+  const data = new TextEncoder().encode(text);
+  const padded = new Uint8Array(((data.length + 9 + 63) >> 6) << 6);
+  padded.set(data);
+  padded[data.length] = 0x80;
+  const view = new DataView(padded.buffer);
+  view.setUint32(padded.length - 8, Math.floor((data.length * 8) / 2 ** 32));
+  view.setUint32(padded.length - 4, (data.length * 8) >>> 0);
+  const state = Array.from({ length: 8 }, (_, index) => {
+    let candidate = 2;
+    for (let found = 0; ; candidate += 1) {
+      let prime = true;
+      for (let divisor = 2; divisor * divisor <= candidate; divisor += 1) {
+        if (candidate % divisor === 0) prime = false;
+      }
+      if (prime && found++ === index) break;
+    }
+    return Math.floor((Math.sqrt(candidate) % 1) * 2 ** 32) >>> 0;
+  });
+  const rotr = (value: number, bits: number) =>
+    (value >>> bits) | (value << (32 - bits));
+  const w = new Array<number>(64);
+  for (let offset = 0; offset < padded.length; offset += 64) {
+    for (let t = 0; t < 16; t += 1) w[t] = view.getUint32(offset + t * 4);
+    for (let t = 16; t < 64; t += 1) {
+      const s0 =
+        rotr(w[t - 15]!, 7) ^ rotr(w[t - 15]!, 18) ^ (w[t - 15]! >>> 3);
+      const s1 = rotr(w[t - 2]!, 17) ^ rotr(w[t - 2]!, 19) ^ (w[t - 2]! >>> 10);
+      w[t] = (w[t - 16]! + s0 + w[t - 7]! + s1) >>> 0;
+    }
+    let [a, b, c, d, e, f, g, h] = state as [
+      number,
+      number,
+      number,
+      number,
+      number,
+      number,
+      number,
+      number,
+    ];
+    for (let t = 0; t < 64; t += 1) {
+      const t1 =
+        (h +
+          (rotr(e, 6) ^ rotr(e, 11) ^ rotr(e, 25)) +
+          ((e & f) ^ (~e & g)) +
+          sha256K[t]! +
+          w[t]!) >>>
+        0;
+      const t2 =
+        ((rotr(a, 2) ^ rotr(a, 13) ^ rotr(a, 22)) +
+          ((a & b) ^ (a & c) ^ (b & c))) >>>
+        0;
+      h = g;
+      g = f;
+      f = e;
+      e = (d + t1) >>> 0;
+      d = c;
+      c = b;
+      b = a;
+      a = (t1 + t2) >>> 0;
+    }
+    [a, b, c, d, e, f, g, h].forEach((value, index) => {
+      state[index] = (state[index]! + value) >>> 0;
+    });
+  }
+  return state.map((value) => value.toString(16).padStart(8, "0")).join("");
 };
 
 const assertQuery = (query: ResourceCalendarQuery): number => {
@@ -305,71 +392,101 @@ export const composeResourceCalendar = (
         (sum, allocation) => sum + allocation.plannedSecondsPerWeek,
         0,
       );
+      const personPlanned = rows.allocations
+        .filter(
+          (allocation) =>
+            allocation.personId === person.id &&
+            !allocation.projectArchived &&
+            allocationCoversWeek(allocation, weekStart),
+        )
+        .reduce((sum, allocation) => sum + allocation.plannedSecondsPerWeek, 0);
       const available =
         person.weeklyCapacitySeconds -
         timeOffSecondsInWeek(leave, weekStart, person.weeklyCapacitySeconds);
       const weekEnd = addDays(weekStart, 6);
-      const tracked = rows.tracked
-        .filter(
-          (entry) =>
-            entry.personId === person.id &&
-            entry.spentDate >= weekStart &&
-            entry.spentDate <= weekEnd,
-        )
+      const trackedRows = rows.tracked.filter(
+        (entry) =>
+          entry.personId === person.id &&
+          projectScope(entry.projectId) &&
+          entry.spentDate >= weekStart &&
+          entry.spentDate <= weekEnd,
+      );
+      const tracked = trackedRows.reduce(
+        (sum, entry) => sum + entry.roundedSeconds,
+        0,
+      );
+      const otherTracked = trackedRows
+        .filter((entry) => !visible.has(entry.projectId))
         .reduce((sum, entry) => sum + entry.roundedSeconds, 0);
+      if (otherTracked > 0) hasOtherScope = true;
       return {
         weekStart,
         plannedSeconds: planned,
         availableSeconds: available,
         trackedSeconds: tracked,
-        overAllocated: isOverAllocated(planned, available),
+        personPlannedSeconds: personPlanned,
+        overAllocated: isOverAllocated(personPlanned, available),
         projects: [...byProject].map(([projectId, plannedSeconds]) => ({
           projectId,
           plannedSeconds,
         })),
         otherScopePlannedSeconds: other,
+        otherScopeTrackedSeconds: otherTracked,
       };
     });
     return { personId: person.id, name: person.name, weeks };
   });
 
+  // Placeholders belong to no person: a person filter or a later page has none
+  // to show. The first page carries at most maximumResourceCalendarPlaceholders.
   const unassigned: ResourceCalendarUnassignedWeek[] = [];
-  for (const placeholder of rows.placeholders) {
-    if (
-      placeholder.projectArchived ||
-      !visible.has(placeholder.projectId) ||
-      !projectScope(placeholder.projectId)
-    )
-      continue;
-    for (const weekStart of weekStarts) {
-      if (allocationCoversWeek(placeholder, weekStart)) {
-        unassigned.push({
-          weekStart,
-          placeholderId: placeholder.id,
-          name: placeholder.name,
-          projectId: placeholder.projectId,
-          plannedSeconds: placeholder.plannedSecondsPerWeek,
-        });
+  let unassignedTruncated = false;
+  if (query.personId === undefined && query.cursor === undefined) {
+    const matching = [...rows.placeholders]
+      .filter(
+        (placeholder) =>
+          !placeholder.projectArchived &&
+          projectScope(placeholder.projectId) &&
+          weekStarts.some((weekStart) =>
+            allocationCoversWeek(placeholder, weekStart),
+          ),
+      )
+      .sort((a, b) => a.id - b.id);
+    for (const placeholder of matching) {
+      if (!visible.has(placeholder.projectId)) {
+        hasOtherScope = true;
+      }
+    }
+    const shown = matching.filter((placeholder) =>
+      visible.has(placeholder.projectId),
+    );
+    unassignedTruncated = shown.length > maximumResourceCalendarPlaceholders;
+    for (const placeholder of shown.slice(
+      0,
+      maximumResourceCalendarPlaceholders,
+    )) {
+      for (const weekStart of weekStarts) {
+        if (allocationCoversWeek(placeholder, weekStart)) {
+          unassigned.push({
+            weekStart,
+            placeholderId: placeholder.id,
+            name: placeholder.name,
+            projectId: placeholder.projectId,
+            plannedSeconds: placeholder.plannedSecondsPerWeek,
+          });
+        }
       }
     }
   }
 
-  const revision = fnv(
-    [
-      ...rows.allocations.map((row) => `a${row.id}:${row.revision}`),
-      ...rows.placeholders.map((row) => `p${row.id}:${row.revision}`),
-    ]
-      .sort()
-      .join("|"),
-  );
-  return {
-    context,
+  const body = {
     view: query.view,
-    revision,
     weekStarts,
     people,
     unassigned,
+    unassignedTruncated,
     hasOtherScope,
     nextCursor,
   };
+  return { context, revision: sha256(JSON.stringify(body)), ...body };
 };
