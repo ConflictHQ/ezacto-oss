@@ -1,4 +1,4 @@
-import { accountingAvailable } from '../accounting-availability.js'
+import { moduleAvailable } from '../module-availability.js'
 import { renderDataTable, type CellContent, type DataTableSort } from '../components/data-table.js'
 import { rememberedSort, resolveSort } from '../components/table-sort.js'
 import { projectTimeRounding, roundingWithSource } from '../components/time-entry-editor.js'
@@ -1413,7 +1413,7 @@ export const createInvoicePaymentController = (
    * page has to show.
    */
   const loadQuickBooks = async (session: ActiveSession, invoiceId: number): Promise<void> => {
-    if (api.getInvoiceQuickBooks === undefined || !accountingAvailable()) {
+    if (api.getInvoiceQuickBooks === undefined || !moduleAvailable('accounting')) {
       quickBooks = null
       renderQuickBooks()
       syncControls()

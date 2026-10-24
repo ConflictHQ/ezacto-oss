@@ -236,7 +236,7 @@ reads them from its environment.
 | `QUICKBOOKS_CLIENT_SECRET` | its secret |
 | `QUICKBOOKS_WEBHOOK_VERIFIER_TOKEN` | the verifier token of that environment's webhook |
 | `QUICKBOOKS_ENVIRONMENT` | `sandbox` for a development key; anything else, including unset, is live books |
-| `ACCOUNTING_ENABLED` | `false` turns accounting off even where the keys are set: no routes, and the app hides the Accounting section and the invoice QuickBooks line. Unset or `true` leaves it on; any other value stops start-up |
+| `ACCOUNTING_ENABLED` | `false` turns accounting off even where the keys are set: its routes answer 403 `module_disabled`, and the app hides the Accounting section and the invoice QuickBooks line. Unset or `true` leaves it on; any other value stops start-up |
 
 How they reach a deployment, and how to prove they did, is in
 [Integrations: where the keys go](integrations.md). Once they are in place,

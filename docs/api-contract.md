@@ -36,6 +36,13 @@ JSON readers enforce a byte ceiling while consuming the stream (1 MiB by default
 even if `Content-Length` is absent or falsely small. Oversized bodies receive the
 same envelope with `413 payload_too_large`.
 
+An operator can switch a whole module off (`SSO_ENABLED`, `BACKUPS_ENABLED`,
+`INVOICES_ENABLED`, `ACCOUNTING_ENABLED`; see the [operator guide](operator-guide.md#switch-whole-modules-off)).
+Every operation of a switched-off module answers `403 module_disabled` before any
+route, provider, mail or storage call, and its data is untouched. The OpenAPI
+document marks those operations' 403 accordingly, and the CLI prints the status
+and code like any other refusal. No request can turn the module back on.
+
 ## Retries and `Idempotency-Key`
 
 Any write (POST, PUT, PATCH or DELETE) under the data paths may carry an

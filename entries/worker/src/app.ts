@@ -1,4 +1,5 @@
 import { installOrganizationHolidayRoutes } from '@ezacto/api'
+import { installModuleGate, moduleAvailability } from '@ezacto/api'
 import type { OrganizationHolidayRepository } from '@ezacto/core'
 import type { PayoutPreferenceService, PayoutProviderEnablement } from '@ezacto/api'
 import { installOutboundWebhookRoutes } from '@ezacto/api'
@@ -6,7 +7,6 @@ import type { WebhookManagement } from '@ezacto/core'
 import {installMigrationLoadRoutes,type MigrationLoadStatusReader} from '@ezacto/api'
 import { installInvoiceElevationRoutes, type InvoiceElevationStore, type ElevatedInvoiceTimeUnlinkPort } from '@ezacto/api'
 import { installEstimateTemplateRoutes, type EstimateTemplateRepository } from '@ezacto/api'
-import { backupsEnabled } from './backups-enabled.js'
 import type { OffsiteBackupEnvironment } from './offsite-backups.js'
 import type { ReminderProcessOptions, ReminderProcessSummary } from '@ezacto/db/d1'
 import { appleWebConfiguration } from './apple-web.js'
@@ -226,12 +226,17 @@ export type Env = {
 export type AppEnv = Env & {
   APP_BASE_URL?: string
   /**
-   * `false` turns accounting off whatever credentials are present (#1217): the
-   * routes are not mounted and the shell hides every accounting control. Unset
-   * is on, so a self-hosted install is unchanged; anything else is refused at
-   * start-up.
+   * The operator's switches for whole modules (issue 1254), read by one parser
+   * (`moduleAvailability`). `false` turns the module off: the shell hides it,
+   * the API answers 403 `module_disabled` and calls no provider, and its
+   * background work is skipped. Unset is on, so a self-hosted install is
+   * unchanged; anything but `true` or `false` is refused at start-up. They
+   * outrank `organizations.modules`, and nothing in the app can change them.
+   * ACCOUNTING_ENABLED also withholds the QuickBooks keys (#1217).
    */
   ACCOUNTING_ENABLED?: string
+  SSO_ENABLED?: string
+  INVOICES_ENABLED?: string
   OIDC_REDIRECT_ORIGIN?: string
   OIDC_GOOGLE_CLIENT_ID?: string
   OIDC_GOOGLE_CLIENT_SECRET?: string
@@ -276,10 +281,9 @@ export type AppEnv = Env & {
    */
   DEMO_MAIL_ALLOWED_DOMAINS?: string
   /**
-   * Whether this deployment offers its own backup feature (issue 1216). On
-   * unless exactly `false`; any other value than `true` or `false` is refused.
-   * Hosted tenants are backed up by the platform and set it off. See
-   * `backupsEnabled`.
+   * Whether this deployment offers its own backup feature (issue 1216), one of
+   * the operator module switches above. Hosted tenants are backed up by the
+   * platform and set it off.
    */
   BACKUPS_ENABLED?: string
 }
@@ -781,6 +785,8 @@ export const createApp = (
         ? (signInMethods?.read(env) ?? Promise.resolve(null))
         : services.signInMethods.list(),
     ])
+    // Read first: an invalid flag refuses the page, as it refuses everything.
+    const modules = moduleAvailability(env)
     const live = (method: SignInMethod): boolean =>
       enabled === null ||
       (enabled.find((state) => state.method === method)?.enabled ?? true)
@@ -800,10 +806,12 @@ export const createApp = (
       attachmentsAvailable: services === undefined
         ? 'ATTACHMENTS' in env && env.ATTACHMENTS !== undefined
         : services.attachments !== undefined,
-      accountingAvailable: services === undefined
+      accountingAvailable: modules.accounting && (services === undefined
         ? accountingConfigured(env)
-        : services.quickBooks !== undefined,
-      backupsAvailable: backupsEnabled(env),
+        : services.quickBooks !== undefined),
+      backupsAvailable: modules.backups,
+      invoicesAvailable: modules.invoices,
+      ssoAvailable: modules.sso,
       demo: demoDeployment(env),
       // And whether its mail is held to an allowlist, so the Send dialog can
       // say so. Never the list itself: anyone can open the demo, and a page
@@ -1200,6 +1208,25 @@ export const createApp = (
           await next()
         })
       }
+      // The operator's module switches (issue 1254). A disabled module's
+      // screens send a browser to the default page, and everything else it owns
+      // is refused with 403 `module_disabled` before a route, a service or a
+      // provider is reached. Read from the environment alone, so no setting in
+      // the database or write through the API can turn a module back on.
+      app.use('*', async (context, next) => {
+        const path = context.req.path
+        const page = context.req.method === 'GET' || context.req.method === 'HEAD'
+        if (
+          page &&
+          (path === '/invoices' || path.startsWith('/invoices/')) &&
+          context.env !== undefined &&
+          !moduleAvailability(context.env as AppEnv).invoices
+        ) {
+          return context.redirect('/', 302)
+        }
+        await next()
+      })
+      installModuleGate(app, (env) => moduleAvailability((env ?? {}) as AppEnv))
       // Before anything that needs a session, and outside the API surface: the
       // wordmark on the sign-in page is fetched by a browser that has none.
       if (brandAssets !== undefined) {
@@ -2676,30 +2703,14 @@ export const workItemCredentialConfigured = (env: AppEnv, provider: WorkItemProv
   return typeof value === 'string' && value !== ''
 }
 
-/**
- * Whether accounting is switched on. Unset is on; only `true` and `false` are
- * accepted, so a typo cannot leave accounting enabled where it was meant off.
- */
-export const accountingEnabled = (env: { readonly ACCOUNTING_ENABLED?: string }): boolean => {
-  const value = env.ACCOUNTING_ENABLED
-  if (value === undefined || value === 'true') return true
-  if (value === 'false') return false
-  throw new TypeError('ACCOUNTING_ENABLED must be "true" or "false"')
-}
-
-/** Page-render form of the above: an invalid value reads as unavailable. */
+/** Whether the page has QuickBooks keys to offer; the operator switch is read beside it. */
 const accountingConfigured = (env: AppEnv): boolean => {
   const keys = env as Pick<WorkerEnv, 'QUICKBOOKS_CLIENT_ID' | 'QUICKBOOKS_CLIENT_SECRET'>
-  try {
-    return (
-      accountingEnabled(env) &&
-      !demoDeployment(env) &&
-      keys.QUICKBOOKS_CLIENT_ID !== undefined &&
-      keys.QUICKBOOKS_CLIENT_SECRET !== undefined
-    )
-  } catch {
-    return false
-  }
+  return (
+    !demoDeployment(env) &&
+    keys.QUICKBOOKS_CLIENT_ID !== undefined &&
+    keys.QUICKBOOKS_CLIENT_SECRET !== undefined
+  )
 }
 
 export const demoDeployment = (env: AppEnv): boolean =>
@@ -2759,6 +2770,8 @@ export const configuredSignInProviders = (
   env: AppEnv,
 ): readonly SignInProvider[] => {
   const providers: SignInProvider[] = []
+  // Operator-disabled single sign-on advertises no federated provider (issue 1254).
+  if (!moduleAvailability(env).sso) return providers
   try {
     const google = oidcProvider('google', env)
     if (google !== null) {
@@ -2796,7 +2809,7 @@ export const deployedSignInMethods = (
   }
   for (const provider of configuredSignInProviders(env)) methods.push(provider)
   // Either native or web configuration makes Apple an available method.
-  if (appleProvider(env) !== null && !methods.includes('apple')) methods.push('apple')
+  if (moduleAvailability(env).sso && appleProvider(env) !== null && !methods.includes('apple')) methods.push('apple')
   return methods
 }
 

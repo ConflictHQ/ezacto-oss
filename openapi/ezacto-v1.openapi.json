@@ -3,7 +3,7 @@
   "info": {
     "title": "ezacto API",
     "version": "1.0.0",
-    "description": "The native ezacto v1 contract. Contract and generated clients are deterministic build artifacts."
+    "description": "The native ezacto v1 contract. Contract and generated clients are deterministic build artifacts. An operator can switch whole modules off (SSO_ENABLED, BACKUPS_ENABLED, INVOICES_ENABLED, ACCOUNTING_ENABLED, each `true` or `false`): every operation of a switched-off module answers 403 `module_disabled`, makes no provider call and leaves its data untouched."
   },
   "servers": [
     {
@@ -113,7 +113,7 @@
             "$ref": "#/components/responses/AuthenticationRequired"
           },
           "403": {
-            "$ref": "#/components/responses/InsufficientPermission"
+            "$ref": "#/components/responses/InsufficientPermissionOrModuleDisabled"
           },
           "404": {
             "$ref": "#/components/responses/ResourceNotFound"
@@ -164,7 +164,7 @@
             "$ref": "#/components/responses/AuthenticationRequired"
           },
           "403": {
-            "$ref": "#/components/responses/InsufficientPermission"
+            "$ref": "#/components/responses/InsufficientPermissionOrModuleDisabled"
           },
           "404": {
             "$ref": "#/components/responses/ResourceNotFound"
@@ -218,7 +218,7 @@
             "$ref": "#/components/responses/AuthenticationRequired"
           },
           "403": {
-            "$ref": "#/components/responses/InsufficientPermission"
+            "$ref": "#/components/responses/InsufficientPermissionOrModuleDisabled"
           },
           "404": {
             "$ref": "#/components/responses/ResourceNotFound"
@@ -282,7 +282,7 @@
             "$ref": "#/components/responses/AuthenticationRequired"
           },
           "403": {
-            "$ref": "#/components/responses/InsufficientPermission"
+            "$ref": "#/components/responses/InsufficientPermissionOrModuleDisabled"
           },
           "404": {
             "$ref": "#/components/responses/ResourceNotFound"
@@ -354,7 +354,7 @@
             "$ref": "#/components/responses/AuthenticationRequired"
           },
           "403": {
-            "$ref": "#/components/responses/InsufficientPermission"
+            "$ref": "#/components/responses/InsufficientPermissionOrModuleDisabled"
           },
           "404": {
             "$ref": "#/components/responses/ResourceNotFound"
@@ -416,7 +416,7 @@
             "$ref": "#/components/responses/AuthenticationRequired"
           },
           "403": {
-            "$ref": "#/components/responses/InsufficientPermission"
+            "$ref": "#/components/responses/InsufficientPermissionOrModuleDisabled"
           },
           "404": {
             "$ref": "#/components/responses/ResourceNotFound"
@@ -12885,7 +12885,7 @@
             "$ref": "#/components/responses/AuthenticationRequired"
           },
           "403": {
-            "$ref": "#/components/responses/InsufficientPermission"
+            "$ref": "#/components/responses/InsufficientPermissionOrModuleDisabled"
           },
           "404": {
             "$ref": "#/components/responses/ResourceNotFound"
@@ -13000,7 +13000,7 @@
             "$ref": "#/components/responses/AuthenticationRequired"
           },
           "403": {
-            "$ref": "#/components/responses/InsufficientPermission"
+            "$ref": "#/components/responses/InsufficientPermissionOrModuleDisabled"
           },
           "404": {
             "$ref": "#/components/responses/ResourceNotFound"
@@ -13068,7 +13068,7 @@
             "$ref": "#/components/responses/AuthenticationRequired"
           },
           "403": {
-            "$ref": "#/components/responses/InsufficientPermission"
+            "$ref": "#/components/responses/InsufficientPermissionOrModuleDisabled"
           },
           "404": {
             "$ref": "#/components/responses/ResourceNotFound"
@@ -13709,7 +13709,7 @@
             "$ref": "#/components/responses/AuthenticationRequired"
           },
           "403": {
-            "$ref": "#/components/responses/InsufficientPermission"
+            "$ref": "#/components/responses/InsufficientPermissionOrModuleDisabled"
           },
           "404": {
             "$ref": "#/components/responses/ResourceNotFound"
@@ -13788,7 +13788,7 @@
             "$ref": "#/components/responses/AuthenticationRequired"
           },
           "403": {
-            "$ref": "#/components/responses/InsufficientPermission"
+            "$ref": "#/components/responses/InsufficientPermissionOrModuleDisabled"
           },
           "404": {
             "$ref": "#/components/responses/ResourceNotFound"
@@ -13885,7 +13885,7 @@
             "$ref": "#/components/responses/AuthenticationRequired"
           },
           "403": {
-            "$ref": "#/components/responses/InsufficientPermission"
+            "$ref": "#/components/responses/InsufficientPermissionOrModuleDisabled"
           },
           "404": {
             "$ref": "#/components/responses/ResourceNotFound"
@@ -13989,7 +13989,7 @@
             "$ref": "#/components/responses/AuthenticationRequired"
           },
           "403": {
-            "$ref": "#/components/responses/InsufficientPermission"
+            "$ref": "#/components/responses/InsufficientPermissionOrModuleDisabled"
           },
           "404": {
             "$ref": "#/components/responses/ResourceNotFound"
@@ -14094,7 +14094,7 @@
             "$ref": "#/components/responses/AuthenticationRequired"
           },
           "403": {
-            "$ref": "#/components/responses/InsufficientPermission"
+            "$ref": "#/components/responses/InsufficientPermissionOrModuleDisabled"
           },
           "404": {
             "$ref": "#/components/responses/ResourceNotFound"
@@ -14161,7 +14161,7 @@
             "$ref": "#/components/responses/AuthenticationRequired"
           },
           "403": {
-            "$ref": "#/components/responses/InsufficientPermission"
+            "$ref": "#/components/responses/InsufficientPermissionOrModuleDisabled"
           },
           "404": {
             "$ref": "#/components/responses/ResourceNotFound"
@@ -14248,7 +14248,7 @@
             "$ref": "#/components/responses/AuthenticationRequired"
           },
           "403": {
-            "$ref": "#/components/responses/InsufficientPermission"
+            "$ref": "#/components/responses/InsufficientPermissionOrModuleDisabled"
           },
           "404": {
             "$ref": "#/components/responses/ResourceNotFound"
@@ -14336,7 +14336,7 @@
             "$ref": "#/components/responses/AuthenticationRequired"
           },
           "403": {
-            "$ref": "#/components/responses/InsufficientPermission"
+            "$ref": "#/components/responses/InsufficientPermissionOrModuleDisabled"
           },
           "404": {
             "$ref": "#/components/responses/ResourceNotFound"
@@ -14423,7 +14423,7 @@
             "$ref": "#/components/responses/AuthenticationRequired"
           },
           "403": {
-            "$ref": "#/components/responses/InsufficientPermission"
+            "$ref": "#/components/responses/InsufficientPermissionOrModuleDisabled"
           },
           "404": {
             "$ref": "#/components/responses/ResourceNotFound"
@@ -14503,7 +14503,7 @@
             "$ref": "#/components/responses/AuthenticationRequired"
           },
           "403": {
-            "$ref": "#/components/responses/InsufficientPermission"
+            "$ref": "#/components/responses/InsufficientPermissionOrModuleDisabled"
           },
           "404": {
             "$ref": "#/components/responses/ResourceNotFound"
@@ -14585,7 +14585,7 @@
             "$ref": "#/components/responses/AuthenticationRequired"
           },
           "403": {
-            "$ref": "#/components/responses/InsufficientPermission"
+            "$ref": "#/components/responses/InsufficientPermissionOrModuleDisabled"
           },
           "404": {
             "$ref": "#/components/responses/ResourceNotFound"
@@ -14671,7 +14671,7 @@
             "$ref": "#/components/responses/AuthenticationRequired"
           },
           "403": {
-            "$ref": "#/components/responses/InsufficientPermission"
+            "$ref": "#/components/responses/InsufficientPermissionOrModuleDisabled"
           },
           "404": {
             "$ref": "#/components/responses/ResourceNotFound"
@@ -14738,7 +14738,7 @@
             "$ref": "#/components/responses/AuthenticationRequired"
           },
           "403": {
-            "$ref": "#/components/responses/InsufficientPermission"
+            "$ref": "#/components/responses/InsufficientPermissionOrModuleDisabled"
           },
           "404": {
             "$ref": "#/components/responses/ResourceNotFound"
@@ -14825,7 +14825,7 @@
             "$ref": "#/components/responses/AuthenticationRequired"
           },
           "403": {
-            "$ref": "#/components/responses/InsufficientPermission"
+            "$ref": "#/components/responses/InsufficientPermissionOrModuleDisabled"
           },
           "404": {
             "$ref": "#/components/responses/ResourceNotFound"
@@ -14919,7 +14919,7 @@
             "$ref": "#/components/responses/AuthenticationRequired"
           },
           "403": {
-            "$ref": "#/components/responses/InsufficientPermission"
+            "$ref": "#/components/responses/InsufficientPermissionOrModuleDisabled"
           },
           "404": {
             "$ref": "#/components/responses/ResourceNotFound"
@@ -15565,7 +15565,7 @@
             "$ref": "#/components/responses/AuthenticationRequired"
           },
           "403": {
-            "$ref": "#/components/responses/InsufficientPermission"
+            "$ref": "#/components/responses/InsufficientPermissionOrModuleDisabled"
           },
           "404": {
             "$ref": "#/components/responses/ResourceNotFound"
@@ -15641,7 +15641,7 @@
             "$ref": "#/components/responses/AuthenticationRequired"
           },
           "403": {
-            "$ref": "#/components/responses/InsufficientPermission"
+            "$ref": "#/components/responses/InsufficientPermissionOrModuleDisabled"
           },
           "404": {
             "$ref": "#/components/responses/ResourceNotFound"
@@ -15719,7 +15719,7 @@
             "$ref": "#/components/responses/AuthenticationRequired"
           },
           "403": {
-            "$ref": "#/components/responses/InsufficientPermission"
+            "$ref": "#/components/responses/InsufficientPermissionOrModuleDisabled"
           },
           "404": {
             "$ref": "#/components/responses/ResourceNotFound"
@@ -15786,7 +15786,7 @@
             "$ref": "#/components/responses/AuthenticationRequired"
           },
           "403": {
-            "$ref": "#/components/responses/InsufficientPermission"
+            "$ref": "#/components/responses/InsufficientPermissionOrModuleDisabled"
           },
           "404": {
             "$ref": "#/components/responses/ResourceNotFound"
@@ -15856,7 +15856,7 @@
             "$ref": "#/components/responses/AuthenticationRequired"
           },
           "403": {
-            "$ref": "#/components/responses/InsufficientPermission"
+            "$ref": "#/components/responses/InsufficientPermissionOrModuleDisabled"
           },
           "404": {
             "$ref": "#/components/responses/ResourceNotFound"
@@ -15925,7 +15925,7 @@
             "$ref": "#/components/responses/AuthenticationRequired"
           },
           "403": {
-            "$ref": "#/components/responses/InsufficientPermission"
+            "$ref": "#/components/responses/InsufficientPermissionOrModuleDisabled"
           },
           "404": {
             "$ref": "#/components/responses/ResourceNotFound"
@@ -16012,7 +16012,7 @@
             "$ref": "#/components/responses/AuthenticationRequired"
           },
           "403": {
-            "$ref": "#/components/responses/InsufficientPermission"
+            "$ref": "#/components/responses/InsufficientPermissionOrModuleDisabled"
           },
           "404": {
             "$ref": "#/components/responses/ResourceNotFound"
@@ -16089,7 +16089,7 @@
             "$ref": "#/components/responses/AuthenticationRequired"
           },
           "403": {
-            "$ref": "#/components/responses/InsufficientPermission"
+            "$ref": "#/components/responses/InsufficientPermissionOrModuleDisabled"
           },
           "404": {
             "$ref": "#/components/responses/ResourceNotFound"
@@ -16156,7 +16156,7 @@
             "$ref": "#/components/responses/AuthenticationRequired"
           },
           "403": {
-            "$ref": "#/components/responses/InsufficientPermission"
+            "$ref": "#/components/responses/InsufficientPermissionOrModuleDisabled"
           },
           "404": {
             "$ref": "#/components/responses/ResourceNotFound"
@@ -16246,7 +16246,7 @@
             "$ref": "#/components/responses/AuthenticationRequired"
           },
           "403": {
-            "$ref": "#/components/responses/InsufficientPermission"
+            "$ref": "#/components/responses/InsufficientPermissionOrModuleDisabled"
           },
           "404": {
             "$ref": "#/components/responses/ResourceNotFound"
@@ -16325,7 +16325,7 @@
             "$ref": "#/components/responses/AuthenticationRequired"
           },
           "403": {
-            "$ref": "#/components/responses/InsufficientPermission"
+            "$ref": "#/components/responses/InsufficientPermissionOrModuleDisabled"
           },
           "404": {
             "$ref": "#/components/responses/ResourceNotFound"
@@ -16403,7 +16403,7 @@
             "$ref": "#/components/responses/AuthenticationRequired"
           },
           "403": {
-            "$ref": "#/components/responses/InsufficientPermission"
+            "$ref": "#/components/responses/InsufficientPermissionOrModuleDisabled"
           },
           "404": {
             "$ref": "#/components/responses/ResourceNotFound"
@@ -16470,7 +16470,7 @@
             "$ref": "#/components/responses/AuthenticationRequired"
           },
           "403": {
-            "$ref": "#/components/responses/InsufficientPermission"
+            "$ref": "#/components/responses/InsufficientPermissionOrModuleDisabled"
           },
           "404": {
             "$ref": "#/components/responses/ResourceNotFound"
@@ -16560,7 +16560,7 @@
             "$ref": "#/components/responses/AuthenticationRequired"
           },
           "403": {
-            "$ref": "#/components/responses/InsufficientPermission"
+            "$ref": "#/components/responses/InsufficientPermissionOrModuleDisabled"
           },
           "404": {
             "$ref": "#/components/responses/ResourceNotFound"
@@ -16636,7 +16636,7 @@
             "$ref": "#/components/responses/AuthenticationRequired"
           },
           "403": {
-            "$ref": "#/components/responses/InsufficientPermission"
+            "$ref": "#/components/responses/InsufficientPermissionOrModuleDisabled"
           },
           "404": {
             "$ref": "#/components/responses/ResourceNotFound"
@@ -16715,7 +16715,7 @@
             "$ref": "#/components/responses/AuthenticationRequired"
           },
           "403": {
-            "$ref": "#/components/responses/InsufficientPermission"
+            "$ref": "#/components/responses/InsufficientPermissionOrModuleDisabled"
           },
           "404": {
             "$ref": "#/components/responses/ResourceNotFound"
@@ -16794,7 +16794,7 @@
             "$ref": "#/components/responses/AuthenticationRequired"
           },
           "403": {
-            "$ref": "#/components/responses/InsufficientPermission"
+            "$ref": "#/components/responses/InsufficientPermissionOrModuleDisabled"
           },
           "404": {
             "$ref": "#/components/responses/ResourceNotFound"
@@ -19909,7 +19909,7 @@
             "$ref": "#/components/responses/AuthenticationRequired"
           },
           "403": {
-            "$ref": "#/components/responses/InsufficientPermission"
+            "$ref": "#/components/responses/InsufficientPermissionOrModuleDisabled"
           },
           "404": {
             "$ref": "#/components/responses/ResourceNotFound"
@@ -19985,7 +19985,7 @@
             "$ref": "#/components/responses/AuthenticationRequired"
           },
           "403": {
-            "$ref": "#/components/responses/InsufficientPermission"
+            "$ref": "#/components/responses/InsufficientPermissionOrModuleDisabled"
           },
           "404": {
             "$ref": "#/components/responses/ResourceNotFound"
@@ -20058,7 +20058,7 @@
             "$ref": "#/components/responses/AuthenticationRequired"
           },
           "403": {
-            "$ref": "#/components/responses/InsufficientPermission"
+            "$ref": "#/components/responses/InsufficientPermissionOrModuleDisabled"
           },
           "404": {
             "$ref": "#/components/responses/ResourceNotFound"
@@ -20123,7 +20123,7 @@
             "$ref": "#/components/responses/AuthenticationRequired"
           },
           "403": {
-            "$ref": "#/components/responses/InsufficientPermission"
+            "$ref": "#/components/responses/InsufficientPermissionOrModuleDisabled"
           },
           "404": {
             "$ref": "#/components/responses/ResourceNotFound"
@@ -20189,7 +20189,7 @@
             "$ref": "#/components/responses/AuthenticationRequired"
           },
           "403": {
-            "$ref": "#/components/responses/InsufficientPermission"
+            "$ref": "#/components/responses/InsufficientPermissionOrModuleDisabled"
           },
           "404": {
             "$ref": "#/components/responses/ResourceNotFound"
@@ -20264,7 +20264,7 @@
             "$ref": "#/components/responses/AuthenticationRequired"
           },
           "403": {
-            "$ref": "#/components/responses/InsufficientPermission"
+            "$ref": "#/components/responses/InsufficientPermissionOrModuleDisabled"
           },
           "404": {
             "$ref": "#/components/responses/ResourceNotFound"
@@ -20329,7 +20329,7 @@
             "$ref": "#/components/responses/AuthenticationRequired"
           },
           "403": {
-            "$ref": "#/components/responses/InsufficientPermission"
+            "$ref": "#/components/responses/InsufficientPermissionOrModuleDisabled"
           },
           "404": {
             "$ref": "#/components/responses/ResourceNotFound"
@@ -20402,7 +20402,7 @@
             "$ref": "#/components/responses/AuthenticationRequired"
           },
           "403": {
-            "$ref": "#/components/responses/InsufficientPermission"
+            "$ref": "#/components/responses/InsufficientPermissionOrModuleDisabled"
           },
           "404": {
             "$ref": "#/components/responses/ResourceNotFound"
@@ -20467,7 +20467,7 @@
             "$ref": "#/components/responses/AuthenticationRequired"
           },
           "403": {
-            "$ref": "#/components/responses/InsufficientPermission"
+            "$ref": "#/components/responses/InsufficientPermissionOrModuleDisabled"
           },
           "404": {
             "$ref": "#/components/responses/ResourceNotFound"
@@ -20531,7 +20531,7 @@
             "$ref": "#/components/responses/AuthenticationRequired"
           },
           "403": {
-            "$ref": "#/components/responses/InsufficientPermission"
+            "$ref": "#/components/responses/InsufficientPermissionOrModuleDisabled"
           },
           "404": {
             "$ref": "#/components/responses/ResourceNotFound"
@@ -24982,7 +24982,7 @@
             "$ref": "#/components/responses/AuthenticationRequired"
           },
           "403": {
-            "$ref": "#/components/responses/InsufficientPermission"
+            "$ref": "#/components/responses/InsufficientPermissionOrModuleDisabled"
           },
           "404": {
             "$ref": "#/components/responses/ResourceNotFound"
@@ -25037,7 +25037,7 @@
             "$ref": "#/components/responses/AuthenticationRequired"
           },
           "403": {
-            "$ref": "#/components/responses/InsufficientPermission"
+            "$ref": "#/components/responses/InsufficientPermissionOrModuleDisabled"
           },
           "404": {
             "$ref": "#/components/responses/ResourceNotFound"
@@ -25093,7 +25093,7 @@
             "$ref": "#/components/responses/AuthenticationRequired"
           },
           "403": {
-            "$ref": "#/components/responses/InsufficientPermission"
+            "$ref": "#/components/responses/InsufficientPermissionOrModuleDisabled"
           },
           "404": {
             "$ref": "#/components/responses/ResourceNotFound"
@@ -25194,7 +25194,7 @@
             "$ref": "#/components/responses/AuthenticationRequired"
           },
           "403": {
-            "$ref": "#/components/responses/InsufficientPermission"
+            "$ref": "#/components/responses/InsufficientPermissionOrModuleDisabled"
           },
           "404": {
             "$ref": "#/components/responses/ResourceNotFound"
@@ -25259,7 +25259,7 @@
             "$ref": "#/components/responses/AuthenticationRequired"
           },
           "403": {
-            "$ref": "#/components/responses/InsufficientPermission"
+            "$ref": "#/components/responses/InsufficientPermissionOrModuleDisabled"
           },
           "404": {
             "$ref": "#/components/responses/ResourceNotFound"
@@ -25305,7 +25305,7 @@
             "$ref": "#/components/responses/AuthenticationRequired"
           },
           "403": {
-            "$ref": "#/components/responses/InsufficientPermission"
+            "$ref": "#/components/responses/InsufficientPermissionOrModuleDisabled"
           },
           "404": {
             "$ref": "#/components/responses/ResourceNotFound"
@@ -25360,7 +25360,7 @@
             "$ref": "#/components/responses/AuthenticationRequired"
           },
           "403": {
-            "$ref": "#/components/responses/InsufficientPermission"
+            "$ref": "#/components/responses/InsufficientPermissionOrModuleDisabled"
           },
           "404": {
             "$ref": "#/components/responses/ResourceNotFound"
@@ -25415,7 +25415,7 @@
             "$ref": "#/components/responses/AuthenticationRequired"
           },
           "403": {
-            "$ref": "#/components/responses/InsufficientPermission"
+            "$ref": "#/components/responses/InsufficientPermissionOrModuleDisabled"
           },
           "404": {
             "$ref": "#/components/responses/ResourceNotFound"
@@ -25480,7 +25480,7 @@
             "$ref": "#/components/responses/AuthenticationRequired"
           },
           "403": {
-            "$ref": "#/components/responses/InsufficientPermission"
+            "$ref": "#/components/responses/InsufficientPermissionOrModuleDisabled"
           },
           "404": {
             "$ref": "#/components/responses/ResourceNotFound"
@@ -25535,7 +25535,7 @@
             "$ref": "#/components/responses/AuthenticationRequired"
           },
           "403": {
-            "$ref": "#/components/responses/InsufficientPermission"
+            "$ref": "#/components/responses/InsufficientPermissionOrModuleDisabled"
           },
           "404": {
             "$ref": "#/components/responses/ResourceNotFound"
@@ -25601,7 +25601,7 @@
             "$ref": "#/components/responses/AuthenticationRequired"
           },
           "403": {
-            "$ref": "#/components/responses/InsufficientPermission"
+            "$ref": "#/components/responses/InsufficientPermissionOrModuleDisabled"
           },
           "404": {
             "$ref": "#/components/responses/ResourceNotFound"
@@ -25664,7 +25664,7 @@
             "$ref": "#/components/responses/AuthenticationRequired"
           },
           "403": {
-            "$ref": "#/components/responses/InsufficientPermission"
+            "$ref": "#/components/responses/InsufficientPermissionOrModuleDisabled"
           },
           "404": {
             "$ref": "#/components/responses/ResourceNotFound"
@@ -26285,7 +26285,7 @@
             "$ref": "#/components/responses/AuthenticationRequired"
           },
           "403": {
-            "$ref": "#/components/responses/InsufficientPermission"
+            "$ref": "#/components/responses/InsufficientPermissionOrModuleDisabled"
           },
           "404": {
             "$ref": "#/components/responses/ResourceNotFound"
@@ -26338,7 +26338,7 @@
             "$ref": "#/components/responses/AuthenticationRequired"
           },
           "403": {
-            "$ref": "#/components/responses/InsufficientPermission"
+            "$ref": "#/components/responses/InsufficientPermissionOrModuleDisabled"
           },
           "404": {
             "$ref": "#/components/responses/ResourceNotFound"
@@ -26396,7 +26396,7 @@
             "$ref": "#/components/responses/AuthenticationRequired"
           },
           "403": {
-            "$ref": "#/components/responses/InsufficientPermission"
+            "$ref": "#/components/responses/InsufficientPermissionOrModuleDisabled"
           },
           "404": {
             "$ref": "#/components/responses/ResourceNotFound"
@@ -26462,7 +26462,7 @@
             "$ref": "#/components/responses/AuthenticationRequired"
           },
           "403": {
-            "$ref": "#/components/responses/InsufficientPermission"
+            "$ref": "#/components/responses/InsufficientPermissionOrModuleDisabled"
           },
           "404": {
             "$ref": "#/components/responses/ResourceNotFound"
@@ -26936,7 +26936,7 @@
             "$ref": "#/components/responses/AuthenticationRequired"
           },
           "403": {
-            "$ref": "#/components/responses/InsufficientPermission"
+            "$ref": "#/components/responses/InsufficientPermissionOrModuleDisabled"
           },
           "404": {
             "$ref": "#/components/responses/ResourceNotFound"
@@ -27002,7 +27002,7 @@
             "$ref": "#/components/responses/AuthenticationRequired"
           },
           "403": {
-            "$ref": "#/components/responses/InsufficientPermission"
+            "$ref": "#/components/responses/InsufficientPermissionOrModuleDisabled"
           },
           "404": {
             "$ref": "#/components/responses/ResourceNotFound"
@@ -27068,7 +27068,7 @@
             "$ref": "#/components/responses/AuthenticationRequired"
           },
           "403": {
-            "$ref": "#/components/responses/InsufficientPermission"
+            "$ref": "#/components/responses/InsufficientPermissionOrModuleDisabled"
           },
           "404": {
             "$ref": "#/components/responses/ResourceNotFound"
@@ -27132,7 +27132,7 @@
             "$ref": "#/components/responses/AuthenticationRequired"
           },
           "403": {
-            "$ref": "#/components/responses/InsufficientPermission"
+            "$ref": "#/components/responses/InsufficientPermissionOrModuleDisabled"
           },
           "404": {
             "$ref": "#/components/responses/ResourceNotFound"
@@ -27208,7 +27208,7 @@
             "$ref": "#/components/responses/AuthenticationRequired"
           },
           "403": {
-            "$ref": "#/components/responses/InsufficientPermission"
+            "$ref": "#/components/responses/InsufficientPermissionOrModuleDisabled"
           },
           "404": {
             "$ref": "#/components/responses/ResourceNotFound"
@@ -27274,7 +27274,7 @@
             "$ref": "#/components/responses/AuthenticationRequired"
           },
           "403": {
-            "$ref": "#/components/responses/InsufficientPermission"
+            "$ref": "#/components/responses/InsufficientPermissionOrModuleDisabled"
           },
           "404": {
             "$ref": "#/components/responses/ResourceNotFound"
@@ -27338,7 +27338,7 @@
             "$ref": "#/components/responses/AuthenticationRequired"
           },
           "403": {
-            "$ref": "#/components/responses/InsufficientPermission"
+            "$ref": "#/components/responses/InsufficientPermissionOrModuleDisabled"
           },
           "404": {
             "$ref": "#/components/responses/ResourceNotFound"
@@ -27414,7 +27414,7 @@
             "$ref": "#/components/responses/AuthenticationRequired"
           },
           "403": {
-            "$ref": "#/components/responses/InsufficientPermission"
+            "$ref": "#/components/responses/InsufficientPermissionOrModuleDisabled"
           },
           "404": {
             "$ref": "#/components/responses/ResourceNotFound"
@@ -27467,7 +27467,7 @@
             "$ref": "#/components/responses/AuthenticationRequired"
           },
           "403": {
-            "$ref": "#/components/responses/InsufficientPermission"
+            "$ref": "#/components/responses/InsufficientPermissionOrModuleDisabled"
           },
           "404": {
             "$ref": "#/components/responses/ResourceNotFound"
@@ -27532,7 +27532,7 @@
             "$ref": "#/components/responses/AuthenticationRequired"
           },
           "403": {
-            "$ref": "#/components/responses/InsufficientPermission"
+            "$ref": "#/components/responses/InsufficientPermissionOrModuleDisabled"
           },
           "404": {
             "$ref": "#/components/responses/ResourceNotFound"
@@ -27585,7 +27585,7 @@
             "$ref": "#/components/responses/AuthenticationRequired"
           },
           "403": {
-            "$ref": "#/components/responses/InsufficientPermission"
+            "$ref": "#/components/responses/InsufficientPermissionOrModuleDisabled"
           },
           "404": {
             "$ref": "#/components/responses/ResourceNotFound"
@@ -27654,7 +27654,7 @@
             "$ref": "#/components/responses/AuthenticationRequired"
           },
           "403": {
-            "$ref": "#/components/responses/InsufficientPermission"
+            "$ref": "#/components/responses/InsufficientPermissionOrModuleDisabled"
           },
           "404": {
             "$ref": "#/components/responses/ResourceNotFound"
@@ -27748,7 +27748,7 @@
             "$ref": "#/components/responses/AuthenticationRequired"
           },
           "403": {
-            "$ref": "#/components/responses/InsufficientPermission"
+            "$ref": "#/components/responses/InsufficientPermissionOrModuleDisabled"
           },
           "404": {
             "$ref": "#/components/responses/ResourceNotFound"
@@ -27814,7 +27814,7 @@
             "$ref": "#/components/responses/AuthenticationRequired"
           },
           "403": {
-            "$ref": "#/components/responses/InsufficientPermission"
+            "$ref": "#/components/responses/InsufficientPermissionOrModuleDisabled"
           },
           "404": {
             "$ref": "#/components/responses/ResourceNotFound"
@@ -27890,7 +27890,7 @@
             "$ref": "#/components/responses/AuthenticationRequired"
           },
           "403": {
-            "$ref": "#/components/responses/InsufficientPermission"
+            "$ref": "#/components/responses/InsufficientPermissionOrModuleDisabled"
           },
           "404": {
             "$ref": "#/components/responses/ResourceNotFound"
@@ -27943,7 +27943,7 @@
             "$ref": "#/components/responses/AuthenticationRequired"
           },
           "403": {
-            "$ref": "#/components/responses/InsufficientPermission"
+            "$ref": "#/components/responses/InsufficientPermissionOrModuleDisabled"
           },
           "404": {
             "$ref": "#/components/responses/ResourceNotFound"
@@ -28244,7 +28244,7 @@
             "$ref": "#/components/responses/AuthenticationRequired"
           },
           "403": {
-            "$ref": "#/components/responses/InsufficientPermission"
+            "$ref": "#/components/responses/InsufficientPermissionOrModuleDisabled"
           },
           "404": {
             "$ref": "#/components/responses/ResourceNotFound"
@@ -28308,7 +28308,7 @@
             "$ref": "#/components/responses/AuthenticationRequired"
           },
           "403": {
-            "$ref": "#/components/responses/InsufficientPermission"
+            "$ref": "#/components/responses/InsufficientPermissionOrModuleDisabled"
           },
           "404": {
             "$ref": "#/components/responses/ResourceNotFound"
@@ -28374,7 +28374,7 @@
             "$ref": "#/components/responses/AuthenticationRequired"
           },
           "403": {
-            "$ref": "#/components/responses/InsufficientPermission"
+            "$ref": "#/components/responses/InsufficientPermissionOrModuleDisabled"
           },
           "404": {
             "$ref": "#/components/responses/ResourceNotFound"
@@ -28427,7 +28427,7 @@
             "$ref": "#/components/responses/AuthenticationRequired"
           },
           "403": {
-            "$ref": "#/components/responses/InsufficientPermission"
+            "$ref": "#/components/responses/InsufficientPermissionOrModuleDisabled"
           },
           "404": {
             "$ref": "#/components/responses/ResourceNotFound"
@@ -28482,7 +28482,7 @@
             "$ref": "#/components/responses/AuthenticationRequired"
           },
           "403": {
-            "$ref": "#/components/responses/InsufficientPermission"
+            "$ref": "#/components/responses/InsufficientPermissionOrModuleDisabled"
           },
           "404": {
             "$ref": "#/components/responses/ResourceNotFound"
@@ -28535,7 +28535,7 @@
             "$ref": "#/components/responses/AuthenticationRequired"
           },
           "403": {
-            "$ref": "#/components/responses/InsufficientPermission"
+            "$ref": "#/components/responses/InsufficientPermissionOrModuleDisabled"
           },
           "404": {
             "$ref": "#/components/responses/ResourceNotFound"
@@ -28600,7 +28600,7 @@
             "$ref": "#/components/responses/AuthenticationRequired"
           },
           "403": {
-            "$ref": "#/components/responses/InsufficientPermission"
+            "$ref": "#/components/responses/InsufficientPermissionOrModuleDisabled"
           },
           "404": {
             "$ref": "#/components/responses/ResourceNotFound"
@@ -28664,7 +28664,7 @@
             "$ref": "#/components/responses/AuthenticationRequired"
           },
           "403": {
-            "$ref": "#/components/responses/InsufficientPermission"
+            "$ref": "#/components/responses/InsufficientPermissionOrModuleDisabled"
           },
           "404": {
             "$ref": "#/components/responses/ResourceNotFound"
@@ -28740,7 +28740,7 @@
             "$ref": "#/components/responses/AuthenticationRequired"
           },
           "403": {
-            "$ref": "#/components/responses/InsufficientPermission"
+            "$ref": "#/components/responses/InsufficientPermissionOrModuleDisabled"
           },
           "404": {
             "$ref": "#/components/responses/ResourceNotFound"
@@ -28795,7 +28795,7 @@
             "$ref": "#/components/responses/AuthenticationRequired"
           },
           "403": {
-            "$ref": "#/components/responses/InsufficientPermission"
+            "$ref": "#/components/responses/InsufficientPermissionOrModuleDisabled"
           },
           "404": {
             "$ref": "#/components/responses/ResourceNotFound"
@@ -31652,7 +31652,7 @@
             "$ref": "#/components/responses/AuthenticationRequired"
           },
           "403": {
-            "$ref": "#/components/responses/InsufficientPermission"
+            "$ref": "#/components/responses/InsufficientPermissionOrModuleDisabled"
           },
           "404": {
             "$ref": "#/components/responses/ResourceNotFound"
@@ -31728,7 +31728,7 @@
             "$ref": "#/components/responses/AuthenticationRequired"
           },
           "403": {
-            "$ref": "#/components/responses/InsufficientPermission"
+            "$ref": "#/components/responses/InsufficientPermissionOrModuleDisabled"
           },
           "404": {
             "$ref": "#/components/responses/ResourceNotFound"
@@ -31794,7 +31794,7 @@
             "$ref": "#/components/responses/AuthenticationRequired"
           },
           "403": {
-            "$ref": "#/components/responses/InsufficientPermission"
+            "$ref": "#/components/responses/InsufficientPermissionOrModuleDisabled"
           },
           "404": {
             "$ref": "#/components/responses/ResourceNotFound"
@@ -31852,7 +31852,7 @@
             "$ref": "#/components/responses/AuthenticationRequired"
           },
           "403": {
-            "$ref": "#/components/responses/InsufficientPermission"
+            "$ref": "#/components/responses/InsufficientPermissionOrModuleDisabled"
           },
           "404": {
             "$ref": "#/components/responses/ResourceNotFound"
@@ -31918,7 +31918,7 @@
             "$ref": "#/components/responses/AuthenticationRequired"
           },
           "403": {
-            "$ref": "#/components/responses/InsufficientPermission"
+            "$ref": "#/components/responses/InsufficientPermissionOrModuleDisabled"
           },
           "404": {
             "$ref": "#/components/responses/ResourceNotFound"
@@ -32588,6 +32588,16 @@
       },
       "InsufficientPermission": {
         "description": "Insufficient permission",
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/ErrorEnvelope"
+            }
+          }
+        }
+      },
+      "InsufficientPermissionOrModuleDisabled": {
+        "description": "Insufficient permission, or `module_disabled`: the operator of this instance switched the module off",
         "content": {
           "application/json": {
             "schema": {

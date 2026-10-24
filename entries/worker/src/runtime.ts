@@ -1,3 +1,4 @@
+import { moduleAvailability } from '@ezacto/api'
 import { retryTransientD1IdempotentOperation } from '@ezacto/db/d1'
 import { createOrganizationHolidayRepository } from '@ezacto/db/d1'
 import { createWebhookSecretVault } from '@ezacto/core'
@@ -6,7 +7,6 @@ import { createWorkerWebhookTransport } from '@ezacto/integrations'
 import { createQueuedMigrationStore } from '@ezacto/db/queued-migrations'
 import { createInvoiceElevationStore, unlinkElevatedInvoiceTime } from '@ezacto/db/d1'
 import { createEstimateTemplateRepository } from '@ezacto/db/d1'
-import { backupsEnabled } from './backups-enabled.js'
 import { createWorkerOffsiteBackups } from './offsite-backups.js'
 import { createScheduledRunDispatchService } from '@ezacto/db/d1'
 import { prepareScheduledRunNotifications } from '@ezacto/db/d1'
@@ -204,7 +204,6 @@ import type { AppEnv, RuntimeServices } from "./app.js";
 import { workerBrandAssetSurface } from "./brand-assets.js";
 import { workerInstanceThemeSurface } from "./instance-theme.js";
 import {
-  accountingEnabled,
   cloudflareAccessConfig,
   DEMO_API_TOKEN_MAX_LIFETIME_MS,
   demoDeployment,
@@ -679,7 +678,7 @@ export const providerCredentials = (env: WorkerEnv): ProviderCredentials => {
   if (demoDeployment(env)) return {};
   // ACCOUNTING_ENABLED=false (#1217) withholds the accounting keys the same
   // way, so QuickBooks is not mounted; an invalid value throws at start-up.
-  if (accountingEnabled(env)) return env;
+  if (moduleAvailability(env).accounting) return env;
   const rest = { ...env };
   delete rest.QUICKBOOKS_CLIENT_ID;
   delete rest.QUICKBOOKS_CLIENT_SECRET;
@@ -1222,8 +1221,8 @@ export const createRuntimeServices = async (
 
   // Off where the platform backs the tenant up (issue 1216): nothing below is
   // composed, so the routes answer 404 and the cron has no sync to run.
-  const backups = backupsEnabled(env)
-  const offsiteBackupSync = backups ? await createWorkerOffsiteBackups(drizzle,env) : undefined
+  const modules = moduleAvailability(env)
+  const offsiteBackupSync = modules.backups ? await createWorkerOffsiteBackups(drizzle,env) : undefined
   const scheduledObjects = env.ATTACHMENTS === undefined ? undefined : createR2AttachmentObjectStore(env.ATTACHMENTS)
   const scheduledRunDispatch = scheduledObjects === undefined || organizationMailer?.enqueuePersisted === undefined
     ? undefined : createScheduledRunDispatchService(drizzle, {

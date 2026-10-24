@@ -1,4 +1,4 @@
-import { accountingAvailable } from '../accounting-availability.js'
+import { withdrawUnavailableSettingsSections } from '../module-availability.js'
 import {
   createCalendarProposalController,
   type ProposalDecision,
@@ -7607,18 +7607,10 @@ export const mountShell = async (
     const links = [...document.querySelectorAll<HTMLElement>('[data-settings-section-link]')]
     const strip = document.querySelector<HTMLElement>('[data-settings-sections]')
     // A deployment with accounting off or unconfigured has no Accounting
-    // section to offer (issue 1217). Marked before the first show, so the hash
-    // never lands on it.
-    if (!accountingAvailable()) {
-      for (const section of sections) {
-        if (section.dataset.settingsSection === 'integrations') {
-          section.setAttribute('data-settings-unavailable', '')
-        }
-      }
-      for (const link of links) {
-        if (link.dataset.settingsSectionLink === 'integrations') link.hidden = true
-      }
-    }
+    // section to offer (issue 1217), and the same holds for every module the
+    // operator switched off (issue 1254). Marked before the first show, so the
+    // hash never lands on one.
+    withdrawUnavailableSettingsSections()
     const unavailable = (section: HTMLElement): boolean =>
       section.hasAttribute('data-settings-unavailable')
     // The strip is one line that scrolls sideways where the width runs out, so

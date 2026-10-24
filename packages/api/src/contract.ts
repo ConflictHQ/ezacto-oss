@@ -1,3 +1,4 @@
+import { moduleForPath } from './module-availability.js'
 import { organizationHolidayOperations, organizationHolidaySchemas } from './organization-holiday-contract.js'
 import { outboundWebhookOperations, outboundWebhookSchemas } from './outbound-webhook-contract.js'
 import { invoiceElevationOperations, invoiceElevationSchemas, documentInvoiceTokenElevation } from './invoice-elevation-contract.js'
@@ -11616,7 +11617,12 @@ export const generateOpenApiDocument = (): Record<string, unknown> => {
       [operation.responseStatus]: successResponse(operation),
       "400": { $ref: "#/components/responses/MalformedRequest" },
       "401": { $ref: "#/components/responses/AuthenticationRequired" },
-      "403": { $ref: "#/components/responses/InsufficientPermission" },
+      "403": {
+        $ref:
+          moduleForPath(operation.path) === undefined
+            ? "#/components/responses/InsufficientPermission"
+            : "#/components/responses/InsufficientPermissionOrModuleDisabled",
+      },
       "404": { $ref: "#/components/responses/ResourceNotFound" },
       "409": { $ref: "#/components/responses/StateConflict" },
       "413": { $ref: "#/components/responses/PayloadTooLarge" },
@@ -11671,7 +11677,7 @@ export const generateOpenApiDocument = (): Record<string, unknown> => {
       title: "ezacto API",
       version: "1.0.0",
       description:
-        "The native ezacto v1 contract. Contract and generated clients are deterministic build artifacts.",
+        "The native ezacto v1 contract. Contract and generated clients are deterministic build artifacts. An operator can switch whole modules off (SSO_ENABLED, BACKUPS_ENABLED, INVOICES_ENABLED, ACCOUNTING_ENABLED, each `true` or `false`): every operation of a switched-off module answers 403 `module_disabled`, makes no provider call and leaves its data untouched.",
     },
     servers: [{ url: "https://ezacto.io" }],
     paths,
@@ -11688,6 +11694,9 @@ export const generateOpenApiDocument = (): Record<string, unknown> => {
         MalformedRequest: errorResponse("Malformed request"),
         AuthenticationRequired: errorResponse("Authentication required"),
         InsufficientPermission: errorResponse("Insufficient permission"),
+        InsufficientPermissionOrModuleDisabled: errorResponse(
+          "Insufficient permission, or `module_disabled`: the operator of this instance switched the module off",
+        ),
         ResourceNotFound: errorResponse("Resource not found"),
         StateConflict: errorResponse("State conflict"),
         PayloadTooLarge: errorResponse("Payload too large"),
