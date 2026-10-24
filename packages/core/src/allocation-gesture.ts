@@ -3,6 +3,7 @@ import {
   allocationCoversWeek,
   assertAllocationFields,
   capacityWeeks,
+  isAllocationDate,
   isOverAllocated,
   type AllocationWeekStartDay,
 } from "./allocation.js";
@@ -44,7 +45,8 @@ export interface AllocationRange {
   readonly endDate: string;
 }
 
-export type AllocationRangeRefusal = "empty_range";
+export type AllocationRangeRefusal =
+  "empty_range" | "invalid_delta" | "invalid_range";
 
 /**
  * The range a gesture proposes. A resize past the opposite edge is refused
@@ -57,16 +59,30 @@ export const proposeAllocationRange = (
 ):
   | { readonly ok: true; readonly range: AllocationRange }
   | { readonly ok: false; readonly refusal: AllocationRangeRefusal } => {
-  if (!Number.isInteger(deltaDays))
-    return { ok: false, refusal: "empty_range" };
-  const startDate =
-    kind === "resize-end"
-      ? allocation.startDate
-      : addDays(allocation.startDate, deltaDays);
-  const endDate =
-    kind === "resize-start"
-      ? allocation.endDate
-      : addDays(allocation.endDate, deltaDays);
+  if (!Number.isSafeInteger(deltaDays))
+    return { ok: false, refusal: "invalid_delta" };
+  if (
+    !isAllocationDate(allocation.startDate) ||
+    !isAllocationDate(allocation.endDate)
+  )
+    return { ok: false, refusal: "invalid_range" };
+  let startDate: string;
+  let endDate: string;
+  try {
+    startDate =
+      kind === "resize-end"
+        ? allocation.startDate
+        : addDays(allocation.startDate, deltaDays);
+    endDate =
+      kind === "resize-start"
+        ? allocation.endDate
+        : addDays(allocation.endDate, deltaDays);
+  } catch {
+    // A huge delta leaves the representable calendar; refuse, never throw.
+    return { ok: false, refusal: "invalid_range" };
+  }
+  if (!isAllocationDate(startDate) || !isAllocationDate(endDate))
+    return { ok: false, refusal: "invalid_range" };
   if (endDate < startDate) return { ok: false, refusal: "empty_range" };
   return { ok: true, range: { startDate, endDate } };
 };
@@ -79,6 +95,9 @@ export interface PreviewWeek {
   readonly overAllocated: boolean;
 }
 
+export type AllocationPreviewRefusal =
+  AllocationRangeRefusal | "overlap" | "archived" | "range_too_wide";
+
 export type AllocationPreview =
   | {
       readonly ok: true;
@@ -87,7 +106,7 @@ export type AllocationPreview =
     }
   | {
       readonly ok: false;
-      readonly refusal: "empty_range" | "overlap" | "archived";
+      readonly refusal: AllocationPreviewRefusal;
     };
 
 export interface PreviewContext {
@@ -115,10 +134,14 @@ export const previewAllocationGesture = (
   const proposed = proposeAllocationRange(allocation, kind, deltaDays);
   if (!proposed.ok) return { ok: false, refusal: proposed.refusal };
   const { range } = proposed;
-  assertAllocationFields({
-    ...range,
-    plannedSecondsPerWeek: allocation.plannedSecondsPerWeek,
-  });
+  try {
+    assertAllocationFields({
+      ...range,
+      plannedSecondsPerWeek: allocation.plannedSecondsPerWeek,
+    });
+  } catch {
+    return { ok: false, refusal: "invalid_range" };
+  }
   const others = context.otherAllocations.filter(
     (other) => other.id !== allocation.id,
   );
@@ -129,11 +152,17 @@ export const previewAllocationGesture = (
       other.endDate >= range.startDate,
   );
   if (overlaps) return { ok: false, refusal: "overlap" };
-  const weeks = capacityWeeks(
-    range.startDate,
-    range.endDate,
-    context.weekStartDay,
-  ).map((weekStart) => {
+  let weekStarts: string[];
+  try {
+    weekStarts = capacityWeeks(
+      range.startDate,
+      range.endDate,
+      context.weekStartDay,
+    );
+  } catch {
+    return { ok: false, refusal: "range_too_wide" };
+  }
+  const weeks = weekStarts.map((weekStart) => {
     const plannedSeconds =
       allocation.plannedSecondsPerWeek +
       others
@@ -169,6 +198,8 @@ export type AllocationGestureState =
       readonly allocation: GestureAllocation;
       readonly kind: AllocationGestureKind;
       readonly deltaDays: number;
+      /** Read at start, so commit applies the same refusals as the preview. */
+      readonly context: PreviewContext;
     }
   | { readonly phase: "saving"; readonly command: AllocationUpdateCommand };
 
@@ -178,24 +209,40 @@ export type AllocationGestureEvent =
       readonly gestureId: string;
       readonly allocation: GestureAllocation;
       readonly kind: AllocationGestureKind;
+      readonly context: PreviewContext;
     }
   | { readonly type: "move"; readonly deltaDays: number }
   | { readonly type: "commit" }
-  | { readonly type: "cancel" | "escape" | "scroll" | "stale-session" }
+  | {
+      readonly type:
+        "cancel" | "escape" | "scroll" | "stale-session" | "authority-revoked";
+    }
   | { readonly type: "saved" }
-  | { readonly type: "conflict" | "failed" };
+  | {
+      readonly type: "conflict";
+      /** The server's current revision, for the host to reload. */
+      readonly currentRevision?: number;
+    }
+  | { readonly type: "failed" };
 
 export interface AllocationGestureStep {
   readonly state: AllocationGestureState;
   /** Present on exactly one transition per gesture: commit with a changed range. */
   readonly command?: AllocationUpdateCommand;
+  /** Why a commit produced no command, when it was refused. */
+  readonly refusal?: AllocationPreviewRefusal;
+  /** How a save ended. `conflict` and `failed` are distinct for the host. */
+  readonly outcome?: "saved" | "conflict" | "failed";
+  /** On conflict: the revision to reload. Form fields stay the host's. */
+  readonly currentRevision?: number;
 }
 
 const idle: AllocationGestureStep = { state: { phase: "idle" } };
 
 /**
- * The gesture state machine. `conflict` and `failed` return to idle: the host
- * rolls back its optimistic display and reloads the current revision.
+ * The gesture state machine. `conflict` and `failed` return to idle with a
+ * distinct outcome: the host rolls back its optimistic display, keeps any
+ * unsaved form fields, and reloads the current revision.
  */
 export const stepAllocationGesture = (
   state: Readonly<AllocationGestureState>,
@@ -211,25 +258,27 @@ export const stepAllocationGesture = (
               allocation: event.allocation,
               kind: event.kind,
               deltaDays: 0,
+              context: event.context,
             },
           }
         : idle;
     case "dragging":
       switch (event.type) {
         case "move":
-          return Number.isInteger(event.deltaDays)
-            ? { state: { ...state, deltaDays: event.deltaDays } }
-            : { state };
+          // Stored as given; a non-integer delta is refused at commit.
+          return { state: { ...state, deltaDays: event.deltaDays } };
         case "commit": {
-          const proposed = proposeAllocationRange(
+          const preview = previewAllocationGesture(
             state.allocation,
             state.kind,
             state.deltaDays,
+            state.context,
           );
+          if (!preview.ok) return { ...idle, refusal: preview.refusal };
+          const proposed = { range: preview.range };
           const unchanged =
-            !proposed.ok ||
-            (proposed.range.startDate === state.allocation.startDate &&
-              proposed.range.endDate === state.allocation.endDate);
+            proposed.range.startDate === state.allocation.startDate &&
+            proposed.range.endDate === state.allocation.endDate;
           if (unchanged) return idle;
           const command: AllocationUpdateCommand = {
             allocationId: state.allocation.id,
@@ -243,15 +292,29 @@ export const stepAllocationGesture = (
         case "escape":
         case "scroll":
         case "stale-session":
+        case "authority-revoked":
           return idle;
         default:
           return { state };
       }
     case "saving":
-      return event.type === "saved" ||
-        event.type === "conflict" ||
-        event.type === "failed"
-        ? idle
-        : { state };
+      switch (event.type) {
+        case "saved":
+          return { ...idle, outcome: "saved" };
+        case "conflict":
+          return {
+            ...idle,
+            outcome: "conflict",
+            ...(event.currentRevision === undefined
+              ? {}
+              : { currentRevision: event.currentRevision }),
+          };
+        case "failed":
+          return { ...idle, outcome: "failed" };
+        case "authority-revoked":
+          return idle;
+        default:
+          return { state };
+      }
   }
 };
