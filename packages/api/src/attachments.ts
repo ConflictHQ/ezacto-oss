@@ -235,9 +235,9 @@ const owners: readonly OwnerDefinition[] = [
 
 const unavailable = (): never => {
   throw new ApiError({
-    status: 503,
-    code: "service_unavailable",
-    message: "Attachment storage is not configured.",
+    status: 403,
+    code: "feature_unavailable",
+    message: "File attachments are not enabled on this instance.",
   });
 };
 
