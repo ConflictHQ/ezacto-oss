@@ -144,6 +144,125 @@ export const describeApplyContract = (name: string, make: () => ApplyHarness): v
       expect(h.entryCount()).toBe(2)
     })
 
+    it('cancel that lands mid-run stops before the next chunk and is not overwritten', async () => {
+      const h = await setup()
+      let calls = 0
+      const cancelling: AuthorityPort = {
+        ...allow,
+        check: async () => {
+          calls += 1
+          if (calls === 2) await h.store.cancel(h.runId, T0)
+          return 'ok'
+        },
+      }
+      const status = await driveApply(deps(h, cancelling), h.runId, 'w1')
+      expect(status).toMatchObject({
+        state: 'cancelled',
+        code: 'cancelled-by-administrator',
+        applied: 2,
+      })
+      expect(h.entryCount()).toBe(2)
+    })
+
+    it('cancel after the last chunk is not overwritten by complete', async () => {
+      const h = await setup()
+      let calls = 0
+      const cancelling: AuthorityPort = {
+        ...allow,
+        check: async () => {
+          calls += 1
+          if (calls === 4) await h.store.cancel(h.runId, T0)
+          return 'ok'
+        },
+      }
+      const status = await driveApply(deps(h, cancelling), h.runId, 'w1')
+      expect(status).toMatchObject({ state: 'cancelled', code: 'cancelled-by-administrator' })
+    })
+
+    it('cancelled is sticky against any later fenced state write', async () => {
+      const h = await setup()
+      const lease = (await h.store.acquireLease(h.runId, 'w1', T0))!
+      await h.store.cancel(h.runId, T0)
+      for (const state of ['running', 'paused', 'partial', 'complete', 'failed'] as const) {
+        await h.store.setState(lease, state, null, T0)
+        expect(await h.store.status(h.runId)).toMatchObject({
+          state: 'cancelled',
+          code: 'cancelled-by-administrator',
+        })
+      }
+    })
+
+    it('the plan is immutable and creating again with a different plan returns the original', async () => {
+      const h = await setup()
+      const altered = { ...plan, mappingSha256: 'c'.repeat(64), actorId: 'admin-2', totalRows: 9 }
+      const again = await h.store.createRun(altered, [], later(5))
+      expect(again).toMatchObject({ runId: h.runId, totalRows: plan.totalRows })
+      expect(await h.store.plan(h.runId)).toEqual(plan)
+      expect((await h.store.nextChunk(h.runId))?.index).toBe(0)
+    })
+
+    it('a failed commit leaves no entry, and a replayed key under another run adds no entry', async () => {
+      const h = await setup()
+      const lease = (await h.store.acquireLease(h.runId, 'w1', T0))!
+      h.failNext(1)
+      await expect(h.store.commitChunk(lease, chunks[0]!, T0)).rejects.toMatchObject({
+        errorClass: 'storage',
+      })
+      expect(h.entryCount()).toBe(0)
+      expect((await h.store.nextChunk(h.runId))?.index).toBe(0)
+      await h.store.commitChunk(lease, chunks[0]!, T0)
+      expect(h.entryCount()).toBe(2)
+      // Same source, different file: the recorded source keys must dedupe it.
+      const other = { ...plan, fileSha256: 'd'.repeat(64) }
+      await h.store.createRun(other, chunks, T0)
+      const otherId = [other.destinationId, other.sourceId, other.fileSha256].join(':')
+      const done = await driveApply({ ...deps(h), now: () => later(120_000) }, otherId, 'w2')
+      expect(done).toMatchObject({ state: 'complete', applied: 3, alreadyImported: 2 })
+      expect(h.entryCount()).toBe(5)
+    })
+
+    it('a partial run and a paused run both resume to completion', async () => {
+      const partial = await setup()
+      partial.failNext(99)
+      expect((await driveApply(deps(partial), partial.runId, 'w1')).state).toBe('partial')
+      partial.failNext(0)
+      const resumed = await driveApply(
+        { ...deps(partial), now: () => later(120_000) },
+        partial.runId,
+        'w2',
+      )
+      expect(resumed).toMatchObject({ state: 'complete', code: null, applied: 5 })
+      expect(partial.entryCount()).toBe(5)
+
+      const paused = await setup()
+      const revoked = { ...allow, check: async () => 'revoked' as const }
+      expect((await driveApply(deps(paused, revoked), paused.runId, 'w1')).state).toBe('paused')
+      const back = await driveApply(
+        { ...deps(paused), now: () => later(120_000) },
+        paused.runId,
+        'w2',
+      )
+      expect(back).toMatchObject({ state: 'complete', code: null, applied: 5 })
+    })
+
+    it('a holder fenced out mid-run returns quietly and the new holder finishes', async () => {
+      const h = await setup()
+      let calls = 0
+      const stolen: AuthorityPort = {
+        ...allow,
+        check: async () => {
+          calls += 1
+          if (calls === 2) await h.store.acquireLease(h.runId, 'w2', later(120_000))
+          return 'ok'
+        },
+      }
+      const status = await driveApply(deps(h, stolen), h.runId, 'w1')
+      expect(status).toMatchObject({ state: 'running', applied: 2 })
+      const done = await driveApply({ ...deps(h), now: () => later(300_000) }, h.runId, 'w3')
+      expect(done).toMatchObject({ state: 'complete', applied: 5 })
+      expect(h.entryCount()).toBe(5)
+    })
+
     it('status carries the retention deadline and no free text', async () => {
       const h = await setup()
       const status = await h.store.status(h.runId)

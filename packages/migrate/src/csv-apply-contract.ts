@@ -15,7 +15,18 @@
  *  4. The plan (selection, mapping hash, adapter version, actor) never changes
  *     after creation.
  *  5. Cancel stops future chunks; committed rows stay. Nothing is rolled back.
- *  6. Status carries counts, safe codes and the retention deadline only, never
+ *     `cancelled` is sticky: once set, `setState` under any lease is a silent
+ *     no-op (it neither throws nor changes state or code), so a worker that is
+ *     mid-run cannot overwrite the cancel with complete, paused or partial. A
+ *     chunk already being committed when cancel lands may finish; no later one
+ *     starts.
+ *  6. There is no lease renewal or heartbeat. A holder whose work outlives
+ *     LEASE_TTL_MS can be fenced out by a later acquisition; its next write
+ *     throws `stale-lease`, the driver returns the current status without
+ *     writing, and the run is resumed by the new holder. Chunk commits are
+ *     idempotent, so nothing is lost or doubled. Keep chunks small enough to
+ *     commit well inside the TTL.
+ *  7. Status carries counts, safe codes and the retention deadline only, never
  *     emails, notes, cell contents or file names.
  */
 
@@ -154,6 +165,8 @@ export const driveApply = async (
         await store.setState(lease, 'paused', 'policy-changed', now())
         break
       }
+      // Cancel can land while the authority checks above are in flight.
+      if ((await store.status(runId)).state === 'cancelled') return await store.status(runId)
       const chunk = await store.nextChunk(runId)
       if (chunk === null) {
         await store.setState(lease, 'complete', null, now())
