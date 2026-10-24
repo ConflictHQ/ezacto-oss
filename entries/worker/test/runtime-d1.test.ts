@@ -15,6 +15,7 @@ import {
 import { build } from "esbuild";
 import { Miniflare } from "miniflare";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { createD1SessionStore } from "../../../packages/db/src/sessions.js";
 import { parseCursorSigningKey } from "../src/runtime.js";
 
 const timestamp = "2026-08-28T08:00:00.000Z";
@@ -259,6 +260,53 @@ describe("Worker D1 runtime composition", () => {
         expect(await page.text()).toContain('data-attachments-unavailable');
       }
     } finally { await runtime.dispose(); }
+  });
+
+  it('[#1216] answers 404 on every backup route when BACKUPS_ENABLED is false, and serves them otherwise', async () => {
+    const run = async (extra: Record<string, string>) => {
+      const runtime = new Miniflare({
+        bindings: { API_CURSOR_SIGNING_KEY: cursorSecret, ENVIRONMENT: 'test', RELEASE: 'backups-flag-test', ...extra },
+        compatibilityDate: '2026-08-06', compatibilityFlags: ['nodejs_als'],
+        d1Databases: ['DB'], modules: true, script: bundledWorker,
+      });
+      try {
+        await runtime.dispatchFetch('https://worker.test/api/v1');
+        const db = await runtime.getD1Database('DB');
+        await db.prepare("INSERT INTO organizations (id, name, modules, created_at, updated_at) VALUES (1, 'Fixture', '{}', ?, ?)")
+          .bind(timestamp, timestamp).run();
+        await db.prepare("INSERT INTO users (id, first_name, last_name, profile, manager_grants, created_at, updated_at) VALUES (1, 'Fixture', 'Owner', 'administrator', '[]', ?, ?)")
+          .bind(timestamp, timestamp).run();
+        const session = await createD1SessionStore(db).issue(1);
+        const headers = { cookie: `__Host-ezacto_session=${session.token}`, origin: 'https://worker.test' };
+        const status = async (path: string, init: { method?: string; body?: string } = {}) =>
+          (await runtime.dispatchFetch(`https://worker.test${path}`, { headers, ...init })).status;
+        return {
+          status: await status('/api/v1/backup/status'),
+          runs: await status('/api/v1/backup/runs'),
+          check: await status('/api/v1/backup/offsite/check', { method: 'POST' }),
+          mint: await status('/api/v1/backup/download-links', { method: 'POST', body: '{}' }),
+          redeem: await status('/backup-download/not-a-token'),
+          page: await (await runtime.dispatchFetch('https://worker.test/settings/company')).text(),
+        };
+      } finally { await runtime.dispose(); }
+    };
+    const on = await run({});
+    expect(on.status).toBe(200);
+    expect(on.runs).toBe(200);
+    expect(on.page).not.toContain('data-backups-unavailable');
+    const off = await run({ BACKUPS_ENABLED: 'false' });
+    expect(off).toMatchObject({ status: 404, runs: 404, check: 404, mint: 404, redeem: 404 });
+    expect(off.page).toContain('data-backups-unavailable');
+    // An unrecognised value is refused at start-up, not read as on or off.
+    const invalid = new Miniflare({
+      bindings: { API_CURSOR_SIGNING_KEY: cursorSecret, ENVIRONMENT: 'test', RELEASE: 'backups-flag-test', BACKUPS_ENABLED: 'off' },
+      compatibilityDate: '2026-08-06', compatibilityFlags: ['nodejs_als'],
+      d1Databases: ['DB'], modules: true, script: bundledWorker,
+    });
+    try {
+      expect((await invalid.dispatchFetch('https://worker.test/api/v1/backup/status')).status).toBe(503);
+      expect((await invalid.dispatchFetch('https://worker.test/settings/company')).status).not.toBe(200);
+    } finally { await invalid.dispose(); }
   });
 
   it("[api] migrates the real D1 binding before its first DB-backed fetch", async () => {
