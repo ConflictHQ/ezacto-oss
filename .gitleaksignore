@@ -67,3 +67,16 @@ ebbbacf79c2f758f0a81b0ae6def0aa0c9117fde:scripts/restore-drill.test.mjs:generic-
 3fc63f9f6fe982ef3ec4ed7c52de4818c88b0b72:entries/container/test/stripe-acceptance.test.ts:stripe-access-token:37
 7af73e2111359966e94650cd8e502b2cdcd1f07f:entries/container/test/stripe-acceptance.test.ts:stripe-access-token:37
 22b64f4c58800d7ceefdb96ebc9828d087548bec:entries/container/test/stripe-acceptance.test.ts:stripe-access-token:37
+
+# Filtered-history occurrences of the three findings pinned above by pvt commit hash.
+# The publish filter (scripts/publish-oss/publish.sh) rewrites every commit, so the
+# same findings carry different hashes in the history that gets published, and the
+# pvt pins do not apply to that scan. Filtered hashes are stable between publishes
+# (a publish is always a fast-forward), so these keep applying. Each was reviewed
+# 2026-10-24 from the publish dry run's redacted report; none is a secret.
+# Stripe placeholder in a container test at the filtered-history commit of 2026-10-20. A synthetic stand-in, never a credential; HEAD composes it from parts so no scanner matches it. Pinned by the filtered history's fingerprint because the publish filter changes every commit hash.
+5ce1656d06bd2ee117c4cdc968cc5b56544d3a6b:entries/container/test/stripe-acceptance.test.ts:stripe-access-token:37
+# An error-message hint that names the AWS secret-access-key environment variable, at the filtered-history commit of 2026-10-19. The line contains no value, only the variable name; reworded at HEAD. Pinned by filtered fingerprint.
+189932f8ce085f2a659bf6aea6a52263fb0ecf1d:packages/cli/src/s3.ts:generic-api-key:137
+# A synthetic placeholder constant standing in for a client name in the restore-drill test, at the filtered-history commit of 2026-10-19. Not a credential; renamed at HEAD. Pinned by filtered fingerprint.
+7d1fa1f0068a6bb27ac914c0b85dc7a3555355cd:scripts/restore-drill.test.mjs:generic-api-key:14
