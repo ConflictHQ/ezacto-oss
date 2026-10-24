@@ -1789,6 +1789,7 @@ test('[e2e:expense-categories] [e2e:expense-receipt] manages category availabili
   await expectNoPageOverflow(page)
 
   await page.getByRole('link', { name: 'Back to expenses' }).click()
+  await page.locator('[data-expense-create-open]').click()
   const createExpense = page.locator('[data-expense-create-form]')
   await createExpense
     .getByLabel('Project')
@@ -1853,6 +1854,7 @@ test('[e2e:expense-categories] [e2e:expense-receipt] manages category availabili
 
 const exerciseExpenseReceipt = async (page: Page): Promise<void> => {
   await page.goto('/expenses')
+  await page.locator('[data-expense-create-open]').click()
 
   const create = page.locator('[data-expense-create-form]')
   await expect(create).toBeVisible()

@@ -130,6 +130,87 @@ const catalogs = (): Pick<
 })
 
 describe('Expenses V1 browser controller', () => {
+  it('[#995] keeps the list first, preserves a closed draft, fences pending saves and clears on session end', async () => {
+    writeDocument('expense-list', '/expenses')
+    document.querySelector('[data-authenticated-shell]')!.removeAttribute('inert')
+    const result = deferred<Expense>()
+    const createWorkflowExpense = vi.fn(() => result.promise)
+    const controller = createExpenseWorkflowController({ ...catalogs(), listWorkflowExpenses: async () => page([]), createWorkflowExpense })
+    const session = new AbortController()
+    await controller.activate(identity, session.signal, () => false)
+    const panel = document.querySelector<HTMLElement>('[data-expense-create-panel]')!
+    const open = document.querySelector<HTMLButtonElement>('[data-expense-create-open]')!
+    const close = document.querySelector<HTMLButtonElement>('[data-expense-create-close]')!
+    const empty = document.querySelector<HTMLButtonElement>('[data-expense-empty-create]')!
+    const form = document.querySelector<HTMLFormElement>('[data-expense-create-form]')!
+    const notes = form.elements.namedItem('notes') as HTMLTextAreaElement
+    const amount = form.elements.namedItem('expense_value') as HTMLInputElement
+    expect(panel.hidden).toBe(true)
+    expect(open.getAttribute('aria-expanded')).toBe('false')
+    expect(empty.hidden).toBe(false)
+    empty.click()
+    expect(panel.hidden).toBe(false)
+    expect(document.activeElement).toBe(form.elements.namedItem('project_id'))
+    notes.value = 'Keep my private draft'
+    amount.value = '19.95'
+    close.click()
+    expect(panel.hidden).toBe(true)
+    expect(document.activeElement).toBe(empty)
+    open.click()
+    expect(notes.value).toBe('Keep my private draft')
+    ;(form.elements.namedItem('project_id') as HTMLSelectElement).value = '3'
+    ;(form.elements.namedItem('spent_date') as HTMLInputElement).value = '2026-09-01'
+    form.dispatchEvent(new SubmitEvent('submit', { bubbles: true, cancelable: true }))
+    expect(close.disabled).toBe(true)
+    expect(open.disabled).toBe(true)
+    expect(notes.disabled).toBe(true)
+    close.click()
+    expect(panel.hidden).toBe(false)
+    result.resolve({ ...baseExpense, id: 28 })
+    await vi.waitFor(() => expect(panel.hidden).toBe(true))
+    await vi.waitFor(() => expect(open.disabled).toBe(false))
+    expect(document.activeElement).toBe(open)
+    expect(notes.value).toBe('')
+    expect(document.querySelector('[data-expense-create-notice] a')?.getAttribute('href')).toBe('/expenses/28')
+    open.click()
+    notes.value = 'Must disappear on sign-out'
+    session.abort()
+    expect(panel.hidden).toBe(true)
+    expect(notes.value).toBe('')
+    expect(open.disabled).toBe(true)
+  })
+
+  it('[#995] leaves failed creation open with its draft and ignores late creation after sign-out', async () => {
+    writeDocument('expense-list', '/expenses')
+    document.querySelector('[data-authenticated-shell]')!.removeAttribute('inert')
+    const late = deferred<Expense>()
+    const createWorkflowExpense = vi.fn().mockRejectedValueOnce(new EzactoApiError(422, { error: { message: 'Amount is invalid', fields: [] } }, null)).mockImplementationOnce(() => late.promise)
+    const controller = createExpenseWorkflowController({ ...catalogs(), listWorkflowExpenses: async () => page([]), createWorkflowExpense })
+    const session = new AbortController()
+    await controller.activate(identity, session.signal, () => false)
+    const open = document.querySelector<HTMLButtonElement>('[data-expense-create-open]')!
+    const form = document.querySelector<HTMLFormElement>('[data-expense-create-form]')!
+    const panel = document.querySelector<HTMLElement>('[data-expense-create-panel]')!
+    const notes = form.elements.namedItem('notes') as HTMLTextAreaElement
+    open.click()
+    ;(form.elements.namedItem('project_id') as HTMLSelectElement).value = '3'
+    ;(form.elements.namedItem('spent_date') as HTMLInputElement).value = '2026-09-01'
+    ;(form.elements.namedItem('expense_value') as HTMLInputElement).value = '19.95'
+    notes.value = 'Keep on server error'
+    form.dispatchEvent(new SubmitEvent('submit', { bubbles: true, cancelable: true }))
+    await vi.waitFor(() => expect(document.querySelector('[data-expense-create-result]')?.textContent).toContain('Amount is invalid'))
+    expect(panel.hidden).toBe(false)
+    expect(notes.value).toBe('Keep on server error')
+    await vi.waitFor(() => expect(document.activeElement).toBe(document.querySelector('[data-expense-create-result]')))
+    form.dispatchEvent(new SubmitEvent('submit', { bubbles: true, cancelable: true }))
+    session.abort()
+    late.resolve({ ...baseExpense, id: 29 })
+    await Promise.resolve()
+    expect(panel.hidden).toBe(true)
+    expect(notes.value).toBe('')
+    expect(document.querySelector('[data-expense-create-notice]')?.textContent).toBe('')
+  })
+
   it('[#1167] loads the expense and explains receipts without calling unavailable storage', async () => {
     writeDocument('expense-detail', '/expenses/8')
     document.documentElement.setAttribute('data-attachments-unavailable', '')
@@ -335,6 +416,7 @@ describe('Expenses V1 browser controller', () => {
       createWorkflowExpense,
     })
     await controller.activate(identity, new AbortController().signal, () => false)
+    document.querySelector<HTMLButtonElement>('[data-expense-create-open]')!.click()
     const form = document.querySelector<HTMLFormElement>('[data-expense-create-form]')!
     ;(form.elements.namedItem('project_id') as HTMLSelectElement).value = '3'
     ;(form.elements.namedItem('spent_date') as HTMLInputElement).value = '2026-09-01'
@@ -352,9 +434,10 @@ describe('Expenses V1 browser controller', () => {
       billable: false,
       reimbursable: false,
     })
-    await vi.waitFor(() => expect(document.querySelector('[data-expense-create-result]')?.textContent).toContain('Expense added'))
-    await vi.waitFor(() => expect(document.querySelector<HTMLButtonElement>('[data-expense-create-submit]')?.disabled).toBe(false))
+    await vi.waitFor(() => expect(document.querySelector('[data-expense-create-notice]')?.textContent).toContain('Expense added'))
+    await vi.waitFor(() => expect(document.querySelector<HTMLButtonElement>('[data-expense-create-open]')?.disabled).toBe(false))
 
+    document.querySelector<HTMLButtonElement>('[data-expense-create-open]')!.click()
     ;(form.elements.namedItem('expense_category_id') as HTMLSelectElement).value = '2'
     ;(form.elements.namedItem('expense_category_id') as HTMLSelectElement).dispatchEvent(new Event('change'))
     expect(document.querySelector('[data-expense-create-value-label]')?.textContent).toContain('Units (mile)')
@@ -781,6 +864,8 @@ describe('Expenses V1 browser controller', () => {
 
     expect(document.querySelector<HTMLElement>('[data-expense-module-unavailable]')?.hidden).toBe(false)
     expect(document.querySelector<HTMLElement>('[data-expense-create-panel]')?.hidden).toBe(true)
+    expect(document.querySelector<HTMLElement>('[data-expense-create-open]')?.hidden).toBe(true)
+    expect(document.querySelector<HTMLElement>('[data-expense-empty-create]')?.hidden).toBe(true)
     expect(document.querySelector<HTMLFormElement>('[data-expense-filter-form]')?.hidden).toBe(true)
     expect(document.querySelector<HTMLOListElement>('[data-expense-list]')?.hidden).toBe(true)
     expect(document.querySelector('[data-expense-list-status]')?.textContent).toContain('not enabled')
