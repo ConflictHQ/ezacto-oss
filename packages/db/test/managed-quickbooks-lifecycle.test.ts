@@ -220,7 +220,7 @@ describe.each(['sqlite', 'd1'] as const)('managed QuickBooks lifecycle fence %s'
     expect(status(await f.commands.fence(f.request(), fence(f, { grantId: 'e'.repeat(64) })))).toBe(409)
     expect(status(await f.commands.fence(f.request(), fence(f, { expectedConnectionGeneration: 0 })))).toBe(409)
     expect(status(await f.commands.fence(f.request(), fence(f, { expectedConnectionGeneration: 2 })))).toBe(409)
-    await f.sessions.revoke?.(f.admin.token)
+    await f.sessions.revoke(2, f.admin.session.id)
     expect(await f.rows('quickbooks_revocations')).toHaveLength(0)
     expect(await f.canonical.readConnection()).toMatchObject({ realmId: 'owned-realm' })
   })
@@ -297,7 +297,7 @@ describe.each(['sqlite', 'd1'] as const)('managed QuickBooks lifecycle fence %s'
     const dump = await everything(f)
     expect(dump).not.toContain('PRIVATE_REFRESH_SENTINEL')
     expect(dump).not.toContain('PRIVATE_ACCESS_SENTINEL')
-    await expect(Promise.resolve().then(() => f.execute(`DELETE FROM quickbooks_revocations`))).rejects.toThrow()
+    await expect((async () => f.execute(`DELETE FROM quickbooks_revocations`))()).rejects.toThrow()
   })
 
   it('claims the credential once under concurrent begin calls', async () => {
