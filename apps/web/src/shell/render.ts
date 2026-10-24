@@ -708,7 +708,7 @@ ${instancePalette ? `  <link rel="stylesheet" href="${INSTANCE_THEME_STYLESHEET_
         </span>
         <a class="identity-settings" href="/settings/user" data-settings-link>${iconMarkup('sliders')}<span class="identity-action-label">Settings</span></a>
         ${(options.signInProviders ?? []).includes('apple') ? '<a class="identity-settings" href="/auth/apple/disconnect">Disconnect Apple</a>' : ''}
-        <button type="button" class="identity-settings" data-first-run-help hidden>Help: setup guide</button>
+        <button type="button" class="identity-settings" data-first-run-help aria-label="Help: setup guide" title="Help: setup guide" hidden>${iconMarkup('list')}<span class="identity-action-label">Help</span></button>
         <button type="button" class="identity-signout" data-logout>${iconMarkup('sign-out')}<span class="identity-action-label">Sign out</span></button>
         <p class="auth-result visually-hidden" data-logout-result role="status" aria-live="polite"></p>
       </div>
