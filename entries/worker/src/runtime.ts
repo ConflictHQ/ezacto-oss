@@ -13,7 +13,7 @@ import { createD1EmailSuppressionStore } from '@ezacto/db/d1'
 import type { ReminderProcessOptions } from '@ezacto/db/d1'
 import { createRuntimeAppleWeb } from './apple-web.js'
 import { createD1AppleWebCustodyStore } from '@ezacto/db/d1'
-import { captureException } from '@sentry/cloudflare'
+import { reportWorkerError, runtimeTraceId, type WorkerErrorReporter } from './error-reporting.js'
 import { createPaymentRunsService, createScheduledRunsService, createScheduledJobsService, proposeDueScheduledJobs } from '@ezacto/db/d1'
 import { createWisePaymentProvider } from '@ezacto/integrations'
 import { createContractorReviewStore, createStaffPaymentStore } from '@ezacto/db/d1'
@@ -697,6 +697,8 @@ export const createRuntimeServices = async (
     cloudflareAccessFetch?: CloudflareAccessFetch;
     /** Scheduled ticks retry only ledger-fenced readiness, never service effects. */
     retryReadiness?: boolean;
+    /** Trusted error sink for embedded runtimes; never a serialized Worker binding. */
+    reportError?: WorkerErrorReporter;
   } = {},
 ): Promise<RuntimeServices> => {
   const binding = requireDatabase(env);
@@ -925,8 +927,8 @@ export const createRuntimeServices = async (
           profileId: credentials.WISE_PROFILE_ID,
           fetch: (input, init) => fetch(input as RequestInfo, init as RequestInit),
         }),
-    (error, context) => {
-      captureException(error, { tags: { component: 'payment-processing', ...context } })
+    (error) => {
+      reportWorkerError(options.reportError, error, { phase: 'payment', traceId: runtimeTraceId() })
     },
   )
   const wise =

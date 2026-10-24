@@ -1,3 +1,6 @@
+import { AsyncLocalStorage } from 'node:async_hooks'
+import { apiFailureStatus, reportWorkerError, runtimeTraceId, scrubWorkerEvent, type WorkerErrorContext, type WorkerOptions } from './error-reporting.js'
+export type { WorkerErrorContext, WorkerErrorPhase, WorkerErrorReporter, WorkerOptions } from './error-reporting.js'
 import { consumeMigrationBatch } from './migration-queue.js'
 import { ensureRuntimeDatabaseReady } from './runtime.js'
 import * as Sentry from '@sentry/cloudflare'
@@ -20,12 +23,7 @@ import {
   createWorkerMailProvider,
 } from './runtime.js'
 
-const publicApp = createApp(
-  undefined,
-  workerBrandAssetSurface,
-  workerInstanceThemeSurface,
-  workerSignInMethodSurface,
-)
+
 
 /**
  * Loopback has no TLS to upgrade to. `wrangler dev`, the container runtime and
@@ -130,25 +128,44 @@ const unavailable = (): Response => {
  * request. Answers only ready or unavailable: the ledger is read by the deploy,
  * not exposed here.
  */
-const readiness = async (env: WorkerEnv): Promise<Response> => {
+type Report = (error: unknown, context: WorkerErrorContext) => void
+const reporter = (options: WorkerOptions, executionContext: ExecutionContext): Report => {
+  let traceId: string | undefined
+  return (error, context) => reportWorkerError(options.reportError, error, { ...context, traceId: traceId ??= runtimeTraceId() }, promise => executionContext?.waitUntil(promise))
+}
+
+const readiness = async (env: WorkerEnv, report: Report): Promise<Response> => {
   const headers = { 'cache-control': 'no-store' }
   try {
     await ensureRuntimeDatabaseReady(env.DB)
     return Response.json({ status: 'ready', release: env.RELEASE }, { headers })
   } catch (error) {
     console.error('[worker] readiness check failed', error)
-    Sentry.captureException(error)
+    report(error, { phase: 'readiness', status: 503 })
     return Response.json({ status: 'unavailable' }, { status: 503, headers })
   }
 }
 
-export const worker: ExportedHandler<WorkerEnv, unknown> = {
+export const createWorker = (options: WorkerOptions = {}): ExportedHandler<WorkerEnv, unknown> => {
+  const reports = new AsyncLocalStorage<Report>()
+  const publicApp = createApp(undefined, workerBrandAssetSurface, workerInstanceThemeSurface, workerSignInMethodSurface, {
+    reportError: (error, requestId) => {
+      const context = { phase: 'api' as const, requestId, status: apiFailureStatus(error) }
+      const report = reports.getStore()
+      if (report) report(error, context)
+      else reportWorkerError(options.reportError, error, { ...context, traceId: runtimeTraceId() })
+    },
+  })
+  return ({
   async fetch(request, env, executionContext) {
+    const report = reporter(options, executionContext)
+    const telemetry = { reportError: (error: Error, requestId: string) => report(error, { phase: 'api', requestId, status: apiFailureStatus(error) }) }
+    return reports.run(report, async () => {
     // First, before a route is matched or a service is constructed: nothing
     // below this line should ever compose a response for a cleartext request.
     const refusal = cleartextRefusal(request)
     if (refusal !== null) return refusal
-    if (new URL(request.url).pathname === '/readyz') return readiness(env)
+    if (new URL(request.url).pathname === '/readyz') return readiness(env, report)
     if (!isDataRequest(request)) {
       return withStrictTransport(
         request,
@@ -156,12 +173,13 @@ export const worker: ExportedHandler<WorkerEnv, unknown> = {
       )
     }
     try {
-      const services = await createRuntimeServices(env)
+      const services = await createRuntimeServices(env, { reportError: report })
       const app = createApp(
         services,
         workerBrandAssetSurface,
         workerInstanceThemeSurface,
         workerSignInMethodSurface,
+        telemetry,
       )
       // A write with an Idempotency-Key runs once and is replayed after that
       // (#952). Every data answer says so in Idempotency-Key-Lifetime, which is
@@ -182,18 +200,23 @@ export const worker: ExportedHandler<WorkerEnv, unknown> = {
             waitUntil: (promise) => executionContext.waitUntil(promise),
             report: (error) => {
               console.error('[worker] idempotent response not recorded', error)
-              Sentry.captureException(error)
+              report(error, { phase: 'idempotency' })
             },
           },
         ),
       )
-    } catch {
+    } catch (error) {
       // Configuration and migration failures stay fail-closed and never reflect
       // binding values, bearer credentials, SQL, or secret material.
-      return withStrictTransport(request, unavailable())
+      const response = unavailable()
+      report(error, { phase: 'bootstrap', status: 503, requestId: response.headers.get('x-request-id')! })
+      return withStrictTransport(request, response)
     }
+    })
   },
-  async queue(batch, env) {
+  async queue(batch, env, executionContext) {
+    const report = reporter(options, executionContext)
+    try {
     if(env.MIGRATION_QUEUE_NAME !== undefined && batch.queue === env.MIGRATION_QUEUE_NAME) {
       await consumeMigrationBatch(batch,env)
       return
@@ -204,6 +227,7 @@ export const worker: ExportedHandler<WorkerEnv, unknown> = {
     }
     const services = await createRuntimeServices(env, {
       emailProvider: provider,
+      reportError: report,
     })
     // The consumer fetches what a job names, immediately before sending. Bytes
     // never rode the queue to get here (issue 626).
@@ -219,18 +243,21 @@ export const worker: ExportedHandler<WorkerEnv, unknown> = {
       demoMailDomains(env) ?? undefined,
       services.emailSuppressions?.lookup,
     )
+    } catch (error) { if (options.reportError) report(error, { phase: 'queue' }); throw error }
   },
-  async scheduled(controller, env) {
+  async scheduled(controller, env, executionContext) {
+    const report = reporter(options, executionContext)
+    try {
     // Migration batches are ledger-fenced and restartable even if a committed
     // response was lost. Service construction/provider jobs are not retried.
     // Exhaustion propagates to withSentry once and marks this tick failed;
     // readiness is cached only on success, so the next tick can recover.
-    const services = await createRuntimeServices(env, { retryReadiness: true })
+    const services = await createRuntimeServices(env, { retryReadiness: true, reportError: report })
     const isolate = async <T>(name: string, job: () => Promise<T>): Promise<T | undefined> => {
       try { return await job() }
       catch (error) {
         console.error(`[worker] ${name} failed`, error)
-        Sentry.captureException(error)
+        report(error, { phase: 'scheduled' })
         return undefined
       }
     }
@@ -248,7 +275,7 @@ export const worker: ExportedHandler<WorkerEnv, unknown> = {
         await services.budgetAlerts.evaluate(new Date().toISOString())
       } catch (error) {
         console.error('[worker] budget alert evaluation failed', error)
-        Sentry.captureException(error)
+        report(error, { phase: 'scheduled' })
       }
     }
     if (controller.cron === '* * * * *' && services.timeReminders !== undefined) {
@@ -260,7 +287,7 @@ export const worker: ExportedHandler<WorkerEnv, unknown> = {
         await services.timeReminders.processDue(new Date().toISOString())
       } catch (error) {
         console.error('[worker] time reminders failed', error)
-        Sentry.captureException(error)
+        report(error, { phase: 'scheduled' })
       }
     }
     if (controller.cron === '* * * * *' && services.timesheetAutoApprovalSweep !== undefined) {
@@ -274,14 +301,14 @@ export const worker: ExportedHandler<WorkerEnv, unknown> = {
         }
       } catch (error) {
         console.error('[worker] automatic approval sweep failed', error)
-        Sentry.captureException(error)
+        report(error, { phase: 'scheduled' })
       }
     }
     if (controller.cron === '* * * * *' && services.offsiteBackupSync !== undefined) {
       try { await services.offsiteBackupSync.processDue() }
       catch (error) {
         console.error('[worker] off-site backup checkpoint failed', error)
-        Sentry.captureException(error)
+        report(error, { phase: 'scheduled' })
       }
     }
     if (controller.cron === '* * * * *' && services.scheduledJobProposals !== undefined) {
@@ -291,7 +318,7 @@ export const worker: ExportedHandler<WorkerEnv, unknown> = {
           console.error('[worker] scheduled job proposal failed', failure.jobId, failure.message)
       } catch (error) {
         console.error('[worker] scheduled job proposal sweep failed', error)
-        Sentry.captureException(error)
+        report(error, { phase: 'scheduled' })
       }
     }
     if (controller.cron === '* * * * *' && services.scheduledRunNotices !== undefined) {
@@ -299,7 +326,7 @@ export const worker: ExportedHandler<WorkerEnv, unknown> = {
         await services.scheduledRunNotices.processDue(new Date().toISOString())
       } catch (error) {
         console.error('[worker] scheduled manifest notice failed', error)
-        Sentry.captureException(error)
+        report(error, { phase: 'scheduled' })
       }
     }
     if (controller.cron === '* * * * *' && services.scheduledRunDispatch !== undefined) {
@@ -314,7 +341,7 @@ export const worker: ExportedHandler<WorkerEnv, unknown> = {
         }
       } catch (error) {
         console.error('[worker] scheduled run dispatch failed', error)
-        Sentry.captureException(error)
+        report(error, { phase: 'scheduled' })
       }
     }
     if (controller.cron === '* * * * *' && services.scheduledActionExpiry !== undefined) {
@@ -322,7 +349,7 @@ export const worker: ExportedHandler<WorkerEnv, unknown> = {
       // reports its own failure, so it never stops the drain below.
       await isolate('scheduled run expiry', () => services.scheduledActionExpiry!.expireDue(new Date().toISOString(), (error) => {
         console.error('[worker] scheduled run expiry failed', error)
-        Sentry.captureException(error)
+        report(error, { phase: 'scheduled' })
       }))
     }
     // Not on the demo (#931): its database is thrown away at this hour, and an
@@ -370,7 +397,7 @@ export const worker: ExportedHandler<WorkerEnv, unknown> = {
         reconcile: services.bill!.reconcilePayments,
         report: (error) => {
           console.error('[worker] BILL reconciliation failed', error)
-          Sentry.captureException(error)
+          report(error, { phase: 'scheduled' })
         },
       })())
     }
@@ -383,7 +410,7 @@ export const worker: ExportedHandler<WorkerEnv, unknown> = {
         await services.quickBooks.catchUp()
       } catch (error) {
         console.error('[worker] QuickBooks catch-up failed', error)
-        Sentry.captureException(error)
+        report(error, { phase: 'scheduled' })
       }
     }
     if (controller.cron === '0 * * * *' && services.deelSync !== undefined) {
@@ -397,11 +424,11 @@ export const worker: ExportedHandler<WorkerEnv, unknown> = {
           ? await services.deelSync.runAutomaticIfDue() : undefined
         if (run?.status === 'failed') {
           console.error('[worker] Deel time sync failed', run.error, run.failed)
-          Sentry.captureException(new Error(run.error ?? 'Deel time sync had failed submissions'))
+          report(new Error(run.error ?? 'Deel time sync had failed submissions'), { phase: 'scheduled' })
         }
       } catch (error) {
         console.error('[worker] Deel time sync failed', error)
-        Sentry.captureException(error)
+        report(error, { phase: 'scheduled' })
       }
     }
     // Refuses on any deployment that is not the demo, so this line is safe to
@@ -416,10 +443,14 @@ export const worker: ExportedHandler<WorkerEnv, unknown> = {
     // minute. Reported once per tick here, not once per row.
     if (drained?.interrupted !== undefined) {
       console.error('[worker] outbox drain interrupted', drained.interrupted)
-      Sentry.captureException(drained.interrupted)
+      report(drained.interrupted, { phase: 'scheduled' })
     }
+    } catch (error) { if (options.reportError) report(error, { phase: 'scheduled' }); throw error }
   },
+})
 }
+
+export const worker = createWorker()
 
 // Crash/error reporting for the fetch, queue and scheduled handlers. Inert
 // until an instance sets the SENTRY_DSN secret, so it is a no-op by default and
@@ -432,6 +463,7 @@ export default Sentry.withSentry<WorkerEnv, QueuedEmailJob>(
     release: env.RELEASE,
     sendDefaultPii: false,
     tracesSampleRate: 0,
+    beforeSend: scrubWorkerEvent,
   }),
   worker,
 )

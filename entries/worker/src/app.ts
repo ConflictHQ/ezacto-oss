@@ -19,7 +19,7 @@ import { installDeelSyncRoutes, installStaffPaymentRoutes, type DeelSyncApiDepen
 import type { ContractorReviewStore, StaffPaymentStore } from '@ezacto/core'
 import { installMyPaymentRoutes } from '@ezacto/api'
 import type { MyPaymentsStore } from '@ezacto/core'
-import { captureException } from "@sentry/cloudflare";
+import { apiFailureStatus, reportWorkerError, runtimeTraceId } from './error-reporting.js'
 import type { BillRuntime, DeelSyncRuntime, QuickBooksService, WiseRuntime } from "@ezacto/integrations";
 import type {
   InvoiceDocumentPreferenceService,
@@ -700,6 +700,7 @@ export const createApp = (
    * refuse (issue 761).
    */
   signInMethods?: { read(env: AppEnv): Promise<readonly SignInMethodState[] | null> },
+  telemetry?: { reportError?: (error: Error, requestId: string) => void | Promise<void> },
 ) => {
   const cleanupPorts = ([services?.nativeAppleLifecycle, services?.appleWebCleanup] as (AppleCleanupPort | undefined)[]).filter((port): port is AppleCleanupPort => port !== undefined)
   const appleCleanup: AppleCleanupPort | undefined = cleanupPorts.length === 0 ? undefined : {
@@ -796,7 +797,8 @@ export const createApp = (
     // was handed (issue 807). A no-op until SENTRY_DSN is set, like the wrapper
     // in index.ts, and never given a request or response body.
     reportError: (error, requestId) => {
-      captureException(error, { tags: { request_id: requestId } })
+      reportWorkerError(telemetry?.reportError === undefined ? undefined : (failure) => telemetry.reportError!(failure, requestId), error,
+        { phase: 'api', requestId, traceId: runtimeTraceId(), status: apiFailureStatus(error) })
     },
     ...(services === undefined
       ? {}
