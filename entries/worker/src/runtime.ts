@@ -204,6 +204,7 @@ import type { AppEnv, RuntimeServices } from "./app.js";
 import { workerBrandAssetSurface } from "./brand-assets.js";
 import { workerInstanceThemeSurface } from "./instance-theme.js";
 import {
+  accountingEnabled,
   cloudflareAccessConfig,
   DEMO_API_TOKEN_MAX_LIFETIME_MS,
   demoDeployment,
@@ -674,8 +675,17 @@ type ProviderCredentials = Pick<
  * see `demo-lockdown.ts` -- but this is the half that holds for code paths
  * nobody thought to list.
  */
-export const providerCredentials = (env: WorkerEnv): ProviderCredentials =>
-  demoDeployment(env) ? {} : env;
+export const providerCredentials = (env: WorkerEnv): ProviderCredentials => {
+  if (demoDeployment(env)) return {};
+  // ACCOUNTING_ENABLED=false (#1217) withholds the accounting keys the same
+  // way, so QuickBooks is not mounted; an invalid value throws at start-up.
+  if (accountingEnabled(env)) return env;
+  const rest = { ...env };
+  delete rest.QUICKBOOKS_CLIENT_ID;
+  delete rest.QUICKBOOKS_CLIENT_SECRET;
+  delete rest.QUICKBOOKS_WEBHOOK_VERIFIER_TOKEN;
+  return rest;
+};
 
 /**
  * Object storage the demo reads and never writes (#931). The upload routes are

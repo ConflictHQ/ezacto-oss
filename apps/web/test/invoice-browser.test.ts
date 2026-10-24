@@ -1320,6 +1320,31 @@ describe('the QuickBooks line and Sync button (issue 819)', () => {
     expect(button().hidden).toBe(true)
   })
 
+  it('[browser #1217] makes no QuickBooks request where accounting is unavailable', async () => {
+    renderDetail()
+    document.documentElement.setAttribute('data-accounting-unavailable', '')
+    try {
+      const getInvoiceQuickBooks = vi.fn(async () => refusedBeforeConnect)
+      const controller = createInvoicePaymentController({
+        getInvoice: vi.fn(async () => invoice('OFF')),
+        listInvoiceMessages: vi.fn(async () => []),
+        listInvoicePayments: vi.fn(async () => []),
+        getInvoiceQuickBooks,
+        syncInvoiceQuickBooks: vi.fn(),
+      })
+      await controller.activate(identity(1), new AbortController().signal, () => false)
+      await vi.waitFor(() =>
+        expect(document.querySelector('[data-invoice-document]')!.hasAttribute('hidden')).toBe(false),
+      )
+      await new Promise((resolve) => setTimeout(resolve, 0))
+      expect(getInvoiceQuickBooks).not.toHaveBeenCalled()
+      expect(fact().hidden).toBe(true)
+      expect(button().hidden).toBe(true)
+    } finally {
+      document.documentElement.removeAttribute('data-accounting-unavailable')
+    }
+  })
+
   it('[e2e:invoice-quickbooks] renders the refusal, syncs on press, and the line follows', async () => {
     renderDetail()
     let state = refusedBeforeConnect
