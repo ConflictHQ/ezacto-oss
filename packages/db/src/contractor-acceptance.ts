@@ -89,6 +89,10 @@ export const createContractorAcceptanceStore = (
       const prior = replay(await existing(command.id))
       if (prior) return prior
       const snapshot = await review(command.month, now)
+      // A matching caller may commit while this review is loading. Replay its
+      // exact actor/intent before the resulting changed snapshot can reject it.
+      const reviewedReplay = replay(await existing(command.id))
+      if (reviewedReplay) return reviewedReplay
       const person = snapshot.people.find((p) => p.user_id === command.user_id)
       const balance = person?.currencies.find((c) => c.currency === command.currency)
       if (!person || !balance) invalid('Choose a contractor and currency in this review.')
