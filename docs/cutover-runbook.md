@@ -883,7 +883,7 @@ Measured on a fresh rehearsal against the live account, 2026-09-07, snapshot
 `bc074919`:
 
 ```
-matches <count>   rounding 0   gaps 8   unexplained 0
+matches 26109   rounding 0   gaps 8   unexplained 0
 ```
 
 The eight are the four rows above. Every correction in the account loaded,

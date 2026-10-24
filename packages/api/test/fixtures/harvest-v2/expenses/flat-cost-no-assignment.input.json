@@ -1,0 +1,71 @@
+{
+  "expense": {
+    "id": 9101,
+    "harvestId": null,
+    "userId": 401,
+    "projectId": 301,
+    "spentDate": "2024-03-08",
+    "notes": null,
+    "billable": false,
+    "approvalStatus": "unsubmitted",
+    "sourceApprovalStatus": null,
+    "invoiceId": null,
+    "createdAt": "2024-01-05T10:00:00.123Z",
+    "updatedAt": "2024-03-09T16:45:30.987Z",
+    "state": {
+      "approvalStatus": "unsubmitted",
+      "invoiceId": null,
+      "isBilled": false,
+      "isLocked": false,
+      "lockedReasonCode": null,
+      "lockedReason": null
+    },
+    "expenseCategoryId": 802,
+    "units": null,
+    "totalCostCents": 1999,
+    "reimbursable": false,
+    "reimbursementStatus": "none",
+    "payoutRef": null
+  },
+  "context": {
+    "user": {
+      "id": 401,
+      "firstName": "Sample",
+      "lastName": "Sample-Worker",
+      "email": "worker@example.test",
+      "profile": "member",
+      "createdAt": "2024-01-05T10:00:00.123Z",
+      "updatedAt": "2024-03-09T16:45:30.987Z"
+    },
+    "userAssignment": null,
+    "project": {
+      "id": 301,
+      "clientId": 101,
+      "name": "Sample Rollout",
+      "code": "SMP-1",
+      "createdAt": "2024-01-05T10:00:00.123Z",
+      "updatedAt": "2024-03-09T16:45:30.987Z"
+    },
+    "client": {
+      "id": 101,
+      "name": "Sample Widgets Ltd",
+      "address": null,
+      "currency": "USD",
+      "isActive": true,
+      "createdAt": "2024-01-05T10:00:00.123Z",
+      "updatedAt": "2024-03-09T16:45:30.987Z"
+    },
+    "expenseCategory": {
+      "id": 802,
+      "name": "Sample Lodging",
+      "unitName": null,
+      "unitPriceCents": null,
+      "isActive": false,
+      "createdAt": "2024-01-05T10:00:00.123Z",
+      "updatedAt": "2024-03-09T16:45:30.987Z"
+    },
+    "isBilled": false,
+    "lockedReason": null,
+    "invoice": null
+  }
+}

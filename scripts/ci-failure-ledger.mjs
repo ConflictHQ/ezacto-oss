@@ -30,9 +30,20 @@ export const SIGNATURES = [
     disposition: "Upstream; no retry, re-run the job and record it",
   },
   {
+    id: "kdf-overload",
+    pattern: /PasswordDerivationOverloadedError/,
+    disposition:
+      "Load on the runner queueing password derivations; the limiter caps are a memory decision, so rerun the test alone before touching them",
+  },
+  {
     id: "vitest-timeout",
     pattern: /(?:Test|Hook) timed out in \d+ms/,
     disposition: "Budget against a loaded runner; compare the green duration before touching it",
+  },
+  {
+    id: "request-abort-timeout",
+    pattern: /TimeoutError: The operation was aborted due to timeout/,
+    disposition: "A per-request AbortSignal budget lost to a cold runtime; size it for migrations if it recurs",
   },
   {
     id: "registry-reset",
