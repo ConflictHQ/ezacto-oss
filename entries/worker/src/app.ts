@@ -6,6 +6,7 @@ import type { WebhookManagement } from '@ezacto/core'
 import {installMigrationLoadRoutes,type MigrationLoadStatusReader} from '@ezacto/api'
 import { installInvoiceElevationRoutes, type InvoiceElevationStore, type ElevatedInvoiceTimeUnlinkPort } from '@ezacto/api'
 import { installEstimateTemplateRoutes, type EstimateTemplateRepository } from '@ezacto/api'
+import { backupsEnabled } from './backups-enabled.js'
 import type { OffsiteBackupEnvironment } from './offsite-backups.js'
 import type { ReminderProcessOptions, ReminderProcessSummary } from '@ezacto/db/d1'
 import { appleWebConfiguration } from './apple-web.js'
@@ -266,6 +267,13 @@ export type AppEnv = Env & {
    * `demoMailDomains`.
    */
   DEMO_MAIL_ALLOWED_DOMAINS?: string
+  /**
+   * Whether this deployment offers its own backup feature (issue 1216). On
+   * unless exactly `false`; any other value than `true` or `false` is refused.
+   * Hosted tenants are backed up by the platform and set it off. See
+   * `backupsEnabled`.
+   */
+  BACKUPS_ENABLED?: string
 }
 
 export type WorkerEnv = AppEnv & OffsiteBackupEnvironment & {
@@ -784,6 +792,7 @@ export const createApp = (
       attachmentsAvailable: services === undefined
         ? 'ATTACHMENTS' in env && env.ATTACHMENTS !== undefined
         : services.attachments !== undefined,
+      backupsAvailable: backupsEnabled(env),
       demo: demoDeployment(env),
       // And whether its mail is held to an allowlist, so the Send dialog can
       // say so. Never the list itself: anyone can open the demo, and a page
