@@ -78,6 +78,17 @@ first component exceeds 12. That heuristic is insufficient for browser
 confirmation and must be hardened by the adapter story. CLI compatibility is
 separate; no silent change to a prior run's adapter interpretation is allowed.
 
+Adapter identities are frozen per run
+(`CLOCKIFY_ADAPTERS` in [`csv-clockify.ts`](../packages/migrate/src/csv-clockify.ts)).
+`clockify-detailed-cli@1` is the existing CLI reader: ISO or month-first dates,
+first of any repeated header. `clockify-detailed-browser@1`
+(`createClockifyBrowserAdapter({ exporterZone })`) is the browser contract: ISO
+dates only (any slash date refuses the file), a repeated header is a file error,
+the source header is bounded to 40 columns before projection, a wall-clock time
+in a daylight-saving gap is rejected for that row, and midnight spans, repeated
+hours, seconds and duration/clock differences each carry a warning naming the
+line. Neither reader converts zones. A change of reading is a new identity.
+
 Require unrounded export durations and `HH:MM:SS` duration output. Clockify's
 [rounding guide](https://clockify.me/help/track-time-and-expenses/time-rounding)
 explains that exported values can already be rounded. Preview shows source
