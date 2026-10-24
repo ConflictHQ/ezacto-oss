@@ -56,6 +56,22 @@ Use **Payments → Review selected payments**, confirm the recipient, amount/cur
 
 A scheduled time starts processing; it is not a promised bank-arrival time. The Worker processes due runs on its minute tick and the container uses its scheduler. The implementation refreshes the quote before execution and pauses changes beyond the approved limits. When a create/funding response is uncertain, inspect the existing Wise transfer and use reconciliation; do not create a replacement simply because a request timed out.
 
+## Local webhook completion and retries
+
+After signature verification, a trusted raw-body identity, the existing local
+planned-payout transition and the processed marker commit together. A database
+failure rolls back the command; a verified retry can resume a matching pending
+trusted record while retaining its original received/occurred timestamps.
+Completed retries acknowledge without rewriting payout or delivery history.
+Ignored states and unknown transfers still record their reason. Legacy
+header-keyed history is not automatically replayed or promoted into trusted work.
+No provider transfer or automatic mutation retry is performed by this operation.
+
+Custom integration compositions implementing `WiseDeliveryPort` must supply its
+required atomic `process` method. The older split DB-store methods remain for
+existing internal callers, but webhook dispatch does not use them or fall back
+to them; a custom port missing the atomic method fails type checking.
+
 ## Troubleshooting, rotation and stopping
 
 | Symptom | Check |
