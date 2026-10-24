@@ -109,7 +109,7 @@ it('does not load while inactive or when the older backend cannot resolve a zone
   f.controller.sync(null)
   f.controller.sync({ ...f.context, timeZone: null })
   expect(f.api.listCalendarProposals).not.toHaveBeenCalled()
-  expect(f.root.textContent).toContain('effective timezone')
+  expect(f.root.textContent).toContain('calendar timezone is unavailable')
 })
 it('loads every page for the own date range and never sends a target user', async () => {
   const list = vi
@@ -127,6 +127,21 @@ it('loads every page for the own date range and never sends a target user', asyn
   expect(list.mock.calls[1]![0]).toMatchObject({ cursor: 'next' })
   expect(list.mock.calls[0]![0]).not.toHaveProperty('user_id')
 })
+it.each([undefined, null, {}, { next_cursor: undefined }])(
+  'rejects an incomplete page %j without partial rows',
+  async (invalidPage) => {
+    const f = setup({
+      listCalendarProposals: vi
+        .fn()
+        .mockResolvedValueOnce(page([proposal(1)], 'next'))
+        .mockResolvedValueOnce({ data: [proposal(2)], page: invalidPage }),
+    })
+    f.controller.sync(f.context)
+    await vi.waitFor(() => expect(f.root.textContent).toContain('incomplete page'))
+    expect(f.controller.proposals()).toEqual([])
+    expect(f.root.querySelector<HTMLButtonElement>('button')!.hidden).toBe(false)
+  },
+)
 it('rejects repeated cursors as a whole-list error and retries without retaining partial private rows', async () => {
   const list = vi
     .fn()

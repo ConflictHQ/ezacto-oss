@@ -108,7 +108,12 @@ export const createCalendarProposalController = (
         signal,
       )
       if (!current(signal)) return []
-      if (!Array.isArray(page?.data) || page.page === undefined)
+      if (
+        !Array.isArray(page?.data) ||
+        page.page === null ||
+        typeof page.page !== 'object' ||
+        page.page.next_cursor === undefined
+      )
         throw new Error('Calendar proposals returned an incomplete page. Retry the list.')
       for (const item of page.data) {
         if (!isProposal(item) || ids.has(item.id))
@@ -117,7 +122,7 @@ export const createCalendarProposalController = (
         rows.push(item)
       }
       const next = page.page.next_cursor
-      if (next === null || next === undefined) return rows
+      if (next === null) return rows
       if (typeof next !== 'string' || next === '' || cursors.has(next))
         throw new Error('Calendar proposals returned an invalid cursor. Retry the list.')
       cursors.add(next)
@@ -290,7 +295,7 @@ export const createCalendarProposalController = (
       host.root.hidden = false
       if (next.timeZone === null) {
         status.textContent =
-          'Calendar proposals need your effective timezone. Refresh or update your profile; no event positions have been guessed.'
+          'Your calendar timezone is unavailable. Refresh the page, check your Profile timezone, or ask an administrator for help.'
         return
       }
       void load()

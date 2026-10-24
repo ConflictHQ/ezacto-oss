@@ -8,6 +8,7 @@ import {
   clockFromMinutes,
   firstVisibleMinutes,
   MINUTES_IN_DAY,
+  MINIMUM_SPAN_MINUTES,
   moveSpan,
   resizeSpanEnd,
   resizeSpanStart,
@@ -590,13 +591,25 @@ export const createCalendarController = (host: CalendarHost): CalendarController
       if (day.date === next.now.date) column.dataset.today = 'true'
       column.append(drawCursor(day.date))
       const proposed = (next.proposals ?? []).filter((block) => block.date === day.date)
-      const lanes = assignLanes([
-        ...day.blocks.map((block) => ({ key: block.entry.id, start: block.start, end: block.end })),
-        ...proposed.map((block) => ({ key: -block.proposal.id, start: block.start, end: Math.max(block.end, block.start + 60) })),
-      ])
-      for (const block of day.blocks) column.append(drawBlock({ ...block, ...lanes.get(block.entry.id)! }))
+      const lanes =
+        proposed.length === 0
+          ? null
+          : assignLanes([
+              ...day.blocks.map((block) => ({
+                key: block.entry.id,
+                start: block.offsetMinutes,
+                end: block.offsetMinutes + Math.max(block.minutes, MINIMUM_SPAN_MINUTES),
+              })),
+              ...proposed.map((block) => ({
+                key: -block.proposal.id,
+                start: block.start,
+                end: Math.max(block.end, block.start + 60),
+              })),
+            ])
+      for (const block of day.blocks)
+        column.append(drawBlock(lanes === null ? block : { ...block, ...lanes.get(block.entry.id)! }))
       for (const block of proposed) {
-        const lane = lanes.get(-block.proposal.id)!
+        const lane = lanes!.get(-block.proposal.id)!
         column.append(drawProposal(block, lane.lane, lane.lanes))
       }
       if (day.date === next.now.date) column.append(drawNow())
