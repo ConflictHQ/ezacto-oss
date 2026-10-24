@@ -1,3 +1,4 @@
+export { createManagedBillConnectionCommands, type ManagedBillConnectionOptions, type ManagedBillConnectCommand, type ManagedBillDisconnectInput } from './managed-bill.js'
 export { createManagedQuickBooksGrantCommands, type ManagedQuickBooksGrantOptions } from './managed-quickbooks.js'
 export { installScheduledJobRoutes } from './scheduled-jobs.js'
 export { createApiApp } from './app.js'
