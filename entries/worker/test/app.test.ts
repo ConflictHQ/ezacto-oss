@@ -20,6 +20,13 @@ describe('worker entry', () => {
     expect(withStorage).not.toContain('data-attachments-unavailable')
   })
 
+  it('[#1216] marks backups unavailable only when BACKUPS_ENABLED is explicitly false', async () => {
+    const fetchPage = async (extra: Partial<AppEnv>) => (await app.request('/settings/company', {}, { ...env, ...extra })).text()
+    expect(await fetchPage({})).not.toContain('data-backups-unavailable')
+    expect(await fetchPage({ BACKUPS_ENABLED: 'true' })).not.toContain('data-backups-unavailable')
+    expect(await fetchPage({ BACKUPS_ENABLED: 'false' })).toContain('data-backups-unavailable')
+  })
+
   it('reports health with the environment and release it was deployed with', async () => {
     const res = await app.request('/healthz', {}, env)
 

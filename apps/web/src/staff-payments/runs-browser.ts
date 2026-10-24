@@ -646,9 +646,24 @@ export const createPaymentRunsController = (
     void action(async () => {
       if (!snapshot || !api.previewPaymentRun) return;
       const selectedLedger = snapshot;
+      const selected = snapshot.rows.filter(
+        (row) =>
+          (
+            form.elements.namedItem(
+              `select-${row.user_id}`,
+            ) as HTMLInputElement | null
+          )?.checked,
+      );
+      // The label only helps a person find the run later, so a blank one is
+      // named from what was selected rather than asked for.
+      const label =
+        input(form, "run_name").value.trim() ||
+        (selected.length === 1
+          ? `${selected[0]!.name} · ${selected[0]!.month}`
+          : `${selected.length} payments · ${snapshot.month}`);
       pendingCommand ??= {
         id: crypto.randomUUID(),
-        name: input(form, "run_name").value.trim(),
+        name: label.slice(0, 100),
         source_currency: input(form, "source_currency")
           .value.trim()
           .toUpperCase(),
@@ -657,16 +672,7 @@ export const createPaymentRunsController = (
             ? new Date().toISOString()
             : new Date(input(form, "scheduled_at").value).toISOString(),
         timezone,
-        items: snapshot.rows
-          .filter(
-            (row) =>
-              (
-                form.elements.namedItem(
-                  `select-${row.user_id}`,
-                ) as HTMLInputElement | null
-              )?.checked,
-          )
-          .map((row) => ({
+        items: selected.map((row) => ({
             user_id: row.user_id,
             month: row.month,
             expected_version: row.version,
@@ -747,15 +753,6 @@ export const createPaymentRunsController = (
     },
     payNow: (userId?: number) => {
       if (busy || !signal || signal.aborted) return;
-      if (!input(form, "run_name").value.trim() && snapshot) {
-        const name =
-          snapshot.rows.find((row) => row.user_id === userId)?.name ??
-          "Payments";
-        input(form, "run_name").value = `${name} · ${snapshot.month}`.slice(
-          0,
-          100,
-        );
-      }
       if (userId !== undefined) {
         if (
           !snapshot?.rows.some(

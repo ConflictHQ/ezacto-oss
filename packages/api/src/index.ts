@@ -200,6 +200,7 @@ export {
 } from './auth-email.js'
 export {
   installHarvestV2Routes,
+  type HarvestExpenseSource,
   type HarvestTimeEntrySource,
   type HarvestV2RouteOptions,
 } from './harvest-v2/routes.js'
