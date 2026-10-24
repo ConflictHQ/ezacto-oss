@@ -54,12 +54,13 @@ export const UNDOCUMENTED_ROUTES: readonly string[] = [
   // `WORKER_ONLY_ROUTES`.
   'get /backup-download/:token',
   // Staff magic-link sign-in, the user-facing sibling of the portal set above
-  // and gated on the same key. The verify leg is a browser/app redirect with no
-  // client call; request and exchange are called by the native app over raw
+  // and gated on the same key. The verify leg is a browser confirm page and a form POST that
+  // redirects, with no client call; request and exchange are called by the native app over raw
   // fetch, not a generated client -- so, like the OIDC app-code handoff, they
   // stay out of the generated client and, unlike it, out of the document too.
   'post /auth/magic-link',
   'get /auth/magic-link/verify',
+  'post /auth/magic-link/verify',
   'post /auth/magic-link/exchange',
   // Native Sign in with Apple. The mobile app posts an Apple identity token
   // over raw fetch and gets the ordinary session back -- there is no redirect
@@ -168,6 +169,7 @@ export const PORTAL_ROUTES: readonly string[] = [
 export const STAFF_MAGIC_LINK_ROUTES: readonly string[] = [
   'post /auth/magic-link',
   'get /auth/magic-link/verify',
+  'post /auth/magic-link/verify',
   'post /auth/magic-link/exchange',
 ]
 

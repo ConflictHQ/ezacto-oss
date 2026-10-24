@@ -50,7 +50,7 @@ unconditioned PATCH and DELETE, then switches to `required`.
 
 ## Native enforcement and rollout
 
-Migration `0158_planning_revisions` adds safe-integer, nonnegative `version`
+Migration `0159_planning_revisions` adds safe-integer, nonnegative `version`
 columns to existing allocations and time off, initialized to zero. A database
 trigger requires every update to advance exactly one version. The mutation and
 its actor-attributed before/after event remain one SQLite transaction or D1

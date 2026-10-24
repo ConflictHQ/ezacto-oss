@@ -297,6 +297,17 @@ class MemoryAppCodes implements OidcAppCodeStorePort {
   }
 }
 
+/** Issue 740: the emailed link is redeemed by a same-origin form POST. */
+const redeemLink = (app: { request: (input: string, init?: RequestInit) => Response | Promise<Response> }) =>
+  app.request('http://localhost/auth/magic-link/verify', {
+    method: 'POST',
+    headers: {
+      'content-type': 'application/x-www-form-urlencoded',
+      origin: 'http://localhost',
+    },
+    body: `token=${'T'.repeat(43)}`,
+  })
+
 const magicLinkHarness = (twoFactor: TwoFactorGate) => {
   const sessions = { issue: vi.fn(async () => ({ setCookie: SESSION_COOKIE })) }
   const app = createApiApp({
@@ -318,9 +329,7 @@ const magicLinkHarness = (twoFactor: TwoFactorGate) => {
 describe('the second factor on a staff magic link', () => {
   it('[security] the emailed link lands on the code step, not on a session', async () => {
     const { app, sessions } = magicLinkHarness(gate())
-    const response = await app.request(
-      `/auth/magic-link/verify?token=${'T'.repeat(43)}`,
-    )
+    const response = await redeemLink(app)
 
     expect(response.status).toBe(303)
     // The flag says which step to open. The token itself stays in the cookie,
@@ -355,9 +364,7 @@ describe('the second factor on a staff magic link', () => {
 
   it('[security] an unenrolled user is unaffected on both legs', async () => {
     const { app, sessions } = magicLinkHarness(gate({ enrolled: false }))
-    const redirected = await app.request(
-      `/auth/magic-link/verify?token=${'T'.repeat(43)}`,
-    )
+    const redirected = await redeemLink(app)
     expect(redirected.headers.get('location')).toBe('/')
 
     const exchanged = await post(app, '/auth/magic-link/exchange', {
