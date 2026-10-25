@@ -36,6 +36,8 @@ const run = spawnSync(
     stdio: 'inherit',
     env: {
       ...process.env,
+      // An explicit audit always owns all four scenarios, even from a web-only CI environment.
+      EZACTO_SKIP_CONTROL_STYLE_AUDIT: '',
       ...(record ? { EZACTO_CONTROL_AUDIT_RECORD: '1' } : {}),
       ...(screenshots ? { EZACTO_CONTROL_AUDIT_SCREENSHOTS: '1' } : {}),
     },
