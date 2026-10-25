@@ -1,4 +1,4 @@
-import { createHash } from 'node:crypto'
+import { sha256Hex, utf8ByteLength } from './portable-hash.js'
 import { nameKey } from './csv-contract.js'
 
 /**
@@ -64,7 +64,7 @@ export const emptyMapping = (): CsvMapping => ({
 })
 
 export const parseMapping = (source: string): CsvMapping => {
-  if (Buffer.byteLength(source) > MAX_MAPPING_BYTES) {
+  if (utf8ByteLength(source) > MAX_MAPPING_BYTES) {
     throw new CsvMappingError('The mapping file is larger than 1 MiB.')
   }
   let parsed: unknown
@@ -131,5 +131,5 @@ const sorted = (value: unknown): unknown => {
 /** The form stored with a run, and the hash a retry is compared by. */
 export const canonicalMapping = (mapping: CsvMapping): { json: string; sha256: string } => {
   const json = JSON.stringify(sorted(mapping))
-  return { json, sha256: createHash('sha256').update(json).digest('hex') }
+  return { json, sha256: sha256Hex(json) }
 }

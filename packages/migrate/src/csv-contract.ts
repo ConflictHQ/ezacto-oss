@@ -1,4 +1,5 @@
-import { createHash } from 'node:crypto'
+import { csvNameKey, CSV_BROWSER_MAX_DATA_ROWS } from '@ezacto/core'
+import { sha256Hex } from './portable-hash.js'
 
 /**
  * The vendor-neutral CSV time contract (issue 1012, slice 1). One file, one row
@@ -20,7 +21,7 @@ import { createHash } from 'node:crypto'
  */
 
 export const MAX_CSV_BYTES = 5 * 1024 * 1024
-export const MAX_CSV_ROWS = 50_000
+export const MAX_CSV_ROWS = CSV_BROWSER_MAX_DATA_ROWS
 export const MAX_CSV_COLUMNS = 40
 export const MAX_FIELD_LENGTH = 10_000
 export const MAX_NAME_LENGTH = 255
@@ -80,7 +81,7 @@ const emptyResult = (bytes: Uint8Array, fileErrors: CsvIssue[]): ParsedCsv => ({
   invalid: [],
   warnings: [],
   dataRows: 0,
-  sha256: createHash('sha256').update(bytes).digest('hex'),
+  sha256: sha256Hex(bytes),
   bytes: bytes.byteLength,
 })
 
@@ -545,7 +546,7 @@ export const parseCsv = (bytes: Uint8Array, adapter?: CsvAdapter): ParsedCsv => 
     invalid,
     warnings,
     dataRows,
-    sha256: createHash('sha256').update(bytes).digest('hex'),
+    sha256: sha256Hex(bytes),
     bytes: bytes.byteLength,
   }
 }
@@ -560,8 +561,7 @@ export const parseCsv = (bytes: Uint8Array, adapter?: CsvAdapter): ParsedCsv => 
 export const sourceKeys = (rows: readonly CsvRow[]): string[] => {
   const seen = new Map<string, number>()
   return rows.map((row) => {
-    const digest = createHash('sha256')
-      .update(
+    const digest = sha256Hex(
         JSON.stringify([
           row.date,
           row.personEmail,
@@ -575,7 +575,6 @@ export const sourceKeys = (rows: readonly CsvRow[]): string[] => {
           row.billable,
         ]),
       )
-      .digest('hex')
     const occurrence = seen.get(digest) ?? 0
     seen.set(digest, occurrence + 1)
     return `${digest}#${occurrence}`
@@ -583,5 +582,4 @@ export const sourceKeys = (rows: readonly CsvRow[]): string[] => {
 }
 
 /** Names compare without case, surrounding space or runs of inner space. */
-export const nameKey = (value: string): string =>
-  value.normalize('NFC').trim().replace(/\s+/g, ' ').toLowerCase()
+export const nameKey = csvNameKey
