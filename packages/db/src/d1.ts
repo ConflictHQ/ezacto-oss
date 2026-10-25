@@ -567,3 +567,5 @@ export * from './project-missing-rates.js'
 
 // Runtime infrastructure: callers must establish idempotence before use.
 export { retryTransientD1IdempotentOperation } from './d1-idempotent-retry.js'
+
+export * from './placeholder-allocations.js'

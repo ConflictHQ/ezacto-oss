@@ -69,6 +69,7 @@ import {
   createTimesheetLockPolicyRepository,
   createTeamRepository,
   DrizzleAllocationRepository,
+  createPlaceholderAllocationRepository,
   DrizzleCalendarProposalRepository,
   DrizzleWorkItemRepository,
   DrizzleTrackedResourceRepository,
@@ -922,6 +923,7 @@ export const createContainerRuntime = async (
     clientRateCards: createClientRateCardRepository(drizzle),
       trackedResources,
       calendarProposals: new DrizzleCalendarProposalRepository(drizzle, trackedResources),
+      placeholderPlanning: createPlaceholderAllocationRepository(drizzle),
       allocations: new DrizzleAllocationRepository(drizzle),
       organizationHolidays: createOrganizationHolidayRepository(drizzle),
       workItems: {
