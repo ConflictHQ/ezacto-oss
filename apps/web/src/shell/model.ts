@@ -146,6 +146,7 @@ export interface ShellApi
   ): ReturnType<CapacityApi['getCapacity']>
   /** Allocation and time off entry on the capacity screen, for an administrator (issue 1007). */
   planning?: PlanningApi
+  placeholders?: CapacityApi['placeholders']
   /** The signed-in person's own payment summary (issue 100). */
   getMyPayments?(month: string, signal?: AbortSignal): ReturnType<MyPaymentsApi['getMyPayments']>
   scheduledRuns?: ScheduledRunApi
@@ -2070,6 +2071,21 @@ export const createShellApi = (client: EzactoClient): ShellApi => ({
     ).data,
   getCapacity: (range, signal) =>
     client.getCapacity({ query: range, ...withSignal(signal) }),
+  placeholders: {
+    list: (range, signal) => collectPlanned(cursor => client.listPlaceholderAllocations({
+      query: { ...range, state: 'open', per_page: 200, ...(cursor === undefined ? {} : { cursor }) }, ...withSignal(signal),
+    }), signal),
+    listDefinitions: signal => collectPlanned(cursor => client.listPlanningPlaceholders({
+      query: { is_active: true, per_page: 200, ...(cursor === undefined ? {} : { cursor }) }, ...withSignal(signal),
+    }), signal),
+    createDefinition: (body, signal) => client.createPlanningPlaceholder({ body, ...withSignal(signal) }),
+    updateDefinition: (id, body, signal) => client.updatePlanningPlaceholder({ id, body, ...withSignal(signal) }),
+    archiveDefinition: (id, version, signal) => client.deletePlanningPlaceholder({ id, body: { version }, ...withSignal(signal) }),
+    create: (body, signal) => client.createPlaceholderAllocation({ body, ...withSignal(signal) }),
+    update: (id, body, signal) => client.updatePlaceholderAllocation({ id, body, ...withSignal(signal) }),
+    archive: (id, version, signal) => client.deletePlaceholderAllocation({ id, body: { version }, ...withSignal(signal) }),
+    assign: async (id, body, signal) => (await client.assignPlaceholderAllocation({ id, body, ...withSignal(signal) })).data,
+  },
   planning: {
     holidays: {
       list: (range, signal) => collectPlanned(cursor => client.listOrganizationHolidays({ query: { ...range, per_page: 200, ...(cursor === undefined ? {} : { cursor }) }, ...withSignal(signal) }), signal),

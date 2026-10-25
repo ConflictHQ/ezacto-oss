@@ -8,6 +8,11 @@ weekly Capacity view and administrator entry forms. PRs #1045 and #1061 are the
 allocation/time-off delivery lineage. Closing #1007 accepts this inventory and
 buildable follow-on plan; implementation delivery belongs to the child issues.
 
+Delivery inventory refreshed on 2026-10-25: holidays and client revision
+preconditions have merged, and #1191 adds the native placeholder workflow below.
+Project/team calendars, gestures, feeds and native applications remain their own
+follow-on deliveries.
+
 ## Current implementation
 
 | Surface | Actual behavior and source | Evidence already present |
@@ -20,10 +25,10 @@ buildable follow-on plan; implementation delivery belongs to the child issues.
 | Existing Time calendar | The draggable calendar consumes actual entries and creates/moves their start/end times. Calendar proposals are suggestions that become actual entries only after acceptance. These are distinct from resource allocations. [Calendar host](../apps/web/src/calendar/browser.ts), [proposal rules](../packages/core/src/calendar-proposal.ts), [proposal API](../packages/api/src/resources/calendar-proposals.ts). | [Actual-time drag acceptance](../apps/web/e2e/calendar-drag.browser.ts), [proposal tests](../packages/api/test/calendar-proposals.test.ts). |
 | Runtime/client surfaces | Worker and container compose the same allocation repository/API. The generated client publishes allocation, time-off and capacity operations. [Worker](../entries/worker/src/runtime.ts), [container](../entries/container/src/runtime.ts), [client](../packages/client/src/generated.ts). | Current API/runtime tests and generated-contract checks; native application UI acceptance remains a separate slice. |
 
-Organization holidays are being implemented under [#1188](https://github.com/ConflictHQ/ezacto-pvt/issues/1188).
-[PR #1196](https://github.com/ConflictHQ/ezacto-pvt/pull/1196), source
-`79fc0b0a`, is the proposed delivery. Its merge, deployment and read-back remain
-pending at this audit baseline; holidays are not counted as delivered here.
+Organization holidays shipped under [#1188](https://github.com/ConflictHQ/ezacto-pvt/issues/1188),
+[PR #1196](https://github.com/ConflictHQ/ezacto-pvt/pull/1196), merge `20eedf39`.
+Client-read revision preconditions shipped under #1190,
+[PR #1263](https://github.com/ConflictHQ/ezacto-pvt/pull/1263), merge `debf7dcc`.
 
 ## First slice: exact operating rules
 
@@ -45,7 +50,7 @@ access or create task/person staffing assignments.
 | Archived resources | Creation/update requires an active person and project; time off requires an active person. Authorized deletion of old plans/leave remains possible after archive. Capacity excludes archived people and plans on archived projects, while tracked totals for active people still include their stored actuals on archived projects. Existing list/history APIs retain their own scoped rows. |
 | Actual comparison | `tracked_seconds` is the sum of stored `rounded_seconds` by person and `spent_date`; it is separate from planned seconds and the live elapsed-timer badge. Capacity figures are not a financial forecast or an invoice input. |
 | Current web date context | The current Capacity controller chooses its initial 56-day window using the device-local date, then the API applies the organization's week boundaries. The resource-calendar slice will publish organization-local today/week context and test device/organization/DST boundaries explicitly. |
-| Mutation concurrency | Repositories compare the `updated_at` read inside an update/delete request and audit the write atomically. Existing browser rows/PATCH/DELETE requests do not bind the client's earlier read revision. [#1190](https://github.com/ConflictHQ/ezacto-pvt/issues/1190) owns that real stale-editor gap before richer concurrent editing. |
+| Mutation concurrency | #1190 exposes integer client-read versions and compares them inside the mutation, with fresh actor/grant/closure authority and atomic audit. Browser conflicts keep drafts and require explicit reload of saved values. Placeholder commands use the same version convention. |
 
 ### Permissions are deliberately different between API and web entry
 
@@ -78,8 +83,8 @@ forms need no replacement stories.
 
 | Slice | Dependency | Bounded delivery and state |
 | --- | --- | --- |
-| [#1188 Organization holidays](https://github.com/ConflictHQ/ezacto-pvt/issues/1188) | Delivered allocation/time-off baseline | **In progress, delivery pending.** Explicit organization dates/names, administrator CRUD and atomic audit, weekday availability subtraction with daily max against personal leave. Holiday/weekend overlap never double-subtracts and availability stays nonnegative. No country feeds, recurrence or leave approvals. |
-| [#1190 Client revision preconditions](https://github.com/ConflictHQ/ezacto-pvt/issues/1190) | Delivered allocation/time-off APIs/forms | Add integer revisions and public stale-write preconditions, migrate existing forms and retain input after a conflict. Fresh authority and before/after audit commit with the mutation. This hardens the existing editor; it does not replace the allocation model. |
+| [#1188 Organization holidays](https://github.com/ConflictHQ/ezacto-pvt/issues/1188) | Delivered allocation/time-off baseline | **Delivered, PR #1196.** Explicit organization dates/names, administrator CRUD and atomic audit, weekday availability subtraction with daily max against personal leave. Holiday/weekend overlap never double-subtracts and availability stays nonnegative. No country feeds, recurrence or leave approvals. |
+| [#1190 Client revision preconditions](https://github.com/ConflictHQ/ezacto-pvt/issues/1190) | Delivered allocation/time-off APIs/forms | **Delivered, PR #1263.** Integer client-read revisions and stale-write preconditions, forms that retain drafts after a conflict, and fresh authority plus before/after audit committed with each mutation. |
 | [#1191 Placeholders and atomic assignment](https://github.com/ConflictHQ/ezacto-pvt/issues/1191) | #1190 | Named unassigned project demand in separate planning records/rows. One revisioned, idempotent assignment creates the person plan and consumes the placeholder allocation atomically. No fake users, capacity denominators, staffing grants or actual-time writes. |
 | [#1192 Project/team resource calendars](https://github.com/ConflictHQ/ezacto-pvt/issues/1192) | #1188 and #1191 | A shared scoped projection plus week/timeline views for allocations, availability and unassigned work, separate from the Time calendar. Organization-local today/week context, bounded reads and explicit aggregate/detail scope. The selected release includes holidays and placeholder rows. |
 | [#1193 Drag editing](https://github.com/ConflictHQ/ezacto-pvt/issues/1193) | #1192 and #1190 | Administrator move/resize with a visible full-week-hours preview, revision checks, cancel/rollback and equivalent keyboard/phone forms. Each completed gesture calls a planning command; moving a plan never moves actual time. |
@@ -121,12 +126,13 @@ The private native source at `c148488f356b3e36bf1b9260e0d1d6a0738824db` has
 no resource-capacity/allocation/time-off screen found in the `src` inventory.
 Native implementation and device evidence remain with #1195 and that repository.
 
-## Placeholder assignment contract (#1191, contract only)
+## Placeholder assignment rules (#1191)
 
 [`packages/core/src/placeholder-allocation.ts`](../packages/core/src/placeholder-allocation.ts)
-fixes the interface before the tables exist; its reference store and
-[tests](../packages/core/test/placeholder-allocation.test.ts) are what a real
-repository must pass. No schema, route or migration is added by it.
+defines the domain rules. Its reference store and
+[tests](../packages/core/test/placeholder-allocation.test.ts) establish refusal,
+warning and replay semantics; native storage/API and browser tests separately
+verify the real implementation.
 
 - A placeholder allocation names unassigned project demand: project, inclusive
   dates, weekly seconds, `state` (`open`, `assigned`, `archived`), integer
@@ -136,23 +142,29 @@ repository must pass. No schema, route or migration is added by it.
   expectedRevision, userId}`. In a single transaction it re-reads authority,
   creates the person allocation from the placeholder's project/dates/hours and
   marks the placeholder `assigned` with a revision bump and audit event.
-- Refusal order, each writing nothing: not found (404), no management of the
+- Domain refusal order, each writing nothing: not found (404), no management of the
   project (403), stale revision (409), not open (409), inactive person/project
-  (422), same person/project date overlap (409). Not found precedes forbidden
-  because authority comes from the placeholder's project; a route that must
-  hide which ids exist answers 404 for both.
+  (422), same person/project date overlap (409). Native routes additionally fence
+  current authority before disclosing private names, revisions or replay facts;
+  an unauthorized caller cannot use a refusal to probe hidden work.
 - Idempotency: a key is scoped to actor and key, and stores a fingerprint of
   placeholder, revision and user. A replay with the same fingerprint re-checks
   authority (403 if lost), then returns the stored result and writes nothing.
   The same key with a different fingerprint is refused with 422
   `idempotency_key_reused`.
-- Warnings, never refusals: `over_allocated` per week (existing policy).
+- Warnings, never refusals: `over_allocated` per touched week, using the same
+  available-capacity calculation as the Capacity grid. Current leave and holidays
+  use daily maximum overlap, weekend exclusion and the weekly clamp; archived
+  projects do not contribute planned hours. A Wednesday-starting plan still
+  accounts for Monday's unavailability in that touched week.
   Missing project access is returned as a `project_access_missing`
   prerequisite; the command creates no staffing assignment or access.
 - Unassigned rows are listed separately and never enter a person's capacity or
-  utilization. Organization-wide lists need `schedule:write` over the project.
+  utilization. Reads need `schedule:read` plus current management authority;
+  mutations need `schedule:write` within the managed scope. Fresh authority is
+  checked before disclosing private replay or lifecycle facts.
 
-## Placeholder storage and repository (#1191, slice 2)
+## Native placeholder storage, API and web workflow (#1191)
 
 Migration `0158_placeholder_allocations` adds new tables and leaves
 `allocations` (and its `user_id` foreign key) untouched:
@@ -173,11 +185,41 @@ person allocation, placeholder `assigned` with revision + 1, key result and
 audit event (aggregate `placeholder_allocation`). Each write is also guarded in
 SQL by the live actor and project scope, and a date overlap is refused by the
 existing allocations trigger, which rolls the whole batch back. Reads and writes
-require `schedule:write`: administrators and executive managers see all, project
-managers only projects they manage, everyone else is refused.
+recheck current management authority: administrators and executive managers see
+permitted organization work, project managers only managed projects and people,
+and ordinary members receive no organization-wide unassigned list. Missing
+project access for an explicitly managed target is a visible prerequisite,
+without granting access. Hidden placeholder names cannot be attached by guessing
+their identifiers.
 
-Still open: the HTTP routes and revision wire shape (waits for #1190), the
-planning-view lines and administrator forms, edit of an open placeholder
-allocation, and the shared capacity projection (#1192).
+Migration `0163_placeholder_planning` adds definition versions and minimal creator
+attribution. Renaming and archiving require the definition's saved version;
+archiving atomically withdraws its remaining open allocations and audits those
+identifiers. Account closure erases replay receipts for the actor or assigned
+person while retaining the immutable fact that demand was assigned. It cannot
+resurrect an erased person plan.
 
-Open: the revision wire shape depends on #1190.
+The native management API is `/api/v1/planning-placeholders` and
+`/api/v1/placeholder-allocations`, with cursor pagination, scoped names and the
+public `version` field. PATCH/DELETE require the saved version. The explicit
+`POST /placeholder-allocations/:id/assign` body is
+`{version, user_id, idempotency_key}`. All writes are audited, version-fenced and
+available through both runtime compositions and the generated client. DELETE
+archives demand rather than deleting its identity.
+
+Capacity shows separate unassigned project/date/hour rows and weekly demand
+totals. A partial-week plan contributes its full weekly amount to every touched
+week; assigned and archived demand contribute nothing. Managers have scoped
+read-only rows. Administrator forms create, rename, edit, archive and explicitly
+assign demand. Assignment displays capacity warnings and unmet project-access
+prerequisites. Conflicts retain input; a failed or in-flight reload keeps writes
+blocked until saved state is read successfully. Date-only edits preserve exact
+weekly seconds, including sub-hour and one-second plans. Session abort clears
+cached names and drafts and ignores late replies. Tables scroll within the page
+on phones, controls retain keyboard behavior and at least 44px targets.
+
+Evidence: [native repository cases](../packages/db/test/placeholder-allocations.test.ts),
+[API implementation](../packages/api/src/resources/placeholder-allocations.ts),
+[web behavior tests](../apps/web/test/placeholder-planning.test.ts) and
+[native browser workflow](../apps/web/e2e/placeholder-planning.browser.ts).
+The shared project/team calendar projection remains #1192.
