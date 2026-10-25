@@ -261,6 +261,7 @@ export {
 export {
   createQuickBooksMirrorSubscriber,
   createQuickBooksRuntime,
+  quickBooksConfigured,
   type QuickBooksCatchUp,
   type QuickBooksConfig,
   type QuickBooksConnectionStatus,
@@ -309,3 +310,5 @@ export type {
 export * from './work-items/github-read.js'
 
 export { createWorkerWebhookTransport } from './outbound-webhooks.js'
+
+export { wiseConfigured, parseWiseMode } from './wise/runtime.js'

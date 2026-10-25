@@ -317,12 +317,23 @@ const refusalFor = (
       ? "already_linked"
       : "unknown_user";
 
+/** Operator environment syntax used by the native Worker; explicit full/disabled are not accepted. */
+export const parseWiseMode = (value: string | undefined): 'full' | 'read_only' => {
+  if (value === undefined || value === '') return 'full';
+  if (value === 'read_only') return 'read_only';
+  throw new TypeError('WISE_MODE must be unset or read_only');
+};
+
+/** Local configuration only; disabled and blank credentials never offer a connection. */
+export const wiseConfigured = (config: Pick<WiseConfig, 'token'>, mode: WiseConnectionMode = 'full'): boolean =>
+  mode !== 'disabled' && trimmed(config.token) !== null;
+
 export const createWiseRuntime = (options: Readonly<WiseRuntimeOptions>): WiseRuntime => {
   const { config, accounts } = options;
   const mode = options.mode ?? "full";
   // A disabled connection never builds a client, so no code path can reach the
   // provider however the token got here.
-  const token = mode === "disabled" ? null : trimmed(config.token);
+  const token = wiseConfigured(config, mode) ? trimmed(config.token) : null;
   const requireWritable = (): void => {
     if (mode !== "full") throw new WiseReadOnlyError();
   };

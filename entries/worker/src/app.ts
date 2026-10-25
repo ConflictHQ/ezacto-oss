@@ -1,4 +1,4 @@
-import { billConfigured, deelConfigurationProblem } from '@ezacto/integrations'
+import { billConfigured, deelConfigurationProblem, quickBooksConfigured, wiseConfigured, parseWiseMode } from '@ezacto/integrations'
 import { installOrganizationHolidayRoutes } from '@ezacto/api'
 import { installModuleGate, moduleAvailability } from '@ezacto/api'
 import type { OrganizationHolidayRepository } from '@ezacto/core'
@@ -806,7 +806,7 @@ export const createApp = (
       ? services === undefined
         ? configuredAccountingProviders(env)
         : {
-            quickbooks: services.quickBooks !== undefined,
+            quickbooks: services.quickBooks?.configured?.() ?? (services.quickBooks !== undefined && services.quickBooks.clientId() !== null && services.quickBooks.callbackUrl() !== null),
             bill: services.bill?.status().configured === true,
             wise: services.wise?.configured() === true,
             deel: (await services.deelSync?.status())?.configured === true,
@@ -2737,10 +2737,10 @@ export const workItemCredentialConfigured = (env: AppEnv, provider: WorkItemProv
 const configuredAccountingProviders = (env: AppEnv): AccountingProviderAvailability => {
   const keys = env as WorkerEnv
   return {
-    quickbooks: keys.QUICKBOOKS_CLIENT_ID !== undefined && keys.QUICKBOOKS_CLIENT_SECRET !== undefined,
+    quickbooks: quickBooksConfigured({ clientId: keys.QUICKBOOKS_CLIENT_ID, clientSecret: keys.QUICKBOOKS_CLIENT_SECRET, appBaseUrl: keys.APP_BASE_URL }),
     bill: billConfigured({ devKey: keys.BILL_DEV_KEY, companyId: keys.BILL_COMPANY_ID,
       username: keys.BILL_USERNAME, password: keys.BILL_PASSWORD, replyToUserId: undefined, environment: keys.BILL_ENVIRONMENT }),
-    wise: keys.WISE_TOKEN !== undefined,
+    wise: wiseConfigured({ token: keys.WISE_TOKEN }, parseWiseMode(keys.WISE_MODE)),
     deel: deelConfigurationProblem({ token: keys.DEEL_TOKEN, startDate: keys.DEEL_SYNC_START_DATE }) === null,
   }
 }

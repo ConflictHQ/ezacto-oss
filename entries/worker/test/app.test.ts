@@ -23,7 +23,7 @@ describe('worker entry', () => {
   })
 
   it('[#1217] bootstraps accounting availability from the runtime before session restoration', async () => {
-    const keys = { QUICKBOOKS_CLIENT_ID: 'id', QUICKBOOKS_CLIENT_SECRET: 'secret' }
+    const keys = { QUICKBOOKS_CLIENT_ID: 'id', QUICKBOOKS_CLIENT_SECRET: 'secret', APP_BASE_URL: 'https://accounting.example.test' }
     const html = async (extra: Partial<WorkerEnv>) =>
       (await (await app.request('/invoices', {}, { ...env, ...extra })).text())
     expect(await html({})).toContain('data-accounting-unavailable')
@@ -47,6 +47,22 @@ describe('worker entry', () => {
     for (const id of ['quickbooks', 'bill', 'wise', 'deel']) expect(off).toContain(`data-accounting-provider="${id}" data-provider-available="false"`)
     const incomplete = await (await app.request('/settings/company', {}, { ...env, BILL_DEV_KEY: 'dev', DEEL_TOKEN: 'deel', DEEL_SYNC_START_DATE: 'not-a-date' })).text()
     expect(incomplete).toContain('data-accounting-unavailable')
+  })
+
+  it('[#1217] refuses blank or incomplete native connection prerequisites without advertising a provider', async () => {
+    for (const flags of [
+      { WISE_TOKEN: '   ' },
+      { QUICKBOOKS_CLIENT_ID: ' ', QUICKBOOKS_CLIENT_SECRET: 'secret', APP_BASE_URL: 'https://app.example.test' },
+      { QUICKBOOKS_CLIENT_ID: 'id', QUICKBOOKS_CLIENT_SECRET: 'secret' },
+      { DEEL_TOKEN: 'token', DEEL_SYNC_START_DATE: '2026-99-99' },
+    ]) {
+      const response = await app.request('/settings/company', {}, { ...env, ...flags })
+      expect(response.status).toBe(200)
+      expect(await response.text()).toContain('data-accounting-unavailable')
+    }
+    for (const mode of ['disabled', 'full', 'unknown']) {
+      expect((await app.request('/settings/company', {}, { ...env, WISE_TOKEN: 'token', WISE_MODE: mode })).status).toBe(500)
+    }
   })
 
   it('[#1217] accepts only true or false for ACCOUNTING_ENABLED', () => {

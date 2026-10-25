@@ -235,6 +235,16 @@ describe('the connect button', () => {
     expect(quickBooks.beginAuthorization).not.toHaveBeenCalled()
   })
 
+  it('[api #1217] uses local native readiness without starting an unavailable connection', async () => {
+    const quickBooks = service({ configured: () => false })
+    const status = await app(quickBooks).request('/integrations/quickbooks')
+    expect((await status.json() as { data: { configured: boolean } }).data.configured).toBe(false)
+    const response = await app(quickBooks).request('/integrations/quickbooks/authorize', { method: 'POST' })
+    expect(response.status).toBe(503)
+    expect(quickBooks.beginAuthorization).not.toHaveBeenCalled()
+    expect(quickBooks.authorizeUrl).not.toHaveBeenCalled()
+  })
+
   it('[api] says so rather than half-starting when the deployment has no Intuit keys', async () => {
     const quickBooks = service({ clientId: vi.fn(() => null) })
     const response = await app(quickBooks).request('/integrations/quickbooks/authorize', {

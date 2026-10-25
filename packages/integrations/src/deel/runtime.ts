@@ -185,8 +185,11 @@ export interface DeelSyncRuntime {
 
 const isoDate = /^\d{4}-\d{2}-\d{2}$/u
 
-const validDate = (value: string): boolean =>
-  isoDate.test(value) && new Date(`${value}T00:00:00Z`).toISOString().slice(0, 10) === value
+const validDate = (value: string): boolean => {
+  if (!isoDate.test(value)) return false
+  const parsed = new Date(`${value}T00:00:00Z`)
+  return Number.isFinite(parsed.getTime()) && parsed.toISOString().slice(0, 10) === value
+}
 
 export const deelConfigurationProblem = (config: DeelSyncConfig): string | null => {
   if (config.token === undefined || config.token.trim() === '') return 'no Deel token is configured'
