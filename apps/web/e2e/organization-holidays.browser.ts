@@ -42,7 +42,11 @@ test('[e2e #1007] organization holidays reduce capacity once and can be edited a
         .available_capacity_seconds,
     { from, to },
   )
-  await root.getByLabel('Holiday date', { exact: true }).fill(from)
+  // Earlier settings scenarios can choose Saturday/Sunday as the week start.
+  // A holiday on the weekend correctly removes no working capacity: choose
+  // Monday within the organization's visible week instead.
+  const firstMonday = addCalendarDays(from, (8 - new Date(`${from}T00:00:00Z`).getUTCDay()) % 7)
+  await root.getByLabel('Holiday date', { exact: true }).fill(firstMonday)
   await root
     .getByLabel('Holiday name', { exact: true })
     .fill('Office closed ' + crypto.randomUUID())
