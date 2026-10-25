@@ -1,6 +1,7 @@
 /** @vitest-environment happy-dom */
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { browserApi, identity, mountShell, renderBrowserShell, resource, unmount } from './support/shell-harness.js'
+import { loadShellSnapshot } from '../src/shell/model.js'
 import { EzactoApiError } from '@conflict-hq/ezacto-client'
 import { createClientDirectoryController } from '../src/clients/browser.js'
 
@@ -119,7 +120,7 @@ describe('dependent surfaces with operator modules off (#1259)', () => {
     renderBrowserShell({ view: 'invoice-generation' })
     const api = browserApi()
     api.listExpenses = vi.fn(async () => {
-      throw new EzactoApiError(403, { error: { code: 'module_disabled' } })
+      throw new EzactoApiError(403, { error: { code: 'module_disabled' } }, null)
     })
     await mountShell({ ...api, getUninvoicedReport: vi.fn(async () => { throw new Error('offline') }) } as never)
     const source = document.querySelector<HTMLSelectElement>('[data-invoice-expense-summary]')!
@@ -127,6 +128,20 @@ describe('dependent surfaces with operator modules off (#1259)', () => {
     expect(source.closest('label')!.hidden).toBe(true)
     expect(source.value).toBe('')
     expect(api.listExpenses).toHaveBeenCalledTimes(1)
+  })
+
+  it('[browser] does not re-request withdrawn expenses on week navigation, and rechecks on a new activation', async () => {
+    const api = browserApi()
+    api.listExpenses = vi.fn(async () => {
+      throw new EzactoApiError(403, { error: { code: 'module_disabled' } }, null)
+    })
+    const activation = new AbortController()
+    expect((await loadShellSnapshot(api, new Date('2026-08-28T12:00:00Z'), activation.signal)).expensesAvailable).toBe(false)
+    expect((await loadShellSnapshot(api, new Date('2026-09-04T12:00:00Z'), activation.signal)).expensesAvailable).toBe(false)
+    expect(api.listExpenses).toHaveBeenCalledTimes(1)
+    activation.abort()
+    expect((await loadShellSnapshot(api, new Date('2026-09-04T12:00:00Z'), new AbortController().signal)).expensesAvailable).toBe(false)
+    expect(api.listExpenses).toHaveBeenCalledTimes(2)
   })
 
 })
