@@ -70,7 +70,7 @@ lock and reconciliation are unchanged.
 ## Unknown create results
 
 Deel has no idempotency key on timesheet creation, so the transfer log (written
-after Deel answers) cannot alone make a replay safe. Migration 0158 adds
+after Deel answers) cannot alone make a replay safe. Migration 0159 adds
 `deel_transfer_intents`. The runtime writes an intent for a submission's entries
 before the create. The log insert removes it. A definite refusal (HTTP 400, 401,
 403, 404, 422, or a request that never left the process) releases it. Anything

@@ -1,4 +1,4 @@
-/** Bounds of the canonical Deel connection row (migration 0158). */
+/** Bounds of the canonical Deel connection row (migration 0159). */
 export const managedDeelLimits = {
   tokenLength: 4096,
   /** A credential or start-date change needs a sign-in this recent. */

@@ -1,4 +1,5 @@
 import type { Context, Hono } from 'hono'
+import { requireSameOriginForUnsafeSessionRequest } from './auth.js'
 import type { ApiContext } from './context.js'
 import { ApiError, readJsonBody, validationError } from './errors.js'
 import type { OidcAppCodeStorePort } from './oidc.js'
@@ -138,6 +139,16 @@ const generateCode = (): string => {
 const codePattern = /^[0-9]{6}$/
 const tokenPattern = /^[A-Za-z0-9_-]{43}$/
 
+const confirmPage = (token: string): string =>
+  '<!doctype html><html lang="en"><head><meta charset="utf-8">' +
+  '<meta name="viewport" content="width=device-width,initial-scale=1">' +
+  '<meta name="robots" content="noindex"><title>Finish signing in</title></head>' +
+  '<body><main><h1>Finish signing in</h1>' +
+  '<p>Confirm to sign in with this link. It works once.</p>' +
+  '<form method="post" action="/auth/magic-link/verify">' +
+  `<input type="hidden" name="token" value="${token}">` +
+  '<button type="submit">Continue</button></form></main></body></html>'
+
 const accepted = <Bindings extends object>(
   context: Context<ApiContext<Bindings>>
 ) =>
@@ -248,10 +259,36 @@ export const installStaffMagicLinkRoutes = <Bindings extends object>(
     return accepted(context)
   })
 
+  // Issue 740. A GET must not spend the link: mail scanners and link previews
+  // fetch every URL in a message, and would burn it before the person taps.
+  // The GET only renders a confirm page; the POST below redeems.
   app.get('/auth/magic-link/verify', async (context) => {
     await assertLive(context.env)
     const token = context.req.query('token')
     if (typeof token !== 'string' || !tokenPattern.test(token)) {
+      throw new ApiError({
+        status: 400,
+        code: 'magic_link_invalid',
+        message: 'The sign-in link is malformed.',
+      })
+    }
+    return new Response(confirmPage(token), {
+      status: 200,
+      headers: {
+        'cache-control': 'no-store',
+        'referrer-policy': 'no-referrer',
+        'x-robots-tag': 'noindex',
+        'content-type': 'text/html; charset=utf-8',
+      },
+    })
+  })
+
+  app.post('/auth/magic-link/verify', async (context) => {
+    await assertLive(context.env)
+    requireSameOriginForUnsafeSessionRequest(context.req.raw)
+    const raw = await context.req.text()
+    const token = raw.length > 1024 ? null : new URLSearchParams(raw).get('token')
+    if (token === null || !tokenPattern.test(token)) {
       throw new ApiError({
         status: 400,
         code: 'magic_link_invalid',
