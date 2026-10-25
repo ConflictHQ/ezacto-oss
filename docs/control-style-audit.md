@@ -47,7 +47,10 @@ exercised at each width.
 Magic confirmation uses the real production GET handler through a GET-only
 fixture delegate and an unissued format-valid token. Its status, heading, POST
 form action, hidden token and single Continue button are asserted; nothing is
-issued or redeemed. Portal estimates use native HTML/controller code with owned
+issued or redeemed. Its actual cookie-selected scheme, canonical theme marker
+and effective ink are asserted without projecting a scheme onto the page. The
+closed cookie parser follows the existing web first-match/raw-value behavior;
+invalid preferences fall back to system. Portal estimates use native HTML/controller code with owned
 read-only quote responses for coherent sign-in, list, detail and confirmation
 states. Accept only opens confirmation; Cancel closes it, and a POST trap must
 remain unused. Apple connected, recovery and success renderer states have separate

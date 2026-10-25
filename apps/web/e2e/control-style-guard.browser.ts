@@ -7,6 +7,7 @@ import {
 } from '../src/settings-sections.js'
 import { renderPortalInvoicePage } from '../src/portal-invoice/render.js'
 import { quote } from './fixtures/portal-estimate.js'
+import { defaultTheme, themeManifest } from '../src/theme.js'
 import {
   renderAppleDisconnect,
   renderDocumentShell,
@@ -215,11 +216,33 @@ for (const scenario of [
         await expect(
           page.getByRole('button', { name: 'Continue', exact: true }),
         ).toHaveCount(1)
-        await page.evaluate(
-          (scheme) =>
-            document.documentElement.setAttribute('data-ez-scheme', scheme),
+        await expect(page.locator('html')).toHaveAttribute(
+          'data-ez-theme',
+          defaultTheme,
+        )
+        await expect(page.locator('html')).toHaveAttribute(
+          'data-ez-scheme',
           scenario.scheme,
         )
+        const theme = themeManifest[defaultTheme]
+        const ink =
+          scenario.scheme === 'dark' ? theme.darkColors!.ink : theme.colors.ink
+        const rgb = `rgb(${[1, 3, 5].map((offset) => Number.parseInt(ink.slice(offset, offset + 2), 16)).join(', ')})`
+        expect(
+          await page
+            .getByRole('heading', { name: 'Finish signing in', exact: true })
+            .evaluate((node) => getComputedStyle(node).color),
+        ).toBe(rgb)
+        expect(
+          await page
+            .locator('html')
+            .evaluate((node) =>
+              getComputedStyle(node)
+                .getPropertyValue('--ez-ink')
+                .trim()
+                .toLowerCase(),
+            ),
+        ).toBe(ink.toLowerCase())
         await inspect('magic-link-confirmation', { standalone: true })
         // Native portal HTML/controller with owned read-only responses: coherent sign-in, list, detail and confirmation states.
         let portalPosts = 0
@@ -283,9 +306,20 @@ for (const scenario of [
           .getByRole('button', { name: 'Accept this estimate', exact: true })
           .click()
         await expect(page.locator('[data-portal-confirm]')).toBeVisible()
-        await expect(page.locator('[data-portal-actions]')).toBeHidden()
+        await expect(page.locator('[data-portal-confirm-text]')).toContainText(
+          'Accept estimate EST-7 for $1,080.00?',
+        )
+        await expect(page.locator('[data-portal-confirm-text]')).toContainText(
+          'Nothing is charged and no invoice is raised.',
+        )
+        await expect(page.locator('[data-portal-confirm-text]')).toBeFocused()
+        await expect(page.locator('[data-portal-confirm-yes]')).toHaveText(
+          'Confirm: accept this estimate',
+        )
+        expect(portalPosts).toBe(0)
         await inspect('portal-estimates-confirm', { standalone: true })
         await page.getByRole('button', { name: 'Cancel', exact: true }).click()
+        await expect(page.locator('[data-portal-confirm]')).toBeHidden()
         expect(portalPosts).toBe(0)
         // Actual standalone renderers, with owned data and the shipped stylesheet.
         // No portal credentials are minted or saved in screenshots/reports.
@@ -314,7 +348,7 @@ for (const scenario of [
           ['portal-invoice', invoice],
           [
             'document',
-            '<!doctype html><html><head><link rel="stylesheet" href="/assets/ezacto.css"></head><body>' +
+            `<!doctype html><html data-ez-theme="${defaultTheme}"><head><link rel="stylesheet" href="/assets/ezacto.css"></head><body>` +
               renderDocumentShell('Owned document', 'Owned document content') +
               '</body></html>',
           ],
@@ -340,6 +374,10 @@ for (const scenario of [
               document.documentElement.setAttribute('data-ez-scheme', scheme),
             scenario.scheme,
           )
+          await expect(page.locator('html')).toHaveAttribute(
+            'data-ez-theme',
+            defaultTheme,
+          )
           const heading =
             name === 'portal-invoice'
               ? 'Invoice STYLE-1'
@@ -349,6 +387,20 @@ for (const scenario of [
           await expect(
             page.getByRole('heading', { name: heading, exact: true }),
           ).toBeVisible()
+          if (name === 'portal-invoice') {
+            await expect(
+              page.getByRole('link', { name: 'Download PDF', exact: true }),
+            ).toBeVisible()
+            await expect(
+              page.getByRole('link', { name: 'Pay online', exact: true }),
+            ).toBeVisible()
+          }
+          if (name === 'apple-success') {
+            await expect(page.getByRole('status')).toHaveText(
+              'Your Apple authorization has been disconnected. Your workspace records have not been deleted.',
+            )
+            await expect(page.locator('form')).toHaveCount(0)
+          }
           if (name === 'apple-disconnect') {
             const checkbox = page.locator('input[type=checkbox]')
             const glyph = await checkbox.boundingBox()

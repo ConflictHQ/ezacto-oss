@@ -60,7 +60,12 @@
       "observedBorder": "outset",
       "observedTargetHeight": 21,
       "disposition": "implemented; final native matrix required",
-      "fix": "Actual magic-link page loads shipped stylesheet and existing primary-action/auth-card components"
+      "fix": "Actual magic-link page loads shipped stylesheet and existing primary-action/auth-card components",
+      "additional_native_finding": {
+        "evidence": "Native artifact12604982766: requested dark scheme retained light h1 ink rgb(26, 26, 46); root lacked the Precision theme marker.",
+        "reason": "missing-theme-root-marker",
+        "fix": "Actual private GET response sets canonical Precision marker, closed raw-cookie scheme and color-scheme meta. Native guard compares actual attributes and effective ink to canonical web tokens; no scheme projection for this page."
+      }
     },
     {
       "screen": "portal-estimates",
