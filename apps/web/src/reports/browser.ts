@@ -1,3 +1,4 @@
+import { moduleAvailable } from '../module-availability.js'
 import {
   EzactoApiError,
   type ClientRollupMetrics,
@@ -454,6 +455,9 @@ const renderMyHours = (report: Readonly<MyHoursReport>): DocumentFragment => {
   fragment.append(facts, wrapper)
   return fragment
 }
+
+const invoiceReference = (invoice: { id: number; number: string | null }, label: string): HTMLElement =>
+  moduleAvailable('invoices') ? linkElement(invoicePagePath(invoice), label) : textElement('span', label)
 
 const invoiceHref = (
   report: Readonly<UninvoicedReport>,
@@ -1000,7 +1004,7 @@ const renderInvoiced = (
     const invoice = element('th')
     invoice.scope = 'row'
     invoice.append(
-      linkElement(invoicePagePath({ id: row.invoice_id, number: row.number }), row.number),
+      invoiceReference({ id: row.invoice_id, number: row.number }, row.number),
     )
     line.append(invoice)
     const client = element('td')
@@ -1076,10 +1080,7 @@ const renderPaymentsReceived = (
     const invoice = element('th')
     invoice.scope = 'row'
     invoice.append(
-      linkElement(
-        invoicePagePath({ id: row.invoice_id, number: row.invoice_number }),
-        row.invoice_number,
-      ),
+      invoiceReference({ id: row.invoice_id, number: row.invoice_number }, row.invoice_number),
     )
     const client = element('td')
     client.append(linkElement(`/clients/${row.client_id}`, row.client_name))
@@ -2039,10 +2040,7 @@ const detailedTimeCells = (
       // and nobody can find an invoice by that.
       const number = row.invoice_number ?? null
       claim.append(
-        linkElement(
-          invoicePagePath({ id: row.invoice_id, number }),
-          number ?? `Invoice ${row.invoice_id}`,
-        ),
+        invoiceReference({ id: row.invoice_id, number }, number ?? `Invoice ${row.invoice_id}`),
       )
     }
     cells.push(claim)
@@ -2276,6 +2274,7 @@ const renderDetailedTime = (
       ['mark_uninvoiced', 'Mark uninvoiced'],
       ['move', 'Move hours'],
     ] as const) {
+      if (action !== 'move' && !moduleAvailable('invoices')) continue
       const button = textElement('button', label)
       button.type = 'button'
       button.disabled = true
@@ -3836,6 +3835,7 @@ export const createReportsController = (
             ['administrator', 'accounting', 'executive_manager'].includes(active.identity.profile)
             ? {
                 onAction: (action: 'mark_invoiced' | 'mark_uninvoiced' | 'move', entryIds: readonly number[]) => {
+                  if (action !== 'move' && !moduleAvailable('invoices')) return
                   const invoiceId = action === 'mark_invoiced' ? Number(globalThis.prompt('Draft invoice ID')) : undefined
                   const projectId = action === 'move' ? Number(globalThis.prompt('Destination project ID')) : undefined
                   const taskId = action === 'move' ? Number(globalThis.prompt('Destination task ID')) : undefined
@@ -3932,7 +3932,7 @@ export const createReportsController = (
       results.replaceChildren(
         renderUninvoiced(
           report as UninvoicedReport,
-          session !== null && invoiceIdentityCanWrite(session.identity),
+          moduleAvailable('invoices') && session !== null && invoiceIdentityCanWrite(session.identity),
         ),
       )
     } else if (filters.kind === 'invoiced') {

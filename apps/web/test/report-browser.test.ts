@@ -238,6 +238,22 @@ const detailedTimeReport = (
 })
 
 describe('Reports Stage 1 browser controller', () => {
+  it('[browser #1259] keeps historical invoice references and moving time while withdrawing invoice mutations', async () => {
+    writeDocument('/reports?report=detailed-time&from=2026-08-01&to=2026-08-31&grain=entry')
+    document.documentElement.setAttribute('data-invoices-unavailable', '')
+    const executeDetailedTimeAction = vi.fn()
+    const report = detailedTimeReport({ grain: 'entry', rows: [detailedTimeRow({ time_entry_id: 91, invoice_id: 301, invoice_number: '0301' })] })
+    const active = new AbortController()
+    await createReportsController(baseApi({ getDetailedTimeReport: async () => report, executeDetailedTimeAction })).activate(identity('administrator'), active.signal, () => false)
+    expect(document.querySelector('[data-report-results]')?.textContent).toContain('0301')
+    expect(document.querySelector('a[href="/invoices/0301"]')).toBeNull()
+    expect(document.querySelector('[data-detailed-action="mark_invoiced"]')).toBeNull()
+    expect(document.querySelector('[data-detailed-action="mark_uninvoiced"]')).toBeNull()
+    expect(document.querySelector('[data-detailed-action="move"]')).not.toBeNull()
+    expect(executeDetailedTimeAction).not.toHaveBeenCalled()
+    active.abort()
+  })
+
   it('[browser] follows the newest popstate filters when a report request is in flight', async () => {
     writeDocument('/reports?report=uninvoiced&from=2026-08-01&to=2026-08-31')
     let resolveUninvoiced!: (value: {
@@ -863,8 +879,9 @@ describe('Reports Stage 1 browser controller', () => {
     session.abort()
   })
 
-  it('[browser] renders issued invoices and preserves client and status filters', async () => {
+  it.each([true, false])('[browser #1259] renders issued invoices and preserves client and status filters (invoices=%s)', async (invoicesEnabled) => {
     writeDocument('/reports?report=invoiced&from=2026-08-01&to=2026-08-31&client_id=1&status=open')
+    document.documentElement.toggleAttribute('data-invoices-unavailable', !invoicesEnabled)
     const getInvoicedReport = vi.fn(async () => ({
       from: '2026-08-01',
       to: '2026-08-31',
@@ -902,13 +919,15 @@ describe('Reports Stage 1 browser controller', () => {
     expect(results.textContent).toContain('$1,000.00')
     expect(results.textContent).toContain('$750.00')
     // Addressed by the number it shows, leading zero and all, not by its id.
-    expect(results.querySelector('a[href="/invoices/0301"]')?.textContent).toBe('0301')
+    expect(results.textContent).toContain('0301')
+    expect(results.querySelector('a[href="/invoices/0301"]')?.textContent ?? null).toBe(invoicesEnabled ? '0301' : null)
     expect(results.querySelector('a[href="/clients/1"]')?.textContent).toBe('Parent')
     expect(document.querySelector<HTMLSelectElement>('[data-report-invoice-status]')?.value).toBe('open')
   })
 
-  it('[browser] renders payments received with invoice and client drill-throughs', async () => {
+  it.each([true, false])('[browser #1259] renders payments received with invoice and client drill-throughs (invoices=%s)', async (invoicesEnabled) => {
     writeDocument('/reports?report=payments-received&from=2026-08-01&to=2026-08-31&client_id=1')
+    document.documentElement.toggleAttribute('data-invoices-unavailable', !invoicesEnabled)
     const getPaymentsReceivedReport = vi.fn(async () => ({
       from: '2026-08-01', to: '2026-08-31', client_id: 1,
       totals: [{ currency: 'USD', payment_count: 1, payment_cents: 25_000 }],
@@ -938,7 +957,8 @@ describe('Reports Stage 1 browser controller', () => {
     const results = document.querySelector('[data-report-results]')!
     expect(results.textContent).toContain('2026-08-20')
     expect(results.textContent).toContain('$250.00')
-    expect(results.querySelector('a[href="/invoices/0301"]')?.textContent).toBe('0301')
+    expect(results.textContent).toContain('0301')
+    expect(results.querySelector('a[href="/invoices/0301"]')?.textContent ?? null).toBe(invoicesEnabled ? '0301' : null)
   })
 
   it('[browser] ages receivables at the selected period end without mixing currency', async () => {
@@ -3053,8 +3073,9 @@ describe('Reports Stage 1 browser controller', () => {
     session.abort()
   })
 
-  it('[browser #713] groups uninvoiced project rows by client and carries the selection into invoice generation', async () => {
+  it.each([true, false])('[browser #1259 #713] preserves uninvoiced totals and gates generation (invoices=%s)', async (invoicesEnabled) => {
     writeDocument('/reports?report=uninvoiced&from=2026-08-01&to=2026-08-31')
+    document.documentElement.toggleAttribute('data-invoices-unavailable', !invoicesEnabled)
     const getUninvoicedReport = vi.fn(async () => ({
       from: '2026-08-01', to: '2026-08-31', client_id: null, project_id: null,
       totals: [{
@@ -3097,7 +3118,7 @@ describe('Reports Stage 1 browser controller', () => {
     expect(clients[1]!.querySelector('tbody')?.textContent).toContain('Identity')
     expect(clients[1]!.querySelector('tbody')?.textContent).toContain('$100.00')
     expect(clients[0]!.querySelector<HTMLAnchorElement>('.report-row-action')?.getAttribute('href'))
-      .toBe('/invoices/new?client_id=1&project_id=7&from=2026-08-01&to=2026-08-31')
+      .toBe(invoicesEnabled ? '/invoices/new?client_id=1&project_id=7&from=2026-08-01&to=2026-08-31' : undefined)
     session.abort()
   })
 
