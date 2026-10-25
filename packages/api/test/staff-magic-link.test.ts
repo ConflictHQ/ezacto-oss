@@ -202,9 +202,37 @@ describe('staff magic-link verify (link)', () => {
       const html = await res.text()
       expect(html).toContain('<form method="post" action="/auth/magic-link/verify">')
       expect(html).toContain(`name="token" value="${token}"`)
+      expect(html).toContain('href="/assets/ezacto.css"')
+      expect(html).toContain('<button class="primary-action" type="submit">Continue</button>')
     }
     expect(h.sessions.issue).not.toHaveBeenCalled()
     expect((await redeem(h.app, token)).status).toBe(303)
+  })
+
+  it.each([
+    { cookie: undefined, scheme: 'system', meta: 'light dark' },
+    { cookie: 'ezacto_scheme=light', scheme: 'light', meta: 'light' },
+    { cookie: 'ezacto_scheme=dim', scheme: 'dim', meta: 'dark' },
+    { cookie: 'ezacto_scheme=dark', scheme: 'dark', meta: 'dark' },
+    { cookie: 'ezacto_scheme=system', scheme: 'system', meta: 'light dark' },
+    { cookie: 'ezacto_scheme=unknown', scheme: 'system', meta: 'light dark' },
+    { cookie: 'ezacto_scheme=%64ark', scheme: 'system', meta: 'light dark' },
+    { cookie: 'ezacto_scheme=%', scheme: 'system', meta: 'light dark' },
+    { cookie: 'ezacto_scheme=light%22%20UNTRUSTED_SENTINEL', scheme: 'system', meta: 'light dark' },
+    { cookie: 'ezacto_scheme=dim; ezacto_scheme=dark', scheme: 'dim', meta: 'dark' },
+  ])('GET safely renders the closed display preference: $cookie', async ({ cookie, scheme, meta }) => {
+    const h = harness()
+    const res = await h.app.request(`${verifyUrl}?token=${'A'.repeat(43)}`, cookie===undefined ? {} : {headers:{cookie}})
+    expect(res.status).toBe(200)
+    expect(res.headers.get('cache-control')).toBe('no-store')
+    expect(res.headers.get('referrer-policy')).toBe('no-referrer')
+    expect(res.headers.get('set-cookie')).toBeNull()
+    const html = await res.text()
+    expect(html).toContain(`data-ez-theme="precision" data-ez-scheme="${scheme}"`)
+    expect(html).toContain(`<meta name="color-scheme" content="${meta}">`)
+    expect(html).not.toContain('UNTRUSTED_SENTINEL')
+    expect(h.sessions.issue).not.toHaveBeenCalled()
+    expect(h.mailed).toHaveLength(0)
   })
 
   it('GET still answers 400 for a missing or malformed token', async () => {

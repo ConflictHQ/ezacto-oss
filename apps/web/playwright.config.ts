@@ -43,6 +43,10 @@ const topbarCookie =
 export default defineConfig({
   testDir: './e2e',
   testMatch: '**/*.browser.ts',
+  // CI runs these four scenarios in a parallel job; normal local verify still includes them.
+  testIgnore: process.env.EZACTO_SKIP_CONTROL_STYLE_AUDIT === '1'
+    ? '**/control-style-guard.browser.ts'
+    : [],
   fullyParallel: false,
   workers: 1,
   retries: 0,

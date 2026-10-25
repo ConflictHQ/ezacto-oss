@@ -1,0 +1,179 @@
+{
+  "issue": 1260,
+  "baselineCommit": "debf7dcc",
+  "reference": "docs/design-reference-audit.md and shipped Precision tokens; original package not recovered for this audit",
+  "baseline": {
+    "width": 390,
+    "scheme": "light",
+    "navigation": "sidebar",
+    "pagesAndSections": 62,
+    "scope": "Initial visible rendered controls and file-picker pseudo inventory; extended manual/source review identified partially reset standalone targets and Apple checkbox sizing. Final guard requires route/state identity and standalone target dimensions."
+  },
+  "findings": [
+    {
+      "screen": "invoice-detail",
+      "tag": "input::file-selector-button",
+      "reasons": [
+        "non-theme-font",
+        "ua-button-edge"
+      ],
+      "observedFont": "Arial",
+      "observedBorder": "outset",
+      "observedTargetHeight": 44,
+      "disposition": "implemented; final native matrix required",
+      "fix": "Shared token-based file-selector-button rule"
+    },
+    {
+      "screen": "project-detail",
+      "tag": "input::file-selector-button",
+      "reasons": [
+        "non-theme-font",
+        "ua-button-edge"
+      ],
+      "observedFont": "Arial",
+      "observedBorder": "outset",
+      "observedTargetHeight": 44,
+      "disposition": "implemented; final native matrix required",
+      "fix": "Shared token-based file-selector-button rule"
+    },
+    {
+      "screen": "expense-detail",
+      "tag": "input::file-selector-button",
+      "reasons": [
+        "non-theme-font",
+        "ua-button-edge"
+      ],
+      "observedFont": "Arial",
+      "observedBorder": "outset",
+      "observedTargetHeight": 44,
+      "disposition": "implemented; final native matrix required",
+      "fix": "Shared token-based file-selector-button rule"
+    },
+    {
+      "screen": "magic-link-confirmation",
+      "tag": "button",
+      "reasons": [
+        "non-theme-font",
+        "ua-button-edge"
+      ],
+      "observedFont": "Arial",
+      "observedBorder": "outset",
+      "observedTargetHeight": 21,
+      "disposition": "implemented; final native matrix required",
+      "fix": "Actual magic-link page loads shipped stylesheet and existing primary-action/auth-card components",
+      "additional_native_finding": {
+        "evidence": "Native artifact12604982766: requested dark scheme retained light h1 ink rgb(26, 26, 46); root lacked the Precision theme marker.",
+        "reason": "missing-theme-root-marker",
+        "fix": "Actual private GET response sets canonical Precision marker, closed raw-cookie scheme and color-scheme meta. Native guard compares actual attributes and effective ink to canonical web tokens; no scheme projection for this page."
+      }
+    },
+    {
+      "screen": "portal-estimates",
+      "tag": "button",
+      "attribute": "data-portal-request-link",
+      "reasons": [
+        "standalone-target-below-44"
+      ],
+      "observedTargetHeight": 20,
+      "evidence": "Baseline owned-renderer computed metadata; globally revealed state was CSS inventory only, not a coherent page proof.",
+      "disposition": "implemented; final native matrix required",
+      "fix": "Shared low-specificity standalone button minimum44px and padding; coherent sign-in/detail/confirmation regression states"
+    },
+    {
+      "screen": "portal-estimates",
+      "tag": "button",
+      "attribute": "data-portal-decline",
+      "reasons": [
+        "standalone-target-below-44"
+      ],
+      "observedTargetHeight": 20,
+      "evidence": "Baseline owned-renderer computed metadata; globally revealed state was CSS inventory only, not a coherent page proof.",
+      "disposition": "implemented; final native matrix required",
+      "fix": "Shared low-specificity standalone button minimum44px and padding; coherent sign-in/detail/confirmation regression states"
+    },
+    {
+      "screen": "portal-estimates",
+      "tag": "button",
+      "attribute": "data-portal-confirm-no",
+      "reasons": [
+        "standalone-target-below-44"
+      ],
+      "observedTargetHeight": 20,
+      "evidence": "Baseline owned-renderer computed metadata; globally revealed state was CSS inventory only, not a coherent page proof.",
+      "disposition": "implemented; final native matrix required",
+      "fix": "Shared low-specificity standalone button minimum44px and padding; coherent sign-in/detail/confirmation regression states"
+    },
+    {
+      "screen": "portal-estimates",
+      "tag": "input[type=email]",
+      "attribute": "data-portal-email",
+      "reasons": [
+        "standalone-target-below-44"
+      ],
+      "observedTargetHeight": null,
+      "evidence": "Visual baseline exposed partially reset compact field; exact baseline height was not recorded.",
+      "disposition": "implemented; final native matrix required",
+      "fix": "Shared standalone field44px minimum/padding; real-controller sign-in fixture"
+    },
+    {
+      "screen": "apple-disconnect",
+      "tag": "input[type=checkbox]",
+      "reasons": [
+        "text-field-sizing-on-native-checkbox"
+      ],
+      "observedTargetHeight": null,
+      "evidence": "Visual/source review: sign-in-form input rules sized the native checkbox as a text field.",
+      "disposition": "implemented; final native matrix required",
+      "fix": "18px native glyph,44px label target; explicit native geometry assertions"
+    },
+    {
+      "screen": "apple-recovery",
+      "tag": "button",
+      "reasons": [
+        "standalone-target-below-44"
+      ],
+      "observedTargetHeight": null,
+      "evidence": "Source review found unclassed recovery submit in previously untested renderer branch; baseline height not measured.",
+      "disposition": "implemented; final native matrix required",
+      "fix": "Shared standalone button rule and separate coherent recovery-state probe"
+    }
+  ],
+  "intentional": [
+    {
+      "scope": "checkbox/radio/range/color",
+      "reason": "Native selection semantics retained. The parent control inherits theme typography and existing focus/target styles; native internal decoration is not classified as a UA button defect."
+    },
+    {
+      "scope": "binary PDF",
+      "reason": "pdf-lib output has no HTML controls or UA style cascade; document URI annotations are not browser buttons."
+    },
+    {
+      "scope": "email previews",
+      "reason": "Current invoice email preview exposes subject/text, not an HTML web document; built-in reminder HTML contains escaped text paragraphs without links/buttons. Custom HTML is edited as text in the audited settings editor."
+    },
+    {
+      "scope": "standalone dark variants",
+      "reason": "Audit projects the dark root attribute onto owned renderer HTML to test shared token compatibility; does not claim portal preference persistence or new runtime palette behavior."
+    },
+    {
+      "scope": "document shell",
+      "reason": "Exported HTML fragment is tested with the documented host stylesheet, not claimed as a standalone runtime route."
+    },
+    {
+      "scope": "external fonts",
+      "reason": "External font requests are blocked for deterministic local tests. Computed font-family/token selection is tested; downloaded glyph fidelity is not claimed."
+    },
+    {
+      "scope": "native error responses / custom email templates",
+      "reason": "Portal refusals are plain text/JSON; shell not-found is audited. User-authored email HTML is text in settings-templates, not a rendered preview browser page."
+    },
+    {
+      "scope": "ordinary inline links",
+      "reason": "Theme link colors come from --ez-data; their blue appearance is not itself a UA-default finding. Inline privacy/back text links are not button targets. Hover/visited/underline and keyboard focus remain shared token styles."
+    }
+  ],
+  "verification": {
+    "status": "pending final exact-source native matrix; prior4-case focus probe and v2 missing-page probe are NOT acceptance proof",
+    "required": "All4 cases pass route/state identity, default signatures, standalone44px targets, native checkbox/label geometry and keyboard focus; retained CI screenshots/audit metadata linked from PR."
+  }
+}

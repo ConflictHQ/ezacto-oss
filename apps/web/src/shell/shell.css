@@ -10063,3 +10063,52 @@ button[data-first-run-help] {
   outline: 3px solid var(--ez-data);
   outline-offset: -3px;
 }
+
+/* Shared controls also serve standalone authentication and portal documents. */
+:where(a[href]) {
+  text-decoration-thickness: 0.08em;
+  text-underline-offset: 0.16em;
+}
+:where(a[href]:visited) { color: var(--ez-data); }
+:where(a[href]:hover) { text-decoration: underline; }
+input::file-selector-button {
+  font: inherit;
+  color: var(--ez-ink);
+  background: var(--ez-surface);
+  border: 1px solid var(--ez-border);
+  border-radius: var(--ez-radius);
+  padding: 8px 12px;
+  margin-inline-end: 12px;
+  cursor: pointer;
+}
+input::file-selector-button:hover { background: var(--ez-surface-2); }
+.standalone-auth {
+  width: min(100%, 488px);
+  margin: 48px auto;
+  padding: 24px;
+  box-sizing: border-box;
+}
+.standalone-auth .auth-card { box-sizing: border-box; }
+:where(.portal-estimates, .portal-invoice, .apple-disconnect, .standalone-auth) :where(button) {
+  min-height: 44px;
+  padding: 8px 12px;
+  font-weight: 600;
+}
+:where(.portal-estimates, .portal-invoice, .apple-disconnect, .standalone-auth) :where(input:not([type='checkbox']):not([type='radio']):not([type='hidden']), select, textarea) {
+  min-height: 44px;
+  max-width: 100%;
+  box-sizing: border-box;
+  padding: 8px 12px;
+}
+.sign-in-form .apple-disconnect-confirm {
+  display: flex;
+  min-height: 44px;
+}
+.apple-disconnect-confirm input {
+  width: 18px;
+  height: 18px;
+  min-height: 18px;
+  padding: 0;
+  margin: 3px 0 0;
+  accent-color: var(--ez-data);
+}

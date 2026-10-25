@@ -139,15 +139,31 @@ const generateCode = (): string => {
 const codePattern = /^[0-9]{6}$/
 const tokenPattern = /^[A-Za-z0-9_-]{43}$/
 
-const confirmPage = (token: string): string =>
-  '<!doctype html><html lang="en"><head><meta charset="utf-8">' +
+type ConfirmationScheme = 'system' | 'light' | 'dim' | 'dark'
+
+/** Match the web display-cookie parser: first exact name, raw value, closed preference. */
+const confirmationScheme = (cookie: string | undefined): ConfirmationScheme => {
+  for (const part of (cookie ?? '').split(';')) {
+    const separator = part.indexOf('=')
+    if (separator < 0 || part.slice(0, separator).trim() !== 'ezacto_scheme') continue
+    const value = part.slice(separator + 1).trim()
+    return value === 'light' || value === 'dim' || value === 'dark' ? value : 'system'
+  }
+  return 'system'
+}
+
+// compile-theme-tokens.mjs requires Precision as the only OSS/default theme.
+// The native web audit compares this marker and effective ink to canonical web tokens.
+const confirmPage = (token: string, scheme: ConfirmationScheme): string =>
+  `<!doctype html><html lang="en" data-ez-theme="precision" data-ez-scheme="${scheme}"><head><meta charset="utf-8">` +
+  `<meta name="color-scheme" content="${scheme === 'system' ? 'light dark' : scheme === 'dim' ? 'dark' : scheme}">` +
   '<meta name="viewport" content="width=device-width,initial-scale=1">' +
-  '<meta name="robots" content="noindex"><title>Finish signing in</title></head>' +
-  '<body><main><h1>Finish signing in</h1>' +
+  '<meta name="robots" content="noindex"><title>Finish signing in</title><link rel="stylesheet" href="/assets/ezacto.css"></head>' +
+  '<body><main class="standalone-auth"><section class="auth-card"><h1>Finish signing in</h1>' +
   '<p>Confirm to sign in with this link. It works once.</p>' +
   '<form method="post" action="/auth/magic-link/verify">' +
   `<input type="hidden" name="token" value="${token}">` +
-  '<button type="submit">Continue</button></form></main></body></html>'
+  '<button class="primary-action" type="submit">Continue</button></form></section></main></body></html>'
 
 const accepted = <Bindings extends object>(
   context: Context<ApiContext<Bindings>>
@@ -272,7 +288,7 @@ export const installStaffMagicLinkRoutes = <Bindings extends object>(
         message: 'The sign-in link is malformed.',
       })
     }
-    return new Response(confirmPage(token), {
+    return new Response(confirmPage(token, confirmationScheme(context.req.header('cookie'))), {
       status: 200,
       headers: {
         'cache-control': 'no-store',

@@ -12,6 +12,15 @@ export default {
   ...production,
   async fetch(request, env, context) {
     const url = new globalThis.URL(request.url)
+    // The style audit exercises the real scanner-safe confirmation GET. Only
+    // this GET receives local signing material: request/send and redemption
+    // POST remain unconfigured, and no link is issued or consumed by the fixture.
+    if (request.method === 'GET' && url.pathname === '/auth/magic-link/verify') {
+      return production.fetch(request, {
+        ...env,
+        MAGIC_LINK_SIGNING_KEY: 'AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAg',
+      }, context)
+    }
     if (url.pathname === '/__ezacto_browser_fixture__/scheduled-notices' || url.pathname === '/__ezacto_browser_fixture__/scheduled-dispatch') {
       if (request.method !== 'POST' || request.headers.get('x-ezacto-browser-fixture-control') !== 'start-end-round-trip')
         return new globalThis.Response(null, { status: 403 })
