@@ -46,6 +46,15 @@ export {
   type BillRuntimeOptions,
 } from './bill/runtime.js'
 export {
+  createManagedBillRuntime,
+  type ManagedBillOpenedCredentials,
+  type ManagedBillRuntime,
+  type ManagedBillRuntimeOptions,
+  type ManagedBillRuntimeStore,
+  type ManagedBillState,
+  type ManagedBillStatus,
+} from './bill/managed.js'
+export {
   createScheduledReconciliation as createScheduledBillReconciliation,
   type ScheduledReconciliationOptions as ScheduledBillReconciliationOptions,
 } from './bill/reconcile-schedule.js'
