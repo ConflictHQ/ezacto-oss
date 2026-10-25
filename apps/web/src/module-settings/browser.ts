@@ -150,7 +150,7 @@ const moduleDescriptions: Readonly<Record<string, { label: string; warning: stri
   expenses: {
     label: 'Expenses',
     warning:
-      'Disabling hides the Expenses navigation link and returns 404 from expense API endpoints. Existing expense records are preserved.',
+      'Disabling hides the Expenses navigation link and refuses expense API calls. Existing expense records are preserved.',
   },
   activity_log: {
     label: 'Activity log',

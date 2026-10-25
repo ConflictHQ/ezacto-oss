@@ -85,18 +85,18 @@ credential alone does not make a disabled module available. See the
 | --- | --- |
 | `SSO_ENABLED=false` | Provider sign-in choices and SSO domain settings disappear. Existing password and magic-link methods remain, subject to their own configuration. API-token login in `ez` is unchanged. |
 | `BACKUPS_ENABLED=false` | Company backup controls, history and download links disappear. Local CLI backup, restore, bundle verification and decryption remain operator recovery tools; they do not call the disabled server backup routes. |
-| `INVOICES_ENABLED=false` | Invoice, estimate/recurring and sending controls and their dependent settings, report choices and onboarding links are withdrawn. Time tracking and independent reports remain available; a retained financial summary must not fetch a withdrawn invoice endpoint. |
+| `INVOICES_ENABLED=false` | Invoice, estimate/recurring and sending controls and their dependent settings and links are withdrawn. Historical invoice reports remain readable where their native report endpoint permits them; invoice numbers become text and invoice actions disappear. Time tracking and independent summaries must not fetch withdrawn invoice collections. |
 | `ACCOUNTING_ENABLED=false` | Accounting connection prompts, provider-specific invoice status/actions and accounting settings disappear. Manual native invoice records remain available when invoices are enabled; they are not an accounting-provider connection. This flag does not switch off contractor payouts or standalone payment providers. |
 | Organization `expenses=false` | Expense navigation, entry forms, expense report/export choices and generation options disappear. Time tracking remains available. |
 | Organization `own_money=false` | Personal payment and staff-invoice surfaces show their unavailable state rather than suggesting setup or submission. Administrative payment permissions are separate. |
-| Team unavailable | Team navigation and teammate-selection actions follow the team-status capability and the person's access. Do not assume an organization JSON key changes that capability. |
+| Team unavailable | The runtime reads the existing organization `team` state and exposes Team status. Navigation and bookmarked pages follow that capability and the person's access; status discovery precedes protected reads and setup controls. |
 | Client portal unavailable | Do not offer portal setup or links when no portal capability is supplied. The current native module-settings API does not expose a `client_portal` toggle. |
 
 The native organization module-settings API accepts `approval`, `expenses`,
-`own_money` and `activity_log`. Although the domain inventory also names `team`
-and `client_portal`, those names are not currently writable module settings.
-They are not additional environment variables. Do not add undocumented keys to
-configuration expecting them to grant or revoke access.
+`own_money` and `activity_log`. The runtime also reads the existing organization `team` key, but that key is not
+writable through this API. `client_portal` is named in the domain inventory but
+has no implemented native toggle. Neither is an additional environment variable;
+do not invent configuration keys expecting them to grant or revoke access.
 
 The CLI help and report catalog are intentionally available offline and list
 client-supported operations. They are not a list of enabled instance modules.
