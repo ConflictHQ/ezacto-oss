@@ -81,13 +81,33 @@ separate; no silent change to a prior run's adapter interpretation is allowed.
 Adapter identities are frozen per run
 (`CLOCKIFY_ADAPTERS` in [`csv-clockify.ts`](../packages/migrate/src/csv-clockify.ts)).
 `clockify-detailed-cli@1` is the existing CLI reader: ISO or month-first dates,
-first of any repeated header. `clockify-detailed-browser@1`
+first of any repeated header. `clockify-detailed-browser@2`
 (`createClockifyBrowserAdapter({ exporterZone })`) is the browser contract: ISO
 dates only (any slash date refuses the file), a repeated header is a file error,
 the source header is bounded to 40 columns before projection, a wall-clock time
 in a daylight-saving gap is rejected for that row, and midnight spans, repeated
 hours, seconds and duration/clock differences each carry a warning naming the
 line. Neither reader converts zones. A change of reading is a new identity.
+
+Browser `@2` also rejects formula-like cells in **every source column**, including
+ignored columns and headers. Unnamed columns are refused with their physical
+header line and column index rather than silently dropping their values. The earlier `clockify-detailed-browser@1` was a
+pre-runtime contract, with no production consumer or persisted browser-run
+executor; it is superseded, not silently replayed through `@2`. The CLI reader
+stays `clockify-detailed-cli@1`: its ISO/month-first interpretation and first
+repeated-header behavior remain unchanged, as does its treatment of ignored
+formula-like cells. Exporter-zone options are copied when constructing a browser
+reader; a later caller mutation cannot change that reader's interpretation.
+
+Vendor CSV source admission enforces the existing 5 MiB, 50,000-row, 40-column
+and 10,000-character decoded-field limits **before adapter projection**, including
+columns the adapter would ignore. The tokenizer stops when a source bound is
+exceeded; a rejected source never invokes vendor projection. File errors retain
+the physical record start, and browser header diagnostics use the header's
+physical line even after blank lines. These are source safety bounds, not new
+CLI date or time interpretation. Committed invented fixtures and diagnostic
+expectations live in `packages/migrate/test/fixtures/clockify-browser`.
+
 
 Require unrounded export durations and `HH:MM:SS` duration output. Clockify's
 [rounding guide](https://clockify.me/help/track-time-and-expenses/time-rounding)

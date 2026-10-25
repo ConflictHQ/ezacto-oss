@@ -1,0 +1,4 @@
+Email,Client,Project,Task,Description,Billable,Start Date,Start Time,End Date,End Time,Duration (h)
+fixture@example.invalid,Fixture studio,Website,General,DST gap,Yes,2026-03-08,02:15:00,2026-03-08,03:15:00,01:00:00
+fixture@example.invalid,Fixture studio,Website,General,Repeated hour kept as written,Yes,2026-11-01,01:15:00,2026-11-01,01:45:00,00:30:00
+fixture@example.invalid,Fixture studio,Website,General,DST offset never guessed,Yes,2026-11-01,00:30:00,2026-11-01,02:30:00,03:00:00
