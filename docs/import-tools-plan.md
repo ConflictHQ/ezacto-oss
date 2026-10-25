@@ -279,3 +279,11 @@ store invariants are pinned by a reusable suite, `describeApplyContract` in
 `packages/migrate/test/csv-apply-suite.ts`, which any SQLite (and later D1)
 store must pass; an in-memory fake runs it today. This is contract only: nothing
 in production imports it, and it does not make the browser import available.
+
+### Native planner foundation (#1180)
+
+The reusable implementation boundary and native acceptance are documented in
+[csv-browser-planner.md](csv-browser-planner.md). Registration/staging are
+explicit mutations; direct preview performs only reads. Portable modules and
+native SQLite primitives are distinct from the still-gated HTTP/UI/apply chain
+and from the separately gated Worker/D1 adaptation.

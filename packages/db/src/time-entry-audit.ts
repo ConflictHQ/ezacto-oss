@@ -85,8 +85,9 @@ const snapshotObject = `json_object(${snapshotFields
 /**
  * The outbox insert recording one on-behalf change. Run it as a follow-up of
  * the write it describes (`executeAtomicTrackedMutation`, `executeAtomicWrite`):
- * it reads `changes()` and, for a create, `last_insert_rowid()` from the
- * statement before it.
+ * it reads `changes()` from the preceding statement. For a create, the
+ * target is the newest time row in this same serialized batch: intervening
+ * atomic ledger follow-ups may have changed last_insert_rowid().
  */
 export const timeEntryOnBehalfEvent = (change: TimeEntryOnBehalfChange): CompiledQuery => {
   const eventId = crypto.randomUUID()
@@ -124,7 +125,7 @@ export const timeEntryOnBehalfEvent = (change: TimeEntryOnBehalfChange): Compile
           SELECT max(aggregate_sequence) FROM event_outbox
           WHERE aggregate_type = 'time_entry' AND aggregate_id = target.id
         ), 0) + 1 AS sequence
-        FROM (SELECT ${change.action === 'create' ? 'last_insert_rowid()' : '?'} AS id) target
+        FROM (SELECT ${change.action === 'create' ? '(SELECT max(id) FROM time_entries)' : '?'} AS id) target
       ) subject
       WHERE changes() = 1`,
     params: [

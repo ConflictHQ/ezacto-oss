@@ -1,3 +1,4 @@
+import { csvBrowserDatasetMigration } from './migrations/0164_csv_browser_dataset.js'
 import { placeholderPlanningMigration } from './migrations/0163_placeholder_planning.js'
 import { planningRevisionsMigration } from './migrations/0162_planning_revisions.js'
 import { managedDeelConnectionMigration } from './migrations/0160_managed_deel_connection.js'
@@ -1684,6 +1685,7 @@ const migrations = [
   { id: '0161_managed_bill_connection', statements: managedBillConnectionMigration },
   { id: '0162_planning_revisions', statements: planningRevisionsMigration },
   { id: '0163_placeholder_planning', statements: placeholderPlanningMigration },
+  { id: '0164_csv_browser_dataset', statements: csvBrowserDatasetMigration },
 ] as const
 
 // Fixtures assert against this rather than re-listing ids: a hand-copied ledger merges

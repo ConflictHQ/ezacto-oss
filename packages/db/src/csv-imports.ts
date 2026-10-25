@@ -113,12 +113,38 @@ export const createCsvImportStore = (database: Database) => ({
     runId: number
     sourceId: string
     sourceKey: string
+    /** Optional evidence supplied by a modern adapter at the original write. Never inferred later. */
+    sourceLine?: number
+    sourceSeconds?: number
     now: string
   }): CompiledQuery {
+    if (input.sourceLine === undefined && input.sourceSeconds === undefined) {
+      // Preserve the original CLI statement, including compatibility with
+      // pre-browser schemas. Unknown historical metadata stays unknown.
+      return {
+        sql: `INSERT INTO csv_import_entries (run_id, source_id, source_key, time_entry_id, created_at)
+          VALUES (?, ?, ?, last_insert_rowid(), ?)`,
+        params: [input.runId, input.sourceId, input.sourceKey, input.now],
+      }
+    }
+    if (
+      !Number.isSafeInteger(input.sourceLine) ||
+      (input.sourceLine ?? 0) < 1 ||
+      !Number.isSafeInteger(input.sourceSeconds) ||
+      (input.sourceSeconds ?? -1) < 0
+    )
+      throw new RangeError('Invalid CSV source evidence')
     return {
-      sql: `INSERT INTO csv_import_entries (run_id, source_id, source_key, time_entry_id, created_at)
-        VALUES (?, ?, ?, last_insert_rowid(), ?)`,
-      params: [input.runId, input.sourceId, input.sourceKey, input.now],
+      sql: `INSERT INTO csv_import_entries (run_id, source_id, source_key, time_entry_id, created_at, source_line, source_seconds)
+        VALUES (?, ?, ?, last_insert_rowid(), ?, ?, ?)`,
+      params: [
+        input.runId,
+        input.sourceId,
+        input.sourceKey,
+        input.now,
+        input.sourceLine ?? null,
+        input.sourceSeconds ?? null,
+      ],
     }
   },
 })
