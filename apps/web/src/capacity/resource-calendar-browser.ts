@@ -50,13 +50,25 @@ export const createResourceCalendarController = (api: ResourceCalendarApi, legac
     if ([...person.options].some(option => option.value === selected)) person.value = selected
   }
   const planningHost = find<HTMLElement>('[data-capacity-planning]'), placeholderHost = find<HTMLElement>('[data-capacity-placeholders]')
+  const entryProjects = () => directory.filter(row => row.is_active && (query?.view !== 'project' || row.id === query.project_id))
   const planning = legacy.planning ? createPlanningEntry(planningHost, {
     ...legacy.planning,
-    listProjects: async () => directory.filter(row => row.is_active),
+    listProjects: async () => entryProjects(),
     listAllocations: async () => allocations.filter(row => report?.people.some(person => person.person_id === row.user_id)),
     listTimeOff: async (range, signal) => (await legacy.planning!.listTimeOff(range, signal)).filter(row => report?.people.some(person => person.person_id === row.user_id)),
   }, () => void load(true)) : null
-  const placeholders = legacy.placeholders ? createPlaceholderPlanningController(placeholderHost, legacy.placeholders, () => void load()) : null
+  const placeholders = legacy.placeholders ? createPlaceholderPlanningController(placeholderHost, {
+    ...legacy.placeholders,
+    list: async (range, signal) => {
+      const selected = query
+      if (!selected || selected.person_id !== undefined) return []
+      const selectedProject = selected.view === 'project' ? selected.project_id : undefined
+      if (selected.view === 'project' && selectedProject === undefined) return []
+      const requestedRange = { ...range, ...(selectedProject === undefined ? {} : { project_id: selectedProject }) }
+      const rows = await legacy.placeholders!.list(requestedRange, signal)
+      return selected.view === 'project' ? rows.filter(row => row.project_id === selected.project_id) : rows
+    },
+  }, () => void load()) : null
   const clear = () => {
     generation++; operation?.abort(); operation = null
     planning?.unmount(); placeholders?.clear()
@@ -91,9 +103,10 @@ export const createResourceCalendarController = (api: ResourceCalendarApi, legac
     const children: Node[] = report.people.length ? [scroll] : [element('p', 'No people in this calendar scope.')]
     const demand = element('section'); demand.setAttribute('aria-label', 'Unassigned demand'); demand.append(element('h2', 'Unassigned demand'))
     const list = element('ul')
-    for (const row of report.unassigned) list.append(element('li', `${row.name} · ${directory.find(item => item.id === row.project_id)?.name ?? 'Project'} · ${weekHeading(row.week_start)} · ${hoursText(row.planned_seconds)} planned`))
-    demand.append(report.unassigned.length ? list : element('p', 'No unassigned demand in these weeks.'))
-    if (report.unassigned_truncated) demand.append(element('p', 'More unassigned demand exists. Narrow the project scope to see it.'))
+    const demandRows = query.person_id === undefined ? report.unassigned : []
+    for (const row of demandRows) list.append(element('li', `${row.name} · ${directory.find(item => item.id === row.project_id)?.name ?? 'Project'} · ${weekHeading(row.week_start)} · ${hoursText(row.planned_seconds)} planned`))
+    demand.append(demandRows.length ? list : element('p', query.person_id === undefined ? 'No unassigned demand in these weeks.' : 'Select All people to view unassigned demand.'))
+    if (query.person_id === undefined && report.unassigned_truncated) demand.append(element('p', 'More unassigned demand exists. Narrow the project scope to see it.'))
     children.push(demand); grid.replaceChildren(...children)
     timeline.replaceChildren(element('h2', 'Dated allocations'))
     const visiblePeople = new Map(report.people.map(person => [person.person_id, person.name]))
@@ -145,7 +158,7 @@ export const createResourceCalendarController = (api: ResourceCalendarApi, legac
       const people = report.people.map(person => ({ id: person.person_id, name: person.name }))
       if (administrator && planning) { planning.mount(); await planning.refresh(people, planningRange, signal) }
       if (!current(version, signal)) return
-      if (scheduleManager && placeholders) await placeholders.refresh({ signal, range: planningRange, weeks: report.week_starts, people, projects: directory.filter(row => row.is_active), administrator })
+      if (scheduleManager && placeholders && selectedQuery.person_id === undefined) await placeholders.refresh({ signal, range: planningRange, weeks: report.week_starts, people, projects: entryProjects(), administrator })
       if (current(version, signal)) status.textContent = ''
     } catch (error) {
       if (!current(version, signal)) return

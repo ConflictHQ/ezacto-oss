@@ -46,7 +46,7 @@ export interface PlaceholderAssignment {
 
 export interface PlaceholderPlanningApi {
   list(
-    range: PlanningRange,
+    range: PlanningRange & { readonly project_id?: number },
     signal?: AbortSignal,
   ): Promise<readonly PlaceholderPlan[]>;
   listDefinitions(

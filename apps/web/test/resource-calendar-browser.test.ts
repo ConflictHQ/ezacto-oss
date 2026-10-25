@@ -5,6 +5,8 @@ import { EzactoApiError } from '@conflict-hq/ezacto-client'
 import { createCapacityController } from '../src/capacity/browser.js'
 import { renderCapacityPage } from '../src/capacity/render.js'
 import { calendarPages, calendarWindow, timelinePosition, type ResourceCalendarApi } from '../src/capacity/resource-calendar-model.js'
+import type { CapacityApi, PlanningApi } from '../src/capacity/model.js'
+import type { PlaceholderPlanningApi } from '../src/capacity/placeholder-model.js'
 
 const context = { time_zone: 'America/Los_Angeles', week_start_day: 'monday', today: '2026-10-04', current_week_start: '2026-09-28' } as const
 const projection = (id = 3): ResourceCalendar => ({
@@ -18,10 +20,10 @@ const fixture = () => ({
   projects: vi.fn(async () => ({ data: [{ id: 7, name: 'Owned project', is_active: true }], page: { next_cursor: null } })),
   allocations: vi.fn(async () => ({ data: [{ id: 6, version: 2, user_id: 3, project_id: 7, project_name: 'Owned project', start_date: '2026-10-01', end_date: '2026-10-02', planned_seconds_per_week: 36000 }], page: { next_cursor: null } })),
 })
-const mount = (api: ResourceCalendarApi) => {
+const mount = (api: ResourceCalendarApi, legacy: Pick<CapacityApi, 'planning' | 'placeholders'> = {}) => {
   document.body.innerHTML = renderCapacityPage('capacity')
   const old = vi.fn(async () => { throw new Error('Legacy capacity must not be read') })
-  return { controller: createCapacityController({ calendar: api, getCapacity: old }), old }
+  return { controller: createCapacityController({ ...legacy, calendar: api, getCapacity: old }), old }
 }
 const input = (label: string) => [...document.querySelectorAll('label')].find(node => node.firstChild?.textContent === label)!.querySelector('select')!
 afterEach(() => { document.body.replaceChildren(); vi.restoreAllMocks(); vi.useRealTimers() })
@@ -167,5 +169,79 @@ describe('calendar bounds', () => {
     const read = vi.fn(async () => ({ data: [1], page: { next_cursor: 'same-opaque-cursor' } }))
     await expect(calendarPages(read, new AbortController().signal)).rejects.toThrow('repeated page')
     expect(read).toHaveBeenCalledTimes(2)
+  })
+})
+
+describe('calendar scope in reused administrator editors', () => {
+  const editorFixture = () => {
+    const api = fixture()
+    api.projects.mockResolvedValue({ data: [{ id: 1, name: 'Other project', is_active: true }, { id: 7, name: 'Selected project', is_active: true }], page: { next_cursor: null } })
+    const updateAllocation = vi.fn(async () => ({}))
+    const planning: PlanningApi = {
+      listProjects: async () => [], listAllocations: async () => [], listTimeOff: async () => [],
+      createAllocation: async () => ({}), updateAllocation, deleteAllocation: async () => ({}),
+      createTimeOff: async () => ({}), updateTimeOff: async () => ({}), deleteTimeOff: async () => ({}),
+    }
+    const list = vi.fn(async () => [
+      { id: 21, placeholder_id: 8, name: 'Selected demand', project_id: 7, project_name: 'Selected project', start_date: '2026-09-28', end_date: '2026-10-02', planned_seconds_per_week: 7200, state: 'open' as const, version: 0, assigned_allocation_id: null },
+      { id: 22, placeholder_id: 8, name: 'Other demand', project_id: 1, project_name: 'Other project', start_date: '2026-09-28', end_date: '2026-10-02', planned_seconds_per_week: 36000, state: 'open' as const, version: 0, assigned_allocation_id: null },
+    ])
+    const placeholders: PlaceholderPlanningApi = {
+      list, listDefinitions: async () => [{ id: 8, name: 'Shared role', is_active: true, version: 0 }],
+      createDefinition: async () => ({}), updateDefinition: async () => ({}), archiveDefinition: async () => ({}),
+      create: async () => ({}), update: async () => ({}), archive: async () => ({}), assign: async () => { throw new Error('Unused') },
+    }
+    const mounted = mount(api, { planning, placeholders })
+    const session = new AbortController()
+    const ready = async () => vi.waitFor(() => expect(document.querySelector('[data-capacity-status]')!.textContent).toBe(''))
+    const projectScope = async () => {
+      input('Scope').value = 'project'; input('Scope').dispatchEvent(new Event('change')); await ready()
+      input('Project').value = '7'; input('Project').dispatchEvent(new Event('change')); await ready()
+    }
+    return { ...mounted, api, session, projectScope, ready, list, updateAllocation }
+  }
+  it('defaults a new allocation to the selected project and resets the default on a new scope', async () => {
+    const fixture = editorFixture(); await fixture.controller.activate(fixture.session.signal, { administrator: true })
+    expect([...document.querySelector<HTMLSelectElement>('[data-planning-allocation-form] [name="project_id"]')!.options].map(option => option.value)).toEqual(['1', '7'])
+    await fixture.projectScope()
+    const picker = () => document.querySelector<HTMLSelectElement>('[data-planning-allocation-form] [name="project_id"]')!
+    expect(picker().value).toBe('7')
+    expect([...picker().options].map(option => option.value)).toEqual(['7'])
+    input('Project').value = '1'; input('Project').dispatchEvent(new Event('change')); await fixture.ready()
+    expect(picker().value).toBe('1')
+  })
+  it('keeps off-project demand out of the reused list, totals and project editor choices', async () => {
+    const fixture = editorFixture(); await fixture.controller.activate(fixture.session.signal, { administrator: true }); await fixture.projectScope()
+    const host = document.querySelector<HTMLElement>('[data-capacity-placeholders]')!
+    expect(host.textContent).toContain('Selected demand')
+    expect(host.textContent).not.toContain('Other demand')
+    expect(fixture.list).toHaveBeenLastCalledWith(expect.objectContaining({ project_id: 7 }), expect.any(AbortSignal))
+    expect(host.querySelectorAll('[data-placeholder-rows] tbody tr')).toHaveLength(1)
+    expect([...host.querySelector<HTMLSelectElement>('[data-placeholder-plan-form] [name="project_id"]')!.options].map(option => option.value)).toEqual(['', '7'])
+  })
+  it('withdraws all unassigned rows under a person filter without another unassigned data read', async () => {
+    const fixture = editorFixture(); await fixture.controller.activate(fixture.session.signal, { administrator: true }); await fixture.projectScope()
+    const reads = fixture.list.mock.calls.length
+    input('Person').value = '3'; input('Person').dispatchEvent(new Event('change')); await fixture.ready()
+    const host = document.querySelector<HTMLElement>('[data-capacity-placeholders]')!
+    expect(host.hidden).toBe(true)
+    expect(host.textContent).not.toContain('Selected demand')
+    expect(host.textContent).not.toContain('Other demand')
+    expect(fixture.list).toHaveBeenCalledTimes(reads)
+    expect(document.querySelector('[aria-label="Unassigned demand"]')!.textContent).toContain('Select All people')
+    expect(document.querySelector('[aria-label="Unassigned demand"]')!.textContent).not.toContain('Unassigned design')
+  })
+  it('preserves the edit project and conflict draft during authoritative refresh', async () => {
+    const fixture = editorFixture(); await fixture.controller.activate(fixture.session.signal, { administrator: true }); await fixture.projectScope()
+    document.querySelector<HTMLButtonElement>('[data-planning-allocations] button[aria-label^="Edit allocation"]')!.click()
+    const form = document.querySelector<HTMLFormElement>('[data-planning-allocation-form]')!
+    const hours = form.elements.namedItem('hours') as HTMLInputElement; hours.value = '7.25'
+    fixture.updateAllocation.mockRejectedValueOnce(new EzactoApiError(409, { error: { code: 'allocation_changed', current: { id: 6, version: 3, user_id: 3, project_id: 7, start_date: '2026-10-01', end_date: '2026-10-02', planned_seconds_per_week: 36000 } } }, null))
+    form.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }))
+    await vi.waitFor(() => expect(fixture.updateAllocation).toHaveBeenCalledTimes(1)); await fixture.ready()
+    expect((form.elements.namedItem('id') as HTMLInputElement).value).toBe('6')
+    expect((form.elements.namedItem('project_id') as HTMLSelectElement).value).toBe('7')
+    expect(hours.value).toBe('7.25')
+    expect(document.querySelector('[data-planning-allocation-status]')!.textContent).toContain('Your edits are kept')
   })
 })
