@@ -176,6 +176,9 @@ export const PRESERVED_TABLES: ReadonlySet<string> = new Set([
   // Connection incarnations must remain monotonic across destructive resets.
   // The wipe advances this singleton while connection triggers are lifted.
   'quickbooks_connection_generation',
+  // The migration seeds this singleton and its retain trigger refuses deletion.
+  // The wipe advances its generation and disconnects it (issue 1252).
+  'bill_managed_connection',
 ])
 
 /**
@@ -224,6 +227,9 @@ const wipeStatements = (objects: DemoSchemaObjects): readonly DemoSeedStatement[
   // Connection deletion is a lifecycle change even while its triggers are lifted.
   // Invalidate pending grants even if the subsequent bootstrap never resumes.
   { text: 'UPDATE quickbooks_connection_generation SET generation = generation + 1 WHERE singleton = 1', bindings: [] },
+  // The wipe emptied the users and links this connection was bound to. Drop the
+  // sealed credential and binding; the generation advances, so no stale command applies.
+  { text: "UPDATE bill_managed_connection SET generation = generation + 1, status = 'disconnected', company_id = NULL, binding_company_id = NULL, sealed_credential = NULL, connected_by_user_id = NULL, health_at = NULL WHERE singleton = 1", bindings: [] },
   { text: 'UPDATE contractor_source_clock SET revision = revision + 1 WHERE id = 1', bindings: [] },
   { text: "INSERT INTO contractor_source_versions(scope,revision) SELECT 'all',revision FROM contractor_source_clock WHERE id=1 ON CONFLICT(scope) DO UPDATE SET revision=excluded.revision", bindings: [] },
   // Preserved, but not carried over either: a template version records who
