@@ -34,6 +34,21 @@ describe('worker entry', () => {
     expect((await app.request('/invoices', {}, { ...env, ...keys, ACCOUNTING_ENABLED: 'nope' })).status).toBe(500)
   })
 
+  it('[#1217] renders each native provider independently without provider requests', async () => {
+    const configured = { BILL_DEV_KEY: 'dev', BILL_COMPANY_ID: 'company', BILL_USERNAME: 'user', BILL_PASSWORD: 'pass', WISE_TOKEN: 'wise', DEEL_TOKEN: 'deel', DEEL_SYNC_START_DATE: '2026-01-01' }
+    const page = await (await app.request('/settings/company', {}, { ...env, ...configured })).text()
+    expect(page).not.toContain('data-accounting-unavailable')
+    expect(page).toContain('data-quickbooks-unavailable')
+    for (const id of ['bill', 'wise', 'deel']) expect(page).toContain(`data-accounting-provider="${id}" data-provider-available="true"`)
+    expect(page).toContain('data-accounting-provider="quickbooks" data-provider-available="false"')
+    expect(page).toContain('data-accounting-quickbooks hidden')
+    const off = await (await app.request('/settings/company', {}, { ...env, ...configured, ACCOUNTING_ENABLED: 'false' })).text()
+    expect(off).toContain('data-accounting-unavailable')
+    for (const id of ['quickbooks', 'bill', 'wise', 'deel']) expect(off).toContain(`data-accounting-provider="${id}" data-provider-available="false"`)
+    const incomplete = await (await app.request('/settings/company', {}, { ...env, BILL_DEV_KEY: 'dev', DEEL_TOKEN: 'deel', DEEL_SYNC_START_DATE: 'not-a-date' })).text()
+    expect(incomplete).toContain('data-accounting-unavailable')
+  })
+
   it('[#1217] accepts only true or false for ACCOUNTING_ENABLED', () => {
     expect(moduleAvailability({}).accounting).toBe(true)
     expect(moduleAvailability({ ACCOUNTING_ENABLED: 'true' }).accounting).toBe(true)

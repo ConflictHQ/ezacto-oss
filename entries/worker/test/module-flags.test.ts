@@ -250,6 +250,23 @@ describe('operator module switches (issue 1254)', () => {
     )
   })
 
+  it('[accounting #1217] reports composed native providers independently without contacting them', async () => {
+    const flags = { QUICKBOOKS_CLIENT_ID: undefined, QUICKBOOKS_CLIENT_SECRET: undefined,
+      BILL_DEV_KEY: 'private-bill-dev', BILL_COMPANY_ID: 'private-bill-company', BILL_USERNAME: 'private-bill-user', BILL_PASSWORD: 'private-bill-password',
+      WISE_TOKEN: 'private-wise-token', DEEL_TOKEN: 'private-deel-token', DEEL_SYNC_START_DATE: '2026-01-01' }
+    const ready = await deploy(flags)
+    const html = await (await ready.app.request('/settings/company', {}, ready.env)).text()
+    expect(html).not.toContain('data-accounting-unavailable')
+    expect(html).toContain('data-quickbooks-unavailable')
+    for (const id of ['bill', 'wise', 'deel']) expect(html).toContain(`data-accounting-provider="${id}" data-provider-available="true"`)
+    for (const secret of Object.values(flags)) if (secret?.startsWith('private-')) expect(html).not.toContain(secret)
+    expect(outbound).toEqual([])
+    const off = await deploy({ ...flags, ACCOUNTING_ENABLED: 'false' })
+    const disabled = await (await off.app.request('/settings/company', {}, off.env)).text()
+    expect(disabled).toContain('data-accounting-unavailable')
+    expect(outbound).toEqual([])
+  })
+
   it('[invoices] refuses the invoice API, sends nothing, and sends the screens home', async () => {
     const on = await deploy({})
     const off = await deploy({ INVOICES_ENABLED: 'false' })

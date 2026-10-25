@@ -39,6 +39,7 @@ export {
 export {
   createBillMirrorSubscriber,
   createBillRuntime,
+  billConfigured,
   type BillConfig,
   type BillConnectionStatus,
   type BillMirrorSource,
@@ -142,6 +143,7 @@ export {
 export {
   createDeelSyncRuntime,
   type DeelSyncClient,
+  deelConfigurationProblem,
   type DeelSyncConfig,
   type DeelSyncPreview,
   type DeelSyncPreviewResult,

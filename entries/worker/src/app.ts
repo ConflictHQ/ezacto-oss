@@ -1,3 +1,4 @@
+import { billConfigured, deelConfigurationProblem } from '@ezacto/integrations'
 import { installOrganizationHolidayRoutes } from '@ezacto/api'
 import { installModuleGate, moduleAvailability } from '@ezacto/api'
 import type { OrganizationHolidayRepository } from '@ezacto/core'
@@ -208,6 +209,7 @@ import {
   webAssets,
   type DemoSignInAccount,
   type SignInProvider,
+  type AccountingProviderAvailability,
 } from '@ezacto/web'
 import type {
   EmailLogPager,
@@ -798,6 +800,18 @@ export const createApp = (
     ])
     // Read first: an invalid flag refuses the page, as it refuses everything.
     const modules = moduleAvailability(env)
+    // These are local runtime metadata reads, never provider health probes or connection reads.
+    // Keep QuickBooks separate: another configured provider must not wake its invoice requests.
+    const providers: AccountingProviderAvailability = modules.accounting && !demoDeployment(env)
+      ? services === undefined
+        ? configuredAccountingProviders(env)
+        : {
+            quickbooks: services.quickBooks !== undefined,
+            bill: services.bill?.status().configured === true,
+            wise: services.wise?.configured() === true,
+            deel: (await services.deelSync?.status())?.configured === true,
+          }
+      : { quickbooks: false, bill: false, wise: false, deel: false }
     const live = (method: SignInMethod): boolean =>
       enabled === null ||
       (enabled.find((state) => state.method === method)?.enabled ?? true)
@@ -817,9 +831,8 @@ export const createApp = (
       attachmentsAvailable: services === undefined
         ? 'ATTACHMENTS' in env && env.ATTACHMENTS !== undefined
         : services.attachments !== undefined,
-      accountingAvailable: modules.accounting && (services === undefined
-        ? accountingConfigured(env)
-        : services.quickBooks !== undefined),
+      accountingProviders: providers,
+      accountingAvailable: modules.accounting && Object.values(providers).some(Boolean),
       backupsAvailable: modules.backups,
       invoicesAvailable: modules.invoices,
       ssoAvailable: modules.sso,
@@ -2720,14 +2733,16 @@ export const workItemCredentialConfigured = (env: AppEnv, provider: WorkItemProv
   return typeof value === 'string' && value !== ''
 }
 
-/** Whether the page has QuickBooks keys to offer; the operator switch is read beside it. */
-const accountingConfigured = (env: AppEnv): boolean => {
-  const keys = env as Pick<WorkerEnv, 'QUICKBOOKS_CLIENT_ID' | 'QUICKBOOKS_CLIENT_SECRET'>
-  return (
-    !demoDeployment(env) &&
-    keys.QUICKBOOKS_CLIENT_ID !== undefined &&
-    keys.QUICKBOOKS_CLIENT_SECRET !== undefined
-  )
+/** Same native configuration predicates as the composed services, without constructing providers. */
+const configuredAccountingProviders = (env: AppEnv): AccountingProviderAvailability => {
+  const keys = env as WorkerEnv
+  return {
+    quickbooks: keys.QUICKBOOKS_CLIENT_ID !== undefined && keys.QUICKBOOKS_CLIENT_SECRET !== undefined,
+    bill: billConfigured({ devKey: keys.BILL_DEV_KEY, companyId: keys.BILL_COMPANY_ID,
+      username: keys.BILL_USERNAME, password: keys.BILL_PASSWORD, replyToUserId: undefined, environment: keys.BILL_ENVIRONMENT }),
+    wise: keys.WISE_TOKEN !== undefined,
+    deel: deelConfigurationProblem({ token: keys.DEEL_TOKEN, startDate: keys.DEEL_SYNC_START_DATE }) === null,
+  }
 }
 
 export const demoDeployment = (env: AppEnv): boolean =>

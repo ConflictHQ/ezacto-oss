@@ -156,22 +156,27 @@ const findInvoiceByNumber = async (
   return null
 }
 
-export const createBillRuntime = (
-  options: Readonly<BillRuntimeOptions>,
-): BillRuntime => {
-  const { config, links, source } = options
+/** The same local configuration predicate used by SSR; it performs no provider request. */
+const billCredentials = (config: Readonly<BillConfig>): BillCredentials | null => {
   const devKey = trimmed(config.devKey)
   const companyId = trimmed(config.companyId)
   const username = trimmed(config.username)
   const password = trimmed(config.password)
+  return devKey === null || companyId === null || username === null || password === null
+    ? null : { devKey, companyId, username, password }
+}
+export const billConfigured = (config: Readonly<BillConfig>): boolean => billCredentials(config) !== null
+
+export const createBillRuntime = (
+  options: Readonly<BillRuntimeOptions>,
+): BillRuntime => {
+  const { config, links, source } = options
+  const companyId = trimmed(config.companyId)
   const replyToUserId = trimmed(config.replyToUserId)
   const sandbox = config.environment?.trim().toLowerCase() === 'sandbox'
   const baseUrl = sandbox ? BILL_SANDBOX_BASE_URL : BILL_PRODUCTION_BASE_URL
 
-  const credentials: BillCredentials | null =
-    devKey === null || companyId === null || username === null || password === null
-      ? null
-      : { devKey, companyId, username, password }
+  const credentials = billCredentials(config)
 
   // A single session, reused. BILL expires on idle rather than age, so a
   // deployment that mirrors regularly signs in once and a quiet one signs in

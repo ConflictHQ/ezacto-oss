@@ -188,7 +188,7 @@ const isoDate = /^\d{4}-\d{2}-\d{2}$/u
 const validDate = (value: string): boolean =>
   isoDate.test(value) && new Date(`${value}T00:00:00Z`).toISOString().slice(0, 10) === value
 
-const configurationProblem = (config: DeelSyncConfig): string | null => {
+export const deelConfigurationProblem = (config: DeelSyncConfig): string | null => {
   if (config.token === undefined || config.token.trim() === '') return 'no Deel token is configured'
   if (config.startDate === undefined || config.startDate.trim() === '') {
     return 'no sync start date is configured'
@@ -251,7 +251,7 @@ const sameIds = (left: readonly number[], right: readonly number[]): boolean => 
 export const createDeelSyncRuntime = (
   options: DeelSyncRuntimeOptions & { client?: DeelSyncClient },
 ): DeelSyncRuntime => {
-  const problem = configurationProblem(options.config)
+  const problem = deelConfigurationProblem(options.config)
   const startDate = options.config.startDate?.trim() ?? ''
   const client: DeelSyncClient | null =
     problem !== null

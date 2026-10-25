@@ -911,8 +911,9 @@ describe('billing a client through BILL (issue 542)', () => {
     authentication: { kind: 'session' },
   }
 
-  const activate = async (api: Partial<ClientDirectoryApi>) => {
+  const activate = async (api: Partial<ClientDirectoryApi>, billUnavailable = false) => {
     writeDocument()
+    if (billUnavailable) document.documentElement.setAttribute('data-bill-unavailable', '')
     const controller = createClientDirectoryController({
       ...base,
       ...api,
@@ -933,6 +934,18 @@ describe('billing a client through BILL (issue 542)', () => {
     })
     expect(section().hidden).toBe(false)
     expect(toggle().checked).toBe(true)
+  })
+
+  it('[browser #1217] makes no BILL calls when only another provider is available', async () => {
+    document.documentElement.setAttribute('data-bill-unavailable', '')
+    try {
+      const getBillStatus = vi.fn(), getBillClientDelivery = vi.fn(), setBillClientDelivery = vi.fn()
+      await activate({ getBillStatus, getBillClientDelivery, setBillClientDelivery }, true)
+      expect(section().hidden).toBe(true)
+      expect(getBillStatus).not.toHaveBeenCalled()
+      expect(getBillClientDelivery).not.toHaveBeenCalled()
+      expect(setBillClientDelivery).not.toHaveBeenCalled()
+    } finally { document.documentElement.removeAttribute('data-bill-unavailable') }
   })
 
   it('[security] hides it entirely where the deployment cannot reach BILL', async () => {

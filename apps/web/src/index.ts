@@ -40,3 +40,5 @@ export * from './shell/render.js'
 export * from './week-grid/model.js'
 export * from './portal-estimates/render.js'
 export * from './portal-invoice/render.js'
+
+export * from './accounting-providers.js'
