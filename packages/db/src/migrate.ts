@@ -2,6 +2,7 @@ import { planningCalendarFeedsMigration } from './migrations/0168_planning_calen
 import { deelPaymentStatusMigration } from './migrations/0166_deel_payment_status.js'
 import { isOrdinaryD1SchemaStatement } from './internal/d1-cold-migrations.js'
 import { csvStagingInstanceMigration } from './migrations/0169_csv_staging_instance.js'
+import { csvApplyRuntimeMigration } from './migrations/0170_csv_apply_runtime.js'
 import { csvBrowserDatasetMigration } from './migrations/0164_csv_browser_dataset.js'
 import { nonzeroStoppedTimeMigration } from './migrations/0165_nonzero_stopped_time.js'
 import { placeholderPlanningMigration } from './migrations/0163_placeholder_planning.js'
@@ -1695,6 +1696,7 @@ const migrations = [
   { id: '0166_deel_payment_status', statements: deelPaymentStatusMigration },
   { id: '0168_planning_calendar_feeds', statements: planningCalendarFeedsMigration },
   { id: '0169_csv_staging_instance', statements: csvStagingInstanceMigration },
+  { id: '0170_csv_apply_runtime', statements: csvApplyRuntimeMigration },
 ] as const
 
 // Fixtures assert against this rather than re-listing ids: a hand-copied ledger merges

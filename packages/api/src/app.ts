@@ -1,3 +1,4 @@
+import { installCsvImportApplyRoutes } from './csv-import-apply.js'
 import { Hono } from 'hono'
 import { csvStagingCapabilities, isCsvStagingPath, installCsvImportStagingRoutes } from './csv-import-staging.js'
 import {
@@ -37,7 +38,7 @@ export const createApiApp = <Bindings extends object = object>(
       context.res = errorResponse(new Error('Conditional responses are forbidden for authenticated API resources'), context)
     }
   })
-  app.get('/api/v1/csv-import-capabilities', c => c.json({data:csvStagingCapabilities(options.csvImportStaging)},200,{'cache-control':'no-store'}))
+  app.get('/api/v1/csv-import-capabilities', c => c.json({data:csvStagingCapabilities(options.csvImportStaging,options.csvImportApply!==undefined)},200,{'cache-control':'no-store'}))
   app.use('*', (context,next)=> {
     if (isCsvStagingPath(context.req.path) && options.csvImportStaging === undefined) throw new ApiError({status:404,code:'capability_unsupported',message:'Browser CSV staging is not supported by this runtime.'})
     return next()
@@ -115,6 +116,10 @@ export const createApiApp = <Bindings extends object = object>(
     )
   }
   if(options.csvImportStaging)installCsvImportStagingRoutes(api,options.csvImportStaging)
+  if(options.csvImportApply){
+    if(!options.csvImportStaging)throw new Error('CSV apply requires private staging')
+    installCsvImportApplyRoutes(api,options.csvImportStaging,options.csvImportApply)
+  }
   options.installApi?.(api)
   app.route('/api/v1', api)
   if (options.installHarvestV2 !== undefined) {

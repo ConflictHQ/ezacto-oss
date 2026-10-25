@@ -3,6 +3,9 @@ import { createDeelPaymentStatusStore } from '@ezacto/db'
 import { createDeelPaymentStatusRuntime } from '@ezacto/integrations'
 import { createDeelStageStore } from '@ezacto/db'
 import { createDeelStagingRuntime } from '@ezacto/integrations'
+import { createCsvImportApply } from './csv-apply-service.js'
+import { createCsvApplyRunStore } from '@ezacto/db'
+import { reportWorkerError, runtimeTraceId, type WorkerErrorReporter } from '../../worker/src/error-reporting.js'
 import { moduleAvailability } from '@ezacto/api'
 import { createOrganizationHolidayRepository } from '@ezacto/db'
 import { demoDeployment } from '../../worker/src/app.js'
@@ -333,6 +336,7 @@ export interface ContainerRuntime {
 }
 
 export interface ContainerRuntimeOptions {
+  reportError?: WorkerErrorReporter
   emailProvider?: HttpEmailProvider
   verifyEmailProvider?: () => Promise<void>
 }
@@ -448,13 +452,25 @@ export const createContainerRuntime = async (
   const database = createIdempotentSqlite(handle)
   let csvStaging: Awaited<ReturnType<typeof createCsvImportStaging>> | undefined
   let csvSweep: ReturnType<typeof setInterval> | undefined
+  let csvApply: ReturnType<typeof createCsvImportApply> | undefined
+  let csvApplyTimer: ReturnType<typeof setInterval> | undefined
+  const reportCsvFailure=(cause:unknown)=>{
+    console.error('ezacto: CSV apply work deferred')
+    reportWorkerError(options.reportError,cause,{phase:'queue',traceId:runtimeTraceId()})
+  }
   let queue: ContainerEmailQueue | undefined
   let outboxScheduler: ContainerOutboxScheduler | undefined
   try {
     prepareContainerDatabase(database)
     await chmod(config.databasePath, 0o600)
 
-    csvStaging = await createCsvImportStaging({database:handle,databasePath:config.databasePath,directory:join(config.dataDirectory,'csv-staging')})
+    const csvRuns=createCsvApplyRunStore(handle)
+    csvStaging = await createCsvImportStaging({database:handle,databasePath:config.databasePath,directory:join(config.dataDirectory,'csv-staging'),verifyApplyBinding:csvRuns.verifyStageBinding})
+    if(!demoDeployment(config.appEnv)){
+      csvApply=createCsvImportApply({database:handle,staging:csvStaging.port,privateStaging:csvStaging.apply,reportError:reportCsvFailure})
+      csvApplyTimer=setInterval(()=>{void csvApply!.tick().catch(reportCsvFailure)},5000)
+      csvApplyTimer.unref()
+    }
     await csvStaging.sweep()
     csvSweep=setInterval(()=>{void csvStaging!.sweep().catch(()=>console.error('ezacto: private CSV expiry cleanup deferred'))},60_000)
     csvSweep.unref()
@@ -920,6 +936,7 @@ export const createContainerRuntime = async (
 
     const services: RuntimeServices = {
       csvImportStaging:csvStaging.port,
+      ...(csvApply?{csvImportApply:csvApply.port}:{}),
       bootstrap: (input) => bootstrapInstanceContainer(database, input),
       enrollOwnerPassword: (input) =>
         enrollInstanceOwnerPasswordContainer(database, input),
@@ -1370,6 +1387,8 @@ export const createContainerRuntime = async (
         if (closed) return
         closed = true
         try {
+          if(csvApplyTimer)clearInterval(csvApplyTimer)
+          await csvApply?.close().catch(reportCsvFailure)
           await outboxScheduler!.close(timeoutMs)
           await queue!.close(timeoutMs)
           database.pragma('wal_checkpoint(TRUNCATE)')
@@ -1381,6 +1400,8 @@ export const createContainerRuntime = async (
       },
     }
   } catch (error) {
+    if(csvApplyTimer)clearInterval(csvApplyTimer)
+    await csvApply?.close().catch(reportCsvFailure)
     await outboxScheduler?.close().catch(() => undefined)
     await queue?.close().catch(() => undefined)
     if(csvSweep)clearInterval(csvSweep)

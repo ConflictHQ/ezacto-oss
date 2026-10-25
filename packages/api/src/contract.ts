@@ -1,5 +1,6 @@
 import { calendarFeedOperations, calendarFeedSchemas } from './calendar-feed-contract.js'
 import { deelStagingOperations, deelStagingSchemas } from './deel-staging-contract.js'
+import { csvImportApplyOperations, csvImportApplySchemas } from './csv-import-apply-contract.js'
 import { csvImportStagingOperations, csvImportStagingSchemas } from './csv-import-staging-contract.js'
 import { moduleForPath } from './module-availability.js'
 import { organizationHolidayOperations, organizationHolidaySchemas } from './organization-holiday-contract.js'
@@ -3848,6 +3849,7 @@ export const apiContractOperations: readonly ApiContractOperation[] = [
   ...invoiceElevationOperations,
   ...outboundWebhookOperations,
   ...csvImportStagingOperations,
+  ...csvImportApplyOperations,
 ];
 
 const reconciliationStatusSchema: JsonSchema = {
@@ -11578,6 +11580,7 @@ export const apiContractSchemas: Readonly<Record<string, JsonSchema>> = {
   },
   EffectiveClientRateCardEnvelope: envelope("EffectiveClientRateCard"),
   ...csvImportStagingSchemas,
+  ...csvImportApplySchemas,
 };
 
 const openApiPath = (runtimePath: string): string =>

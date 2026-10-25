@@ -1,3 +1,4 @@
+import type { CsvImportApplyPort } from './csv-import-apply-port.js'
 import type { Hono } from 'hono'
 import type { CsvImportStagingPort } from './csv-import-staging-port.js'
 import type {
@@ -29,6 +30,7 @@ export type ApiInstaller<Bindings extends object> = (api: Hono<ApiContext<Bindin
 
 export interface CreateApiAppOptions<Bindings extends object> {
   csvImportStaging?: CsvImportStagingPort
+  csvImportApply?: CsvImportApplyPort
   /** Fail-closed API authentication. Without resolvers every /api/v1 request is 401. */
   authentication?: ApiAuthentication
   /** Entry-owned routes such as health, identity, or static web mounting. */
