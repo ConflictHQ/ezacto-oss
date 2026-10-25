@@ -223,3 +223,10 @@ The upload wizard, mapping preview UI and Worker/D1 CSV execution are not yet
 available. See the [first browser import plan](import-tools-plan.md) for the
 selected Clockify contract, reuse boundaries, safety gates and implementation
 stories. Current CSV import remains CLI and container (SQLite) only.
+
+## Browser planner foundation
+
+The native planner and sealed-dataset ledger are described in
+[csv-browser-planner.md](csv-browser-planner.md). These workspace modules do not
+enable a browser upload, route or screen. The CLI instructions and mapping
+language above retain their existing behavior.

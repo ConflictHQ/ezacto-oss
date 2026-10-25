@@ -3834,6 +3834,15 @@ export const csvImportRuns = sqliteTable(
     lastError: text('last_error'),
     ...timestamps,
     finishedAt: text('finished_at'),
+    browserPlanJson: text('browser_plan_json'),
+    browserPlanId: text('browser_plan_id'),
+    browserState: text('browser_state', { enum: ['draft', 'partial', 'complete', 'cancelled'] }),
+    confirmedByUserId: integer('confirmed_by_user_id').references(() => users.id, { onDelete: 'restrict' }),
+    leaseHolder: text('lease_holder'),
+    leaseActorUserId: integer('lease_actor_user_id').references(() => users.id, { onDelete: 'restrict' }),
+    leaseGeneration: integer('lease_generation').notNull().default(0),
+    leaseExpiresAt: integer('lease_expires_at'),
+    committedChunks: integer('committed_chunks').notNull().default(0),
   },
   (table) => [uniqueIndex('csv_import_runs_identity').on(table.sourceId, table.fileSha256)],
 )
@@ -3848,6 +3857,8 @@ export const csvImportEntries = sqliteTable(
       .references(() => csvImportRuns.id, { onDelete: 'restrict' }),
     sourceId: text('source_id').notNull(),
     sourceKey: text('source_key').notNull(),
+    sourceLine: integer('source_line'),
+    sourceSeconds: integer('source_seconds'),
     timeEntryId: integer('time_entry_id').references(() => timeEntries.id, {
       onDelete: 'set null',
     }),
@@ -4304,3 +4315,35 @@ export const organizationHolidays = sqliteTable('organization_holidays', {
   version: integer('version').notNull().default(0),
   ...timestamps,
 })
+
+/** Registered browser CSV source identity; row dedup stays in csvImportEntries. */
+export const csvImportDatasets = sqliteTable('csv_import_datasets', {
+  singleton: integer('singleton').notNull().default(1).unique(),
+  sourceId: text('source_id').primaryKey(),
+  workspaceIdentity: text('workspace_identity').notNull().unique(),
+  createdAt: text('created_at').notNull(),
+})
+export const csvImportChunks = sqliteTable('csv_import_chunks', {
+  actorUserId: integer('actor_user_id').notNull().references(() => users.id, { onDelete: 'restrict' }),
+  runId: integer('run_id').notNull().references(() => csvImportRuns.id, { onDelete: 'restrict' }),
+  chunkIndex: integer('chunk_index').notNull(),
+  requestSha256: text('request_sha256').notNull(),
+  sourceKey: text('source_key').notNull(),
+  sourceLine: integer('source_line').notNull(),
+  sourceSeconds: integer('source_seconds').notNull(),
+  insertedRows: integer('inserted_rows').notNull(),
+  alreadyImportedRows: integer('already_imported_rows').notNull(),
+  committedAt: text('committed_at').notNull(),
+}, (table) => [primaryKey({ columns: [table.runId, table.chunkIndex] }), uniqueIndex('csv_import_chunks_source_position').on(table.runId, table.sourceKey)])
+
+/** Committed setup lineage survives cancellation; it is not a row dedup store. */
+export const csvImportSetup = sqliteTable('csv_import_setup', {
+  actorUserId: integer('actor_user_id').notNull().references(() => users.id, { onDelete: 'restrict' }),
+  runId: integer('run_id').notNull().references(() => csvImportRuns.id, { onDelete: 'restrict' }),
+  setupKey: text('setup_key').notNull(),
+  entityKind: text('entity_kind').notNull(),
+  entityId: integer('entity_id').notNull(),
+  requestSha256: text('request_sha256').notNull(),
+  createdAt: text('created_at').notNull(),
+  policyFactsSha256: text('policy_facts_sha256'),
+}, (table) => [primaryKey({ columns: [table.runId, table.setupKey] })])

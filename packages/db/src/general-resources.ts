@@ -11,6 +11,7 @@ import {
 } from '@ezacto/core'
 import type BetterSqlite3 from 'better-sqlite3'
 import { sql, type SQL } from 'drizzle-orm'
+import { SQLiteSyncDialect } from 'drizzle-orm/sqlite-core'
 import type { BetterSQLite3Database } from 'drizzle-orm/better-sqlite3'
 import type { DrizzleD1Database } from 'drizzle-orm/d1'
 import type * as schema from './schema.js'
@@ -535,7 +536,17 @@ const validatedUserEmail = async (
   return address
 }
 
-export const createGeneralResourceRepository = (database: Database): GeneralResourceRepository => ({
+/** Trusted DB-only atomic append seam. Statements run immediately after a
+ * successful base INSERT, before default relations. A refusing statement rolls
+ * the entire canonical creation back. No SQL enters the core resource port. */
+export interface GeneralResourceCreateHooks {
+  followUps(kind: GeneralResourceKind, targetTable: string): readonly AtomicStatement[]
+  afterRelations?(kind: GeneralResourceKind, targetTable: string): readonly AtomicStatement[]
+}
+export const createGeneralResourceRepository = (
+  database: Database,
+  createHooks?: GeneralResourceCreateHooks,
+): GeneralResourceRepository => ({
   async highWatermark(kind, filters, viewer) {
     const definition = definitions[kind]
     const rows = await database.all<{ maximum: number | null }>(
@@ -699,6 +710,7 @@ export const createGeneralResourceRepository = (database: Database): GeneralReso
             ],
           },
         ]
+        statements.push(...(createHooks?.followUps(kind, definition.table) ?? []))
         if (kind === 'roles' && roleUserIds !== undefined && roleUserIds.length > 0) {
           statements.push({
             text: `INSERT INTO user_roles (user_id, role_id, created_at, updated_at)
@@ -719,7 +731,7 @@ export const createGeneralResourceRepository = (database: Database): GeneralReso
           statements.push({
             text: `INSERT INTO user_emails
               (user_id, address, verified_at, is_primary, created_at, updated_at)
-              VALUES (last_insert_rowid(), ?, ?, 1, ?, ?) RETURNING id`,
+              VALUES ((SELECT max(id) FROM users), ?, ?, 1, ?, ?) RETURNING id`,
             params: [String(relationEmail), now, now, now],
           })
         }
@@ -760,6 +772,7 @@ export const createGeneralResourceRepository = (database: Database): GeneralReso
             },
           )
         }
+        statements.push(...(createHooks?.afterRelations?.(kind, definition.table) ?? []))
         const atomicRows = await runAtomic(database, statements)
         rows = atomicRows[0] ?? []
       } else if (kind === 'user-assignments') {
@@ -789,18 +802,27 @@ export const createGeneralResourceRepository = (database: Database): GeneralReso
               ...guard.bindings,
             ],
           },
+          ...(createHooks?.followUps(kind, definition.table) ?? []),
           {
             text: `UPDATE users
               SET version = version + 1, team_write_token = NULL, updated_at = ?
               WHERE id = ? AND changes() = 1 RETURNING id`,
             params: [now, Number(effectiveInput.userId)],
           },
+          ...(createHooks?.afterRelations?.(kind, definition.table) ?? []),
         ])
         rows = atomicRows[0] ?? []
       } else {
-        rows = await database.all<Record<string, unknown>>(
-          sql`INSERT INTO ${identifier(definition.table)} (${sql.join(columns, sql`, `)}) VALUES (${sql.join(values, sql`, `)}) RETURNING *`,
-        )
+        const insert = sql`INSERT INTO ${identifier(definition.table)} (${sql.join(columns, sql`, `)}) VALUES (${sql.join(values, sql`, `)}) RETURNING *`
+        if (createHooks) {
+          const compiled = new SQLiteSyncDialect().sqlToQuery(insert)
+          const atomicRows = await runAtomic(database, [
+            { text: compiled.sql, params: compiled.params },
+            ...createHooks.followUps(kind, definition.table),
+            ...(createHooks.afterRelations?.(kind, definition.table) ?? []),
+          ])
+          rows = atomicRows[0] ?? []
+        } else rows = await database.all<Record<string, unknown>>(insert)
       }
       if (rows.length === 0)
         throw new GeneralResourceError('not_found', 'The resource does not exist.')
