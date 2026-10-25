@@ -202,3 +202,43 @@ describe('Deel sync routes: preview, then confirm', () => {
     expect(deps.runtime.run).not.toHaveBeenCalled()
   })
 })
+
+describe('Deel sync routes over the managed runtime (#1238)', () => {
+  it('consumes the tenant-bound runtime: unconfigured and no provider request while no connection exists', async () => {
+    const { createManagedDeelSyncRuntime } = await import('../../integrations/src/index.js')
+    const fetchSpy = vi.fn(async () => new Response('{}'))
+    const never = async () => {
+      throw new Error('storage must not be read without a connection')
+    }
+    const runtime = createManagedDeelSyncRuntime({
+      credentials: { current: async () => null, generation: async () => 0 },
+      source: {
+        directory: never,
+        entries: never,
+        log: never,
+        logged: never,
+        record: never,
+        beginRun: never,
+        finishRun: never,
+      },
+      settings: { get: never, claimAutomaticDay: never, organizationTimezone: never },
+      fetch: fetchSpy,
+      now: () => new Date('2026-10-20T00:00:00.000Z'),
+    })
+    const base = dependencies()
+    const { api } = fixture('administrator', { ...base, runtime })
+
+    const status = await api.request('/deel-sync')
+    expect(status.status).toBe(200)
+    expect(await status.json()).toMatchObject({
+      configured: false,
+      reason: 'no Deel connection is configured',
+    })
+    const preview = await api.request('/deel-sync/preview', json(window))
+    expect(preview.status).toBe(409)
+    expect(await preview.json()).toMatchObject({ error: { code: 'deel_sync_unconfigured' } })
+    const run = await api.request('/deel-sync/runs', json({ ...window, entry_ids: [1] }))
+    expect(run.status).toBe(409)
+    expect(fetchSpy).not.toHaveBeenCalled()
+  })
+})
