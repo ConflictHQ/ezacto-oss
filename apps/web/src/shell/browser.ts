@@ -1896,6 +1896,8 @@ export const mountShell = async (
     const offered = snapshot?.expensesAvailable !== false
     invoiceExpenseSummary.closest('label')!.hidden = !offered
     available = available && offered
+    invoiceExpenseHint.hidden = available
+    invoiceExpenseHint.textContent = available ? '' : offered ? 'No uninvoiced expenses for this selection.' : 'This source is unavailable.'
     if (available === !invoiceExpenseSummary.disabled) return
     if (available) {
       invoiceExpenseSummary.value = invoiceExpenseChoice
@@ -1904,8 +1906,6 @@ export const mountShell = async (
       invoiceExpenseSummary.value = ''
     }
     invoiceExpenseSummary.disabled = !available
-    invoiceExpenseHint.hidden = available
-    invoiceExpenseHint.textContent = available ? '' : offered ? 'No uninvoiced expenses for this selection.' : 'This source is unavailable.'
   }
 
   const configureNoteInput = (
@@ -7281,7 +7281,7 @@ export const mountShell = async (
         return
       }
       if (rawTimeSummary === '' && rawExpenseSummary === '') {
-        invoiceResult.textContent = 'Include time, expenses, or both.'
+        invoiceResult.textContent = snapshot?.expensesAvailable === false ? 'Include tracked time.' : 'Include time, expenses, or both.'
         return
       }
       input = {

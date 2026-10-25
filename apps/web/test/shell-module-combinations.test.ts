@@ -37,6 +37,7 @@ describe('dependent surfaces with operator modules off (#1259)', () => {
 
   it.each(cases)('[browser] settings reject dependent reads with $label off', async ({ off }) => {
     const fetched = prepare(off)
+    sessionStorage.setItem('ezacto.identity', JSON.stringify(identity))
     const getQuickBooksConnection = vi.fn(async () => ({ configured: true, connection: null }))
     const getInvoiceDefaults = vi.fn(async () => ({}))
     const getInvoiceReminders = vi.fn(async () => ({}))
@@ -60,6 +61,11 @@ describe('dependent surfaces with operator modules off (#1259)', () => {
       expect(getInvoiceDefaults).not.toHaveBeenCalled()
       expect(getInvoiceReminders).not.toHaveBeenCalled()
       expect(hidden('[data-money-nav]')).toBe(true)
+      document.querySelector<HTMLButtonElement>('[data-command-trigger]')!.click()
+      const command = document.querySelector<HTMLInputElement>('[name="command"]')!
+      command.value = 'invo'
+      command.dispatchEvent(new Event('input', { bubbles: true }))
+      expect(document.querySelector('[data-command-option][href^="/invoices"]')).toBeNull()
     }
     if (off.includes('accounting')) expect(getQuickBooksConnection).not.toHaveBeenCalled()
     if (off.includes('backups')) expect(fetched.filter((url) => /\/api\/v1\/backup(?:\/|$)/u.test(url))).toEqual([])
