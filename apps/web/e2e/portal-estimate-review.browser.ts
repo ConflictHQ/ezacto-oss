@@ -4,45 +4,7 @@ import { expect, test, type Page } from '@playwright/test'
  * response flow. The browser harness captures delivery locally; no external
  * provider sends mail during these tests. */
 
-const version = 'a'.repeat(64)
-
-const quote = {
-  id: 7,
-  number: 'EST-7',
-  subject: 'Site rebuild',
-  currency: 'USD',
-  state: 'sent',
-  issue_date: '2026-10-01',
-  amount_cents: 108_000,
-  sent_at: '2026-10-02T09:00:00.000Z',
-  accepted_at: null,
-  declined_at: null,
-  purchase_order: null,
-  notes: 'Valid for the scope listed.',
-  tax_rate_ppm: 80_000,
-  tax2_rate_ppm: null,
-  discount_rate_ppm: null,
-  tax_amount_cents: 8_000,
-  tax2_amount_cents: 0,
-  discount_amount_cents: 0,
-  line_items: [
-    {
-      position: 1,
-      kind: 'Service',
-      description: 'Design',
-      quantity: 10,
-      unit_price_cents: 10_000,
-      amount_cents: 100_000,
-      taxed: true,
-      taxed2: false,
-    },
-  ],
-  version,
-  expires_on: '2026-10-20',
-  expired: false,
-  answerable: true,
-  response: null,
-}
+import { quote, version } from './fixtures/portal-estimate.js'
 
 const answered = {
   ...quote,

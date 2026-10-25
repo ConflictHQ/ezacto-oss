@@ -142,12 +142,12 @@ const tokenPattern = /^[A-Za-z0-9_-]{43}$/
 const confirmPage = (token: string): string =>
   '<!doctype html><html lang="en"><head><meta charset="utf-8">' +
   '<meta name="viewport" content="width=device-width,initial-scale=1">' +
-  '<meta name="robots" content="noindex"><title>Finish signing in</title></head>' +
-  '<body><main><h1>Finish signing in</h1>' +
+  '<meta name="robots" content="noindex"><title>Finish signing in</title><link rel="stylesheet" href="/assets/ezacto.css"></head>' +
+  '<body><main class="standalone-auth"><section class="auth-card"><h1>Finish signing in</h1>' +
   '<p>Confirm to sign in with this link. It works once.</p>' +
   '<form method="post" action="/auth/magic-link/verify">' +
   `<input type="hidden" name="token" value="${token}">` +
-  '<button type="submit">Continue</button></form></main></body></html>'
+  '<button class="primary-action" type="submit">Continue</button></form></section></main></body></html>'
 
 const accepted = <Bindings extends object>(
   context: Context<ApiContext<Bindings>>

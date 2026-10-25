@@ -191,6 +191,17 @@ jobs:
         if: failure()
         run: node scripts/ci-failure-ledger.mjs --classify "$RUNNER_TEMP/test.log" --job "test (${{ matrix.name }})"
 
+      - name: retain owned control-style audit evidence
+        if: always() && matrix.name == 'web'
+        uses: actions/upload-artifact@v4
+        with:
+          name: control-style-audit-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            apps/web/test-results/control-style-guard*/*.png
+            apps/web/test-results/control-style-guard*/control-style-observations.json
+          if-no-files-found: warn
+          retention-days: 7
+
   secrets:
     runs-on: ubuntu-latest
     timeout-minutes: 15

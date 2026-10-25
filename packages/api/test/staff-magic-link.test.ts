@@ -202,6 +202,8 @@ describe('staff magic-link verify (link)', () => {
       const html = await res.text()
       expect(html).toContain('<form method="post" action="/auth/magic-link/verify">')
       expect(html).toContain(`name="token" value="${token}"`)
+      expect(html).toContain('href="/assets/ezacto.css"')
+      expect(html).toContain('<button class="primary-action" type="submit">Continue</button>')
     }
     expect(h.sessions.issue).not.toHaveBeenCalled()
     expect((await redeem(h.app, token)).status).toBe(303)
