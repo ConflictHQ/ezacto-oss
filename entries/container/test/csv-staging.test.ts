@@ -638,6 +638,10 @@ describe("private native CSV admission", () => {
       { waitUntil: () => {} } as never,
     );
     expect(response.status).toBe(404);
+    const errorBody=await response.json() as {request_id:string;error:{code:string}};
+    expect(errorBody.error.code).toBe('capability_unsupported');
+    expect(errorBody.request_id).toMatch(/^[a-f0-9-]{36}$/);
+    expect(response.headers.get('x-request-id')).toBe(errorBody.request_id);
     expect(reads).toBe(0);
     expect(databases).toBe(0);
     const discovery = await worker.fetch!(
@@ -645,6 +649,7 @@ describe("private native CSV admission", () => {
       env as never,
       { waitUntil: () => {} } as never,
     );
+    expect(discovery.headers.get('x-request-id')).toMatch(/^[a-f0-9-]{36}$/);
     expect(await discovery.json()).toMatchObject({
       data: {
         runtime: "worker",

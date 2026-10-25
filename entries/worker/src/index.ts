@@ -165,8 +165,10 @@ export const createWorker = (options: WorkerOptions = {}): ExportedHandler<Worke
     // below this line should ever compose a response for a cleartext request.
     const refusal = cleartextRefusal(request)
     if (refusal !== null) return refusal
-    if (request.method === 'GET' && new URL(request.url).pathname === '/api/v1/csv-import-capabilities') return withStrictTransport(request, Response.json({data:{runtime:'worker',staging_supported:false,browser_ready:false,apply_supported:false,max_csv_bytes:5*1024*1024,max_mapping_bytes:1024*1024,raw_retention_hours:24}}, {headers:{'cache-control':'no-store'}}))
-    if (isCsvStagingPath(new URL(request.url).pathname)) return withStrictTransport(request, Response.json({error:{code:'capability_unsupported',message:'Browser CSV staging is not supported by this runtime.',fields:[]}}, {status:404,headers:{'cache-control':'no-store'}}))
+    if (
+      (request.method === 'GET' && new URL(request.url).pathname === '/api/v1/csv-import-capabilities') ||
+      isCsvStagingPath(new URL(request.url).pathname)
+    ) return withStrictTransport(request, await publicApp.fetch(request, env, executionContext))
     if (new URL(request.url).pathname === '/readyz') return readiness(env, report)
     if (!isDataRequest(request)) {
       return withStrictTransport(

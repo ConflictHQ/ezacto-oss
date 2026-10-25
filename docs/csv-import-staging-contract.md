@@ -38,6 +38,13 @@ rotate it, so recycled numeric user ids cannot read an earlier incarnation's
 private stage. Normal account closure and session changes are checked by the
 live SQL session/role/closure fence.
 
+Physical snapshots capture only the durable organization database, attachments
+and brand data. They validate the stopped source volume before copying and
+exclude `csv-staging` entirely; raw CSV bytes and private preview cells never
+enter a backup archive. Restore rotates the target incarnation. Import keys,
+chunks and native audit records in the organization database remain durable;
+private staged input must be uploaded again after restore.
+
 ## Explicit mapping and immutable preview
 
 PATCH `/api/v1/csv-imports/:runId/mapping` is the explicit workspace registration
