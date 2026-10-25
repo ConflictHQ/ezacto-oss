@@ -1,4 +1,5 @@
 import { Hono } from 'hono'
+import { csvStagingCapabilities, csvStagingOriginalError, isCsvStagingPath, installCsvImportStagingRoutes } from './csv-import-staging.js'
 import {
   apiAuthenticationMiddleware,
   installApiTokenRoutes,
@@ -36,6 +37,11 @@ export const createApiApp = <Bindings extends object = object>(
       context.res = errorResponse(new Error('Conditional responses are forbidden for authenticated API resources'), context)
     }
   })
+  app.get('/api/v1/csv-import-capabilities', c => c.json({data:csvStagingCapabilities(options.csvImportStaging)},200,{'cache-control':'no-store'}))
+  app.use('*', (context,next)=> {
+    if (isCsvStagingPath(context.req.path) && options.csvImportStaging === undefined) throw new ApiError({status:404,code:'capability_unsupported',message:'Browser CSV staging is not supported by this runtime.'})
+    return next()
+  })
   app.use('*', (context, next) => {
     const path = context.req.path
     if (path === '/api/v1' || path.startsWith('/api/v1/')) {
@@ -59,7 +65,7 @@ export const createApiApp = <Bindings extends object = object>(
     await authenticateApi(context, next)
     context.header('cache-control', 'no-store')
   })
-  app.onError((error, context) => errorResponse(error, context, options.reportError))
+  app.onError((error, context) => errorResponse(error, context, (failure,requestId)=>options.reportError?.(csvStagingOriginalError(failure)??failure,requestId)))
   app.notFound((context) => notFoundResponse(context))
   options.installApp?.(app)
 
@@ -108,6 +114,7 @@ export const createApiApp = <Bindings extends object = object>(
       options.authentication.activity,
     )
   }
+  if(options.csvImportStaging)installCsvImportStagingRoutes(api,options.csvImportStaging)
   options.installApi?.(api)
   app.route('/api/v1', api)
   if (options.installHarvestV2 !== undefined) {

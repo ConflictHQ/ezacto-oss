@@ -1,4 +1,4 @@
-import { createApiIdempotencyAuthorization, withIdempotency } from '@ezacto/api'
+import { createApiIdempotencyAuthorization, isCsvStagingPath, withIdempotency } from '@ezacto/api'
 import { demoDeployment, type AppEnv, type RuntimeServices } from '../../worker/src/app.js'
 import { isDataRequest } from '../../worker/src/data-request.js'
 
@@ -25,6 +25,9 @@ export const createContainerHandler = (
   }, async () => JSON.stringify([await services.idempotency.store.authorizationRevision(), env.RELEASE, demoDeployment(env)]), { ...(services.invoiceElevations === undefined ? {} : {invoiceElevations:services.invoiceElevations}) })
   const answer = (request: Request): Promise<Response> => Promise.resolve(app.fetch(request, env))
   return (request) => {
+    // CSV owns its streamed hash/CAS protocol; the generic wrapper must not
+    // buffer an unauthorised upload before the route's session/owner checks.
+    if (isCsvStagingPath(new URL(request.url).pathname)) return answer(request)
     if (!isDataRequest(request)) return answer(request)
     return withIdempotency(request, answer, {
       store: services.idempotency.store,

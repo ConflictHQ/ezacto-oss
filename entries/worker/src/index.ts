@@ -6,7 +6,7 @@ import { ensureRuntimeDatabaseReady } from './runtime.js'
 import * as Sentry from '@sentry/cloudflare'
 import { scheduleConfirmedRunWorkflows } from './scheduled-run-workflow-scheduler.js'
 import type { QueuedEmailJob } from '@ezacto/mailer'
-import { createApiIdempotencyAuthorization, moduleAvailability, withIdempotency } from '@ezacto/api'
+import { createApiIdempotencyAuthorization, isCsvStagingPath, moduleAvailability, withIdempotency } from '@ezacto/api'
 import { createApp, demoDeployment, demoMailDomains, type WorkerEnv } from './app.js'
 import { isDataRequest } from './data-request.js'
 import { workerBrandAssetSurface } from './brand-assets.js'
@@ -165,6 +165,8 @@ export const createWorker = (options: WorkerOptions = {}): ExportedHandler<Worke
     // below this line should ever compose a response for a cleartext request.
     const refusal = cleartextRefusal(request)
     if (refusal !== null) return refusal
+    if (request.method === 'GET' && new URL(request.url).pathname === '/api/v1/csv-import-capabilities') return withStrictTransport(request, Response.json({data:{runtime:'worker',staging_supported:false,browser_ready:false,apply_supported:false,max_csv_bytes:5*1024*1024,max_mapping_bytes:1024*1024,raw_retention_hours:24}}, {headers:{'cache-control':'no-store'}}))
+    if (isCsvStagingPath(new URL(request.url).pathname)) return withStrictTransport(request, Response.json({error:{code:'capability_unsupported',message:'Browser CSV staging is not supported by this runtime.',fields:[]}}, {status:404,headers:{'cache-control':'no-store'}}))
     if (new URL(request.url).pathname === '/readyz') return readiness(env, report)
     if (!isDataRequest(request)) {
       return withStrictTransport(

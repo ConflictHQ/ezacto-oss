@@ -230,6 +230,7 @@ const documentedApp = () =>
         sessions: { issue: unavailable },
       });
     },
+    csvImportStaging: new Proxy({}, {get:()=>unavailable}) as never,
     installApi: (api) => {
       installPlaceholderPlanningRoutes(api, new Proxy({}, { get: () => unavailable }) as never, { cursorSigningKey: new Uint8Array(32), clock: () => '2026-10-25T00:00:00.000Z' });
       installOrganizationHolidayRoutes(api,new Proxy({}, {get:()=>unavailable}) as never,{cursorSigningKey:new Uint8Array(32),clock:()=> '2026-10-22T00:00:00.000Z'});

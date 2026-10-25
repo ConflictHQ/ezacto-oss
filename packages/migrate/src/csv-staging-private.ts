@@ -40,11 +40,48 @@ export interface CsvStagingApplyBinding {
 export type CsvStagingApplyState =
   'queued' | 'running' | 'paused' | 'partial' | 'completed' | 'cancelled' | 'failed'
 export interface CsvStagingApplyPort {
+  requestOwnedCancellation(
+    authority: CsvStagingAuthority,
+    input: {
+      stageId: string
+      previewId: string
+      confirmationCommandId: string
+      cancellationCommandId: string
+      expectedVersion: number
+    },
+  ): Promise<{
+    stageVersion: number
+    targetNonce: string
+    confirmationCommandId: string
+    cancellationCommandId: string
+  }>
+  readOwnedConfirmation(
+    authority: CsvStagingAuthority,
+    stageId: string,
+  ): Promise<{
+    commandId: string
+    previewId: string
+    stageVersion: number
+    targetNonce: string
+    requestJson: string | null
+    cancellationCommandId: string | null
+  } | null>
+  /** Owner/session/target metadata only; available after input expiry. */
+  readOwnedApplyBinding(
+    authority: CsvStagingAuthority,
+    stageId: string,
+  ): Promise<CsvStagingApplyBinding | null>
   /** Claim before reading cached bytes can lead to a native seal. Blocks purge;
    * a repeated command returns the same claim, a different command refuses. */
   claimConfirmation(
     authority: CsvStagingAuthority,
-    input: { stageId: string; previewId: string; expectedVersion: number; commandId: string },
+    input: {
+      stageId: string
+      previewId: string
+      expectedVersion: number
+      commandId: string
+      requestJson?: string
+    },
   ): Promise<{ stageVersion: number; commandId: string; targetNonce: string }>
 
   loadOwnedPreview(

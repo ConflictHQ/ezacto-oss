@@ -27,6 +27,7 @@ export type AppInstaller<Bindings extends object> = (app: Hono<ApiContext<Bindin
 export type ApiInstaller<Bindings extends object> = (api: Hono<ApiContext<Bindings>>) => void
 
 export interface CreateApiAppOptions<Bindings extends object> {
+  csvImportStaging?: import('./csv-import-staging-port.js').CsvImportStagingPort
   /** Fail-closed API authentication. Without resolvers every /api/v1 request is 401. */
   authentication?: ApiAuthentication
   /** Entry-owned routes such as health, identity, or static web mounting. */
