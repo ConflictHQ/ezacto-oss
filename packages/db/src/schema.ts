@@ -3782,6 +3782,36 @@ export const allocations = sqliteTable(
   ],
 )
 
+/** Named unassigned project demand (issue 1191). Names no user and holds no capacity. */
+export const placeholders = sqliteTable('placeholders', {
+  id: integer('id').primaryKey({ autoIncrement: true }),
+  name: text('name').notNull(),
+  isActive: integer('is_active', { mode: 'boolean' }).notNull().default(true),
+  ...timestamps,
+})
+
+/** Dated unassigned hours on a project. `assignedAllocationId` is deliberately not a foreign key. */
+export const placeholderAllocations = sqliteTable(
+  'placeholder_allocations',
+  {
+    id: integer('id').primaryKey({ autoIncrement: true }),
+    placeholderId: integer('placeholder_id')
+      .notNull()
+      .references(() => placeholders.id, { onDelete: 'restrict' }),
+    projectId: integer('project_id')
+      .notNull()
+      .references(() => projects.id, { onDelete: 'restrict' }),
+    startDate: text('start_date').notNull(),
+    endDate: text('end_date').notNull(),
+    plannedSecondsPerWeek: integer('planned_seconds_per_week').notNull(),
+    state: text('state', { enum: ['open', 'assigned', 'archived'] }).notNull().default('open'),
+    revision: integer('revision').notNull().default(0),
+    assignedAllocationId: integer('assigned_allocation_id'),
+    ...timestamps,
+  },
+  (table) => [index('placeholder_allocations_project_dates').on(table.projectId, table.startDate, table.endDate)],
+)
+
 /**
  * One application of a CSV time file (issue 1012): the file's sha-256 under a
  * source id, with the mapping it was applied through. The same file is the same

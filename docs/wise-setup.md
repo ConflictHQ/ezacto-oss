@@ -26,6 +26,18 @@ As an authorized money operator, open **Settings → Payouts** or read `GET /api
 
 Link a person's verified Wise recipient or supported Wise contact deliberately. A suggested destination is not an approval to pay it. eZacto retains provider identifiers and deliberately discards Wise's full bank-account summary; do not copy account numbers into notes or logs.
 
+## Read-only connections (issue 1237)
+
+A host that holds a tenant's own Wise token can keep it from ever moving money. Set `WISE_MODE=read_only` on the Worker (unset keeps the behaviour above, where the token also composes payments; any other value fails at start-up). In that mode:
+
+- status, masked recipient reads and proposals work;
+- every destination write (`POST .../recipients`, `.../recipients/link`, `.../contacts`, `DELETE .../destinations/:userId`, `DELETE .../recipients/:accountId`) answers `403 capability_disabled` before any provider or database call;
+- the payment provider and the webhook route are not composed, so no transfer can be created, funded or settled.
+
+Library hosts get the same split from `createWiseRuntime({ mode })`: `full` (default), `read_only`, or `disabled`, which builds no provider client and performs no provider I/O even with a token present. `service.writable()` reports the mode. The `WISE_MODE` switch is wired in the Worker only; the container entry has no read-only mode.
+
+This is the capability split only. Tenant-owned custody, rotation and disconnect fences, closure inventory and hosted adoption are separate acceptance items of issue 1237 and are not delivered here.
+
 ## Register and verify the webhook
 
 Create a profile-level `transfers#state-change` subscription for the paying profile, with this target:

@@ -25,7 +25,7 @@ and hosted adoption are separate gates. Self-hosted BILL (deployment credentials
 | Export | Package | Role |
 | --- | --- | --- |
 | `createManagedBillVault` and the `ManagedBill*` types | `@ezacto/core` | tenant-bound AES-GCM custody and the store contract |
-| `createManagedBillConnectionStore(database)` | `@ezacto/db`, `@ezacto/db/d1` | canonical store (migration 0158) |
+| `createManagedBillConnectionStore(database)` | `@ezacto/db`, `@ezacto/db/d1` | canonical store (migration 0159) |
 | `createManagedBillConnectionCommands(options)` | `@ezacto/api` | private status, configure/rotate and disconnect commands |
 | `createManagedBillRuntime(options)` | `@ezacto/integrations` | status, mirror, reconcile and payment-link consumers over the existing runtime |
 

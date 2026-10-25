@@ -76,6 +76,20 @@ Anything else is `unclassified`: investigate it, and add a row here and a
 signature in the script if it recurs. A test keeps this table and the script
 equal.
 
+## Repeat under load
+
+`.github/workflows/load-verify.yml` (manual dispatch only, never per PR)
+repeats one shard (`migrate`, `web`, `worker`, `api-1`, `db-10`) N times with
+one worker, pinned to one CPU beside a CPU burner, and writes a pass-rate table
+to the job summary. `scripts/load-verify.mjs` classifies each failed repeat with
+the ledger signatures above; only an `unclassified` failure fails the run, and a
+known class lowers the pass rate, which is a finding. There is no retry in the
+loop. The one retry in the suite stays the narrow miniflare proxy-heap case in
+the migrate resume test.
+
+The web `testTimeout: 15_000` CI override in `apps/web/vitest.config.ts` stays
+until a recorded `web` baseline supports removing it.
+
 ## Standing rules
 
 Red gate = fix, never bypass (PROCESS.md). A bug fix ships with the test that
