@@ -1340,6 +1340,7 @@ export const createRuntimeServices = async (
     calendarProposals: new DrizzleCalendarProposalRepository(drizzle, trackedResources),
     placeholderPlanning: createPlaceholderAllocationRepository(drizzle),
       allocations: new DrizzleAllocationRepository(drizzle),
+      resourceCalendar: createResourceCalendarRepository(drizzle),
       organizationHolidays: createOrganizationHolidayRepository(drizzle),
     workItems: {
       repository: new DrizzleWorkItemRepository(drizzle),
@@ -1761,3 +1762,4 @@ export const createRuntimeServices = async (
         }),
   };
 };
+import { createResourceCalendarRepository } from '@ezacto/db/d1'

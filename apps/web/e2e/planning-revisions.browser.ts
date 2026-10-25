@@ -22,11 +22,13 @@ for (const kind of ['allocation', 'time-off'] as const) {
     })
     await page.locator('[data-sign-in-form]').getByLabel('Email').fill(process.env.EZACTO_BROWSER_FIXTURE_EMAIL!)
     await page.getByLabel('Password', { exact: true }).fill(process.env.EZACTO_BROWSER_FIXTURE_PASSWORD!)
-    const firstCapacity = page.waitForResponse(response => new URL(response.url()).pathname === '/api/v1/capacity' && response.status() === 200)
+    const firstCapacity = page.waitForResponse(response => new URL(response.url()).pathname === '/api/v1/resource-calendar' && response.status() === 200)
     await page.getByRole('button', { name: 'Sign in', exact: true }).click()
-    const baseline = await (await firstCapacity).json() as { data: { weeks: string[]; people: { user_id: number; weeks: { tracked_seconds: number; planned_seconds: number; time_off_seconds: number }[] }[] } }
-    const from = baseline.data.weeks[0]!
+    const initialCalendar = await (await firstCapacity).json() as { data: { week_starts: string[] } }
+    const from = initialCalendar.data.week_starts[0]!
     const to = new Date(Date.parse(from + 'T00:00:00Z') + 6 * 86400000).toISOString().slice(0, 10)
+    // Separate read oracle: the production calendar uses only its scoped ports.
+    const baseline = await (await nativeRequest(page, 'GET', `/api/v1/capacity?from=${from}&to=${to}`)).json() as { data: { people: { user_id: number; weeks: { tracked_seconds: number; planned_seconds: number; time_off_seconds: number }[] }[] } }
     const endpoint = kind === 'allocation' ? '/api/v1/allocations' : '/api/v1/time-off'
     const origin = new URL(page.url()).origin
     const headers = { origin }
@@ -71,12 +73,13 @@ for (const kind of ['allocation', 'time-off'] as const) {
       expect(firstResult.status()).toBe(200)
       expect((await firstResult.json()).data.version).toBe(1)
       const staleWrite = second.waitForResponse(response => new URL(response.url()).pathname === `${endpoint}/${rowId}` && response.request().method() === 'PATCH')
-      const refreshedCapacity = second.waitForResponse(response => new URL(response.url()).pathname === '/api/v1/capacity' && response.status() === 200)
+      const refreshedCapacity = second.waitForResponse(response => new URL(response.url()).pathname === '/api/v1/resource-calendar' && response.status() === 200)
       await second.locator(form).getByRole('button', { name: label, exact: true }).click()
       expect((await staleWrite).status()).toBe(409)
       await expect(second.locator(status)).toContainText('Your edits are kept')
       await expect(second.locator(form + ' input[name="hours"]')).toHaveValue('3.75')
-      const refreshed = await (await refreshedCapacity).json()
+      await refreshedCapacity
+      const refreshed = await (await nativeRequest(second, 'GET', `/api/v1/capacity?from=${from}&to=${to}`)).json()
       const metric = kind === 'allocation' ? 'planned_seconds' : 'time_off_seconds'
       expect(refreshed.data.people.find((person: { user_id: number }) => person.user_id === 1).weeks[0][metric])
         .toBeGreaterThan(baseline.data.people.find(person => person.user_id === 1)!.weeks[0]![metric])

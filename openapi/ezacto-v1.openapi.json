@@ -11316,6 +11316,409 @@
         }
       }
     },
+    "/api/v1/resource-calendar/context": {
+      "get": {
+        "operationId": "getResourceCalendarContext",
+        "summary": "Read current organization-local calendar context",
+        "description": "Requires schedule:read and current native actor authority. Supplies organization-local today, current week, timezone and week start for initial calendar navigation without using the device date. Always no-store; invalid imported organization zones fall back to UTC.",
+        "tags": [
+          "capacity"
+        ],
+        "security": [
+          {
+            "bearerAuth": []
+          },
+          {
+            "cookieSession": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ResourceCalendarContextEnvelope"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/MalformedRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/AuthenticationRequired"
+          },
+          "403": {
+            "$ref": "#/components/responses/InsufficientPermission"
+          },
+          "404": {
+            "$ref": "#/components/responses/ResourceNotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/StateConflict"
+          },
+          "413": {
+            "$ref": "#/components/responses/PayloadTooLarge"
+          },
+          "422": {
+            "$ref": "#/components/responses/ValidationFailed"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "503": {
+            "$ref": "#/components/responses/ServiceUnavailable"
+          }
+        },
+        "x-ezacto-runtime-path": "/api/v1/resource-calendar/context",
+        "x-ezacto-generate-client": true
+      }
+    },
+    "/api/v1/resource-calendar": {
+      "get": {
+        "operationId": "getResourceCalendar",
+        "summary": "Read the scoped project or team resource calendar",
+        "description": "Requires schedule:read. A bounded live projection of planned, available and rounded tracked seconds, with separate unassigned demand. Uses current self/managed-person/project authority on every page. Hidden project work is labelled only by aggregate scope; private leave details are never returned. Availability uses full touched organization weeks and current person capacity. Context always contains organization-local today/week and refreshes even if revision is unchanged. No actual time, staffing or accounting mutations. More than the native fact budget is refused with a range_too_large field error; narrow the date range or person filter. Other web profiles remain read-only.",
+        "tags": [
+          "capacity"
+        ],
+        "security": [
+          {
+            "bearerAuth": []
+          },
+          {
+            "cookieSession": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ResourceCalendarEnvelope"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/MalformedRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/AuthenticationRequired"
+          },
+          "403": {
+            "$ref": "#/components/responses/InsufficientPermission"
+          },
+          "404": {
+            "$ref": "#/components/responses/ResourceNotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/StateConflict"
+          },
+          "413": {
+            "$ref": "#/components/responses/PayloadTooLarge"
+          },
+          "422": {
+            "$ref": "#/components/responses/ValidationFailed"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "503": {
+            "$ref": "#/components/responses/ServiceUnavailable"
+          }
+        },
+        "x-ezacto-runtime-path": "/api/v1/resource-calendar",
+        "x-ezacto-generate-client": true,
+        "parameters": [
+          {
+            "name": "view",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "enum": [
+                "project",
+                "team"
+              ]
+            }
+          },
+          {
+            "name": "from",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "date"
+            }
+          },
+          {
+            "name": "to",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "date"
+            }
+          },
+          {
+            "name": "project_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 1
+            }
+          },
+          {
+            "name": "person_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 1
+            }
+          },
+          {
+            "name": "per_page",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 100,
+              "default": 50
+            }
+          },
+          {
+            "name": "cursor",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ]
+      }
+    },
+    "/api/v1/resource-calendar/allocations": {
+      "get": {
+        "operationId": "getResourceCalendarAllocations",
+        "summary": "Read scoped dated allocation ranges",
+        "description": "Requires schedule:read and current self/managed-person/project access. Returns actual saved allocation dates, exact weekly seconds and mutation versions; no ranges are inferred from weekly aggregates. Snaps the query to full organization weeks, at most 53. Archived people and plans on archived projects are omitted. Project view requires project_id. The live signed cursor is independently scoped to this query. No hidden project identities, time-off detail, rates or actual-time writes.",
+        "tags": [
+          "capacity"
+        ],
+        "security": [
+          {
+            "bearerAuth": []
+          },
+          {
+            "cookieSession": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ResourceCalendarAllocationPage"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/MalformedRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/AuthenticationRequired"
+          },
+          "403": {
+            "$ref": "#/components/responses/InsufficientPermission"
+          },
+          "404": {
+            "$ref": "#/components/responses/ResourceNotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/StateConflict"
+          },
+          "413": {
+            "$ref": "#/components/responses/PayloadTooLarge"
+          },
+          "422": {
+            "$ref": "#/components/responses/ValidationFailed"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "503": {
+            "$ref": "#/components/responses/ServiceUnavailable"
+          }
+        },
+        "x-ezacto-runtime-path": "/api/v1/resource-calendar/allocations",
+        "x-ezacto-generate-client": true,
+        "parameters": [
+          {
+            "name": "view",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "enum": [
+                "project",
+                "team"
+              ]
+            }
+          },
+          {
+            "name": "from",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "date"
+            }
+          },
+          {
+            "name": "to",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "date"
+            }
+          },
+          {
+            "name": "project_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 1
+            }
+          },
+          {
+            "name": "person_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 1
+            }
+          },
+          {
+            "name": "per_page",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 100,
+              "default": 50
+            }
+          },
+          {
+            "name": "cursor",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ]
+      }
+    },
+    "/api/v1/resource-calendar/projects": {
+      "get": {
+        "operationId": "listResourceCalendarProjects",
+        "summary": "List project identities visible to the resource calendar",
+        "description": "Requires schedule:read. Current administrators/executive managers see all projects; project managers see managed projects; members see assigned historical/current project identities. Optional is_active narrows the catalog; archived identities remain available to label retained actuals. Pagination is bounded at 100; current authority is rechecked for every page.",
+        "tags": [
+          "capacity"
+        ],
+        "security": [
+          {
+            "bearerAuth": []
+          },
+          {
+            "cookieSession": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ResourceCalendarProjectPage"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/MalformedRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/AuthenticationRequired"
+          },
+          "403": {
+            "$ref": "#/components/responses/InsufficientPermission"
+          },
+          "404": {
+            "$ref": "#/components/responses/ResourceNotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/StateConflict"
+          },
+          "413": {
+            "$ref": "#/components/responses/PayloadTooLarge"
+          },
+          "422": {
+            "$ref": "#/components/responses/ValidationFailed"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "503": {
+            "$ref": "#/components/responses/ServiceUnavailable"
+          }
+        },
+        "x-ezacto-runtime-path": "/api/v1/resource-calendar/projects",
+        "x-ezacto-generate-client": true,
+        "parameters": [
+          {
+            "name": "is_active",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "boolean"
+            }
+          },
+          {
+            "name": "per_page",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 100,
+              "default": 50
+            }
+          },
+          {
+            "name": "cursor",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ]
+      }
+    },
     "/api/v1/settings/work-item-connections": {
       "get": {
         "operationId": "listWorkItemConnections",
@@ -34899,6 +35302,518 @@
         },
         "required": [
           "data"
+        ],
+        "additionalProperties": false
+      },
+      "ResourceCalendarAllocation": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "version": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "user_id": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "project_id": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "project_name": {
+            "type": "string"
+          },
+          "start_date": {
+            "type": "string",
+            "format": "date"
+          },
+          "end_date": {
+            "type": "string",
+            "format": "date"
+          },
+          "planned_seconds_per_week": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 604800
+          }
+        },
+        "required": [
+          "id",
+          "version",
+          "user_id",
+          "project_id",
+          "project_name",
+          "start_date",
+          "end_date",
+          "planned_seconds_per_week"
+        ],
+        "additionalProperties": false
+      },
+      "ResourceCalendarProject": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "name": {
+            "type": "string"
+          },
+          "is_active": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "id",
+          "name",
+          "is_active"
+        ],
+        "additionalProperties": false
+      },
+      "ResourceCalendarAllocationPage": {
+        "type": "object",
+        "properties": {
+          "data": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ResourceCalendarAllocation"
+            },
+            "maxItems": 100
+          },
+          "links": {
+            "type": "object",
+            "properties": {
+              "self": {
+                "type": "string"
+              },
+              "next": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              }
+            },
+            "required": [
+              "self",
+              "next"
+            ],
+            "additionalProperties": false
+          },
+          "page": {
+            "type": "object",
+            "properties": {
+              "per_page": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 100
+              },
+              "next_cursor": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              }
+            },
+            "required": [
+              "per_page",
+              "next_cursor"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "required": [
+          "data",
+          "links",
+          "page"
+        ],
+        "additionalProperties": false
+      },
+      "ResourceCalendarProjectPage": {
+        "type": "object",
+        "properties": {
+          "data": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ResourceCalendarProject"
+            },
+            "maxItems": 100
+          },
+          "links": {
+            "type": "object",
+            "properties": {
+              "self": {
+                "type": "string"
+              },
+              "next": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              }
+            },
+            "required": [
+              "self",
+              "next"
+            ],
+            "additionalProperties": false
+          },
+          "page": {
+            "type": "object",
+            "properties": {
+              "per_page": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 100
+              },
+              "next_cursor": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              }
+            },
+            "required": [
+              "per_page",
+              "next_cursor"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "required": [
+          "data",
+          "links",
+          "page"
+        ],
+        "additionalProperties": false
+      },
+      "ResourceCalendarContextEnvelope": {
+        "type": "object",
+        "properties": {
+          "data": {
+            "$ref": "#/components/schemas/ResourceCalendarContext"
+          },
+          "links": {
+            "type": "object",
+            "properties": {
+              "self": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "self"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "required": [
+          "data",
+          "links"
+        ],
+        "additionalProperties": false
+      },
+      "ResourceCalendarContext": {
+        "type": "object",
+        "properties": {
+          "time_zone": {
+            "type": "string"
+          },
+          "week_start_day": {
+            "type": "string",
+            "enum": [
+              "saturday",
+              "sunday",
+              "monday"
+            ]
+          },
+          "today": {
+            "type": "string",
+            "format": "date"
+          },
+          "current_week_start": {
+            "type": "string",
+            "format": "date"
+          }
+        },
+        "required": [
+          "time_zone",
+          "week_start_day",
+          "today",
+          "current_week_start"
+        ],
+        "additionalProperties": false
+      },
+      "ResourceCalendarProjectHours": {
+        "type": "object",
+        "properties": {
+          "project_id": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "planned_seconds": {
+            "type": "integer",
+            "minimum": 0
+          }
+        },
+        "required": [
+          "project_id",
+          "planned_seconds"
+        ],
+        "additionalProperties": false
+      },
+      "ResourceCalendarWeek": {
+        "type": "object",
+        "properties": {
+          "week_start": {
+            "type": "string",
+            "format": "date"
+          },
+          "planned_seconds": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "available_seconds": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "tracked_seconds": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "person_planned_seconds": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "person_other_scope_planned_seconds": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "over_allocated": {
+            "type": "boolean"
+          },
+          "projects": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ResourceCalendarProjectHours"
+            },
+            "maxItems": 20000
+          },
+          "other_scope_planned_seconds": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "other_scope_tracked_seconds": {
+            "type": "integer",
+            "minimum": 0
+          }
+        },
+        "required": [
+          "week_start",
+          "planned_seconds",
+          "available_seconds",
+          "tracked_seconds",
+          "person_planned_seconds",
+          "person_other_scope_planned_seconds",
+          "over_allocated",
+          "projects",
+          "other_scope_planned_seconds",
+          "other_scope_tracked_seconds"
+        ],
+        "additionalProperties": false
+      },
+      "ResourceCalendarPerson": {
+        "type": "object",
+        "properties": {
+          "person_id": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "name": {
+            "type": "string"
+          },
+          "weeks": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ResourceCalendarWeek"
+            },
+            "maxItems": 53
+          }
+        },
+        "required": [
+          "person_id",
+          "name",
+          "weeks"
+        ],
+        "additionalProperties": false
+      },
+      "ResourceCalendarUnassigned": {
+        "type": "object",
+        "properties": {
+          "week_start": {
+            "type": "string",
+            "format": "date"
+          },
+          "placeholder_id": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "name": {
+            "type": "string"
+          },
+          "project_id": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "planned_seconds": {
+            "type": "integer",
+            "minimum": 0
+          }
+        },
+        "required": [
+          "week_start",
+          "placeholder_id",
+          "name",
+          "project_id",
+          "planned_seconds"
+        ],
+        "additionalProperties": false
+      },
+      "ResourceCalendar": {
+        "type": "object",
+        "properties": {
+          "context": {
+            "$ref": "#/components/schemas/ResourceCalendarContext"
+          },
+          "view": {
+            "type": "string",
+            "enum": [
+              "project",
+              "team"
+            ]
+          },
+          "revision": {
+            "type": "string",
+            "pattern": "^[a-f0-9]{64}$"
+          },
+          "week_starts": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "format": "date"
+            },
+            "maxItems": 53
+          },
+          "people": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ResourceCalendarPerson"
+            },
+            "maxItems": 100
+          },
+          "unassigned": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ResourceCalendarUnassigned"
+            },
+            "maxItems": 5300
+          },
+          "unassigned_truncated": {
+            "type": "boolean"
+          },
+          "has_other_scope": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "context",
+          "view",
+          "revision",
+          "week_starts",
+          "people",
+          "unassigned",
+          "unassigned_truncated",
+          "has_other_scope"
+        ],
+        "additionalProperties": false
+      },
+      "ResourceCalendarEnvelope": {
+        "type": "object",
+        "properties": {
+          "data": {
+            "$ref": "#/components/schemas/ResourceCalendar"
+          },
+          "links": {
+            "type": "object",
+            "properties": {
+              "self": {
+                "type": "string"
+              },
+              "next": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              }
+            },
+            "required": [
+              "self",
+              "next"
+            ],
+            "additionalProperties": false
+          },
+          "page": {
+            "type": "object",
+            "properties": {
+              "per_page": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 100
+              },
+              "next_cursor": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              }
+            },
+            "required": [
+              "per_page",
+              "next_cursor"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "required": [
+          "data",
+          "links",
+          "page"
         ],
         "additionalProperties": false
       },

@@ -1,4 +1,5 @@
 import { expect, test } from '@playwright/test'
+import { addCalendarDays, hoursText } from '../src/capacity/model.js'
 test('[e2e #1007] organization holidays reduce capacity once and can be edited and removed', async ({
   page,
 }, info) => {
@@ -31,26 +32,35 @@ test('[e2e #1007] organization holidays reduce capacity once and can be edited a
   const thisWeek = page.locator('[data-capacity-current]')
   expect((await thisWeek.boundingBox())!.width).toBeGreaterThan(100)
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true)
+  const from = await page.evaluate(async () => (await (await fetch('/api/v1/resource-calendar/context')).json()).data.current_week_start as string)
+  const to = addCalendarDays(from, 6)
   const baseline = await page.evaluate(
-    async () =>
+    async ({ from, to }) =>
       (
-        await (await fetch('/api/v1/capacity?from=2026-08-31&to=2026-09-06')).json()
+        await (await fetch(`/api/v1/capacity?from=${from}&to=${to}`)).json()
       ).data.people.find((p: { user_id: number }) => p.user_id === 1).weeks[0]
         .available_capacity_seconds,
+    { from, to },
   )
-  await root.getByLabel('Holiday date', { exact: true }).fill('2026-08-31')
+  // Earlier settings scenarios can choose Saturday/Sunday as the week start.
+  // A holiday on the weekend correctly removes no working capacity: choose
+  // Monday within the organization's visible week instead.
+  const firstMonday = addCalendarDays(from, (8 - new Date(`${from}T00:00:00Z`).getUTCDay()) % 7)
+  await root.getByLabel('Holiday date', { exact: true }).fill(firstMonday)
   await root
     .getByLabel('Holiday name', { exact: true })
     .fill('Office closed ' + crypto.randomUUID())
   await root.getByRole('button', { name: 'Add holiday', exact: true }).click()
   await expect(root.locator('[data-holiday-table] tbody tr')).toHaveCount(1)
-  await expect(grid).toContainText('7h time off')
+  const ownerWeek = grid.locator(`[data-calendar-person="1"] [data-calendar-week="${from}"]`)
+  await expect(ownerWeek).toContainText(`${hoursText(baseline - 7 * 3600)} available`)
   const result = await page.evaluate(
-    async () =>
+    async ({ from, to }) =>
       (
-        await (await fetch('/api/v1/capacity?from=2026-08-31&to=2026-09-06')).json()
+        await (await fetch(`/api/v1/capacity?from=${from}&to=${to}`)).json()
       ).data.people.find((p: { user_id: number }) => p.user_id === 1).weeks[0]
         .available_capacity_seconds,
+    { from, to },
   )
   expect(result).toBe(baseline - 7 * 3600)
   await root.getByRole('button', { name: 'Edit holiday', exact: true }).click()
@@ -69,5 +79,5 @@ test('[e2e #1007] organization holidays reduce capacity once and can be edited a
   await expect(root.locator('[data-holiday-table]')).toContainText(
     'No organization holidays in these weeks.',
   )
-  await expect(grid).not.toContainText('7h time off')
+  await expect(ownerWeek).toContainText(`${hoursText(baseline)} available`)
 })

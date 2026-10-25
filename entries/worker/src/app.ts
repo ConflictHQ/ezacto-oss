@@ -435,6 +435,7 @@ export interface RuntimeServices {
   organizationHolidays?: OrganizationHolidayRepository
   placeholderPlanning?: PlaceholderPlanningRepository
   allocations: AllocationRepository
+  resourceCalendar?: ResourceCalendarRepository
   /** Issue tracker connections and the links to their items (issue 1008). */
   workItems: {
     repository: WorkItemRepository
@@ -938,6 +939,11 @@ export const createApp = (
               repository: services.allocations,
               clock: systemClock,
               cursorSigningKey: services.cursorSigningKey,
+            })
+            if (services.resourceCalendar) installResourceCalendarRoutes(api, {
+              repository: services.resourceCalendar,
+              cursorSigningKey: services.cursorSigningKey,
+              now: () => new Date(systemClock.now().instant),
             })
             installCalendarProposalRoutes(api, {
               repository: services.calendarProposals,
@@ -2943,3 +2949,5 @@ const shellContentSecurityPolicy = [
   "form-action 'self'",
   "frame-ancestors 'none'",
 ].join('; ')
+import type { ResourceCalendarRepository } from '@ezacto/core'
+import { installResourceCalendarRoutes } from '@ezacto/api'

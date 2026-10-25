@@ -1,15 +1,20 @@
-# Resource calendar projection contract (contract-only)
+# Resource calendar read contract
 
 Refs [#1192](https://github.com/ConflictHQ/ezacto-pvt/issues/1192); plan in
 [resource-planning-plan.md](resource-planning-plan.md). This settles the shape and
-invariants of the scoped project/team calendar read so the database composition,
-API operation and views can be built against one reference. It adds no endpoint,
-migration or UI.
+invariants of the scoped project/team calendar read. The native SQLite/D1
+composition, HTTP operations and Capacity week/timeline views use this reference.
+There is no second planning store or aggregate table.
 
 Source: [`packages/core/src/resource-calendar.ts`](../packages/core/src/resource-calendar.ts).
 Executable contract: [`packages/core/test/resource-calendar.test.ts`](../packages/core/test/resource-calendar.test.ts).
 Any real implementation must return what `composeResourceCalendar` returns for the
 same rows.
+
+Native composition: [`resource-calendar.ts`](../packages/db/src/resource-calendar.ts).
+HTTP and public DTOs: [routes](../packages/api/src/resources/resource-calendar.ts),
+[OpenAPI source](../packages/api/src/resource-calendar-contract.ts).
+Web: [controller](../apps/web/src/capacity/resource-calendar-browser.ts).
 
 ## Interface
 
@@ -63,11 +68,49 @@ same rows.
    and so at most 100 x 53 rows.
 8. The projection never writes actual time, rates, invoices or staffing.
 
-## Not settled here
+## Native reads and HTTP pagination
 
-- The placeholder row shape is provisional until #1191 lands; only
-  `CalendarPlaceholder` changes if it differs.
-- The real read may compute `revision` another way (for example a database
-  watermark) only if it moves exactly when this digest would.
-- The public API path, scope, OpenAPI entry and generated client are left to the
-  implementation slice.
+- `GET /api/v1/resource-calendar/context` supplies organization-local initial
+  navigation dates. The browser uses this before choosing its window; a device
+  date or a person's timezone does not choose the calendar week. An invalid
+  imported organization timezone falls back to UTC.
+- `GET /api/v1/resource-calendar` returns the projection. `view`, `from` and `to`
+  are required; project view also requires `project_id`. Optional `person_id`
+  restricts people without broadening project visibility.
+- `GET /api/v1/resource-calendar/allocations` separately pages saved, authorized
+  allocation ranges, exact weekly seconds and mutation versions. A timeline
+  never invents dates from weekly aggregates. Hidden project identities are
+  withheld even when their hours contribute to the summary's labelled scope.
+- `GET /api/v1/resource-calendar/projects` pages the current scoped project
+  labels, including historical archived identities; optional `is_active`
+  narrows that list. A renamed label is refreshed independently of the weekly
+  projection digest.
+- Every read requires `schedule:read`, including its token ceiling, and checks
+  current native actor profile/grants/closure and row authority. All responses
+  are `no-store`. The API uses signed query-bound opaque cursors, at most 100
+  rows/people per page, in ascending native ID order. Pagination is a live
+  read, not a frozen multi-request snapshot. An old cursor never confers access.
+- One SQL statement reads each coherent native projection. The whole-week
+  range is limited to 53 weeks before fact reads. Each fact category is limited
+  to 20,000 rows; exceeding that budget returns a `range_too_large` field error
+  rather than partial totals. Narrow the date range or person filter.
+- Open demand uses #1191's actual placeholder-allocation ID and integer
+  revision. A native read may pass hidden demand to the composer as an existence
+  boolean, preserving `hasOtherScope` without fetching private demand names or
+  IDs. The first visible page contains at most 100 placeholders.
+
+## Web entry and follow-on boundaries
+
+Capacity offers team/project scope, a person filter, week and dated-allocation
+timeline displays, explicit people pagination, and organization-week navigation.
+Planned, available and rounded tracked seconds remain separate. Unassigned
+demand stays outside person totals. Broader aggregate scope is labelled.
+
+The existing administrator allocation, time-off, holiday and placeholder forms
+remain the mutation path with their saved versions and conflict drafts. Other
+web profiles are explicitly read-only. Request aborts, scope changes and lost
+authority clear private rows/options and invalidate late replies. Planning never
+creates actual time, staffing grants or accounting entries.
+
+Drag editing, revocable feeds and native application parity remain #1193, #1194
+and #1195 respectively; these read operations do not establish those features.

@@ -12,6 +12,7 @@ import {
 } from './model.js'
 import { createPlanningEntry } from './planning-browser.js'
 import { createPlaceholderPlanningController } from './placeholders-browser.js'
+import type { createResourceCalendarController } from './resource-calendar-browser.js'
 
 export interface CapacityController {
   activate(signal: AbortSignal, options?: { readonly administrator?: boolean; readonly scheduleManager?: boolean }): Promise<void>
@@ -58,6 +59,23 @@ const cell = (person: CapacityPersonData, weekStart: string): CellContent => {
 export const createCapacityController = (api: CapacityApi): CapacityController => {
   const page = document.querySelector<HTMLElement>('[data-capacity-page]')
   if (page === null) return { activate: async () => {} }
+  if (api.calendar) {
+    const calendar = api.calendar
+    let controller: CapacityController | null = null
+    let activation = 0
+    let loading: Promise<{ createResourceCalendarController: typeof createResourceCalendarController }> | null = null
+    return {
+      async activate(signal, options) {
+        const version = ++activation
+        if (signal.aborted) return
+        loading ??= import('./resource-calendar-browser.js')
+        const module = await loading
+        if (signal.aborted || version !== activation) return
+        controller ??= module.createResourceCalendarController(calendar, api)
+        await controller.activate(signal, options)
+      },
+    }
+  }
   const label = required<HTMLElement>('[data-capacity-label]')
   const status = required<HTMLElement>('[data-capacity-status]')
   const grid = required<HTMLElement>('[data-capacity-grid]')

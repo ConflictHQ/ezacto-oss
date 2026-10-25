@@ -9,6 +9,7 @@ import {
 } from "./allocation.js";
 import { timeOffSecondsInWeek } from "./time-off.js";
 import { TrackedResourceInputError } from "./tracked-state.js";
+import type { TeamViewer } from "./team.js";
 
 /**
  * Resource planning (issue 1192): the contract of the scoped project and team
@@ -152,6 +153,8 @@ export interface ResourceCalendarRows {
   readonly visibleProjects: readonly CalendarProject[];
   readonly allocations: readonly CalendarAllocation[];
   readonly placeholders: readonly CalendarPlaceholder[];
+  /** Native reads may report hidden demand as a boolean without fetching its identities. */
+  readonly hasHiddenPlaceholderDemand?: boolean;
   readonly timeOff: readonly CalendarTimeOff[];
   readonly holidays: readonly { readonly date: string }[];
   readonly tracked: readonly CalendarTracked[];
@@ -214,6 +217,55 @@ export interface ResourceCalendarProjection {
   /** Whether planned or tracked hours, or a placeholder, belong to projects hidden from this caller. */
   readonly hasOtherScope: boolean;
   readonly nextCursor: number | null;
+}
+
+/** Native read composition; viewer authority is checked against current storage. */
+export interface ResourceCalendarCollection<Row> {
+  readonly rows: readonly Row[];
+  readonly nextCursor: number | null;
+}
+export interface ResourceCalendarAllocationRange {
+  readonly id: number;
+  readonly version: number;
+  readonly userId: number;
+  readonly projectId: number;
+  readonly projectName: string;
+  readonly startDate: string;
+  readonly endDate: string;
+  readonly plannedSecondsPerWeek: number;
+}
+export interface ResourceCalendarProjectOption {
+  readonly id: number;
+  readonly name: string;
+  readonly isActive: boolean;
+}
+export interface ResourceCalendarRepository {
+  context(
+    viewer: Readonly<TeamViewer>,
+    now: Date,
+  ): Promise<ResourceCalendarContext>;
+  allocations(
+    viewer: Readonly<TeamViewer>,
+    query: Readonly<ResourceCalendarQuery>,
+  ): Promise<ResourceCalendarCollection<ResourceCalendarAllocationRange>>;
+  projects(
+    viewer: Readonly<TeamViewer>,
+    query: Readonly<{ limit?: number; cursor?: number; isActive?: boolean }>,
+  ): Promise<ResourceCalendarCollection<ResourceCalendarProjectOption>>;
+  read(
+    viewer: Readonly<TeamViewer>,
+    query: Readonly<ResourceCalendarQuery>,
+    now: Date,
+  ): Promise<ResourceCalendarProjection>;
+}
+
+export class ResourceCalendarReadError extends Error {
+  constructor(
+    readonly code: "actor_required" | "not_found" | "range_too_large",
+  ) {
+    super(code);
+    this.name = "ResourceCalendarReadError";
+  }
 }
 
 const sha256K = Array.from({ length: 64 }, (_, index) => {
@@ -297,7 +349,26 @@ const sha256 = (text: string): string => {
   return state.map((value) => value.toString(16).padStart(8, "0")).join("");
 };
 
-const assertQuery = (query: ResourceCalendarQuery): number => {
+export const assertResourceCalendarQuery = (
+  query: ResourceCalendarQuery,
+): number => {
+  if (query.view !== "team" && query.view !== "project") {
+    throw new TrackedResourceInputError(
+      "view",
+      "invalid_view",
+      "choose team or project",
+    );
+  }
+  for (const field of ["projectId", "personId", "cursor"] as const) {
+    const value = query[field];
+    if (value !== undefined && (!Number.isSafeInteger(value) || value < 1)) {
+      throw new TrackedResourceInputError(
+        field,
+        "invalid_integer",
+        "must be a positive integer",
+      );
+    }
+  }
   for (const field of ["from", "to"] as const) {
     if (!isAllocationDate(query[field])) {
       throw new TrackedResourceInputError(
@@ -341,7 +412,7 @@ export const composeResourceCalendar = (
   query: ResourceCalendarQuery,
   rows: ResourceCalendarRows,
 ): ResourceCalendarProjection => {
-  const limit = assertQuery(query);
+  const limit = assertResourceCalendarQuery(query);
   const weekStarts = capacityWeeks(query.from, query.to, rows.weekStartDay);
   const visible = new Set(rows.visibleProjects.map((project) => project.id));
   const projectScope = (id: number) =>
@@ -362,19 +433,28 @@ export const composeResourceCalendar = (
   const page = eligible.slice(0, limit);
   const nextCursor = eligible.length > limit ? page[page.length - 1]!.id : null;
 
-  let hasOtherScope = false;
+  let hasOtherScope =
+    query.personId === undefined &&
+    query.cursor === undefined &&
+    rows.hasHiddenPlaceholderDemand === true;
   const people = page.map((person): ResourceCalendarPerson => {
+    const personAllocations = rows.allocations.filter(
+      (allocation) =>
+        allocation.personId === person.id && !allocation.projectArchived,
+    );
+    const personTracked = rows.tracked.filter(
+      (entry) => entry.personId === person.id,
+    );
     const leave = [
       ...rows.timeOff.filter((entry) => entry.personId === person.id),
       ...holidayEntries,
     ];
     const weeks = weekStarts.map((weekStart): ResourceCalendarPersonWeek => {
-      const covering = rows.allocations.filter(
-        (allocation) =>
-          allocation.personId === person.id &&
-          !allocation.projectArchived &&
-          projectScope(allocation.projectId) &&
-          allocationCoversWeek(allocation, weekStart),
+      const personCovering = personAllocations.filter((allocation) =>
+        allocationCoversWeek(allocation, weekStart),
+      );
+      const covering = personCovering.filter((allocation) =>
+        projectScope(allocation.projectId),
       );
       const byProject = new Map<number, number>();
       let other = 0;
@@ -394,12 +474,6 @@ export const composeResourceCalendar = (
         (sum, allocation) => sum + allocation.plannedSecondsPerWeek,
         0,
       );
-      const personCovering = rows.allocations.filter(
-        (allocation) =>
-          allocation.personId === person.id &&
-          !allocation.projectArchived &&
-          allocationCoversWeek(allocation, weekStart),
-      );
       const personPlanned = personCovering.reduce(
         (sum, allocation) => sum + allocation.plannedSecondsPerWeek,
         0,
@@ -412,9 +486,8 @@ export const composeResourceCalendar = (
         person.weeklyCapacitySeconds -
         timeOffSecondsInWeek(leave, weekStart, person.weeklyCapacitySeconds);
       const weekEnd = addDays(weekStart, 6);
-      const trackedRows = rows.tracked.filter(
+      const trackedRows = personTracked.filter(
         (entry) =>
-          entry.personId === person.id &&
           projectScope(entry.projectId) &&
           entry.spentDate >= weekStart &&
           entry.spentDate <= weekEnd,

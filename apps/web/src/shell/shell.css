@@ -9819,6 +9819,48 @@ th[aria-sort="descending"] .table-sort [data-part="ascending"] { opacity: 0.15; 
   gap: 4px;
   font-size: 13px;
 }
+.resource-calendar-controls {
+  margin-block: 12px;
+}
+.resource-calendar-controls label[hidden] {
+  display: none;
+}
+[data-calendar-more] {
+  min-height: 44px;
+  margin-block: 12px;
+}
+.resource-calendar-timeline {
+  display: grid;
+  gap: 12px;
+  margin-block: 20px;
+}
+.resource-calendar-timeline[hidden] {
+  display: none;
+}
+.resource-calendar-allocation {
+  min-width: 0;
+  padding: 12px;
+  border: 1px solid var(--ez-border);
+  border-radius: var(--ez-radius);
+}
+.resource-calendar-allocation h3,
+.resource-calendar-allocation p {
+  overflow-wrap: anywhere;
+  margin: 0 0 8px;
+}
+.resource-calendar-track {
+  height: 12px;
+  background: var(--ez-ground);
+  border: 1px solid var(--ez-border);
+  border-radius: var(--ez-radius);
+  overflow: hidden;
+}
+.resource-calendar-track > span {
+  display: block;
+  height: 100%;
+  min-width: 2px;
+  background: var(--ez-action);
+}
 .capacity-form button {
   min-height: 44px;
   padding: 8px 14px;

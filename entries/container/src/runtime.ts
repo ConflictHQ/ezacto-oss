@@ -925,6 +925,7 @@ export const createContainerRuntime = async (
       calendarProposals: new DrizzleCalendarProposalRepository(drizzle, trackedResources),
       placeholderPlanning: createPlaceholderAllocationRepository(drizzle),
       allocations: new DrizzleAllocationRepository(drizzle),
+      resourceCalendar: createResourceCalendarRepository(drizzle),
       organizationHolidays: createOrganizationHolidayRepository(drizzle),
       workItems: {
         repository: new DrizzleWorkItemRepository(drizzle),
@@ -1365,3 +1366,4 @@ export const createContainerRuntime = async (
     throw error
   }
 }
+import { createResourceCalendarRepository } from '@ezacto/db'
