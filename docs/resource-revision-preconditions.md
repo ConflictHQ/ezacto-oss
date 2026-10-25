@@ -1,8 +1,8 @@
-# Client version preconditions for allocations and time off (contract)
+# Client version preconditions for allocations and time off
 
-Status: contract only. Refs issue 1190, parent planning audit 1007, plan in
-`docs/resource-planning-plan.md`. Nothing here changes a schema, route, form,
-OpenAPI document or generated client. The pure rules are in
+Status: native implementation (issue 1190). Refs issue 1190, parent planning audit 1007, plan in
+`docs/resource-planning-plan.md`. The native SQLite/D1 stores, HTTP routes, administrator forms, OpenAPI
+and generated client implement the same rules. The pure rules are in
 `packages/core/src/revision-precondition.ts`; any real repository must pass the
 suite in `packages/core/test/revision-store-suite.ts`.
 
@@ -48,8 +48,34 @@ the wire and column name (matching organization holidays), and the route ships
 `legacy-unconditioned` for 90 days with a `Deprecation` response header on
 unconditioned PATCH and DELETE, then switches to `required`.
 
-## Out of scope here (blocked on plumbing)
+## Native enforcement and rollout
 
-Migration adding the column, repository changes, route and OpenAPI/client
-updates, administrator form migration, and the real SQLite/D1 race and
-two-editor browser tests. The suite is written so those tests can reuse it.
+Migration `0162_planning_revisions` adds safe-integer, nonnegative `version`
+columns to existing allocations and time off, initialized to zero. A database
+trigger requires every update to advance exactly one version. The mutation and
+its actor-attributed before/after event remain one SQLite transaction or D1
+batch; refused writes leave no audit event. The write repeats the current actor
+profile, grants, active/closure state, managed-person/project authority and
+archival checks together with the client version and same-request snapshot.
+Deleting a row for an archived person/project remains possible.
+
+The initial compatibility window ends **2027-01-22 at 00:00 UTC**, ninety days
+after the documented 2026-10-24 rollout date. Before that instant, absent versions
+are accepted with `Deprecation` and `Sunset` headers. After it, absence is a 422
+`version_required`. Supplied invalid versions are always 422 and supplied stale
+versions are always 409. A DELETE carries `{ "version": 0 }` in its JSON body;
+PATCH carries the same field alongside the changes. The generated client and
+CLI accept these bodies. GET and create return the current version.
+
+A 409 includes `error.currentVersion` and the explicitly serialized
+`error.current` only after a fresh authorized read. A disappeared or newly
+inaccessible row remains 404. The forms keep their draft and original version
+on conflict, refresh authoritative capacity, and offer **Reload saved values
+(replaces these edits)**; they never silently rebase and overwrite another
+editor's changes. Leaving the session clears privileged form/list state and
+late responses cannot restore it.
+
+SQLite/D1 tests cover stale updates/deletes and authority/archive changes after
+real reads. Native two-page browser tests cover both allocation and time-off
+conflicts, preserved input, explicit review and resubmission with the new
+version. Planned/availability changes do not alter tracked totals.

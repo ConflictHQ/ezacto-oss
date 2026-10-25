@@ -1,6 +1,7 @@
 import {
   assertTimeOffFields,
   canProfileUseApiScope,
+  parseExpectedRevision,
   TimeOffConflictError,
   TimeOffNotFoundError,
   TimeOffOverlapError,
@@ -9,7 +10,9 @@ import {
   type TimeOffKind,
 } from '@ezacto/core'
 import { and, asc, desc, eq, gt, gte, lte, sql, type SQL } from 'drizzle-orm'
+import { QueryBuilder } from 'drizzle-orm/sqlite-core'
 import { timeOff, users } from './schema.js'
+import { planningWriteActorSql } from './planning-write-authority.js'
 import { teamPersonAccessSql } from './team-access.js'
 import type { BetterSQLite3Database } from 'drizzle-orm/better-sqlite3'
 import type { DrizzleD1Database } from 'drizzle-orm/d1'
@@ -32,6 +35,7 @@ import { executeAtomicWrite, type CompiledQuery } from './tracked-state.js'
 type Database = BetterSQLite3Database<typeof schema> | DrizzleD1Database<typeof schema>
 
 export interface TimeOffRecord {
+  version: number
   id: number
   userId: number
   startDate: string
@@ -60,6 +64,7 @@ export interface CreateTimeOffRequest {
 
 /** The person is fixed; to move time off to someone else, delete it and make another. */
 export interface UpdateTimeOffRequest {
+  version?: number
   startDate?: string
   endDate?: string
   kind?: TimeOffKind
@@ -96,8 +101,8 @@ const readScope = (viewer: Readonly<TeamViewer>): SQL => {
 /** Which time off a viewer may change: the managed people's. */
 const writeScope = (viewer: Readonly<TeamViewer>): SQL => {
   if (!canWrite(viewer)) return sql`0`
-  if (viewer.profile !== 'project_manager') return sql`1`
-  return sql`EXISTS (SELECT 1 FROM users scoped_user WHERE scoped_user.id = ${timeOff.userId}
+  if (viewer.profile !== 'project_manager') return planningWriteActorSql(viewer)
+  return sql`${planningWriteActorSql(viewer)} AND EXISTS (SELECT 1 FROM users scoped_user WHERE scoped_user.id = ${timeOff.userId}
     AND ${teamPersonAccessSql(viewer, 'scoped_user')})`
 }
 
@@ -114,6 +119,7 @@ const snapshot = (row: Readonly<TimeOffRecord> | null) =>
         kind: row.kind,
         seconds_per_day: row.secondsPerDay,
         updated_at: row.updatedAt,
+        version: row.version,
       }
 
 /**
@@ -261,8 +267,21 @@ export class DrizzleTimeOffRepository {
     if (!canWrite(viewer)) throw new TimeOffNotFoundError()
     assertTimeOffFields(input)
     await this.#assertEnterable(viewer, input.userId)
-    const values = { ...input, createdAt: now, updatedAt: now }
-    const write = this.#database.insert(timeOff).values(values).returning()
+    const values = { ...input, version: 0, createdAt: now, updatedAt: now }
+    const write = this.#database.insert(timeOff).select(new QueryBuilder().select({
+      id: sql<number>`NULL`.as('id'), // SQLite assigns the native autoincrement identity.
+      userId: users.id,
+      startDate: sql<string>`${input.startDate}`.as('startDate'),
+      endDate: sql<string>`${input.endDate}`.as('endDate'),
+      kind: sql<TimeOffKind>`${input.kind}`.as('kind'),
+      secondsPerDay: sql<number | null>`${input.secondsPerDay}`.as('secondsPerDay'),
+      version: sql<number>`0`.as('version'),
+      createdAt: sql<string>`${now}`.as('createdAt'),
+      updatedAt: sql<string>`${now}`.as('updatedAt'),
+    }).from(users).where(and(eq(users.id, input.userId), eq(users.isActive, true),
+      planningWriteActorSql(viewer),
+      viewer.profile === 'project_manager' ? teamPersonAccessSql(viewer, 'users') : sql`1`,
+    ))).returning()
     // The event names the row the insert has just taken, so it is built with a
     // placeholder id that the statement replaces.
     const pending: TimeOffRecord = { id: 0, ...values }
@@ -275,7 +294,11 @@ export class DrizzleTimeOffRepository {
       if (hasMessage(error, overlapPattern)) throw new TimeOffOverlapError()
       throw error
     }
-    return await this.get(viewer, Number(row?.id))
+    if (row === undefined) {
+      await this.#assertEnterable(viewer, input.userId)
+      throw new TimeOffNotFoundError()
+    }
+    return await this.get(viewer, Number(row.id))
   }
 
   async update(
@@ -285,12 +308,14 @@ export class DrizzleTimeOffRepository {
     now: string,
   ): Promise<TimeOffRecord> {
     const before = await this.#writable(viewer, id)
+    const expected = parseExpectedRevision(patch as Readonly<Record<string, unknown>>, 'legacy-unconditioned')
     const next: TimeOffRecord = {
       ...before,
       ...(patch.startDate === undefined ? {} : { startDate: patch.startDate }),
       ...(patch.endDate === undefined ? {} : { endDate: patch.endDate }),
       ...(patch.kind === undefined ? {} : { kind: patch.kind }),
       ...(patch.secondsPerDay === undefined ? {} : { secondsPerDay: patch.secondsPerDay }),
+      version: before.version + 1,
       updatedAt: now,
     }
     assertTimeOffFields(next)
@@ -302,9 +327,11 @@ export class DrizzleTimeOffRepository {
         endDate: next.endDate,
         kind: next.kind,
         secondsPerDay: next.secondsPerDay,
+        version: sql`${timeOff.version} + 1`,
         updatedAt: now,
       })
-      .where(and(eq(timeOff.id, id), eq(timeOff.updatedAt, before.updatedAt), writeScope(viewer)))
+      .where(and(eq(timeOff.id, id), eq(timeOff.updatedAt, before.updatedAt), eq(timeOff.version, before.version),
+          ...(expected === null ? [] : [eq(timeOff.version, expected)]), writeScope(viewer), sql`EXISTS (SELECT 1 FROM users planning_person WHERE planning_person.id = time_off.user_id AND planning_person.is_active = 1)`))
       .returning()
     let row: Record<string, unknown> | undefined
     try {
@@ -315,21 +342,30 @@ export class DrizzleTimeOffRepository {
       if (hasMessage(error, overlapPattern)) throw new TimeOffOverlapError()
       throw error
     }
-    if (row === undefined) throw new TimeOffConflictError()
+    if (row === undefined) {
+      const current = await this.#writable(viewer, id)
+      await this.#assertEnterable(viewer, current.userId)
+      throw new TimeOffConflictError(current.version, current)
+    }
     return await this.get(viewer, id)
   }
 
   /** Removing time off stays possible for an archived person. */
-  async delete(viewer: Readonly<TeamViewer>, id: number, now: string): Promise<TimeOffRecord> {
+  async delete(viewer: Readonly<TeamViewer>, id: number, now: string, version?: number): Promise<TimeOffRecord> {
+    const expected = parseExpectedRevision(version === undefined ? {} : { version }, 'legacy-unconditioned')
     const before = await this.#writable(viewer, id)
     const write = this.#database
       .delete(timeOff)
-      .where(and(eq(timeOff.id, id), eq(timeOff.updatedAt, before.updatedAt), writeScope(viewer)))
+      .where(and(eq(timeOff.id, id), eq(timeOff.updatedAt, before.updatedAt), eq(timeOff.version, before.version),
+          ...(expected === null ? [] : [eq(timeOff.version, expected)]), writeScope(viewer)))
       .returning()
     const row = await executeAtomicWrite(this.#database, write, [
       timeOffEvent('deleted', viewer.userId, before, null, now),
     ])
-    if (row === undefined) throw new TimeOffConflictError()
+    if (row === undefined) {
+      const current = await this.#writable(viewer, id)
+      throw new TimeOffConflictError(current.version, current)
+    }
     return before
   }
 }

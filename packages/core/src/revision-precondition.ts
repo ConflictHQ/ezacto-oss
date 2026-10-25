@@ -2,9 +2,8 @@ import { TrackedResourceInputError } from "./tracked-state.js";
 
 /**
  * Contract for client-read version preconditions on allocation and personal
- * time-off edits (issue 1190). Types and pure rules only: no schema, route or
- * repository changes live here. A real repository must pass the reusable suite
- * in `test/revision-store-suite.ts`.
+ * time-off edits (issue 1190). The native repositories enforce these rules in
+ * their mutation SQL and pass the reusable suite in `test/revision-store-suite.ts`.
  *
  * Invariants:
  * - A row's version is an integer, zero at creation, incremented by exactly

@@ -6,6 +6,7 @@ import {
   AllocationOverlapError,
   assertAllocationFields,
   canProfileUseApiScope,
+  parseExpectedRevision,
   capacityWeeks,
   isOverAllocated,
   timeOffSecondsInWeek,
@@ -15,7 +16,9 @@ import {
 } from '@ezacto/core'
 import type BetterSqlite3 from 'better-sqlite3'
 import { and, asc, desc, eq, gt, gte, lte, sql, type SQL } from 'drizzle-orm'
+import { QueryBuilder } from 'drizzle-orm/sqlite-core'
 import { allocations, organizations, projects, timeOff, organizationHolidays, users } from './schema.js'
+import { planningWriteActorSql } from './planning-write-authority.js'
 import { teamPersonAccessPredicate, teamPersonAccessSql, teamProjectAccessSql } from './team-access.js'
 import type { BetterSQLite3Database } from 'drizzle-orm/better-sqlite3'
 import type { DrizzleD1Database } from 'drizzle-orm/d1'
@@ -43,6 +46,7 @@ import { DrizzleTimeOffRepository } from './time-off.js'
 type Database = BetterSQLite3Database<typeof schema> | DrizzleD1Database<typeof schema>
 
 export interface AllocationRecord {
+  version: number
   id: number
   userId: number
   projectId: number
@@ -72,6 +76,7 @@ export interface CreateAllocationRequest {
 
 /** The person and the project are fixed; to move a plan, delete it and make another. */
 export interface UpdateAllocationRequest {
+  version?: number
   startDate?: string
   endDate?: string
   plannedSecondsPerWeek?: number
@@ -143,8 +148,8 @@ const readScope = (viewer: Readonly<TeamViewer>): SQL => {
 /** Which allocations a viewer may change: the managed part of what they read. */
 const writeScope = (viewer: Readonly<TeamViewer>): SQL => {
   if (!canWrite(viewer)) return sql`0`
-  if (viewer.profile !== 'project_manager') return sql`1`
-  return sql`(
+  if (viewer.profile !== 'project_manager') return planningWriteActorSql(viewer)
+  return sql`${planningWriteActorSql(viewer)} AND (
     EXISTS (SELECT 1 FROM users scoped_user WHERE scoped_user.id = ${allocations.userId}
       AND ${teamPersonAccessSql(viewer, 'scoped_user')})
     AND EXISTS (SELECT 1 FROM projects scoped_project WHERE scoped_project.id = ${allocations.projectId}
@@ -191,6 +196,7 @@ const snapshot = (row: Readonly<AllocationRecord> | null) =>
         end_date: row.endDate,
         planned_seconds_per_week: row.plannedSecondsPerWeek,
         updated_at: row.updatedAt,
+        version: row.version,
       }
 
 /**
@@ -365,8 +371,23 @@ export class DrizzleAllocationRepository {
     if (!canWrite(viewer)) throw new AllocationNotFoundError()
     assertAllocationFields(input)
     await this.#assertPlannable(viewer, input.userId, input.projectId)
-    const values = { ...input, createdAt: now, updatedAt: now }
-    const write = this.#database.insert(allocations).values(values).returning()
+    const values = { ...input, version: 0, createdAt: now, updatedAt: now }
+    const write = this.#database.insert(allocations).select(new QueryBuilder().select({
+      id: sql<number>`NULL`.as('id'), // SQLite assigns the native autoincrement identity.
+      userId: users.id,
+      projectId: sql<number>`${input.projectId}`.as('projectId'),
+      startDate: sql<string>`${input.startDate}`.as('startDate'),
+      endDate: sql<string>`${input.endDate}`.as('endDate'),
+      plannedSecondsPerWeek: sql<number>`${input.plannedSecondsPerWeek}`.as('plannedSecondsPerWeek'),
+      version: sql<number>`0`.as('version'),
+      createdAt: sql<string>`${now}`.as('createdAt'),
+      updatedAt: sql<string>`${now}`.as('updatedAt'),
+    }).from(users).where(and(eq(users.id, input.userId), eq(users.isActive, true),
+      planningWriteActorSql(viewer),
+      viewer.profile === 'project_manager' ? teamPersonAccessSql(viewer, 'users') : sql`1`,
+      sql`EXISTS (SELECT 1 FROM projects WHERE projects.id = ${input.projectId} AND projects.is_active = 1
+        AND ${viewer.profile === 'project_manager' ? teamProjectAccessSql(viewer, 'projects') : sql`1`})`,
+    ))).returning()
     // The event names the row the insert has just taken, so it is built with a
     // placeholder id that the statement replaces.
     const pending: AllocationRecord = { id: 0, ...values }
@@ -379,7 +400,11 @@ export class DrizzleAllocationRepository {
       if (hasMessage(error, overlapPattern)) throw new AllocationOverlapError()
       throw error
     }
-    return await this.get(viewer, Number(row?.id))
+    if (row === undefined) {
+      await this.#assertPlannable(viewer, input.userId, input.projectId)
+      throw new AllocationNotFoundError()
+    }
+    return await this.get(viewer, Number(row.id))
   }
 
   async update(
@@ -389,6 +414,7 @@ export class DrizzleAllocationRepository {
     now: string,
   ): Promise<AllocationRecord> {
     const before = await this.#writable(viewer, id)
+    const expected = parseExpectedRevision(patch as Readonly<Record<string, unknown>>, 'legacy-unconditioned')
     const next: AllocationRecord = {
       ...before,
       ...(patch.startDate === undefined ? {} : { startDate: patch.startDate }),
@@ -396,6 +422,7 @@ export class DrizzleAllocationRepository {
       ...(patch.plannedSecondsPerWeek === undefined
         ? {}
         : { plannedSecondsPerWeek: patch.plannedSecondsPerWeek }),
+      version: before.version + 1,
       updatedAt: now,
     }
     assertAllocationFields(next)
@@ -406,10 +433,12 @@ export class DrizzleAllocationRepository {
         startDate: next.startDate,
         endDate: next.endDate,
         plannedSecondsPerWeek: next.plannedSecondsPerWeek,
+        version: sql`${allocations.version} + 1`,
         updatedAt: now,
       })
       .where(
-        and(eq(allocations.id, id), eq(allocations.updatedAt, before.updatedAt), writeScope(viewer)),
+        and(eq(allocations.id, id), eq(allocations.updatedAt, before.updatedAt), eq(allocations.version, before.version),
+          ...(expected === null ? [] : [eq(allocations.version, expected)]), writeScope(viewer), sql`EXISTS (SELECT 1 FROM users planning_person WHERE planning_person.id = allocations.user_id AND planning_person.is_active = 1)`, sql`EXISTS (SELECT 1 FROM projects planning_project WHERE planning_project.id = allocations.project_id AND planning_project.is_active = 1)`),
       )
       .returning()
     let row: Record<string, unknown> | undefined
@@ -421,7 +450,11 @@ export class DrizzleAllocationRepository {
       if (hasMessage(error, overlapPattern)) throw new AllocationOverlapError()
       throw error
     }
-    if (row === undefined) throw new AllocationConflictError()
+    if (row === undefined) {
+      const current = await this.#writable(viewer, id)
+      await this.#assertPlannable(viewer, current.userId, current.projectId)
+      throw new AllocationConflictError(current.version, current)
+    }
     return await this.get(viewer, id)
   }
 
@@ -430,18 +463,24 @@ export class DrizzleAllocationRepository {
     viewer: Readonly<TeamViewer>,
     id: number,
     now: string,
+    version?: number,
   ): Promise<AllocationRecord> {
+    const expected = parseExpectedRevision(version === undefined ? {} : { version }, 'legacy-unconditioned')
     const before = await this.#writable(viewer, id)
     const write = this.#database
       .delete(allocations)
       .where(
-        and(eq(allocations.id, id), eq(allocations.updatedAt, before.updatedAt), writeScope(viewer)),
+        and(eq(allocations.id, id), eq(allocations.updatedAt, before.updatedAt), eq(allocations.version, before.version),
+          ...(expected === null ? [] : [eq(allocations.version, expected)]), writeScope(viewer)),
       )
       .returning()
     const row = await executeAtomicWrite(this.#database, write, [
       allocationEvent('deleted', viewer.userId, before, null, now),
     ])
-    if (row === undefined) throw new AllocationConflictError()
+    if (row === undefined) {
+      const current = await this.#writable(viewer, id)
+      throw new AllocationConflictError(current.version, current)
+    }
     return before
   }
 

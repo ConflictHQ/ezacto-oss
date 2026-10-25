@@ -1,13 +1,15 @@
 import BetterSqlite3 from 'better-sqlite3'
 import { Miniflare } from 'miniflare'
 import {
+  AllocationConflictError,
   AllocationNotFoundError,
   AllocationOverlapError,
   TrackedResourceInputError,
   type TeamViewer,
   type UserProfile,
 } from '@ezacto/core'
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest'
+import { describeRevisionStoreContract, type RevisionedStoreUnderTest, type SuiteOutcome } from '../../core/test/revision-store-suite.js'
 import { createContainerDatabase, createD1Database } from '../src/adapters.js'
 import { DrizzleAllocationRepository } from '../src/allocations.js'
 import { migrateContainer, migrateD1 } from '../src/migrate.js'
@@ -181,8 +183,210 @@ const setup = async (factory: () => Promise<TestDatabase>) => {
   return { db, repository: new DrizzleAllocationRepository(db.orm) }
 }
 
+/** A second native writer changes authority after a real SELECT resolves, before the mutation. */
+const raceAfterRead = (
+  orm: TestDatabase['orm'],
+  matches: (row: Record<string, unknown>) => boolean,
+  change: () => Promise<void>,
+) => {
+  let changes = 0
+  const wrap = <T extends object>(query: T): T => new Proxy(query, {
+    get(target, property, receiver) {
+      const value: unknown = Reflect.get(target, property, receiver)
+      if (property === 'then' && typeof value === 'function') return (resolve: (rows: unknown) => unknown, reject: (error: unknown) => unknown) => {
+        const result = Reflect.apply(value, target, [async (rows: unknown) => {
+          if (changes === 0 && Array.isArray(rows) && rows[0] && matches(rows[0] as Record<string, unknown>)) {
+            changes++
+            await change()
+          }
+          return rows
+        }]) as Promise<unknown>
+        return result.then(resolve, reject)
+      }
+      if (typeof value !== 'function') return value
+      return (...args: unknown[]) => {
+        const next: unknown = Reflect.apply(value, target, args)
+        return next !== null && typeof next === 'object' && ('then' in next || 'from' in next) ? wrap(next) : next
+      }
+    },
+  })
+  return {
+    orm: new Proxy(orm, { get(target, property, receiver) {
+      if (property === 'select') return () => wrap(target.select())
+      const value: unknown = Reflect.get(target, property, receiver)
+      return typeof value === 'function' ? value.bind(target) : value
+    } }),
+    changes: () => changes,
+  }
+}
+
 for (const [runtime, factory] of factories) {
+  for (const kind of ['allocation', 'time-off'] as const) {
+    describe(`revision store contract ${kind} on ${runtime}`, () => {
+      let shared: TestDatabase
+      let sequence = 0
+      beforeAll(async () => {
+        shared = await factory()
+        await installFixture(shared)
+        await shared.run("INSERT INTO users(id,first_name,last_name,profile,manager_grants,created_at,updated_at) VALUES(7,'Contract','Editor','administrator','[]',?,?)", t0, t0)
+        await shared.run("UPDATE users SET profile='administrator',is_active=1 WHERE id IN(1,2,3,7)")
+      })
+      afterAll(async () => { await shared?.close() })
+      describeRevisionStoreContract((): RevisionedStoreUnderTest => {
+        const repository = new DrizzleAllocationRepository(shared.orm)
+        const store = kind === 'allocation' ? repository : repository.timeOff
+        const aggregate = kind === 'allocation' ? 'allocation' : 'time_off'
+        // The generic contract's labels represent real planned/away seconds;
+        // no shadow store or note field participates in the production write.
+        const notes = new Map<string, number>()
+        const seconds = (note: string): number => {
+          if (!notes.has(note)) notes.set(note, notes.size + 1)
+          return notes.get(note)!
+        }
+        let subject: number | undefined
+        const convert = (row: Awaited<ReturnType<typeof store.get>>) => ({
+          id: row.id, version: row.version,
+          note: [...notes].find(([, value]) => value === ('plannedSecondsPerWeek' in row ? row.plannedSecondsPerWeek : row.secondsPerDay))?.[0] ?? '',
+        })
+        const authority = async (actorId: number, authorized: boolean) => {
+          await shared.run('UPDATE users SET profile=? WHERE id=?', authorized ? 'administrator' : 'member', actorId)
+          return viewer(actorId, 'administrator')
+        }
+        const outcome = (error: unknown, authorized: boolean): SuiteOutcome => {
+          const code = (error as { code?: unknown }).code
+          if (code === 'allocation_not_found' || code === 'time_off_not_found') return authorized ? 'not_found' : 'forbidden'
+          if (code === 'allocation_changed' || code === 'time_off_changed') return 'stale'
+          throw error
+        }
+        return {
+          seed: async note => {
+            const start = new Date(Date.UTC(2026, 9, 5 + sequence++ * 7)).toISOString().slice(0, 10)
+            const created = kind === 'allocation'
+              ? await repository.create(ada, plan({ startDate: start, endDate: start, plannedSecondsPerWeek: seconds(note) }), t0)
+              : await repository.timeOff.create(ada, { userId: 1, startDate: start, endDate: start, kind: 'vacation', secondsPerDay: seconds(note) }, t0)
+            subject = created.id
+            return convert(created)
+          },
+          read: async id => {
+            try { return convert(await store.get(ada, id)) }
+            catch (error) { if (outcome(error, true) === 'not_found') return null; throw error }
+          },
+          update: async input => {
+            const actor = await authority(input.actorId, input.authorized)
+            const version = input.expected === null ? {} : { version: input.expected }
+            try {
+              if (kind === 'allocation') await repository.update(actor, input.id, { plannedSecondsPerWeek: seconds(input.note), ...version }, t1)
+              else await repository.timeOff.update(actor, input.id, { secondsPerDay: seconds(input.note), ...version }, t1)
+              return 'ok'
+            } catch (error) { return outcome(error, input.authorized) }
+          },
+          remove: async input => {
+            const actor = await authority(input.actorId, input.authorized)
+            try { await store.delete(actor, input.id, t1, input.expected ?? undefined); return 'ok' }
+            catch (error) { return outcome(error, input.authorized) }
+          },
+          audit: async () => {
+            const rows = await shared.rows<{ aggregate_sequence: number; event_type: string; payload_json: string }>(
+              "SELECT aggregate_sequence,event_type,payload_json FROM event_outbox WHERE aggregate_type=? AND aggregate_id=? AND event_type<>? ORDER BY aggregate_sequence", aggregate, subject ?? -1, aggregate + '.created')
+            return rows.map(row => {
+              const body = JSON.parse(row.payload_json) as { actor: { id: number }; allocation?: { before: { version: number }; after: { version: number } | null }; time_off?: { before: { version: number }; after: { version: number } | null } }
+              const snapshot = (kind === 'allocation' ? body.allocation : body.time_off)!
+              return { id: row.aggregate_sequence, actorId: body.actor.id, action: row.event_type.endsWith('.deleted') ? 'delete' as const : 'update' as const, beforeRevision: snapshot.before.version, afterRevision: snapshot.after?.version ?? null }
+            })
+          },
+        }
+      })
+    })
+  }
   describe(`allocations on ${runtime} (issue 1007)`, () => {
+    it('[container/D1 #1190] fences native creation against authority and archival changes after validation reads', async () => {
+      const { db } = await setup(factory)
+      await db.run("UPDATE users SET profile='administrator' WHERE id=4")
+      const editor = viewer(4, 'administrator')
+      const baseline = await events(db)
+      for (const kind of ['allocation', 'time-off'] as const) {
+        for (const change of ['actor', 'person', ...(kind === 'allocation' ? ['project', 'assignment'] : [])] as const) {
+          const race = raceAfterRead(db.orm, row => row.id === 1 && (change === 'project' || change === 'assignment' ? 'clientId' in row : 'weeklyCapacity' in row), async () => {
+            if (change === 'actor') await db.run("UPDATE users SET profile='member' WHERE id=4")
+            else if (change === 'person') await db.run('UPDATE users SET is_active=0 WHERE id=1')
+            else if (change === 'project') await db.run('UPDATE projects SET is_active=0 WHERE id=1')
+            else await db.run('UPDATE user_assignments SET is_project_manager=0 WHERE user_id=2 AND project_id=1')
+          })
+          const guarded = new DrizzleAllocationRepository(race.orm)
+          await expect(kind === 'allocation'
+            ? guarded.create(change === 'assignment' ? pia : editor, plan(), t0)
+            : guarded.timeOff.create(editor, { userId: 1, startDate: '2026-10-05', endDate: '2026-10-06', kind: 'vacation', secondsPerDay: null }, t0)).rejects.toBeInstanceOf(Error)
+          expect(race.changes()).toBe(1)
+          expect(await db.rows('SELECT id FROM allocations')).toEqual([])
+          expect(await db.rows('SELECT id FROM time_off')).toEqual([])
+          expect(await events(db)).toEqual(baseline)
+          await db.run("UPDATE users SET profile='administrator' WHERE id=4")
+          await db.run('UPDATE users SET is_active=1 WHERE id=1')
+          await db.run('UPDATE projects SET is_active=1 WHERE id=1')
+          await db.run('UPDATE user_assignments SET is_project_manager=1 WHERE user_id=2 AND project_id=1')
+        }
+      }
+      // A current actor still creates native version-zero rows after all refusals.
+      const current = new DrizzleAllocationRepository(db.orm)
+      expect((await current.create(editor, plan(), t0)).version).toBe(0)
+      expect((await current.timeOff.create(editor, { userId: 1, startDate: '2026-10-05', endDate: '2026-10-06', kind: 'vacation', secondsPerDay: null }, t0)).version).toBe(0)
+    })
+
+    it('[container/D1 #1190] fences stale time-off updates/deletes and authority/archive changes after native reads', async () => {
+      const { db, repository } = await setup(factory)
+      const allocation = await repository.create(ada, plan(), t0)
+      const away = await repository.timeOff.create(ada, { userId: 1, startDate: '2026-10-05', endDate: '2026-10-06', kind: 'vacation', secondsPerDay: null }, t0)
+      expect(away.version).toBe(0)
+      await repository.timeOff.update(ada, away.id, { secondsPerDay: hours(2), version: 0 }, t1)
+      const audit = await db.rows("SELECT id,payload_json FROM event_outbox WHERE aggregate_type IN ('allocation','time_off') ORDER BY id")
+      await expect(repository.timeOff.update(ada, away.id, { secondsPerDay: hours(4), version: 0 }, t1)).rejects.toMatchObject({ code: 'time_off_changed', currentVersion: 1 })
+      await expect(repository.timeOff.delete(ada, away.id, t1, 0)).rejects.toMatchObject({ code: 'time_off_changed' })
+      expect((await repository.timeOff.get(ada, away.id)).secondsPerDay).toBe(hours(2))
+      await db.run("UPDATE users SET profile='administrator' WHERE id=4")
+      const editor = viewer(4, 'administrator')
+      for (const kind of ['allocation', 'time-off'] as const) {
+        const id = kind === 'allocation' ? allocation.id : away.id
+        const version = kind === 'allocation' ? 0 : 1
+        const race = raceAfterRead(db.orm, row => row.id === id && (kind === 'allocation' ? 'plannedSecondsPerWeek' in row : 'secondsPerDay' in row),
+          () => db.run("UPDATE users SET profile='member' WHERE id=4"))
+        const guarded = new DrizzleAllocationRepository(race.orm)
+        const store = kind === 'allocation' ? guarded : guarded.timeOff
+        await expect(store.update(editor, id, { startDate: '2026-10-06', version }, t1)).rejects.toMatchObject({ code: kind === 'allocation' ? 'allocation_not_found' : 'time_off_not_found' })
+        expect(race.changes()).toBe(1)
+        await expect(store.delete(editor, id, t1, 999)).rejects.toMatchObject({ code: kind === 'allocation' ? 'allocation_not_found' : 'time_off_not_found' })
+        await db.run("UPDATE users SET profile='administrator' WHERE id=4")
+      }
+      for (const target of ['person', 'project', 'assignment'] as const) {
+        const race = raceAfterRead(db.orm, row => row.id === 1 && (target === 'person' ? 'weeklyCapacity' in row : 'clientId' in row),
+          () => target === 'person' ? db.run('UPDATE users SET is_active=0 WHERE id=1')
+            : target === 'project' ? db.run('UPDATE projects SET is_active=0 WHERE id=1')
+              : db.run('UPDATE user_assignments SET is_project_manager=0 WHERE user_id=2 AND project_id=1'))
+        const guarded = new DrizzleAllocationRepository(race.orm)
+        await expect(guarded.update(target === 'assignment' ? pia : ada, allocation.id, { plannedSecondsPerWeek: hours(1), version: 0 }, t1)).rejects.toBeInstanceOf(Error)
+        expect(race.changes()).toBe(1)
+        await db.run('UPDATE users SET is_active=1 WHERE id=1')
+        await db.run('UPDATE projects SET is_active=1 WHERE id=1')
+        await db.run('UPDATE user_assignments SET is_project_manager=1 WHERE user_id=2 AND project_id=1')
+      }
+      expect((await repository.get(ada, allocation.id)).version).toBe(0)
+      expect((await repository.timeOff.get(ada, away.id)).version).toBe(1)
+      expect(await db.rows("SELECT id,payload_json FROM event_outbox WHERE aggregate_type IN ('allocation','time_off') ORDER BY id")).toEqual(audit)
+      const removed = await repository.timeOff.delete(ada, away.id, t1, 1)
+      expect(removed.version).toBe(1)
+      await expect(repository.timeOff.delete(ada, away.id, t1, 1)).rejects.toMatchObject({ code: 'time_off_not_found' })
+    })
+
+    it('[container/D1] refuses a stale client version without overwriting or auditing it', async () => {
+      const { db, repository } = await setup(factory)
+      const created = await repository.create(ada, plan(), t0)
+      await repository.update(ada, created.id, { plannedSecondsPerWeek: hours(20), version: 0 } as Parameters<DrizzleAllocationRepository['update']>[2], t1)
+      const before = await events(db)
+      await expect(repository.update(ada, created.id,
+        { plannedSecondsPerWeek: hours(4), version: 0 } as Parameters<DrizzleAllocationRepository['update']>[2], t1)).rejects.toBeInstanceOf(AllocationConflictError)
+      expect((await repository.get(ada, created.id)).plannedSecondsPerWeek).toBe(hours(20))
+      expect(await events(db)).toEqual(before)
+    })
+
     it('[container/D1] an administrator plans a week and the activity log hears of it', async () => {
       const { db, repository } = await setup(factory)
       const created = await repository.create(ada, plan(), t0)

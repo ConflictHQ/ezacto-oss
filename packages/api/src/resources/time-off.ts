@@ -1,3 +1,4 @@
+import { expectedPlanningVersion } from './planning-revisions.js'
 import {
   TimeOffConflictError,
   TimeOffNotFoundError,
@@ -35,6 +36,7 @@ import type { TrackedResourceClock } from './tracked-repository.js'
  */
 
 export interface TimeOffRecord {
+  version: number
   id: number
   userId: number
   startDate: string
@@ -60,6 +62,7 @@ export interface CreateTimeOffRequest {
 }
 
 export interface UpdateTimeOffRequest {
+  version?: number
   startDate?: string
   endDate?: string
   kind?: TimeOffKind
@@ -83,7 +86,7 @@ export interface TimeOffRepository {
     patch: Readonly<UpdateTimeOffRequest>,
     now: string,
   ): Promise<TimeOffRecord>
-  delete(viewer: Readonly<TeamViewer>, id: number, now: string): Promise<TimeOffRecord>
+  delete(viewer: Readonly<TeamViewer>, id: number, now: string, version?: number): Promise<TimeOffRecord>
 }
 
 export interface TimeOffRouteOptions {
@@ -93,6 +96,7 @@ export interface TimeOffRouteOptions {
 }
 
 interface TimeOffOutput {
+  version: number
   id: number
   user_id: number
   start_date: string
@@ -105,6 +109,7 @@ interface TimeOffOutput {
 
 export const serializeTimeOff = (entry: Readonly<TimeOffRecord>): TimeOffOutput => ({
   id: entry.id,
+  version: entry.version,
   user_id: entry.userId,
   start_date: entry.startDate,
   end_date: entry.endDate,
@@ -126,7 +131,7 @@ const viewerOf = (principal: {
 
 const listKeys = new Set(['cursor', 'per_page', 'user_id', 'from', 'to'])
 const createKeys = new Set(['user_id', 'start_date', 'end_date', 'kind', 'seconds_per_day'])
-const updateKeys = new Set(['start_date', 'end_date', 'kind', 'seconds_per_day'])
+const updateKeys = new Set(['version', 'start_date', 'end_date', 'kind', 'seconds_per_day'])
 
 const listFilters = (url: URL): TimeOffFilters => {
   const params = strictSearchParams(url, listKeys)
@@ -220,7 +225,7 @@ const updateInput = (body: Record<string, unknown>): UpdateTimeOffRequest => {
   const endDate = optionalDate(body, 'end_date', errors)
   const kind = kindOf(body, false, errors)
   const secondsPerDay = secondsPerDayOf(body, errors)
-  if (Object.keys(body).length === 0) {
+  if (Object.keys(body).every(key => key === 'version')) {
     errors.push({ field: 'body', code: 'empty', message: 'at least one field is required' })
   }
   assertFields(errors)
@@ -235,7 +240,14 @@ const updateInput = (body: Record<string, unknown>): UpdateTimeOffRequest => {
 /** Time-off-specific failures; the rest are the shared resource errors. */
 const translateTimeOffError = (error: unknown): never => {
   if (error instanceof TimeOffNotFoundError) throw notFound('time off')
-  if (error instanceof TimeOffOverlapError || error instanceof TimeOffConflictError) {
+  if (error instanceof TimeOffConflictError) {
+    throw new ApiError({ status: 409, code: error.code, message: error.message,
+      ...(error.currentVersion === undefined || error.current === undefined ? {} : {
+        revisionConflict: { currentVersion: error.currentVersion, current: serializeTimeOff(error.current as TimeOffRecord) },
+      }),
+    })
+  }
+  if (error instanceof TimeOffOverlapError) {
     throw new ApiError({ status: 409, code: error.code, message: error.message })
   }
   return translateResourceError(error, 'time off')
@@ -300,11 +312,14 @@ export const installTimeOffRoutes = <Bindings extends object>(
     requireApiScope(context, 'schedule:write')
     try {
       const id = resourceId(context.req.param('id'), 'time off')
+      const body = await readObjectBody(context)
+      const now = options.clock.now().instant
+      const version = expectedPlanningVersion(body, now, (name, value) => context.header(name, value))
       const entry = await options.repository.update(
         viewerOf(context.get('principal')),
         id,
-        updateInput(await readObjectBody(context)),
-        options.clock.now().instant,
+        { ...updateInput(body), ...(version === undefined ? {} : { version }) },
+        now,
       )
       return context.json({ data: serializeTimeOff(entry), links: { self: selfLink(id) } }, 200, {
         'cache-control': 'no-store',
@@ -318,10 +333,15 @@ export const installTimeOffRoutes = <Bindings extends object>(
     requireApiScope(context, 'schedule:write')
     try {
       const id = resourceId(context.req.param('id'), 'time off')
+      const body = await readObjectBody(context, { allowEmptyObject: true })
+      assertFields(unknownFieldErrors(body, new Set(['version'])))
+      const now = options.clock.now().instant
+      const version = expectedPlanningVersion(body, now, (name, value) => context.header(name, value))
       const entry = await options.repository.delete(
         viewerOf(context.get('principal')),
         id,
-        options.clock.now().instant,
+        now,
+        version,
       )
       return context.json({ data: serializeTimeOff(entry), links: { self: selfLink(id) } }, 200, {
         'cache-control': 'no-store',

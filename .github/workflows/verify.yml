@@ -119,10 +119,11 @@ jobs:
           - { name: api 2, workspaces: -w @ezacto/api, shard: 2/3, exclude: test/reports.test.ts, exclude_secondary: test/money-resources.test.ts }
           - { name: api 3, workspaces: -w @ezacto/api, shard: 3/3, exclude: test/reports.test.ts, exclude_secondary: test/money-resources.test.ts }
           - { name: api reports, workspaces: -w @ezacto/api, filter: test/reports.test.ts, max_workers: 1, timeout_minutes: 30 }
-          # money-resources' 130 native cases took 17m57s even in successful run
-          # 40122777973, then shared api1 exceeded 20m in 40125067601. Isolate
-          # that exact file like reports; keep every assertion/per-test limit.
-          - { name: api money, workspaces: -w @ezacto/api, filter: test/money-resources.test.ts, max_workers: 1, timeout_minutes: 30 }
+          # The combined money suite exceeded 30m in run40144622189. Run both
+          # existing runtime groups separately, retaining every case and the
+          # same per-test, worker and job limits.
+          - { name: api money SQLite, workspaces: -w @ezacto/api, filter: test/money-resources.test.ts, test_name_pattern: 'money resource API [(]SQLite[)]', max_workers: 1, timeout_minutes: 30 }
+          - { name: api money D1, workspaces: -w @ezacto/api, filter: test/money-resources.test.ts, test_name_pattern: 'money resource API [(]D1[)]', max_workers: 1, timeout_minutes: 30 }
           - { name: migrate, workspaces: -w @conflict-hq/ezacto-migrate }
           # One worker, not two. The worker suite's two-factor and backup-download
           # tests derive passwords through the isolate's KDF limiter, and two
@@ -155,6 +156,7 @@ jobs:
           WORKSPACES: ${{ matrix.workspaces }}
           SHARD: ${{ matrix.shard }}
           TEST_FILTER: ${{ matrix.filter }}
+          TEST_NAME_PATTERN: ${{ matrix.test_name_pattern }}
           TEST_EXCLUDE: ${{ matrix.exclude }}
           TEST_EXCLUDE_SECONDARY: ${{ matrix.exclude_secondary }}
           MAX_WORKERS: ${{ matrix.max_workers || 2 }}
@@ -181,6 +183,7 @@ jobs:
           test_args=(--maxWorkers="$MAX_WORKERS")
           if [ -n "$SHARD" ]; then test_args+=(--shard="$SHARD"); fi
           if [ -n "$TEST_FILTER" ]; then test_args+=("$TEST_FILTER"); fi
+          if [ -n "$TEST_NAME_PATTERN" ]; then test_args+=(--testNamePattern="$TEST_NAME_PATTERN"); fi
           if [ -n "$TEST_EXCLUDE" ]; then test_args+=(--exclude "$TEST_EXCLUDE"); fi
           if [ -n "$TEST_EXCLUDE_SECONDARY" ]; then test_args+=(--exclude "$TEST_EXCLUDE_SECONDARY"); fi
           npm test $WORKSPACES -- "${test_args[@]}" 2>&1 | tee "$RUNNER_TEMP/test.log"
