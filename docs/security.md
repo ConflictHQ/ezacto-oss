@@ -69,7 +69,7 @@ challenge instead of a session:
 | --- | --- |
 | `POST /auth/sign-in` | Password |
 | `POST /auth/magic-link/exchange` | The six-digit code from the sign-in email |
-| `GET /auth/magic-link/verify` | The link from the sign-in email |
+| `POST /auth/magic-link/verify` | The link from the sign-in email, confirmed on the page its `GET` renders |
 | `POST /auth/oidc/exchange` | An app code minted by a magic-link sign-in |
 
 The challenge is answered at `POST /auth/two-factor/challenge`, which is the

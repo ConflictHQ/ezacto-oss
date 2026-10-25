@@ -112,6 +112,11 @@ export type WiseOnboardOutcome =
 
 export interface WiseService {
   configured(): boolean
+  /**
+   * False for a read-only connection (issue 1237). Optional so an existing
+   * composition that supplies none keeps its full behaviour.
+   */
+  writable?(): boolean
   readStatus(): Promise<WiseConnectionStatus | null>
   listRecipients(): Promise<readonly WiseRecipientView[]>
   linkRecipient(input: {
@@ -180,6 +185,16 @@ const requireConfigured = (service: Readonly<WiseService>): void => {
       status: 503,
       code: 'service_unavailable',
       message: 'Wise is not configured for this deployment. An API token is required.',
+    })
+  }
+}
+
+const requireWritable = (service: Readonly<WiseService>): void => {
+  if (service.writable?.() === false) {
+    throw new ApiError({
+      status: 403,
+      code: 'capability_disabled',
+      message: 'This Wise connection is read-only. Payout destinations cannot be changed.',
     })
   }
 }
@@ -303,6 +318,7 @@ export const installWiseRoutes = <Bindings extends object>(
   api.post('/integrations/wise/recipients/link', async (context) => {
     const { userId: linkedByUserId } = assertMoneyWriter(context)
     requireConfigured(service)
+    requireWritable(service)
     const body = await readObjectBody(context)
     const userId = Number(body['user_id'])
     if (!Number.isSafeInteger(userId) || userId <= 0) {
@@ -348,6 +364,7 @@ export const installWiseRoutes = <Bindings extends object>(
   api.post('/integrations/wise/recipients', async (context) => {
     const { userId: linkedByUserId } = assertMoneyWriter(context)
     requireConfigured(service)
+    requireWritable(service)
     const body = await readObjectBody(context)
     const userId = Number(body['user_id'])
     const email = typeof body['email'] === 'string' ? body['email'].trim() : ''
@@ -438,6 +455,7 @@ export const installWiseRoutes = <Bindings extends object>(
     }
     const { userId: linkedByUserId } = assertMayDestineFor(context, userId)
     requireConfigured(service)
+    requireWritable(service)
     const identifier = typeof body['identifier'] === 'string' ? body['identifier'].trim() : ''
     const currency = typeof body['currency'] === 'string' ? body['currency'].trim() : ''
     const problems: { field: string; code: string; message: string }[] = []
@@ -564,6 +582,7 @@ export const installWiseRoutes = <Bindings extends object>(
       ])
     }
     assertMayDestineFor(context, userId)
+    requireWritable(service)
     if (!(await service.detachFor(userId))) {
       throw new ApiError({
         status: 404,
@@ -576,6 +595,7 @@ export const installWiseRoutes = <Bindings extends object>(
 
   api.delete('/integrations/wise/recipients/:accountId', async (context) => {
     assertMoneyWriter(context)
+    requireWritable(service)
     const accountId = Number(context.req.param('accountId') ?? '')
     if (!Number.isSafeInteger(accountId) || accountId <= 0) {
       throw validationError([

@@ -1,4 +1,5 @@
-import { managedQuickBooksRevocationsMigration } from './migrations/0158_managed_quickbooks_revocations.js'
+import { managedQuickBooksRevocationsMigration } from './migrations/0159_managed_quickbooks_revocations.js'
+import { placeholderAllocationsMigration } from './migrations/0158_placeholder_allocations.js'
 import { managedQuickBooksGrantsMigration } from './migrations/0157_managed_quickbooks_grants.js'
 import { wiseSignedDeliveriesMigration } from './migrations/0156_wise_signed_deliveries.js'
 import { organizationHolidaysMigration } from './migrations/0155_organization_holidays.js'
@@ -1673,7 +1674,8 @@ const migrations = [
   { id: '0155_organization_holidays', statements: organizationHolidaysMigration },
   { id: '0156_wise_signed_deliveries', statements: wiseSignedDeliveriesMigration },
   { id: '0157_managed_quickbooks_grants', statements: managedQuickBooksGrantsMigration },
-  { id: '0158_managed_quickbooks_revocations', statements: managedQuickBooksRevocationsMigration },
+  { id: '0158_placeholder_allocations', statements: placeholderAllocationsMigration },
+  { id: '0159_managed_quickbooks_revocations', statements: managedQuickBooksRevocationsMigration },
 ] as const
 
 // Fixtures assert against this rather than re-listing ids: a hand-copied ledger merges

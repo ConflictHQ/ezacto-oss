@@ -126,7 +126,7 @@ revoked or erased: only a recorded provider outcome sets `complete: true`.
   one. The intent retains only the refresh token, the single credential needed to
   revoke the grant. Exact retries replay; a changed binding, grant, generation or
   actor conflicts. A fresh administrator is rechecked in SQL.
-- Migration0158 refuses to natively disconnect a managed connection, or point it
+- Migration 0159 refuses to natively disconnect a managed connection, or point it
   at another company, without such an intent (`managed_quickbooks_fence_required`),
   so the native disconnect path cannot strand custody. Managed hosts must call
   `fence`. A same-company native reconnect still advances the generation and

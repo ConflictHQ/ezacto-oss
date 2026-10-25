@@ -152,5 +152,32 @@ repository must pass. No schema, route or migration is added by it.
 - Unassigned rows are listed separately and never enter a person's capacity or
   utilization. Organization-wide lists need `schedule:write` over the project.
 
-Open: the revision wire shape depends on #1190, and the audit/idempotency
-storage is decided with the migration.
+## Placeholder storage and repository (#1191, slice 2)
+
+Migration `0158_placeholder_allocations` adds new tables and leaves
+`allocations` (and its `user_id` foreign key) untouched:
+
+- `placeholders`: a name and an active flag. No user, capacity or rate.
+- `placeholder_allocations`: project, inclusive dates, weekly seconds, `state`,
+  `revision` from 0 and a plain `assigned_allocation_id` (not a foreign key, so
+  erasing a person's plan keeps the record that the demand was met). Rows are
+  AUTOINCREMENT and never deleted; triggers refuse deletes and any change to a
+  row that is not `open`, so ids are never reused and a stale conversion cannot
+  re-open a row.
+- `placeholder_assignment_keys`: one row per actor and idempotency key with the
+  request fingerprint and the stored result.
+
+`createPlaceholderAllocationRepository` (`packages/db/src/placeholder-allocations.ts`)
+supplies `decideAssignment` its facts and commits the result as one batch:
+person allocation, placeholder `assigned` with revision + 1, key result and
+audit event (aggregate `placeholder_allocation`). Each write is also guarded in
+SQL by the live actor and project scope, and a date overlap is refused by the
+existing allocations trigger, which rolls the whole batch back. Reads and writes
+require `schedule:write`: administrators and executive managers see all, project
+managers only projects they manage, everyone else is refused.
+
+Still open: the HTTP routes and revision wire shape (waits for #1190), the
+planning-view lines and administrator forms, edit of an open placeholder
+allocation, and the shared capacity projection (#1192).
+
+Open: the revision wire shape depends on #1190.

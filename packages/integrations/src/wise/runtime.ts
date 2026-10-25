@@ -197,7 +197,28 @@ export interface WiseConfig {
   readonly webhookPublicKey: string | undefined;
 }
 
+/**
+ * What a connection is allowed to do (issue 1237).
+ *
+ * `full` is the self-hosted default: one token reads and also composes the
+ * payment provider. `read_only` is the tenant-owned shape: status and masked
+ * recipient reads only, with no destination writes and no provider writes.
+ * `disabled` performs no provider I/O at all, whatever token is present.
+ * Payment execution is composed separately by the host, never by this mode.
+ */
+export type WiseConnectionMode = "full" | "read_only" | "disabled";
+
+/** Thrown by a write on a connection whose mode does not permit it. */
+export class WiseReadOnlyError extends Error {
+  constructor() {
+    super("This Wise connection is read-only.");
+    this.name = "WiseReadOnlyError";
+  }
+}
+
 export interface WiseRuntimeOptions {
+  /** Absent means `full`, preserving the deployment-token behaviour. */
+  readonly mode?: WiseConnectionMode;
   readonly config: WiseConfig;
   readonly accounts: WisePayoutAccountPort;
   /** Absent where a deployment does not receive webhooks; the route is then not mounted. */
@@ -223,6 +244,8 @@ export interface WiseRuntime {
   };
   readonly service: {
     configured(): boolean;
+    /** False when the connection may only read; writes then refuse. */
+    writable(): boolean;
     readStatus(): Promise<WiseConnectionStatus | null>;
     /** Everyone the profile can pay, our own accounts excluded. */
     listRecipients(): Promise<readonly WiseRecipient[]>;
@@ -296,7 +319,13 @@ const refusalFor = (
 
 export const createWiseRuntime = (options: Readonly<WiseRuntimeOptions>): WiseRuntime => {
   const { config, accounts } = options;
-  const token = trimmed(config.token);
+  const mode = options.mode ?? "full";
+  // A disabled connection never builds a client, so no code path can reach the
+  // provider however the token got here.
+  const token = mode === "disabled" ? null : trimmed(config.token);
+  const requireWritable = (): void => {
+    if (mode !== "full") throw new WiseReadOnlyError();
+  };
   const configuredProfileId = trimmed(config.profileId);
   const webhookPublicKey = trimmed(config.webhookPublicKey);
   const deliveries = options.deliveries;
@@ -422,6 +451,8 @@ export const createWiseRuntime = (options: Readonly<WiseRuntimeOptions>): WiseRu
     service: {
       configured: () => token !== null,
 
+      writable: () => mode === "full",
+
       readStatus: async () => {
         const profile = await payingProfile();
         if (profile === null) return null;
@@ -444,6 +475,7 @@ export const createWiseRuntime = (options: Readonly<WiseRuntimeOptions>): WiseRu
        * destination and a claim somebody typed.
        */
       linkRecipient: async ({ userId, recipientId, linkedByUserId }) => {
+        requireWritable();
         const recipients = await payableRecipients();
         const wanted = recipientId.trim();
         const recipient = recipients.find((candidate) => candidate.id === wanted);
@@ -475,6 +507,7 @@ export const createWiseRuntime = (options: Readonly<WiseRuntimeOptions>): WiseRu
       },
 
       onboardRecipient: async ({ userId, email, legalName, currency, linkedByUserId }) => {
+        requireWritable();
         const profile = await payingProfile();
         if (client === null || profile === null) return { outcome: "not_configured" };
 
@@ -510,6 +543,7 @@ export const createWiseRuntime = (options: Readonly<WiseRuntimeOptions>): WiseRu
       },
 
       shareWiseProfile: async ({ userId, identifier, currency, linkedByUserId }) => {
+        requireWritable();
         const profile = await payingProfile();
         if (client === null || profile === null) return { outcome: "not_configured" };
 
@@ -589,13 +623,17 @@ export const createWiseRuntime = (options: Readonly<WiseRuntimeOptions>): WiseRu
       },
 
       detachFor: async (userId) => {
+        requireWritable();
         const mine = (await accounts.listForUser(userId)).find(
           (account) => account.provider === "wise",
         );
         return mine === undefined ? false : accounts.detach(mine.id, instant());
       },
 
-      unlink: async (accountId) => accounts.detach(accountId, instant()),
+      unlink: async (accountId) => {
+        requireWritable();
+        return accounts.detach(accountId, instant());
+      },
     },
   };
 };

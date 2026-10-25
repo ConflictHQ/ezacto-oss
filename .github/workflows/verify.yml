@@ -47,6 +47,8 @@ jobs:
           node-version-file: .nvmrc
       - name: SQL backup and monthly restore safety checks
         run: node --test scripts/restore-drill.test.mjs scripts/monthly-restore-drill.test.mjs
+      - name: load-verify gate and shard list match the verify matrix
+        run: node --test scripts/load-verify.test.mjs
       - name: no tracked symlink points outside the repo or into node_modules
         run: |
           node --test scripts/check-tracked-symlinks.test.mjs
