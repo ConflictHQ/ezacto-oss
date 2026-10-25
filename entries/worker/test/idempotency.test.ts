@@ -10,6 +10,7 @@ import {
 } from '@ezacto/api'
 import { createD1IdempotencyStore, createIdempotentD1, migrateD1 } from '@ezacto/db/d1'
 import { createContainerIdempotencyStore, createIdempotentSqlite, migrateContainer } from '@ezacto/db'
+import { createContainerDatabase, createD1Database, DrizzleAllocationRepository } from '@ezacto/db'
 
 /**
  * The HTTP half of idempotency keys (#952) over both real stores: D1 through
@@ -19,6 +20,8 @@ import { createContainerIdempotencyStore, createIdempotentSqlite, migrateContain
  */
 
 interface Runtime {
+  planning: DrizzleAllocationRepository
+  run(sql: string, ...params: unknown[]): Promise<void>
   insert(note: string): Promise<number>
   rows<T>(sql: string, ...params: unknown[]): Promise<T[]>
   store: IdempotencyStore
@@ -40,6 +43,8 @@ const d1Runtime = async (): Promise<Runtime> => {
   await binding.prepare(scratch).run()
   const riding = createIdempotentD1(binding)
   return {
+    planning: new DrizzleAllocationRepository(createD1Database(riding)),
+    run: async (sql, ...params) => { await binding.prepare(sql).bind(...params).run() },
     insert: async (note) =>
       (await riding
         .prepare('INSERT INTO idempotency_test_notes (note) VALUES (?) RETURNING id')
@@ -63,6 +68,8 @@ const containerRuntime = async (): Promise<Runtime> => {
   handle.exec(scratch)
   const riding = createIdempotentSqlite(handle)
   return {
+    planning: new DrizzleAllocationRepository(createContainerDatabase(riding)),
+    run: async (sql, ...params) => { handle.prepare(sql).run(...params) },
     insert: async (note) =>
       (
         riding.prepare('INSERT INTO idempotency_test_notes (note) VALUES (?) RETURNING id').get(note) as {
@@ -192,6 +199,47 @@ for (const [name, create] of runtimes) {
       requestId: response.headers.get('x-request-id'),
       cookies: response.headers.getSetCookie(),
       lifetime: response.headers.get(IDEMPOTENCY_KEY_LIFETIME_HEADER),
+    })
+
+    it('[#1193] replays one exact allocation date command, reauthorizes it, and leaves actual/financial data unchanged', async () => {
+      const at = startedAt.toISOString()
+      await runtime.run("INSERT INTO organizations(id,name,modules,created_at,updated_at) VALUES(1,'Owned planning','{}',?,?)", at, at)
+      await runtime.run("INSERT INTO users(id,first_name,last_name,profile,manager_grants,created_at,updated_at) VALUES(1,'Owned','Admin','administrator','[]',?,?)", at, at)
+      await runtime.run("INSERT INTO users(id,first_name,last_name,profile,manager_grants,created_at,updated_at) VALUES(2,'Retained','Admin','administrator','[]',?,?)", at, at)
+      await runtime.run("INSERT INTO clients(id,name,currency,created_at,updated_at) VALUES(1,'Owned client','USD',?,?)", at, at)
+      await runtime.run("INSERT INTO projects(id,client_id,name,created_at,updated_at) VALUES(1,1,'Owned project',?,?)", at, at)
+      const actor = { userId: 2, profile: 'administrator', managerGrants: [] } as const
+      const source = await runtime.planning.create(actor, { userId: 2, projectId: 1, startDate: '2026-10-06', endDate: '2026-10-07', plannedSecondsPerWeek: 4442 }, at)
+      const fingerprint = async () => {
+        const result = []
+        for (const table of ['time_entries', 'time_approvals', 'invoices', 'invoice_items', 'payments', 'projects', 'user_assignments', 'task_assignments']) {
+          const exists = await runtime.rows("SELECT name FROM sqlite_schema WHERE type='table' AND name=?", table)
+          if (exists.length) result.push([table, await runtime.rows(`SELECT * FROM ${table} ORDER BY id`)])
+        }
+        return JSON.stringify(result)
+      }
+      const before = await fingerprint(), dates = { start_date: '2026-10-12', end_date: '2026-10-14', version: 0 }, key = crypto.randomUUID()
+      let writes = 0
+      const answer = async (request: Request) => {
+        const patch = await request.json() as typeof dates
+        writes++
+        const result = await runtime.planning.update(actor, source.id, { version: patch.version, startDate: patch.start_date, endDate: patch.end_date }, at)
+        return Response.json({ data: result })
+      }
+      const sendDate = () => withIdempotency(new Request(`https://ezacto.test/api/v1/allocations/${source.id}`, { method: 'PATCH', headers: { authorization: 'Bearer owned-planning', 'content-type': 'application/json', 'idempotency-key': key }, body: JSON.stringify(dates) }), answer, {
+        store: runtime.store, secret, now: () => clock,
+        authorize: async () => (await runtime.rows<{ profile: string }>('SELECT profile FROM users WHERE id=2'))[0]?.profile === 'administrator' ? 'owned-current-admin' : Response.json({ error: { code: 'forbidden' } }, { status: 403 }),
+      })
+      const first = await sendDate(); expect(first.status).toBe(200); const response = await first.text()
+      const audit = await runtime.rows("SELECT * FROM event_outbox WHERE aggregate_type='allocation' ORDER BY id")
+      const retry = await sendDate(); expect(retry.status).toBe(200); expect(retry.headers.get('idempotent-replayed')).toBe('true'); expect(await retry.text()).toBe(response)
+      expect(writes).toBe(1); expect(await runtime.rows("SELECT * FROM event_outbox WHERE aggregate_type='allocation' ORDER BY id")).toEqual(audit)
+      expect(await runtime.planning.get(actor, source.id)).toMatchObject({ startDate: dates.start_date, endDate: dates.end_date, version: 1, plannedSecondsPerWeek: 4442 })
+      await runtime.run("UPDATE users SET profile='member' WHERE id=2")
+      expect((await sendDate()).status).toBe(403); expect(writes).toBe(1)
+      await expect(runtime.planning.update(actor, source.id, { version: 1, startDate: '2026-10-13' }, at)).rejects.toThrow()
+      expect(await fingerprint()).toBe(before)
+      expect(await runtime.rows("SELECT * FROM event_outbox WHERE aggregate_type='allocation' ORDER BY id")).toEqual(audit)
     })
 
     it('[api] a response lost after the commit is replayed byte for byte, and nothing runs again', async () => {
