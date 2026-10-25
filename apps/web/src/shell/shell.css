@@ -9859,7 +9859,7 @@ th[aria-sort="descending"] .table-sort [data-part="ascending"] { opacity: 0.15; 
   display: block;
   height: 100%;
   min-width: 2px;
-  background: var(--ez-primary, #254fe8);
+  background: var(--ez-action);
 }
 .capacity-form button {
   min-height: 44px;

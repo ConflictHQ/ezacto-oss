@@ -35,11 +35,11 @@ test('[e2e:capacity] shows the signed-in person against their weekly capacity, r
   const grid = page.locator('[data-capacity-grid]')
   const rows = grid.locator('tbody tr')
   await expect(rows.first()).toBeVisible()
-  // Zero planned against a weekly capacity; a plan beyond capacity would say
-  // "Over-allocated" here, and nothing is planned.
-  // No \b: the cells' text runs together in the DOM ("Owner0h of 35h"), so there
-  // is no word boundary before the figure.
-  await expect(rows.first()).toContainText(/0h of \d/)
+  // The calendar keeps planned, available and rounded actual time separate.
+  // A fresh instance has no planned demand and no over-allocation warning.
+  await expect(rows.first()).toContainText('0h planned')
+  await expect(rows.first()).toContainText(/\d+(?:\.\d+)?h available/)
+  await expect(rows.first()).toContainText('tracked (rounded)')
   await expect(grid).not.toContainText('Over-allocated')
   await expect(page.locator('[data-capacity-status]')).toHaveText('')
 
