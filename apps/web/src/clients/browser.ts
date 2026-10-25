@@ -1,3 +1,4 @@
+import { moduleAvailable } from '../module-availability.js'
 import { createClientRateCardController } from './rate-card-browser.js'
 import { focusSortHeader, rememberedSort, resolveSort, sortRows, type TableSort } from '../components/table-sort.js'
 import { renderDataTable } from '../components/data-table.js'
@@ -189,6 +190,12 @@ export const createClientDirectoryController = (
   api: Partial<ClientDirectoryApi>,
 ): ClientDirectoryController => {
   const rateCards = createClientRateCardController(api)
+  if (!moduleAvailable('invoices')) {
+    for (const selector of ['#ez-contact-recipient', '#ez-client-bill-to']) {
+      document.querySelector(selector)?.closest('label')?.setAttribute('hidden', '')
+      document.querySelector(selector)?.setAttribute('disabled', '')
+    }
+  }
   const listPage = document.documentElement.dataset.appView === 'client-list'
   const detailPage = document.documentElement.dataset.appView === 'client-detail'
   const listPageElement = required<HTMLElement>('[data-client-list-page]')
@@ -518,7 +525,7 @@ export const createClientDirectoryController = (
               return link
             },
           },
-          ...(session !== null && canManageClientTerms(session.identity) ? [{
+          ...(moduleAvailable('invoices') && session !== null && canManageClientTerms(session.identity) ? [{
             key: 'billing',
             fit: true,
             label: 'Billing',
@@ -551,7 +558,7 @@ export const createClientDirectoryController = (
     editingContactId = contact?.id ?? null
     contactForm.reset()
     const routing = field(contactForm, 'invoice_recipient_status')
-    routing.disabled = !canManageClientTerms(active.identity)
+    routing.disabled = !moduleAvailable('invoices') || !canManageClientTerms(active.identity)
     routing.closest('label')!.hidden = routing.disabled
     contactFormTitle.textContent = contact === null ? 'Add contact' : 'Edit contact'
     contactFormSubmit.textContent = contact === null ? 'Add contact' : 'Save contact'
@@ -620,7 +627,7 @@ export const createClientDirectoryController = (
                 .filter((value): value is string => value !== null)
                 .join(' · ') || '—',
           },
-          ...(session !== null && canManageClientTerms(session.identity) ? [{
+          ...(moduleAvailable('invoices') && session !== null && canManageClientTerms(session.identity) ? [{
             key: 'recipient',
             label: 'Invoices',
             sortValue: (contact: GeneralResource) =>
@@ -668,7 +675,7 @@ export const createClientDirectoryController = (
    */
   const renderDelivery = async (): Promise<void> => {
     const client = currentClient
-    if (client === null || api.getBillClientDelivery === undefined) {
+    if (!moduleAvailable('invoices') || !moduleAvailable('accounting') || client === null || api.getBillClientDelivery === undefined) {
       deliverySection.hidden = true
       return
     }
@@ -807,6 +814,7 @@ export const createClientDirectoryController = (
    */
   const refreshSending = async (active: ActiveSession, clientId: number): Promise<void> => {
     if (
+      !moduleAvailable('invoices') ||
       !clientCanSetInvoiceSending(active.identity) ||
       api.getClientInvoiceSending === undefined ||
       api.setClientInvoiceSending === undefined
@@ -843,7 +851,7 @@ export const createClientDirectoryController = (
    * client's own lists, stay as they are on screen.
    */
   const refreshSendingContacts = async (active: ActiveSession, clientId: number): Promise<void> => {
-    if (sending === null || api.getClientInvoiceSending === undefined) return
+    if (!moduleAvailable('invoices') || sending === null || api.getClientInvoiceSending === undefined) return
     const generation = sendingGeneration
     try {
       const fresh = await api.getClientInvoiceSending(clientId, active.signal)
@@ -1027,7 +1035,7 @@ export const createClientDirectoryController = (
     if (
       !clientProfileCanReadMoney(active.identity.profile) ||
       api.listClientSubtree === undefined ||
-      api.listClientOpenInvoices === undefined ||
+      (moduleAvailable('invoices') && api.listClientOpenInvoices === undefined) ||
       api.listClientRetainers === undefined ||
       api.getClientRollupReport === undefined
     ) {
@@ -1035,6 +1043,8 @@ export const createClientDirectoryController = (
       return
     }
     rollupSection.hidden = false
+    // Keep independent budget and retainer figures without querying a withdrawn book.
+    rollupInvoices.closest('section')!.hidden = !moduleAvailable('invoices')
     rollupFigures.hidden = true
     rollupRetry.hidden = true
     rollupStatus.textContent = 'Loading the rollup…'
@@ -1050,10 +1060,12 @@ export const createClientDirectoryController = (
         await api.listClientSubtree(clientId, active.signal),
       )
       const [invoices, retainers, report] = await Promise.all([
-        collect<Invoice>(
-          (cursor) => api.listClientOpenInvoices!(subtree, cursor, active.signal),
-          active.signal,
-        ),
+        moduleAvailable('invoices')
+          ? collect<Invoice>(
+              (cursor) => api.listClientOpenInvoices!(subtree, cursor, active.signal),
+              active.signal,
+            )
+          : Promise.resolve([]),
         collect<Retainer>(
           (cursor) => api.listClientRetainers!(subtree, cursor, active.signal),
           active.signal,
@@ -1329,7 +1341,7 @@ export const createClientDirectoryController = (
         address: optionalText(data, 'address'),
         ...(currency === null ? {} : { currency: currency.toLocaleUpperCase('en-US') }),
         parent_client_id: relationId(data, 'parent_client_id'),
-        bill_to_client_id: relationId(data, 'bill_to_client_id'),
+        ...(moduleAvailable('invoices') ? { bill_to_client_id: relationId(data, 'bill_to_client_id') } : {}),
         ...(canManageClientTerms(active.identity) ? {
           payment_terms: optionalText(data, 'payment_terms') ?? 'custom',
           default_tax_pct: optionalNumber(data, 'default_tax_pct'),
@@ -1402,7 +1414,7 @@ export const createClientDirectoryController = (
       phone_office: optionalText(data, 'phone_office'),
       phone_mobile: optionalText(data, 'phone_mobile'),
       fax: optionalText(data, 'fax'),
-      ...(canManageClientTerms(active.identity) ? {
+      ...(moduleAvailable('invoices') && canManageClientTerms(active.identity) ? {
         invoice_recipient_status: optionalText(data, 'invoice_recipient_status') ?? 'none',
       } : {}),
     }
@@ -1520,7 +1532,7 @@ export const createClientDirectoryController = (
   deliveryToggle.addEventListener('change', () => {
     const active = session
     const client = currentClient
-    if (active === null || client === null || deliveryBusy) return
+    if (!moduleAvailable('invoices') || !moduleAvailable('accounting') || active === null || client === null || deliveryBusy) return
     if (api.setBillClientDelivery === undefined) return
     const id = clientNumber(client, 'id')
     if (id === null) return
@@ -1584,6 +1596,7 @@ export const createClientDirectoryController = (
       client === null ||
       state === null ||
       sendingBusy ||
+      !moduleAvailable('invoices') ||
       !clientCanSetInvoiceSending(active.identity) ||
       api.getClientInvoiceSending === undefined ||
       api.setClientInvoiceSending === undefined

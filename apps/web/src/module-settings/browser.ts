@@ -2587,7 +2587,9 @@ export const createModuleSettingsController = (
     // methods are shown, and no switch moves.
     signInStatus.textContent = demo ? demoUnavailable('Switching a sign-in method') : ''
     signInList.hidden = false
-    signInList.innerHTML = states.map((state) => renderSignInMethodCard(state, demo)).join('')
+    signInList.innerHTML = states
+      .filter((state) => moduleAvailable('sso') || state.method === 'password' || state.method === 'magic_link')
+      .map((state) => renderSignInMethodCard(state, demo)).join('')
     for (const toggle of signInList.querySelectorAll<HTMLInputElement>(
       '[data-sign-in-toggle]',
     )) {
