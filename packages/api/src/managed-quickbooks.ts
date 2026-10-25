@@ -3,7 +3,9 @@ import {
   type ManagedQuickBooksAuthority,
   type ManagedQuickBooksGrantCommand,
   type ManagedQuickBooksGrantProbe,
+  type ManagedQuickBooksFenceCommand,
   type ManagedQuickBooksGrantStore,
+  type ManagedQuickBooksLifecycleStore,
 } from '@ezacto/core'
 import { createApiApp } from './app.js'
 import {
@@ -15,6 +17,8 @@ import { ApiError } from './errors.js'
 
 export type ManagedQuickBooksGrantOptions = {
   store: ManagedQuickBooksGrantStore
+  /** Required only for `fence`; revocation custody stays in this trusted store. */
+  lifecycle?: ManagedQuickBooksLifecycleStore
   now?: () => string
   /** Original unexpected cause, trusted in-process only. Expected4xx are not reported. */
   reportError?: (error: Error, requestId: string) => void | Promise<void>
@@ -190,5 +194,11 @@ export const createManagedQuickBooksGrantCommands = (
       invoke(request, (authority, now) =>
         options.store.accept(command, authority, now),
       ),
+    /** Fresh administrator authority fences the connection and records revocation intent. */
+    fence: (request: Request, command: ManagedQuickBooksFenceCommand) => {
+      const lifecycle = options.lifecycle
+      if (!lifecycle) throw new Error('Managed QuickBooks lifecycle store is not configured')
+      return invoke(request, (authority, now) => lifecycle.fence(command, authority, now))
+    },
   }
 }

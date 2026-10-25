@@ -14,12 +14,12 @@ import type { InvoiceStateDatabase } from './invoice-state.js'
 import { quickBooksConnectionStatements } from './quickbooks-connection-command.js'
 
 type Database = BetterSQLite3Database<typeof schema> | DrizzleD1Database<typeof schema>
-function fail(kind: ManagedQuickBooksGrantError['kind']): never {
+export function fail(kind: ManagedQuickBooksGrantError['kind']): never {
   throw new ManagedQuickBooksGrantError(kind)
 }
-const hex = (value: unknown): value is string =>
+export const hex = (value: unknown): value is string =>
   typeof value === 'string' && /^[a-f0-9]{64}$/.test(value)
-const validTime = (value: unknown): value is string => {
+export const validTime = (value: unknown): value is string => {
   if (
     typeof value !== 'string' ||
     !/^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d(?:\.\d{3})?Z$/.test(value) ||
@@ -34,7 +34,7 @@ const validTime = (value: unknown): value is string => {
 const validProbe = (probe: ManagedQuickBooksGrantProbe) => {
   if (!hex(probe.grantId) || !hex(probe.browserHash) || !hex(probe.credentialHash)) fail('invalid')
 }
-const validAuthority = (authority: ManagedQuickBooksAuthority, now: string) => {
+export const validAuthority = (authority: ManagedQuickBooksAuthority, now: string) => {
   if (
     !validTime(now) ||
     !Number.isSafeInteger(authority.userId) ||
