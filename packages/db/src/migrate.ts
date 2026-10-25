@@ -1,3 +1,4 @@
+import { placeholderPlanningMigration } from './migrations/0163_placeholder_planning.js'
 import { planningRevisionsMigration } from './migrations/0162_planning_revisions.js'
 import { managedDeelConnectionMigration } from './migrations/0160_managed_deel_connection.js'
 import { managedBillConnectionMigration } from './migrations/0161_managed_bill_connection.js'
@@ -1682,6 +1683,7 @@ const migrations = [
   { id: '0160_managed_deel_connection', statements: managedDeelConnectionMigration },
   { id: '0161_managed_bill_connection', statements: managedBillConnectionMigration },
   { id: '0162_planning_revisions', statements: planningRevisionsMigration },
+  { id: '0163_placeholder_planning', statements: placeholderPlanningMigration },
 ] as const
 
 // Fixtures assert against this rather than re-listing ids: a hand-copied ledger merges

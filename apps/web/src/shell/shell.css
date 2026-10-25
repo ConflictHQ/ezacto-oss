@@ -9828,6 +9828,28 @@ th[aria-sort="descending"] .table-sort [data-part="ascending"] { opacity: 0.15; 
   color: var(--ez-ink);
   font: inherit;
 }
+.placeholder-planning input:not([type='hidden']),
+.placeholder-planning select,
+.placeholder-planning button,
+.placeholder-planning .data-table-overflow > summary {
+  min-height: 44px;
+}
+.placeholder-planning .data-table-overflow > summary {
+  min-width: 44px;
+}
+[data-placeholder-rows] .data-table {
+  min-width: 660px;
+}
+[data-placeholder-definitions] .data-table {
+  min-width: 440px;
+}
+.placeholder-planning .data-table .is-wrap {
+  overflow-wrap: anywhere;
+}
+.placeholder-planning .capacity-form h3,
+.placeholder-planning .capacity-form p {
+  flex-basis: 100%;
+}
 .team-period [data-capacity-current] {
   padding-inline: 14px;
   white-space: nowrap;

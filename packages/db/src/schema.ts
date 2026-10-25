@@ -3788,6 +3788,8 @@ export const placeholders = sqliteTable('placeholders', {
   id: integer('id').primaryKey({ autoIncrement: true }),
   name: text('name').notNull(),
   isActive: integer('is_active', { mode: 'boolean' }).notNull().default(true),
+  revision: integer('revision').notNull().default(0),
+  createdByUserId: integer('created_by_user_id').references(() => users.id, { onDelete: 'restrict' }),
   ...timestamps,
 })
 

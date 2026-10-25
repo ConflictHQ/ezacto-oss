@@ -1,6 +1,7 @@
-// Provenance: ezacto-pvt #1191 (parent #1007). CONTRACT ONLY: the types, the
-// refusal order and an in-memory reference store that a real repository must
-// match. No table, route or migration exists yet; it follows #1190 (revisions).
+// Provenance: ezacto-pvt #1191 (parent #1007). Domain decisions and a reference
+// store, backed by the native placeholder repository, management API and web
+// planning view. Storage repeats current authority and revision fences atomically.
+import { timeOffSecondsInWeek } from "./time-off.js";
 import { TrackedResourceInputError } from "./tracked-state.js";
 import {
   addDays,
@@ -57,6 +58,12 @@ export interface AssignmentContext {
   readonly projectActive: boolean;
   readonly personHasProjectAccess: boolean;
   readonly personWeeklyCapacitySeconds: number;
+  /** Minimal scoped leave/holiday facts; no leave kind, note or identity is returned. */
+  readonly personUnavailability?: readonly {
+    readonly startDate: string;
+    readonly endDate: string;
+    readonly secondsPerDay: number | null;
+  }[];
   readonly weekStartDay: AllocationWeekStartDay;
   /** All of the person's current allocations, on every project. */
   readonly personAllocations: readonly PersonAllocationRow[];
@@ -182,12 +189,15 @@ export const decideAssignment = (
         (sum, row) => sum + row.plannedSecondsPerWeek,
         allocation.plannedSecondsPerWeek,
       );
-    if (planned > context.personWeeklyCapacitySeconds) {
+    const available = context.personWeeklyCapacitySeconds - timeOffSecondsInWeek(
+      context.personUnavailability ?? [], week, context.personWeeklyCapacitySeconds,
+    );
+    if (planned > available) {
       warnings.push({
         code: "over_allocated",
         weekStart: week,
         plannedSeconds: planned,
-        capacitySeconds: context.personWeeklyCapacitySeconds,
+        capacitySeconds: available,
       });
     }
   }

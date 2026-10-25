@@ -1,4 +1,5 @@
 import { renderDataTable, type CellContent } from '../components/data-table.js'
+import { EzactoApiError } from '@conflict-hq/ezacto-client'
 import {
   addCalendarDays,
   capacityCellText,
@@ -10,9 +11,10 @@ import {
   type CapacityPersonData,
 } from './model.js'
 import { createPlanningEntry } from './planning-browser.js'
+import { createPlaceholderPlanningController } from './placeholders-browser.js'
 
 export interface CapacityController {
-  activate(signal: AbortSignal, options?: { readonly administrator?: boolean }): Promise<void>
+  activate(signal: AbortSignal, options?: { readonly administrator?: boolean; readonly scheduleManager?: boolean }): Promise<void>
 }
 
 const required = <ElementType extends Element>(selector: string): ElementType => {
@@ -65,6 +67,9 @@ export const createCapacityController = (api: CapacityApi): CapacityController =
   const current = required<HTMLButtonElement>('[data-capacity-current]')
 
   const planningHost = page.querySelector<HTMLElement>('[data-capacity-planning]')
+  const placeholderHost = page.querySelector<HTMLElement>('[data-capacity-placeholders]')
+  const placeholders = api.placeholders && placeholderHost
+    ? createPlaceholderPlanningController(placeholderHost, api.placeholders, () => void load()) : null
   const planning =
     api.planning === undefined || planningHost === null
       ? null
@@ -73,6 +78,9 @@ export const createCapacityController = (api: CapacityApi): CapacityController =
   let active: AbortSignal | null = null
   let releaseActivation: (() => void) | null = null
   let windows = 0
+  let administrator = false
+  let scheduleManager = false
+  let readRevision = 0
 
   const render = (report: CapacityData): void => {
     const first = report.weeks[0]
@@ -109,27 +117,36 @@ export const createCapacityController = (api: CapacityApi): CapacityController =
   const load = async (): Promise<void> => {
     const signal = active
     if (signal === null || signal.aborted) return
+    const request = ++readRevision
     status.textContent = 'Loading capacity…'
     retry.hidden = true
     try {
       const range = capacityRange(localToday(), windows)
       const response = await api.getCapacity(range, signal)
-      if (signal.aborted || active !== signal) return
+      if (signal.aborted || active !== signal || request !== readRevision) return
       render(response.data)
       status.textContent = ''
-      await planning?.refresh(
+      const planningRange = { from: response.data.weeks[0] ?? range.from,
+        to: response.data.weeks.length ? addCalendarDays(response.data.weeks.at(-1)!, 6) : range.to }
+      const people = response.data.people.map(person => ({ id: person.user_id, name: `${person.first_name} ${person.last_name}` }))
+      await Promise.all([planning?.refresh(
         response.data.people.map((person) => ({
           id: person.user_id,
           name: `${person.first_name} ${person.last_name}`,
         })),
         // Entry lists cover the same complete weeks as the capacity grid.
-        { from: response.data.weeks[0] ?? range.from,
-          to: response.data.weeks.length ? addCalendarDays(response.data.weeks.at(-1)!, 6) : range.to },
+        planningRange,
         signal,
-      )
+      ), (async () => {
+        if (!scheduleManager || !placeholders) return
+        const projects = administrator && api.planning ? await api.planning.listProjects(signal) : []
+        if (signal.aborted || active !== signal || request !== readRevision) return
+        await placeholders.refresh({ signal, range: planningRange, weeks: response.data.weeks, people, projects, administrator })
+      })()])
     } catch (error) {
-      if (signal.aborted || active !== signal) return
+      if (signal.aborted || active !== signal || request !== readRevision) return
       grid.replaceChildren()
+      if (error instanceof EzactoApiError && (error.status === 401 || error.status === 403)) placeholders?.clear()
       retry.hidden = false
       status.textContent = error instanceof Error ? error.message : 'Capacity could not be loaded.'
     }
@@ -149,6 +166,7 @@ export const createCapacityController = (api: CapacityApi): CapacityController =
       if (active !== signal) {
         releaseActivation?.()
         planning?.unmount()
+        placeholders?.clear()
         grid.replaceChildren()
         label.textContent = '—'
         status.textContent = ''
@@ -156,10 +174,15 @@ export const createCapacityController = (api: CapacityApi): CapacityController =
         windows = 0
       }
       active = signal
+      if (administrator !== (options.administrator === true)) placeholders?.clear()
+      administrator = options.administrator === true
+      scheduleManager = administrator || options.scheduleManager === true
       const clear = (): void => {
         if (active !== signal) return
         active = null
         planning?.unmount()
+        placeholders?.clear()
+        readRevision++
         grid.replaceChildren()
         label.textContent = '—'
         status.textContent = ''
@@ -172,6 +195,7 @@ export const createCapacityController = (api: CapacityApi): CapacityController =
       // Entry is for an administrator only; anyone else gets no control at all.
       if (options.administrator === true) planning?.mount()
       else planning?.unmount()
+      if (!scheduleManager) placeholders?.clear()
       if (page.hidden) return
       await load()
     },

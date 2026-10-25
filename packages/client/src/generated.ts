@@ -197,6 +197,119 @@ export type OrganizationHolidayPage = {
 };
 };
 
+export type PlanningPlaceholder = {
+  "id": number;
+  "name": string;
+  "is_active": boolean;
+  "version": number;
+};
+
+export type PlanningPlaceholderInput = {
+  "name": string;
+};
+
+export type PlanningPlaceholderUpdateInput = {
+  "name": string;
+  "version": number;
+};
+
+export type PlanningVersionInput = {
+  "version": number;
+};
+
+export type PlanningPlaceholderEnvelope = {
+  "data": PlanningPlaceholder;
+};
+
+export type PlanningPlaceholderPage = {
+  "data": Array<PlanningPlaceholder>;
+  "links": {
+  "self": string;
+  "next": string | null;
+};
+  "page": {
+  "per_page": number;
+  "next_cursor": string | null;
+};
+};
+
+export type PlaceholderAllocation = {
+  "id": number;
+  "placeholder_id": number;
+  "name": string;
+  "project_id": number;
+  "project_name": string;
+  "start_date": string;
+  "end_date": string;
+  "planned_seconds_per_week": number;
+  "state": "open" | "assigned" | "archived";
+  "version": number;
+  "assigned_allocation_id": number | null;
+};
+
+export type PlaceholderAllocationInput = {
+  "placeholder_id": number;
+  "project_id": number;
+  "start_date": string;
+  "end_date": string;
+  "planned_seconds_per_week": number;
+};
+
+export type PlaceholderAllocationUpdateInput = {
+  "version": number;
+  "start_date"?: string;
+  "end_date"?: string;
+  "planned_seconds_per_week"?: number;
+};
+
+export type PlaceholderAllocationEnvelope = {
+  "data": PlaceholderAllocation;
+};
+
+export type PlaceholderAllocationPage = {
+  "data": Array<PlaceholderAllocation>;
+  "links": {
+  "self": string;
+  "next": string | null;
+};
+  "page": {
+  "per_page": number;
+  "next_cursor": string | null;
+};
+};
+
+export type PlaceholderAssignmentInput = {
+  "version": number;
+  "user_id": number;
+  "idempotency_key": string;
+};
+
+export type PlaceholderAssignment = {
+  "allocation": {
+  "id": number;
+  "version": number;
+  "user_id": number;
+  "project_id": number;
+  "start_date": string;
+  "end_date": string;
+  "planned_seconds_per_week": number;
+};
+  "placeholder": PlaceholderAllocation;
+  "warnings": Array<{
+  "code": "over_allocated";
+  "week_start": string;
+  "planned_seconds": number;
+  "capacity_seconds": number;
+}>;
+  "prerequisites": Array<{
+  "code": "project_access_missing";
+}>;
+};
+
+export type PlaceholderAssignmentEnvelope = {
+  "data": PlaceholderAssignment;
+};
+
 export type AttachmentUploadInput = {
   "file": string;
 };
@@ -6878,6 +6991,96 @@ export class EzactoClient {
     const headers = new Headers(args.headers);
 
     return this.request<OrganizationHolidayEnvelope>("DELETE", "/api/v1/organization-holidays/:id".replace(":id", encodeURIComponent(String(args["id"]))), {
+      body: args.body,
+      signal: args.signal,
+      headers,
+    });
+  }
+
+  async listPlanningPlaceholders(args: { query?: { "cursor"?: string; "per_page"?: number; "is_active"?: boolean }; signal?: AbortSignal; headers?: HeadersInit } = {}): Promise<PlanningPlaceholderPage> {
+    const headers = new Headers(args.headers);
+
+    return this.request<PlanningPlaceholderPage>("GET", "/api/v1/planning-placeholders", {
+      query: args.query,
+      signal: args.signal,
+      headers,
+    });
+  }
+
+  async createPlanningPlaceholder(args: { body: PlanningPlaceholderInput; signal?: AbortSignal; headers?: HeadersInit }): Promise<PlanningPlaceholderEnvelope> {
+    const headers = new Headers(args.headers);
+
+    return this.request<PlanningPlaceholderEnvelope>("POST", "/api/v1/planning-placeholders", {
+      body: args.body,
+      signal: args.signal,
+      headers,
+    });
+  }
+
+  async updatePlanningPlaceholder(args: { "id": number; body: PlanningPlaceholderUpdateInput; signal?: AbortSignal; headers?: HeadersInit }): Promise<PlanningPlaceholderEnvelope> {
+    const headers = new Headers(args.headers);
+
+    return this.request<PlanningPlaceholderEnvelope>("PATCH", "/api/v1/planning-placeholders/:id".replace(":id", encodeURIComponent(String(args["id"]))), {
+      body: args.body,
+      signal: args.signal,
+      headers,
+    });
+  }
+
+  async deletePlanningPlaceholder(args: { "id": number; body: PlanningVersionInput; signal?: AbortSignal; headers?: HeadersInit }): Promise<PlanningPlaceholderEnvelope> {
+    const headers = new Headers(args.headers);
+
+    return this.request<PlanningPlaceholderEnvelope>("DELETE", "/api/v1/planning-placeholders/:id".replace(":id", encodeURIComponent(String(args["id"]))), {
+      body: args.body,
+      signal: args.signal,
+      headers,
+    });
+  }
+
+  async listPlaceholderAllocations(args: { query?: { "cursor"?: string; "per_page"?: number; "project_id"?: number; "state"?: "open" | "assigned" | "archived"; "from"?: string; "to"?: string }; signal?: AbortSignal; headers?: HeadersInit } = {}): Promise<PlaceholderAllocationPage> {
+    const headers = new Headers(args.headers);
+
+    return this.request<PlaceholderAllocationPage>("GET", "/api/v1/placeholder-allocations", {
+      query: args.query,
+      signal: args.signal,
+      headers,
+    });
+  }
+
+  async createPlaceholderAllocation(args: { body: PlaceholderAllocationInput; signal?: AbortSignal; headers?: HeadersInit }): Promise<PlaceholderAllocationEnvelope> {
+    const headers = new Headers(args.headers);
+
+    return this.request<PlaceholderAllocationEnvelope>("POST", "/api/v1/placeholder-allocations", {
+      body: args.body,
+      signal: args.signal,
+      headers,
+    });
+  }
+
+  async updatePlaceholderAllocation(args: { "id": number; body: PlaceholderAllocationUpdateInput; signal?: AbortSignal; headers?: HeadersInit }): Promise<PlaceholderAllocationEnvelope> {
+    const headers = new Headers(args.headers);
+
+    return this.request<PlaceholderAllocationEnvelope>("PATCH", "/api/v1/placeholder-allocations/:id".replace(":id", encodeURIComponent(String(args["id"]))), {
+      body: args.body,
+      signal: args.signal,
+      headers,
+    });
+  }
+
+  async deletePlaceholderAllocation(args: { "id": number; body: PlanningVersionInput; signal?: AbortSignal; headers?: HeadersInit }): Promise<PlaceholderAllocationEnvelope> {
+    const headers = new Headers(args.headers);
+
+    return this.request<PlaceholderAllocationEnvelope>("DELETE", "/api/v1/placeholder-allocations/:id".replace(":id", encodeURIComponent(String(args["id"]))), {
+      body: args.body,
+      signal: args.signal,
+      headers,
+    });
+  }
+
+  async assignPlaceholderAllocation(args: { "id": number; body: PlaceholderAssignmentInput; signal?: AbortSignal; headers?: HeadersInit }): Promise<PlaceholderAssignmentEnvelope> {
+    const headers = new Headers(args.headers);
+
+    return this.request<PlaceholderAssignmentEnvelope>("POST", "/api/v1/placeholder-allocations/:id/assign".replace(":id", encodeURIComponent(String(args["id"]))), {
       body: args.body,
       signal: args.signal,
       headers,

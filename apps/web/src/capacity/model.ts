@@ -1,3 +1,5 @@
+import type { PlaceholderPlanningApi } from './placeholder-model.js'
+
 /**
  * The capacity view's pure parts (issue 1007, slice 2): which days a screen asks
  * for, and how a figure reads. Kept apart from the DOM so they are tested
@@ -31,6 +33,7 @@ export interface CapacityData {
 }
 
 export interface CapacityApi {
+  readonly placeholders?: PlaceholderPlanningApi
   getCapacity(
     range: { readonly from: string; readonly to: string },
     signal?: AbortSignal,
