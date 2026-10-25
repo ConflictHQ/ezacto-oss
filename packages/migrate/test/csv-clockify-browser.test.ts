@@ -58,10 +58,63 @@ const codes = (issues: readonly { line: number; code: string }[]) =>
   issues.map((issue): [number, string] => [issue.line, issue.code])
 
 describe('Clockify browser adapter', () => {
+  it.each(['\n', '\r\n', '\r'])('[#1179] preserves physical diagnostic lines through the adapter: %j', (newline) => {
+    const notes = `first${newline}second`
+    const parsed = parseCsv(new TextEncoder().encode([
+      HEADER,
+      row(['2026-09-01', '09:00:00'], ['2026-09-01', '10:00:00'], '01:00:00', notes),
+      row(['2026-09-02', '09:00:00'], ['2026-09-02', '10:00:00'], 'bad'),
+    ].join(newline)), adapter)
+    expect(parsed.fileErrors).toEqual([])
+    expect(parsed.rows).toHaveLength(1)
+    expect(parsed.rows[0]).toMatchObject({ line: 2, notes })
+    expect(codes(parsed.invalid)).toEqual([[4, 'invalid_duration']])
+  })
+
+  it('[#1179] requires an explicit exporter zone instead of falling back to the device zone', () => {
+    expect(() => createClockifyBrowserAdapter({} as Parameters<typeof createClockifyBrowserAdapter>[0])).toThrow()
+  })
+
+  it('[#1179] freezes the exporter zone at reader construction', () => {
+    const options = { exporterZone: 'America/New_York' }
+    const frozen = createClockifyBrowserAdapter(options)
+    options.exporterZone = 'UTC'
+    const parsed = parseCsv(file(row(['2026-03-08', '02:30:00'], ['2026-03-08', '03:30:00'], '01:00:00')), frozen)
+    expect(codes(parsed.invalid)).toEqual([[2, 'clockify_dst_gap']])
+    expect(parsed.rows).toEqual([])
+  })
+
+  it.each([{ extra: [''] }, { extra: ['', '  '] }])('[#1179] refuses unnamed source columns rather than silently dropping values: $extra', ({ extra }) => {
+    const source = new TextEncoder().encode(HEADER + ',' + quote(extra) + '\n' + row(['2026-09-01', '09:00:00'], ['2026-09-01', '10:00:00'], '01:00:00') + ',' + quote(extra.map(() => 'UNSUPPORTED_CELL_SENTINEL')))
+    const parsed = parseCsv(source, adapter)
+    expect(codes(parsed.fileErrors)).toEqual(extra.map(() => [1, 'clockify_blank_column']))
+    extra.forEach((_, index) => expect(parsed.fileErrors[index]?.message).toContain(`column ${COLUMNS.length + index + 1}`))
+    expect(JSON.stringify(parsed.fileErrors)).not.toContain('UNSUPPORTED_CELL_SENTINEL')
+    expect(parsed.rows).toEqual([])
+    expect(parseCsv(source, clockifyAdapter).rows).toHaveLength(1)
+  })
+
+  it('[#1179] rejects formula-like ignored headers before accepting source rows', () => {
+    const source = new TextEncoder().encode(HEADER + ',"=1+1"\n' + row(['2026-09-01', '09:00:00'], ['2026-09-01', '10:00:00'], '01:00:00') + ',"ordinary"')
+    const parsed = parseCsv(source, adapter)
+    expect(codes(parsed.fileErrors)).toEqual([[1, 'formula_injection']])
+    expect(parsed.rows).toEqual([])
+    expect(parseCsv(source, clockifyAdapter).rows).toHaveLength(1)
+    expect(codes(parseCsv(new TextEncoder().encode('\n\n' + new TextDecoder().decode(source)), adapter).fileErrors)).toEqual([[3, 'formula_injection']])
+  })
+
+  it('[#1179] rejects formula-like ignored source cells only in the browser reader', () => {
+    const source = file(row(['2026-09-01', '09:00:00'], ['2026-09-01', '10:00:00'], '01:00:00')).slice()
+    const text = new TextDecoder().decode(source).replace('"urgent"', '"=1+1"')
+    const csv = new TextEncoder().encode(text)
+    expect(codes(parseCsv(csv, adapter).invalid)).toEqual([[2, 'formula_injection']])
+    expect(parseCsv(csv, clockifyAdapter).rows).toHaveLength(1)
+  })
+
   it('[unit] has a frozen identity apart from the CLI reader', () => {
     expect(CLOCKIFY_ADAPTERS).toEqual({
       cli: 'clockify-detailed-cli@1',
-      browser: 'clockify-detailed-browser@1',
+      browser: 'clockify-detailed-browser@2',
     })
   })
 

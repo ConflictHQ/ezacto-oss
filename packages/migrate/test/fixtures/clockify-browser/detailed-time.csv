@@ -1,0 +1,9 @@
+﻿Email,Client,Project,Task,Description,Billable,Start Date,Start Time,End Date,End Time,Duration (h),Billable Rate (USD),Billable Amount (USD),Currency,Attachment,Custom Field: Team
+fixture@example.invalid,Fixture studio,Website,General,"Quoted, task
+second ""quoted"" line – café",Yes,2026-09-01,9:00:00 AM,2026-09-01,10:30:00 AM,01:30:00,150.00,225.00,EUR,https://fixture.invalid/receipt,Invented team
+fixture@example.invalid,Fixture studio,Website,General,"<img src=""https://fixture.invalid/x"" onerror=""globalThis.csvFixtureExecuted=true"">",Yes,2026-09-01,13:00:15,2026-09-01,13:59:59,00:59:44,150.00,225.00,EUR,https://fixture.invalid/receipt,Invented team
+fixture@example.invalid,Fixture studio,Website,General,Overnight wall clock,Yes,2026-09-01,23:30:00,2026-09-02,00:30:00,01:00:00,150.00,225.00,EUR,https://fixture.invalid/receipt,Invented team
+fixture@example.invalid,Fixture studio,Website,General,Rounded export duration,Yes,2026-09-01,10:00:00,2026-09-01,11:00:00,00:54:00,150.00,225.00,EUR,https://fixture.invalid/receipt,Invented team
+fixture@example.invalid,,Website,General,Omitted dimension requires a mapping decision,Yes,2026-09-01,09:00:00,2026-09-01,10:00:00,01:00:00,150.00,225.00,EUR,https://fixture.invalid/receipt,Invented team
+fixture@example.invalid,Fixture studio,,General,Omitted dimension requires a mapping decision,Yes,2026-09-01,09:00:00,2026-09-01,10:00:00,01:00:00,150.00,225.00,EUR,https://fixture.invalid/receipt,Invented team
+fixture@example.invalid,Fixture studio,Website,,Omitted dimension requires a mapping decision,Yes,2026-09-01,09:00:00,2026-09-01,10:00:00,01:00:00,150.00,225.00,EUR,https://fixture.invalid/receipt,Invented team

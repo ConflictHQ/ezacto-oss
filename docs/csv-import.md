@@ -120,6 +120,38 @@ account's wall clock, not converted. A file whose dates are DD/MM/YYYY is refuse
 with `clockify_date_format`; export again with the date format set to MM/DD/YYYY
 or YYYY-MM-DD.
 
+### Browser contract and export settings
+
+The adapter hardening does not enable browser imports; their planner, private
+staging and durable apply remain separate implementation work. The versioned
+browser reader is `clockify-detailed-browser@2`, with ISO dates, an explicit
+exporter zone, duplicate-header refusal and formula-like source-cell rejection
+including ignored columns. `@1` was a pre-runtime browser contract and is not
+replayed by the new reader. The CLI keeps `clockify-detailed-cli@1` behavior.
+Vendor source row/column/decoded-field bounds apply before projection, even when
+an oversized value belongs to an ignored column. See the
+[accepted browser plan](import-tools-plan.md#dates-timezone-and-currency-are-explicit).
+
+Primary documentation checked on 2026-10-25:
+
+- [Export reports](https://clockify.me/help/reports/exporting-reports) documents
+  Detailed report timestamps and time-entry dimensions; Summary lacks timestamps.
+- [Customize report exports](https://clockify.me/help/reports/customize-exports)
+  lets the exporting user omit columns. Our eleven English header names above
+  are the narrow accepted reader contract, not a guarantee about every export.
+- [Users in different time zones](https://clockify.me/help/administration/time-zones)
+  explains that a report uses the reporting user's profile zone, which can differ
+  from the person who tracked the work. Select and record that exporter zone;
+  this reader never reconstructs another person's zone or converts offsets.
+- [Time rounding](https://clockify.me/help/track-time-and-expenses/time-rounding)
+  documents that report rounding also affects exported durations. Turn rounding
+  off and export full `HH:MM:SS` durations. Source seconds and destination policy
+  rounding are separate; source invoice or money parity is not imported.
+
+Sanitized golden fixtures are invented examples, not a live provider acceptance
+claim. Missing dimensions, ambiguous dates, DST gaps, repeated hours, overnight
+spans and timing loss remain visible diagnostic decisions before apply.
+
 ## The mapping
 
 Optional JSON. A name the mapping does not mention is looked up as written.

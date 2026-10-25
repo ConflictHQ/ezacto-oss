@@ -1,4 +1,4 @@
-import type { CsvAdapter, CsvIssue, RawRecord } from './csv-contract.js'
+import { isFormulaLikeCsvCell, type CsvAdapter, type CsvIssue, type RawRecord } from './csv-contract.js'
 
 /**
  * The Clockify adapter (issue 1012): the "detailed" time report CSV export, read
@@ -33,7 +33,7 @@ import type { CsvAdapter, CsvIssue, RawRecord } from './csv-contract.js'
 /** Frozen per-run identities. Change a reading by adding a version, not editing one. */
 export const CLOCKIFY_ADAPTERS = {
   cli: 'clockify-detailed-cli@1',
-  browser: 'clockify-detailed-browser@1',
+  browser: 'clockify-detailed-browser@2',
 } as const
 
 export interface ClockifyBrowserOptions {
@@ -156,18 +156,28 @@ const readClockify = (
   browser: ClockifyBrowserOptions | null,
 ): ReturnType<CsvAdapter> => {
   const header = records[0]!
+  const headerLine = browser === null ? 1 : header.line
+  if (browser !== null && header.fields.some(isFormulaLikeCsvCell)) return {
+    records: [], invalid: [], warnings: [],
+    fileErrors: [{ line: headerLine, code: 'formula_injection', message: 'A source header starts with a character a spreadsheet would run as a formula.' }],
+  }
   const names = header.fields.map((field) => field.trim().toLowerCase())
   const at = new Map<string, number>()
   names.forEach((name, index) => {
     if (!at.has(name)) at.set(name, index)
   })
   if (browser !== null) {
+    const unnamed = names.flatMap((name, index) => name === '' ? [index + 1] : [])
+    if (unnamed.length > 0) return {
+      records: [], invalid: [], warnings: [],
+      fileErrors: unnamed.map(column => ({ line: headerLine, code: 'clockify_blank_column', message: `Source column ${column} has no header; name or remove it before importing.` })),
+    }
     const repeated = names.filter((name, index) => name !== '' && names.indexOf(name) !== index)
     if (repeated.length > 0) {
       return {
         records: [],
         fileErrors: [...new Set(repeated)].map((name) => ({
-          line: 1,
+          line: headerLine,
           code: 'clockify_duplicate_column',
           message: `Column ${name} appears more than once; remove the repeat and export again.`,
         })),
@@ -177,7 +187,7 @@ const readClockify = (
     }
   }
   const fileErrors: CsvIssue[] = REQUIRED.filter((name) => !at.has(name)).map((name) => ({
-    line: 1,
+    line: headerLine,
     code: 'clockify_missing_column',
     message: `The Clockify detailed time report has a ${name} column; this file does not.`,
   }))
@@ -231,7 +241,7 @@ const readClockify = (
     .filter((name) => name !== '' && !(REQUIRED as readonly string[]).includes(name))
     .map((name) => {
       if (browser === null) {
-        return { line: 1, code: 'clockify_column_ignored', message: `Column ${name} is not read.` }
+        return { line: headerLine, code: 'clockify_column_ignored', message: `Column ${name} is not read.` }
       }
       const index = names.indexOf(name)
       const carrying = records
@@ -243,14 +253,14 @@ const readClockify = (
           ? 'clockify_attachment_ignored'
           : 'clockify_column_ignored'
       return {
-        line: 1,
+        line: headerLine,
         code,
         message: `Column ${name} is not read; ${carrying} of ${records.length - 1} rows carry a value.`,
       }
     })
 
   const invalid: CsvIssue[] = []
-  const out: RawRecord[] = [{ line: 1, fields: CONTRACT_HEADER }]
+  const out: RawRecord[] = [{ line: headerLine, fields: CONTRACT_HEADER }]
   for (const record of records.slice(1)) {
     const { line } = record
     if (record.fields.length !== header.fields.length) {
@@ -259,6 +269,10 @@ const readClockify = (
         code: 'column_count',
         message: `The row has ${record.fields.length} fields; the header has ${header.fields.length}.`,
       })
+      continue
+    }
+    if (browser !== null && record.fields.some(isFormulaLikeCsvCell)) {
+      invalid.push({ line, code: 'formula_injection', message: 'A source cell starts with a character a spreadsheet would run as a formula.' })
       continue
     }
     const raw = (name: ClockifyColumn): string => record.fields[at.get(name)!] ?? ''
@@ -368,6 +382,8 @@ export const clockifyAdapter: CsvAdapter = (records) => readClockify(records, nu
 
 /** The browser pilot's reader. Throws on an exporter zone the runtime does not know. */
 export const createClockifyBrowserAdapter = (options: ClockifyBrowserOptions): CsvAdapter => {
-  new Intl.DateTimeFormat('en-US', { timeZone: options.exporterZone })
-  return (records) => readClockify(records, options)
+  const frozen = Object.freeze({ exporterZone: options.exporterZone })
+  if (typeof frozen.exporterZone !== 'string' || frozen.exporterZone.trim() === '') throw new RangeError('An explicit exporter time zone is required.')
+  new Intl.DateTimeFormat('en-US', { timeZone: frozen.exporterZone })
+  return (records) => readClockify(records, frozen)
 }
