@@ -108,7 +108,7 @@ export type CsvAdapter = (records: readonly RawRecord[]) => {
  * its start and closes it only before a comma or a line break; anything else is
  * reported, never repaired, because a guess here becomes somebody's timesheet.
  */
-const readRecords = (text: string): { records: RawRecord[]; error: CsvIssue | null } => {
+const readRecords = (text: string, sourceLimits = false): { records: RawRecord[]; error: CsvIssue | null } => {
   const records: RawRecord[] = []
   let fields: string[] = []
   let field = ''
@@ -133,7 +133,23 @@ const readRecords = (text: string): { records: RawRecord[]; error: CsvIssue | nu
     fields = []
     started = false
   }
+  const sourceViolation = (): CsvIssue | null => {
+    if (field.length > MAX_FIELD_LENGTH) return {
+      line: recordLine, code: 'field_too_long', message: `A source field exceeds ${MAX_FIELD_LENGTH} characters.`,
+    }
+    if (fields.length >= MAX_CSV_COLUMNS) return {
+      line: recordLine, code: 'too_many_columns', message: `A source record exceeds ${MAX_CSV_COLUMNS} columns.`,
+    }
+    if (records.length > MAX_CSV_ROWS + 1) return {
+      line: 1, code: 'too_many_rows', message: `At most ${MAX_CSV_ROWS} data rows.`,
+    }
+    return null
+  }
   for (let index = 0; index < text.length; index += 1) {
+    if (sourceLimits) {
+      const violation = sourceViolation()
+      if (violation !== null) return { records, error: violation }
+    }
     const char = text[index]!
     if (inQuotes) {
       if (char === '"') {
@@ -145,7 +161,8 @@ const readRecords = (text: string): { records: RawRecord[]; error: CsvIssue | nu
           afterQuote = true
         }
       } else {
-        if (char === '\n') line += 1
+        // CRLF is one physical break; preserve both bytes in the cell.
+        if (char === '\r' || (char === '\n' && text[index - 1] !== '\r')) line += 1
         field += char
       }
       continue
@@ -189,6 +206,10 @@ const readRecords = (text: string): { records: RawRecord[]; error: CsvIssue | nu
       field += char
     }
   }
+  if (sourceLimits) {
+    const violation = sourceViolation()
+    if (violation !== null) return { records, error: violation }
+  }
   if (inQuotes) {
     return {
       records,
@@ -200,6 +221,9 @@ const readRecords = (text: string): { records: RawRecord[]; error: CsvIssue | nu
     }
   }
   if (started || field !== '' || fields.length > 0) endRecord()
+  if (sourceLimits && records.length > MAX_CSV_ROWS + 1) return {
+    records, error: { line: 1, code: 'too_many_rows', message: `At most ${MAX_CSV_ROWS} data rows.` },
+  }
   return { records, error: null }
 }
 
@@ -233,6 +257,10 @@ export const isKnownCurrency = (code: string): boolean => {
 /** Cells a spreadsheet would run as a formula if the text were opened in one. */
 const FORMULA_START = /^[=+\-@\t\r]/
 
+/** One closed rule for retained text and browser source cells; never evaluate formulas. */
+export const isFormulaLikeCsvCell = (raw: string): boolean =>
+  raw.trim() !== '' && (FORMULA_START.test(raw) || FORMULA_START.test(raw.trim()))
+
 const TEXT_FIELDS = ['person_email', 'client', 'project', 'task', 'notes'] as const
 
 const truthy = new Set(['true', 'yes', 'y', '1'])
@@ -257,7 +285,7 @@ const parseRow = (
     if (value.length > (name === 'notes' ? MAX_FIELD_LENGTH : MAX_NAME_LENGTH)) {
       bad('field_too_long', `${name} is longer than the contract allows.`)
     }
-    if (value !== '' && (FORMULA_START.test(value) || FORMULA_START.test(raw(name)))) {
+    if (isFormulaLikeCsvCell(raw(name))) {
       bad(
         'formula_injection',
         `${name} starts with a character a spreadsheet would run as a formula.`,
@@ -412,7 +440,8 @@ export const parseCsv = (bytes: Uint8Array, adapter?: CsvAdapter): ParsedCsv => 
       { line: 0, code: 'binary_content', message: 'The file contains NUL bytes; it is not a CSV.' },
     ])
   }
-  const { records: read, error } = readRecords(text)
+  // Vendor projection must not discard oversized cells/columns or spend work on excess rows.
+  const { records: read, error } = readRecords(text, adapter !== undefined)
   if (error !== null) return emptyResult(bytes, [error])
   if (read.length === 0) {
     return emptyResult(bytes, [

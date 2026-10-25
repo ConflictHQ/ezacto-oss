@@ -213,6 +213,19 @@ describe('CSV time contract', () => {
     expect(parsed.invalid).toEqual([expect.objectContaining({ line: 5, code: 'invalid_hours' })])
   })
 
+  it.each(['\n', '\r\n', '\r'])('[#1179] counts quoted physical line breaks without changing notes: %j', (newline) => {
+    const notes = `first${newline}second`
+    const parsed = parseCsv(encode([
+      HEADER,
+      `2026-09-01,a@example.com,C,P,T,1,"${notes}",,,`,
+      '2026-09-02,a@example.com,C,P,T,0,,,,',
+    ].join(newline)))
+    expect(parsed.fileErrors).toEqual([])
+    expect(parsed.rows).toHaveLength(1)
+    expect(parsed.rows[0]).toMatchObject({ line: 2, notes })
+    expect(parsed.invalid).toEqual([expect.objectContaining({ line: 4, code: 'invalid_hours' })])
+  })
+
   it('[unit] gives a row the same source key however the file is ordered, and tells twins apart', () => {
     const a = '2026-09-01,a@example.com,C,P,T,1,,,,'
     const b = '2026-09-02,a@example.com,C,P,T,2,,,,'
