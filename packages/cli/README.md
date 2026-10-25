@@ -66,6 +66,27 @@ report inventory, and a SQLite backup through the installed `ez` command. This
 check runs in CI and before either package is published; it needs access to npm
 for public dependencies and cleans up its temporary installation afterward.
 
+## Instance module availability
+
+`ez --help` and `ez report list` work offline and describe commands supported by
+this client. They do not promise that the selected instance enables every module
+or that the current token has every permission. A report name in the inventory
+is not a successful capability check.
+
+Remote invoice commands, reports and exports retain the server's module and
+permission checks. A `403` with `module_disabled` means the operator has switched
+the module off; signing in again or granting a token another scope cannot enable
+it. JSON failures preserve the server code, HTTP status and request ID. The CLI
+does not fall back to another endpoint or provider after a refusal.
+
+The SSO switch controls interactive provider sign-in, not validation of an
+already-issued API token. `ez login` stores a token; it does not start an SSO
+flow. `ez backup`, `restore`, `backup-decrypt` and `export --verify` operate on
+local files. `backup --sync-to` is an explicit operator copy to the configured
+S3-compatible destination, not the instance's managed backup service. These
+recovery commands remain available with `BACKUPS_ENABLED=false`; possession of
+the files and destination credentials is still required.
+
 ## Report permissions
 
 `ez report list` names the scope required by each report. `ez uninvoiced` and

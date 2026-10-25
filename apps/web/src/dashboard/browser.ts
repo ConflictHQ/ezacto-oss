@@ -4,7 +4,8 @@ import {
   type TimesheetSubmission,
   type Whoami,
 } from '@conflict-hq/ezacto-client'
-import { formatReportHours, formatReportMoney } from '../reports/model.js'
+import { moduleAvailable } from '../module-availability.js'
+import { canReadFinancialReports, formatReportHours, formatReportMoney } from '../reports/model.js'
 import { markMoney, moneyText } from '../money-display.js'
 import { localDate, weekRange } from '../shell/model.js'
 import {
@@ -103,6 +104,11 @@ export const createDashboardController = (api: DashboardApi): DashboardControlle
    */
   const offers = (card: Readonly<DashboardCard>): boolean => {
     if (withdrawn.has(card.key)) return false
+    if (!moduleAvailable('invoices')) {
+      if (card.key === 'owed') return false
+      // Reporting remains available even when raising invoices is disabled.
+      if (card.key === 'uninvoiced') return session !== null && canReadFinancialReports(session.identity.profile)
+    }
     if (card.gate === undefined) return true
     const gate = document.querySelector<HTMLElement>(card.gate)
     return gate !== null && !gate.hidden

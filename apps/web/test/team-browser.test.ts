@@ -149,6 +149,72 @@ beforeEach(() => {
 })
 
 describe('Team browser controller', () => {
+  it.each(['team-list', 'team-person'] as const)('[#1259] a disabled Team bookmark withdraws controls and reads (%s)', async (view) => {
+    writeDocument(view)
+    const listTeamPeople = vi.fn(async () => page([summary()]))
+    const getTeamPerson = vi.fn(async () => person())
+    const getTeamCatalog = vi.fn(async () => catalog)
+    const getTeamWeekStartDay = vi.fn(async () => 'monday' as const)
+    const listPayoutPreferences = vi.fn(async () => ({ data: { people: [], organization_default: 'deel' as const } }))
+    const createTeamPerson = vi.fn()
+    const getTeamStatus = vi.fn(async () => ({ enabled: false }))
+    await createTeamDirectoryController({ getTeamStatus, listTeamPeople, getTeamPerson, getTeamCatalog, getTeamWeekStartDay, listPayoutPreferences, createTeamPerson }).activate(identity(), new AbortController().signal, () => false)
+    for (const read of [listTeamPeople, getTeamPerson, getTeamCatalog, getTeamWeekStartDay, listPayoutPreferences]) expect(read).not.toHaveBeenCalled()
+    expect(getTeamStatus).toHaveBeenCalledOnce()
+    const add = document.querySelector<HTMLButtonElement>('[data-team-person-create]')!
+    expect(add.hidden).toBe(true)
+    expect(add.disabled).toBe(true)
+    add.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+    expect(createTeamPerson).not.toHaveBeenCalled()
+    expect(document.querySelector<HTMLElement>('[data-team-defaults]')?.hidden).toBe(true)
+    expect(document.querySelector(view === 'team-list' ? '[data-team-list-status]' : '[data-team-person-status]')?.textContent).toBe('Team is unavailable.')
+  })
+
+  it('[#1259] only an enabled current Team discovery releases private reads and Add person', async () => {
+    writeDocument('team-list')
+    let release!: (value: { enabled: boolean }) => void
+    const getTeamStatus = vi.fn(() => new Promise<{ enabled: boolean }>(resolve => { release = resolve }))
+    const listTeamPeople = vi.fn(async () => page([summary()]))
+    const controller = createTeamDirectoryController({ getTeamStatus, listTeamPeople })
+    const session = new AbortController()
+    const activation = controller.activate(identity(), session.signal, () => false)
+    expect(listTeamPeople).not.toHaveBeenCalled()
+    expect(document.querySelector<HTMLButtonElement>('[data-team-person-create]')?.hidden).toBe(true)
+    release({ enabled: true })
+    await activation
+    expect(listTeamPeople).toHaveBeenCalledOnce()
+    expect(document.querySelector<HTMLButtonElement>('[data-team-person-create]')?.hidden).toBe(false)
+    expect(document.querySelector('[data-team-list]')?.textContent).toContain('Avery Owner')
+    session.abort()
+  })
+
+  it('[#1259] a late enabled Team status cannot release an aborted activation', async () => {
+    writeDocument('team-list')
+    let release!: (value: { enabled: boolean }) => void
+    const getTeamStatus = vi.fn(() => new Promise<{ enabled: boolean }>(resolve => { release = resolve }))
+    const listTeamPeople = vi.fn(async () => page([summary()]))
+    const session = new AbortController()
+    const activation = createTeamDirectoryController({ getTeamStatus, listTeamPeople }).activate(identity(), session.signal, () => false)
+    session.abort()
+    expect(getTeamStatus).toHaveBeenCalledOnce()
+    release({ enabled: true })
+    await activation
+    expect(listTeamPeople).not.toHaveBeenCalled()
+    expect(document.querySelector<HTMLButtonElement>('[data-team-person-create]')?.hidden).toBe(true)
+  })
+
+  it('[#1259] a failed Team discovery fails closed and preserves authentication handling', async () => {
+    writeDocument('team-list')
+    const failure = new Error('Owned unavailable status')
+    const onSessionFailure = vi.fn(() => false)
+    const listTeamPeople = vi.fn(async () => page([summary()]))
+    await createTeamDirectoryController({ getTeamStatus: async () => { throw failure }, listTeamPeople }).activate(identity(), new AbortController().signal, onSessionFailure)
+    expect(onSessionFailure).toHaveBeenCalledWith(failure)
+    expect(listTeamPeople).not.toHaveBeenCalled()
+    expect(document.querySelector<HTMLButtonElement>('[data-team-person-create]')?.hidden).toBe(true)
+    expect(document.querySelector('[data-team-list-status]')?.textContent).toBe('Team is unavailable.')
+  })
+
   it('loads authoritative utilization and reloads week and Active/All filters', async () => {
     writeDocument('team-list')
     const listTeamPeople = vi.fn(async (filter) =>

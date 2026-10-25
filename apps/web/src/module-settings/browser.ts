@@ -150,7 +150,7 @@ const moduleDescriptions: Readonly<Record<string, { label: string; warning: stri
   expenses: {
     label: 'Expenses',
     warning:
-      'Disabling hides the Expenses navigation link and returns 404 from expense API endpoints. Existing expense records are preserved.',
+      'Disabling hides the Expenses navigation link and refuses expense API calls. Existing expense records are preserved.',
   },
   activity_log: {
     label: 'Activity log',
@@ -2587,7 +2587,9 @@ export const createModuleSettingsController = (
     // methods are shown, and no switch moves.
     signInStatus.textContent = demo ? demoUnavailable('Switching a sign-in method') : ''
     signInList.hidden = false
-    signInList.innerHTML = states.map((state) => renderSignInMethodCard(state, demo)).join('')
+    signInList.innerHTML = states
+      .filter((state) => moduleAvailable('sso') || state.method === 'password' || state.method === 'magic_link')
+      .map((state) => renderSignInMethodCard(state, demo)).join('')
     for (const toggle of signInList.querySelectorAll<HTMLInputElement>(
       '[data-sign-in-toggle]',
     )) {

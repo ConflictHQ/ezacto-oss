@@ -225,6 +225,7 @@ export const createTeamDirectoryController = (
   personPageElement.hidden = !personPage
 
   let session: ActiveSession | null = null
+  let moduleReady = false
   let removeSessionAbortListener: (() => void) | null = null
   let people: readonly TeamPersonSummary[] = []
   let person: TeamPerson | null = null
@@ -260,7 +261,7 @@ export const createTeamDirectoryController = (
   let emailFactorPending = false
 
   const currentSession = (): ActiveSession | null =>
-    session === null || session.signal.aborted ? null : session
+    !moduleReady || session === null || session.signal.aborted ? null : session
 
   const readDenialMessage = (active: ActiveSession): string =>
     active.identity.authentication.kind === 'token' &&
@@ -322,6 +323,9 @@ export const createTeamDirectoryController = (
   }
 
   const clearPrivatePresentation = (): void => {
+    moduleReady = false
+    required<HTMLElement>('[data-team-defaults]').hidden = true
+    required<HTMLElement>('[data-team-defaults-rows]').replaceChildren()
     listGeneration += 1
     people = []
     person = null
@@ -653,6 +657,7 @@ export const createTeamDirectoryController = (
   // that has just written a person has to say what the reader can now see, and
   // "it reloaded" is not the same answer as "the request came back".
   const loadPeople = async (active: ActiveSession): Promise<boolean> => {
+    if (currentSession() !== active) return false
     // Payment defaults for everyone are an administrator's view (issue 1152).
     if (active.identity.profile === 'administrator') void payoutDefaults.load(active.signal)
     if (!active.capabilities.canRead) {
@@ -1452,6 +1457,7 @@ export const createTeamDirectoryController = (
   }
 
   const loadPerson = async (active: ActiveSession): Promise<boolean> => {
+    if (currentSession() !== active) return false
     if (!active.capabilities.canRead) {
       personStatus.textContent = readDenialMessage(active)
       return false
@@ -1999,7 +2005,7 @@ export const createTeamDirectoryController = (
         identity,
         capabilities: teamCapabilities(identity),
         signal,
-        ...sessionPresenter(() => currentSession() === active, onSessionFailure),
+        ...sessionPresenter(() => session === active && !signal.aborted, onSessionFailure),
       }
       session = active
       const abort = (): void => {
@@ -2014,6 +2020,28 @@ export const createTeamDirectoryController = (
       const removeAbortListener = (): void => signal.removeEventListener('abort', abort)
       removeSessionAbortListener = removeAbortListener
       signal.addEventListener('abort', abort, { once: true })
+      if (!active.capabilities.canRead) {
+        listStatus.textContent = readDenialMessage(active)
+        personStatus.textContent = readDenialMessage(active)
+        return
+      }
+      listStatus.textContent = 'Team is unavailable.'
+      personStatus.textContent = 'Team is unavailable.'
+      if (api.getTeamStatus !== undefined) {
+        try {
+          const status = await api.getTeamStatus(signal)
+          if (session !== active || signal.aborted) return
+          if (status.enabled !== true) return
+        } catch (error) {
+          active.presentFailure(error, () => {
+            listStatus.textContent = 'Team is unavailable.'
+            personStatus.textContent = 'Team is unavailable.'
+          })
+          return
+        }
+      }
+      if (session !== active || signal.aborted) return
+      moduleReady = true
       if (listPage) {
         syncAddPersonControls(active)
         if (api.getTeamWeekStartDay !== undefined) {

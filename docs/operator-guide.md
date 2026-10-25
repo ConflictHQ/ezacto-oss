@@ -7,8 +7,8 @@ Set up and operate an eZacto instance: identity, email, error reporting, account
 1. Install [Cloudflare Workers](self-host-worker.md) or the [container](self-host-container.md), choose the canonical HTTPS application URL and establish an administrator login.
 2. Confirm [backup and restore](../RESTORE.md) before connecting a real company's books.
 3. Configure [transactional email](email-setup.md) and [error reporting](sentry-setup.md).
-4. Configure a sign-in provider and test it in a second browser before disabling the current administrator's working sign-in method.
-5. Connect payment/accounting providers to the intended account. Separate configuration checks from actions that send invoices or move money.
+4. Confirm an enabled sign-in method in a second browser before disabling the current administrator's working method. Configure an SSO provider only if SSO is enabled and wanted.
+5. For enabled modules that need them, connect payment/accounting providers to the intended account. Separate configuration checks from actions that send invoices or move money.
 
 ## Setup guides
 
@@ -58,7 +58,7 @@ An operator can turn a company module off for the whole instance with one enviro
 
 Unset means on, so an install that sets none of them is unchanged. The only accepted values are `true` and `false`, exactly, in lower case. Anything else, including an empty value, stops start-up with a message naming the variable, so a typo cannot leave a module on that was meant off. `BACKUPS_ENABLED` and `ACCOUNTING_ENABLED` keep their existing names and meaning.
 
-A disabled module answers every API call with `403` and the stable code `module_disabled` before any route runs, so no provider, mail or storage request is made. Existing data is not touched: switching the variable back to `true` (or removing it) and restarting restores the module with everything in it. Mail already queued before a module was switched off is not recalled.
+Requests to routes owned by a disabled operator module answer `403` with the stable code `module_disabled` before the module route runs, so that refused call makes no provider, mail or storage request. Existing data is not touched: switching the variable back to `true` (or removing it) and restarting restores the module with everything in it. A flag change is not an unsend or recall operation; review existing queued work before changing policy.
 
 To turn all four off on a Cloudflare Worker, set them as variables in `wrangler.jsonc` (the container reads the same names from its environment):
 
@@ -72,6 +72,38 @@ To turn all four off on a Cloudflare Worker, set them as variables in `wrangler.
 ```
 
 Turn off one by setting only its variable. Sign-in stays available through password or magic link, so keep one working administrator sign-in before switching SSO off.
+
+### What people see
+
+The navigation, command palette, settings links and first-use guidance must
+follow the effective module state, including when a cached session resumes.
+An enabled module still requires the person's normal permissions; a provider
+credential alone does not make a disabled module available. See the
+[surface audit](module-ui-audit.md) for the screen-by-screen disposition.
+
+| Off switch or organization setting | Expected visible behavior |
+| --- | --- |
+| `SSO_ENABLED=false` | Provider sign-in choices and SSO domain settings disappear. Existing password and magic-link methods remain, subject to their own configuration. API-token login in `ez` is unchanged. |
+| `BACKUPS_ENABLED=false` | Company backup controls, history and download links disappear. Local CLI backup, restore, bundle verification and decryption remain operator recovery tools; they do not call the disabled server backup routes. |
+| `INVOICES_ENABLED=false` | Invoice, estimate/recurring and sending controls and their dependent settings and links are withdrawn. Historical invoice reports remain readable where their native report endpoint permits them; invoice numbers become text and invoice actions disappear. Time tracking and independent summaries must not fetch withdrawn invoice collections. |
+| `ACCOUNTING_ENABLED=false` | Accounting connection prompts, provider-specific invoice status/actions and accounting settings disappear. Manual native invoice records remain available when invoices are enabled; they are not an accounting-provider connection. This flag does not switch off contractor payouts or standalone payment providers. |
+| Organization `expenses=false` | Expense navigation, entry forms, expense report/export choices and generation options disappear. Time tracking remains available. |
+| Organization `own_money=false` | Personal payment and staff-invoice surfaces show their unavailable state rather than suggesting setup or submission. Administrative payment permissions are separate. |
+| Team unavailable | The runtime reads the existing organization `team` state and exposes Team status. Navigation and bookmarked pages follow that capability and the person's access; status discovery precedes protected reads and setup controls. |
+| Client portal unavailable | Do not offer portal setup or links when no portal capability is supplied. The current native module-settings API does not expose a `client_portal` toggle. |
+
+The native organization module-settings API accepts `approval`, `expenses`,
+`own_money` and `activity_log`. The runtime also reads the existing organization `team` key, but that key is not
+writable through this API. `client_portal` is named in the domain inventory but
+has no implemented native toggle. Neither is an additional environment variable;
+do not invent configuration keys expecting them to grant or revoke access.
+
+The CLI help and report catalog are intentionally available offline and list
+client-supported operations. They are not a list of enabled instance modules.
+A remote `module_disabled` refusal is operator policy, not a request to issue a
+broader token or reconnect a provider. Local recovery remains possible while a
+server module is off. Data already delivered outside the instance cannot be
+recalled by changing a module flag; review queued work before re-enabling it.
 
 ## Archive a finished year of the activity log
 

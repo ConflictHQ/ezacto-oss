@@ -276,6 +276,18 @@ afterEach(() => {
 })
 
 describe('home dashboard', () => {
+  it('[browser #1259] keeps financial reporting while invoices are off without reading the invoice collection', async () => {
+    renderDashboard()
+    document.documentElement.setAttribute('data-invoices-unavailable', '')
+    const listInvoices = vi.fn(async () => ({ data: [], page: { next_cursor: null } }))
+    const getUninvoicedReport = vi.fn(async () => uninvoicedReport(true))
+    await mountShell(dashboardApi('administrator', { listInvoices, getUninvoicedReport }))
+    await vi.waitFor(() => expect(getUninvoicedReport).toHaveBeenCalledOnce())
+    expect(cardKeys()).toContain('uninvoiced')
+    expect(cardKeys()).not.toContain('owed')
+    expect(listInvoices).not.toHaveBeenCalled()
+  })
+
   it('[security] withholds every company figure from a member, and never asks for one', async () => {
     // The premise of the whole screen: a member must not learn the company's
     // uninvoiced total or its receivables from a card. Not by reading it, and

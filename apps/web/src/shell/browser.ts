@@ -1,4 +1,4 @@
-import { withdrawUnavailableSettingsSections } from '../module-availability.js'
+import { moduleAvailable, withdrawUnavailableSettingsSections } from '../module-availability.js'
 import {
   createCalendarProposalController,
   type ProposalDecision,
@@ -1841,6 +1841,7 @@ export const mountShell = async (
   // own choice only when it differs, so following the default stays following.
   let invoiceJournalDefault: InvoiceJournalChoice = { level: false, formats: ['pdf'] }
   let invoiceExpenseChoice = invoiceExpenseSummary.value
+  let invoiceExpensesInSelection = true
   let invoiceCommandId: string | null = null
   let invoiceNextCursor: string | null = null
   let invoiceListRows: readonly Invoice[] = []
@@ -1891,6 +1892,12 @@ export const mountShell = async (
    * reader, as it always was, rather than silently dropping expenses.
    */
   const setInvoiceExpensesAvailable = (available: boolean): void => {
+    invoiceExpensesInSelection = available
+    const offered = snapshot?.expensesAvailable !== false
+    invoiceExpenseSummary.closest('label')!.hidden = !offered
+    available = available && offered
+    invoiceExpenseHint.hidden = available
+    invoiceExpenseHint.textContent = available ? '' : offered ? 'No uninvoiced expenses for this selection.' : 'This source is unavailable.'
     if (available === !invoiceExpenseSummary.disabled) return
     if (available) {
       invoiceExpenseSummary.value = invoiceExpenseChoice
@@ -1899,8 +1906,6 @@ export const mountShell = async (
       invoiceExpenseSummary.value = ''
     }
     invoiceExpenseSummary.disabled = !available
-    invoiceExpenseHint.hidden = available
-    invoiceExpenseHint.textContent = available ? '' : 'No uninvoiced expenses for this selection.'
   }
 
   const configureNoteInput = (
@@ -2437,7 +2442,7 @@ export const mountShell = async (
    * keeping a second copy of the rule.
    */
   const revealMoneySections = (identity: Readonly<Whoami>): void => {
-    const visible = canReadFinancialReports(identity.profile)
+    const visible = moduleAvailable('invoices') && canReadFinancialReports(identity.profile)
     for (const link of document.querySelectorAll<HTMLElement>('[data-money-nav]')) {
       link.hidden = !visible
     }
@@ -4045,6 +4050,7 @@ export const mountShell = async (
     // disagreed with what the timesheet called the same week.
     invoicePeriod.setWeekStartDay(loadedWeekStartDay)
     snapshot = loaded
+    setInvoiceExpensesAvailable(invoiceExpensesInSelection)
     if (requestedPerson === null && loaded.entries.length > 0) firstRun.markTimeEntrySaved()
     // A module an administrator switched off is not offered in the strip
     // (issue 815), the way Approvals and Team already are not. Only hidden,
@@ -7275,7 +7281,7 @@ export const mountShell = async (
         return
       }
       if (rawTimeSummary === '' && rawExpenseSummary === '') {
-        invoiceResult.textContent = 'Include time, expenses, or both.'
+        invoiceResult.textContent = snapshot?.expensesAvailable === false ? 'Include tracked time.' : 'Include time, expenses, or both.'
         return
       }
       input = {
