@@ -1,4 +1,4 @@
-import { DeelClient, type DeelPerson, type DeelTimesheetSink } from './client.js'
+import { DeelApiError, DeelClient, type DeelPerson, type DeelTimesheetSink } from './client.js'
 import { matchPayrollContracts, type DirectoryPerson } from './matching.js'
 import {
   reconcileTransferLog,
@@ -66,6 +66,28 @@ export interface DeelSyncSource {
     summary: DeelSyncSummary,
     now: string,
   ): Promise<void>
+  /** Absent only in fixtures that predate #1238; the database store has it. */
+  intents?: DeelTransferIntents
+}
+
+/**
+ * Durable intent to create a timesheet (#1238). Deel has no idempotency key, so
+ * an intent is written BEFORE the create and cleared only when the transfer log
+ * row lands, on a definite rejection, or by an operator. An entry that still has
+ * one is never planned again: its create result is unknown.
+ */
+export interface DeelTransferIntents {
+  /** Entry ids whose earlier create result is unresolved. */
+  open(): Promise<readonly number[]>
+  begin(
+    submission: {
+      contractId: string
+      entries: readonly { entryId: number; fingerprint: string }[]
+    },
+    now: string,
+  ): Promise<void>
+  /** Only for a result that proves nothing was created. */
+  release(entryIds: readonly number[]): Promise<void>
 }
 
 /** What the automatic schedule reads. `@ezacto/db` implements it. */
@@ -95,6 +117,12 @@ export interface DeelSyncRuntimeOptions {
   settings: DeelSyncSettingsSource
   fetch: (request: Request) => Promise<Response>
   now: () => Date
+  /**
+   * Asked before each timesheet is created. False means the connection changed
+   * (rotated, disconnected, suspended) since this runtime was built, so the
+   * rest of the run is abandoned and nothing more is sent.
+   */
+  lifecycleCurrent?: () => Promise<boolean>
 }
 
 export interface DeelSyncRunRequest {
@@ -119,6 +147,8 @@ export interface DeelSyncPreview {
   conflicts: readonly TransferConflict[]
   unsyncable: readonly UnsyncableEntry[]
   unmatched: readonly unknown[]
+  /** Entries held back because an earlier create at Deel has no known result. */
+  unresolved: readonly number[]
 }
 
 export type DeelSyncRunResult =
@@ -143,7 +173,9 @@ export type DeelSyncPreviewResult =
   | ({ status: 'ready' } & DeelSyncPreview)
 
 export interface DeelSyncRuntime {
-  status(): { configured: boolean; reason: string | null }
+  status():
+    | { configured: boolean; reason: string | null }
+    | Promise<{ configured: boolean; reason: string | null }>
   preview(window: DeelSyncWindow): Promise<DeelSyncPreviewResult>
   run(request?: DeelSyncRunRequest): Promise<DeelSyncRunResult>
   /** Runs once a day, at the configured time, when the mode is automatic. */
@@ -240,15 +272,35 @@ export const createDeelSyncRuntime = (
   const planWindow = async (
     window: DeelSyncWindow,
     matches: Awaited<ReturnType<typeof contractMatches>>['matches'],
-  ) =>
-    planTimeTransfer({
+  ) => {
+    const plan = planTimeTransfer({
       entries: await options.source.entries(window),
       matches,
       log: await options.source.log(window),
     })
+    const open = new Set(await (options.source.intents?.open() ?? []))
+    const held = (submission: (typeof plan.submissions)[number]): boolean =>
+      submission.entries.some((entry) => open.has(entry.entryId))
+    return {
+      ...plan,
+      submissions: plan.submissions.filter((submission) => !held(submission)),
+      unresolved: plan.submissions
+        .filter(held)
+        .flatMap((submission) => submission.entries.map((entry) => entry.entryId)),
+    }
+  }
 
   const plannedEntryIds = (plan: Awaited<ReturnType<typeof planWindow>>): number[] =>
     plan.submissions.flatMap((submission) => submission.entries.map((entry) => entry.entryId))
+
+  /**
+   * Whether a failed create provably created nothing: Deel rejected it, or it
+   * never left this process. Anything else (a timeout, a 5xx, a dropped
+   * response) may have landed, so the intent stays and the entry stays held.
+   */
+  const createdNothing = (error: unknown): boolean =>
+    error instanceof RangeError ||
+    (error instanceof DeelApiError && [400, 401, 403, 404, 422].includes(error.status))
 
   const preview = async (window: DeelSyncWindow): Promise<DeelSyncPreviewResult> => {
     if (client === null) return { status: 'unconfigured', reason: problem ?? '' }
@@ -265,6 +317,7 @@ export const createDeelSyncRuntime = (
       conflicts: plan.conflicts,
       unsyncable: plan.unsyncable,
       unmatched: found.unmatched,
+      unresolved: plan.unresolved,
     }
   }
 
@@ -298,15 +351,35 @@ export const createDeelSyncRuntime = (
         detail = { ...trigger, stale, expected: request.expectedEntryIds, planned }
       } else {
         for (const submission of plan.submissions) {
+          if (options.lifecycleCurrent !== undefined && !(await options.lifecycleCurrent())) {
+            error = 'the Deel connection changed during the run, so the rest was not sent'
+            break
+          }
+          const entryIds = submission.entries.map((entry) => entry.entryId)
+          await options.source.intents?.begin(submission, options.now().toISOString())
+          let nothingCreated = false
+          const sink: DeelTimesheetSink = {
+            createTimesheet: async (input) => {
+              try {
+                return await client.createTimesheet(input)
+              } catch (caught) {
+                nothingCreated = createdNothing(caught)
+                throw caught
+              }
+            },
+          }
           const result = await submitTransferPlan({
             plan: { ...plan, submissions: [submission] },
-            client,
+            client: sink,
           })
           failed.push(...result.failed)
           if (result.records.length > 0) timesheetsSubmitted += 1
           for (const record of result.records) {
             await options.source.record(record, options.now().toISOString())
             entriesTransferred += 1
+          }
+          if (result.records.length === 0 && nothingCreated) {
+            await options.source.intents?.release(entryIds)
           }
         }
         reconciliation = reconcileTransferLog({
@@ -319,8 +392,10 @@ export const createDeelSyncRuntime = (
           conflicts: plan.conflicts,
           unsyncable: plan.unsyncable,
           unmatched: found.unmatched,
+          unresolved: plan.unresolved,
           failed,
           reconciliation,
+          error,
         }
       }
     } catch (caught) {

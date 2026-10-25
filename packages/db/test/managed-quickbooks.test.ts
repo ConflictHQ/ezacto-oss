@@ -11,7 +11,7 @@ import {
 } from '../src/migrate.js'
 import { createContainerSessionStore, createD1SessionStore } from '../src/sessions.js'
 import { createQuickBooksStore } from '../src/quickbooks.js'
-import { createManagedQuickBooksGrantStore } from '../src/index.js'
+import { createManagedQuickBooksGrantStore, createManagedQuickBooksLifecycleStore } from '../src/index.js'
 import { createApiSessionService } from '../../api/src/sessions.js'
 import { createManagedQuickBooksGrantCommands } from '../../api/src/index.js'
 import type { ManagedQuickBooksGrantCommand } from '@ezacto/core'
@@ -69,6 +69,7 @@ const fixture = async (runtime: 'sqlite' | 'd1', legacy = false) => {
   const admin = await sessions.issue(2),
     member = await sessions.issue(3)
   const store = createManagedQuickBooksGrantStore(db)
+  const lifecycle = createManagedQuickBooksLifecycleStore(db)
   const errors: Error[] = []
   const commands = createManagedQuickBooksGrantCommands({
     store,
@@ -109,6 +110,7 @@ const fixture = async (runtime: 'sqlite' | 'd1', legacy = false) => {
     db,
     upgrade,
     store,
+    lifecycle,
     commands,
     errors,
     sessions,
@@ -129,6 +131,21 @@ const data = <T>(value: T | Response): T => {
   if (value instanceof Response) throw new Error(`Unexpected managed command status${value.status}`)
   return value
 }
+
+// Managed connections are fenced through lifecycle custody, not native disconnect.
+const fenceManaged = (f: Awaited<ReturnType<typeof fixture>>, generation: number) =>
+  f.lifecycle.fence(
+    {
+      revocationId: String(generation).repeat(64),
+      grantId: f.command.grantId,
+      expectedActorUserId: 2,
+      expectedConnectionGeneration: generation,
+      environment: 'sandbox',
+      reason: 'disconnect',
+    },
+    { kind: 'guarded-session', userId: 2 },
+    f.now(),
+  )
 
 // Delegate every statement to the real backend; hold or fault only AFTER a
 // genuine atomic read/commit so races and unknown replies are deterministic.
@@ -319,7 +336,7 @@ describe.each(['sqlite', 'd1'] as const)('managed QuickBooks native %s', (runtim
       outcome: 'accepted',
       connectionGeneration: 2,
     })
-    await f.canonical.disconnect({ now: f.now() })
+    await fenceManaged(f, 2)
     await f.canonical.disconnect({ now: f.now() })
     expect(data(await f.commands.prepare(f.request()))).toMatchObject({
       connectionGeneration: 4,
@@ -469,7 +486,7 @@ describe.each(['sqlite', 'd1'] as const)('managed QuickBooks native %s', (runtim
     const duplicates = await race([f.command, f.command], 0)
     expect(duplicates.map((value) => data(value).outcome).sort()).toEqual(['accepted', 'replayed'])
     expect(await f.rows('quickbooks_managed_grants')).toHaveLength(1)
-    await f.canonical.disconnect({ now: f.now() })
+    await fenceManaged(f, 1)
     const one = { ...f.command, grantId: 'd'.repeat(64), expectedConnectionGeneration: 2 }
     const two = {
       ...one,

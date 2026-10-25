@@ -1,4 +1,7 @@
-import { planningRevisionsMigration } from './migrations/0159_planning_revisions.js'
+import { planningRevisionsMigration } from './migrations/0162_planning_revisions.js'
+import { managedDeelConnectionMigration } from './migrations/0160_managed_deel_connection.js'
+import { managedBillConnectionMigration } from './migrations/0161_managed_bill_connection.js'
+import { managedQuickBooksRevocationsMigration } from './migrations/0159_managed_quickbooks_revocations.js'
 import { placeholderAllocationsMigration } from './migrations/0158_placeholder_allocations.js'
 import { managedQuickBooksGrantsMigration } from './migrations/0157_managed_quickbooks_grants.js'
 import { wiseSignedDeliveriesMigration } from './migrations/0156_wise_signed_deliveries.js'
@@ -1675,7 +1678,10 @@ const migrations = [
   { id: '0156_wise_signed_deliveries', statements: wiseSignedDeliveriesMigration },
   { id: '0157_managed_quickbooks_grants', statements: managedQuickBooksGrantsMigration },
   { id: '0158_placeholder_allocations', statements: placeholderAllocationsMigration },
-  { id: '0159_planning_revisions', statements: planningRevisionsMigration },
+  { id: '0159_managed_quickbooks_revocations', statements: managedQuickBooksRevocationsMigration },
+  { id: '0160_managed_deel_connection', statements: managedDeelConnectionMigration },
+  { id: '0161_managed_bill_connection', statements: managedBillConnectionMigration },
+  { id: '0162_planning_revisions', statements: planningRevisionsMigration },
 ] as const
 
 // Fixtures assert against this rather than re-listing ids: a hand-copied ledger merges

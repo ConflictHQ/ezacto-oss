@@ -122,7 +122,7 @@ describe('Deel sync runtime: fails closed', () => {
     h.entries.push({ id: 1, userId: ana, spentDate: '2026-09-02', roundedSeconds: 3_600 })
     const runtime = runtimeFor(h, config)
 
-    expect(runtime.status().configured).toBe(false)
+    expect((await runtime.status()).configured).toBe(false)
     expect(await runtime.run()).toMatchObject({ status: 'unconfigured' })
     expect(await runtime.reconcile()).toMatchObject({ status: 'unconfigured' })
     expect(h.requests).toEqual([])

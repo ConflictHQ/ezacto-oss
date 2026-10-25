@@ -14,6 +14,7 @@ import type { BetterSQLite3Database } from 'drizzle-orm/better-sqlite3'
 import type { DrizzleD1Database } from 'drizzle-orm/d1'
 import type {
   DeelSyncSource,
+  DeelTransferIntents,
   DirectoryEmail,
   EmailKind,
   LoggedTransfer,
@@ -72,6 +73,7 @@ export interface DeelSyncRunRecord {
 }
 
 export interface DeelSyncStore extends DeelSyncSource {
+  intents: DeelTransferIntents
   /** Newest first. */
   recentRuns(limit: number): Promise<readonly DeelSyncRunRecord[]>
 }
@@ -191,6 +193,31 @@ export const createDeelSyncStore = (database: Database): DeelSyncStore => ({
         detail = ${JSON.stringify(summary.detail)}
       WHERE id = ${id} AND outcome = 'running'
       RETURNING id`)
+  },
+
+  intents: {
+    open: async () =>
+      (await database.all<{ entry_id: number }>(sql`
+        SELECT entry_id FROM deel_transfer_intents ORDER BY entry_id`)).map((row) => row.entry_id),
+
+    /** One statement, so a group's intents land together or not at all. */
+    begin: async (submission, now) => {
+      const rows = submission.entries.map(
+        (entry) =>
+          sql`(${entry.entryId}, ${submission.contractId}, ${entry.fingerprint}, ${now})`,
+      )
+      await database.all(sql`
+        INSERT INTO deel_transfer_intents (entry_id, contract_id, fingerprint, started_at)
+        VALUES ${sql.join(rows, sql`, `)} RETURNING entry_id`)
+    },
+
+    release: async (entryIds) => {
+      if (entryIds.length === 0) return
+      await database.all(sql`
+        DELETE FROM deel_transfer_intents
+        WHERE entry_id IN (${sql.join(entryIds.map((id) => sql`${id}`), sql`, `)})
+        RETURNING entry_id`)
+    },
   },
 
   recentRuns: async (limit) => {

@@ -28,7 +28,8 @@ export interface BillStatus {
 }
 
 export interface BillService {
-  status(): BillStatus
+  /** A managed tenant composition reads its stored connection state asynchronously. */
+  status(): BillStatus | Promise<BillStatus>
   /** Whether this client is billed through BILL. */
   isOptedIn(clientId: number): Promise<boolean>
   /** Returns false when no such client exists, so the route can answer 404. */
@@ -67,9 +68,9 @@ export const installBillRoutes = <Bindings extends object>(
   api: Hono<ApiContext<Bindings>>,
   service: Readonly<BillService>,
 ): void => {
-  api.get('/integrations/bill', (context) => {
+  api.get('/integrations/bill', async (context) => {
     assertAdministrator(context)
-    const status = service.status()
+    const status = await service.status()
     return context.json(
       {
         data: {
@@ -110,7 +111,7 @@ export const installBillRoutes = <Bindings extends object>(
         },
       ])
     }
-    if (!service.status().configured) {
+    if (!(await service.status()).configured) {
       // Turning it on for a client this deployment cannot reach would be a
       // setting that looks saved and delivers nothing.
       throw new ApiError({

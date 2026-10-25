@@ -363,8 +363,8 @@ export const createBillRuntime = (
  * Failures do throw. The outbox retries, and the mirror is safe to retry: that
  * is what the adopt path and the link table are for.
  */
-export const createBillMirrorSubscriber = (
-  runtime: Readonly<BillRuntime>,
+export const createBillMirrorSubscriber = <Runtime extends Pick<BillRuntime, 'mirror'>>(
+  runtime: Readonly<Runtime>,
 ): {
   readonly id: 'bill_mirror'
   deliver(

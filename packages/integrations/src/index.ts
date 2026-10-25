@@ -46,6 +46,15 @@ export {
   type BillRuntimeOptions,
 } from './bill/runtime.js'
 export {
+  createManagedBillRuntime,
+  type ManagedBillOpenedCredentials,
+  type ManagedBillRuntime,
+  type ManagedBillRuntimeOptions,
+  type ManagedBillRuntimeStore,
+  type ManagedBillState,
+  type ManagedBillStatus,
+} from './bill/managed.js'
+export {
   createScheduledReconciliation as createScheduledBillReconciliation,
   type ScheduledReconciliationOptions as ScheduledBillReconciliationOptions,
 } from './bill/reconcile-schedule.js'
@@ -138,6 +147,7 @@ export {
   type DeelSyncPreviewResult,
   type DeelSyncRunRequest,
   type DeelSyncRunResult,
+  type DeelTransferIntents,
   type DeelSyncRuntime,
   type DeelSyncRuntimeOptions,
   type DeelSyncSettingsSource,
@@ -145,6 +155,11 @@ export {
   type DeelSyncSummary,
   type DeelSyncWindow,
 } from './deel/runtime.js'
+export {
+  createManagedDeelSyncRuntime,
+  type ManagedDeelCredentialSource,
+  type ManagedDeelSyncRuntimeOptions,
+} from './deel/managed-runtime.js'
 export {
   QUICKBOOKS_ACCOUNTING_SCOPE,
   QUICKBOOKS_DEFAULT_ENDPOINTS,
