@@ -94,6 +94,8 @@ import {
   installSessionRoutes,
   installSsoDomainRoutes,
   installAllocationRoutes,
+  installPlaceholderPlanningRoutes,
+  type PlaceholderPlanningRepository,
   installCalendarProposalRoutes,
   installWorkItemRoutes,
   installTrackedResourceRoutes,
@@ -431,6 +433,7 @@ export interface RuntimeServices {
   calendarProposals: CalendarProposalRepository
   /** Planned hours per week and the capacity view (issue 1007). */
   organizationHolidays?: OrganizationHolidayRepository
+  placeholderPlanning?: PlaceholderPlanningRepository
   allocations: AllocationRepository
   /** Issue tracker connections and the links to their items (issue 1008). */
   workItems: {
@@ -930,6 +933,7 @@ export const createApp = (
               isExpensesModuleEnabled: services.isExpensesModuleEnabled,
             })
             if (services.organizationHolidays) installOrganizationHolidayRoutes(api, services.organizationHolidays, { cursorSigningKey: services.cursorSigningKey, clock: () => systemClock.now().instant })
+            if(services.placeholderPlanning) installPlaceholderPlanningRoutes(api,services.placeholderPlanning,{clock:()=>systemClock.now().instant,cursorSigningKey:services.cursorSigningKey})
             installAllocationRoutes(api, {
               repository: services.allocations,
               clock: systemClock,

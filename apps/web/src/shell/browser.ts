@@ -1652,6 +1652,7 @@ export const mountShell = async (
       return api.getCapacity(range, signal)
     },
     ...(api.planning === undefined ? {} : { planning: api.planning }),
+    ...(api.placeholders === undefined ? {} : { placeholders: api.placeholders }),
   })
   const scheduledRun = createScheduledRunController({
     consumeReviewLink: async (id,token,signal) => {
@@ -4872,6 +4873,7 @@ export const mountShell = async (
       await Promise.all([
         capacity.activate(authenticated.signal, {
           administrator: identity.profile === 'administrator',
+          scheduleManager: identity.profile === 'executive_manager' || identity.profile === 'project_manager',
         }),
         loadWeek(authenticated),
       ])

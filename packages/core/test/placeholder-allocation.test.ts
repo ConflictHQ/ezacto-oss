@@ -221,6 +221,16 @@ describe("placeholder assignment contract (issue 1191)", () => {
     expect(store.allocations).toHaveLength(1);
   });
 
+  it("[unit] warns against holiday/leave availability using the existing daily maximum", () => {
+    const store=new InMemoryPlaceholderPlanning();
+    store.create({...fields,plannedSecondsPerWeek:126000});
+    const result=store.assign(command(),context({personWeeklyCapacitySeconds:144000,personUnavailability:[
+      {startDate:'2026-11-02',endDate:'2026-11-02',secondsPerDay:null},
+      {startDate:'2026-11-02',endDate:'2026-11-02',secondsPerDay:28800},
+    ]}));
+    expect(result.warnings).toEqual([{code:'over_allocated',weekStart:'2026-11-02',plannedSeconds:126000,capacitySeconds:115200}]);
+  });
+
   it("[unit] zero capacity warns; missing project access is a prerequisite, not a grant", () => {
     const result = seeded().assign(
       command(),

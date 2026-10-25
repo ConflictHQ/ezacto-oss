@@ -65,6 +65,7 @@ import {
   lastSeenIntervalFromSeconds,
   createD1SsoProvisioningDomainStore,
   DrizzleAllocationRepository,
+  createPlaceholderAllocationRepository,
   DrizzleCalendarProposalRepository,
   DrizzleWorkItemRepository,
   DrizzleTrackedResourceRepository,
@@ -1337,7 +1338,8 @@ export const createRuntimeServices = async (
     activityRoll: createActivityRoll(drizzle, () => new Date().toISOString()),
     trackedResources,
     calendarProposals: new DrizzleCalendarProposalRepository(drizzle, trackedResources),
-    allocations: new DrizzleAllocationRepository(drizzle),
+    placeholderPlanning: createPlaceholderAllocationRepository(drizzle),
+      allocations: new DrizzleAllocationRepository(drizzle),
       organizationHolidays: createOrganizationHolidayRepository(drizzle),
     workItems: {
       repository: new DrizzleWorkItemRepository(drizzle),

@@ -1,5 +1,7 @@
 import {
   assertAllocationFields,
+  addDays,
+  weekStartOf,
   canProfileUseApiScope,
   decideAssignment,
   PlaceholderAssignmentError,
@@ -13,7 +15,9 @@ import {
   type TeamViewer,
 } from '@ezacto/core'
 import { atomic, nativeClient, type ActivityDatabase } from './activity-log.js'
-import { teamProjectAccessPredicate } from './team-access.js'
+import { teamPersonAccessPredicate, teamProjectAccessPredicate } from './team-access.js'
+import { SQLiteSyncDialect } from 'drizzle-orm/sqlite-core'
+import { planningWriteActorSql } from './planning-write-authority.js'
 
 /**
  * Unassigned project demand (issue 1191, parent 1007): named placeholders and
@@ -34,12 +38,14 @@ import { teamProjectAccessPredicate } from './team-access.js'
 
 export interface PlaceholderAllocationRecord extends PlaceholderAllocation {
   readonly name: string
+  readonly projectName: string
 }
 
 export interface PlaceholderRecord {
   readonly id: number
   readonly name: string
   readonly isActive: boolean
+  readonly revision: number
 }
 
 export interface CreatePlaceholderAllocationRequest {
@@ -57,6 +63,10 @@ export interface PlaceholderAllocationFilters {
   from?: string
   /** Allocations that begin on this day or earlier. */
   to?: string
+  afterId?: number
+  throughId?: number
+  limit?: number
+  descending?: boolean
 }
 
 export interface AssignPlaceholderRequest {
@@ -70,6 +80,7 @@ interface Row {
   id: number
   placeholder_id: number
   name: string
+  project_name: string
   project_id: number
   start_date: string
   end_date: string
@@ -83,6 +94,7 @@ const record = (row: Row): PlaceholderAllocationRecord => ({
   id: String(row.id),
   placeholderId: String(row.placeholder_id),
   name: row.name,
+  projectName: row.project_name,
   projectId: String(row.project_id),
   startDate: row.start_date,
   endDate: row.end_date,
@@ -93,8 +105,8 @@ const record = (row: Row): PlaceholderAllocationRecord => ({
     row.assigned_allocation_id === null ? null : String(row.assigned_allocation_id),
 })
 
-const select = `SELECT pa.*, ph.name FROM placeholder_allocations pa
-  JOIN placeholders ph ON ph.id = pa.placeholder_id`
+const select = `SELECT pa.*, ph.name, project.name AS project_name FROM placeholder_allocations pa
+  JOIN placeholders ph ON ph.id = pa.placeholder_id JOIN projects project ON project.id=pa.project_id`
 
 const canManage = (viewer: Readonly<TeamViewer>): boolean =>
   canProfileUseApiScope(viewer.profile, 'schedule:write')
@@ -119,10 +131,10 @@ interface Fragment {
 }
 
 /** The actor is still who the session says, and still active. */
-const liveActor = (viewer: Readonly<TeamViewer>): Fragment => ({
-  sql: `EXISTS (SELECT 1 FROM users actor WHERE actor.id = ? AND actor.is_active = 1 AND actor.profile = ?)`,
-  params: [viewer.userId, viewer.profile],
-})
+const liveActor = (viewer: Readonly<TeamViewer>): Fragment => {
+  const query = new SQLiteSyncDialect().sqlToQuery(planningWriteActorSql(viewer))
+  return { sql: query.sql, params: query.params }
+}
 
 /** The viewer manages `alias`, a projects row. Administrators and executives manage all. */
 const projectScope = (viewer: Readonly<TeamViewer>, alias: string): Fragment => {
@@ -259,10 +271,11 @@ export const createPlaceholderAllocationRepository = (database: ActivityDatabase
     userId: number,
   ): Promise<AssignmentContext> => {
     const projectId = Number(placeholder.projectId)
+    const personScope = teamPersonAccessPredicate(viewer, 'person')
     const person = (
       await query<{ is_active: number; weekly_capacity: number }>(
-        'SELECT is_active, weekly_capacity FROM users WHERE id = ?',
-        [userId],
+        `SELECT person.is_active,person.weekly_capacity FROM users person WHERE person.id=? AND ${personScope.sql}`,
+        [userId, ...personScope.bindings],
       )
     )[0]
     const project = (
@@ -285,7 +298,11 @@ export const createPlaceholderAllocationRepository = (database: ActivityDatabase
         start_date: string
         end_date: string
         planned_seconds_per_week: number
-      }>('SELECT * FROM allocations WHERE user_id = ?', [userId])
+      }>(
+        `SELECT * FROM allocations WHERE user_id=? AND EXISTS(SELECT 1 FROM users person WHERE person.id=? AND ${personScope.sql})
+          AND EXISTS(SELECT 1 FROM projects planned_project WHERE planned_project.id=allocations.project_id AND planned_project.is_active=1)`,
+        [userId, userId, ...personScope.bindings],
+      )
     ).map((row): PersonAllocationRow => ({
       id: String(row.id),
       userId: String(row.user_id),
@@ -294,7 +311,38 @@ export const createPlaceholderAllocationRepository = (database: ActivityDatabase
       endDate: row.end_date,
       plannedSecondsPerWeek: row.planned_seconds_per_week,
     }))
+    // The full weekly plan applies to every touched week, including days outside its date span.
+    const firstWeek = weekStartOf(placeholder.startDate, organization?.week_start_day ?? 'monday')
+    const lastWeekEnd = addDays(
+      weekStartOf(placeholder.endDate, organization?.week_start_day ?? 'monday'),
+      6,
+    )
+    const away = person
+      ? await query<{ start_date: string; end_date: string; seconds_per_day: number | null }>(
+          `SELECT start_date,end_date,seconds_per_day FROM time_off WHERE user_id=? AND end_date>=? AND start_date<=?
+        AND EXISTS(SELECT 1 FROM users person WHERE person.id=? AND ${personScope.sql})`,
+          [userId, firstWeek, lastWeekEnd, userId, ...personScope.bindings],
+        )
+      : []
+    const holidays = person
+      ? await query<{ holiday_date: string }>(
+          'SELECT holiday_date FROM organization_holidays WHERE holiday_date BETWEEN ? AND ?',
+          [firstWeek, lastWeekEnd],
+        )
+      : []
     return {
+      personUnavailability: [
+        ...away.map((row) => ({
+          startDate: row.start_date,
+          endDate: row.end_date,
+          secondsPerDay: row.seconds_per_day,
+        })),
+        ...holidays.map((row) => ({
+          startDate: row.holiday_date,
+          endDate: row.holiday_date,
+          secondsPerDay: null,
+        })),
+      ],
       actorCanManageProject: await manages(viewer, projectId),
       personActive: person?.is_active === 1,
       projectActive: project?.is_active === 1,
@@ -326,6 +374,58 @@ export const createPlaceholderAllocationRepository = (database: ActivityDatabase
       )
     )[0]
 
+  interface DefinitionRow {
+    id: number
+    name: string
+    is_active: number
+    revision: number
+    created_by_user_id: number | null
+  }
+  const definition = (row: DefinitionRow): PlaceholderRecord => ({
+    id: row.id,
+    name: row.name,
+    isActive: row.is_active === 1,
+    revision: row.revision,
+  })
+  const definitionScope = (viewer: Readonly<TeamViewer>, write = false): Fragment => {
+    const actor = liveActor(viewer)
+    if (viewer.profile === 'administrator' || viewer.profile === 'executive_manager') return actor
+    const scope = projectScope(viewer, 'definition_project')
+    const visible = `(ph.created_by_user_id=? OR EXISTS(SELECT 1 FROM placeholder_allocations linked
+      JOIN projects definition_project ON definition_project.id=linked.project_id
+      WHERE linked.placeholder_id=ph.id AND ${scope.sql}))`
+    return {
+      sql: `${actor.sql} AND ${visible}${
+        write
+          ? ` AND NOT EXISTS(SELECT 1 FROM placeholder_allocations linked
+      JOIN projects definition_project ON definition_project.id=linked.project_id
+      WHERE linked.placeholder_id=ph.id AND NOT (${scope.sql}))`
+          : ''
+      }`,
+      params: [...actor.params, viewer.userId, ...scope.params, ...(write ? scope.params : [])],
+    }
+  }
+  const readDefinition = async (
+    viewer: Readonly<TeamViewer>,
+    id: number,
+    write = false,
+  ): Promise<DefinitionRow> => {
+    if (!canManage(viewer)) throw forbidden()
+    const scope = definitionScope(viewer, write)
+    const row = (
+      await query<DefinitionRow>(
+        `SELECT ph.* FROM placeholders ph WHERE ph.id=? AND ${scope.sql}`,
+        [id, ...scope.params],
+      )
+    )[0]
+    if (!row)
+      throw new PlaceholderAssignmentError(
+        'placeholder_not_found',
+        'The placeholder does not exist or is outside your scope.',
+      )
+    return row
+  }
+
   return {
     /** A name for unassigned demand. It names no person. */
     async createPlaceholder(
@@ -344,9 +444,9 @@ export const createPlaceholderAllocationRepository = (database: ActivityDatabase
       const actor = liveActor(viewer)
       const results = await atomic(client, [
         {
-          sql: `INSERT INTO placeholders (name, created_at, updated_at)
-            SELECT ?, ?, ? WHERE ${actor.sql} RETURNING id, name, is_active`,
-          params: [name, now, now, ...actor.params],
+          sql: `INSERT INTO placeholders (name, created_at, updated_at, created_by_user_id)
+            SELECT ?, ?, ?, ? WHERE ${actor.sql} RETURNING id, name, is_active, revision`,
+          params: [name, now, now, viewer.userId, ...actor.params],
         },
         event(
           'placeholder',
@@ -358,9 +458,172 @@ export const createPlaceholderAllocationRepository = (database: ActivityDatabase
           now,
         ),
       ])
-      const row = results[0]?.[0] as { id: number; name: string; is_active: number } | undefined
+      const row = results[0]?.[0] as
+        { id: number; name: string; is_active: number; revision: number } | undefined
       if (!row) throw forbidden()
-      return { id: row.id, name: row.name, isActive: row.is_active === 1 }
+      return { id: row.id, name: row.name, isActive: row.is_active === 1, revision: row.revision }
+    },
+
+    async definitions(
+      viewer: Readonly<TeamViewer>,
+      filters: Readonly<{
+        isActive?: boolean
+        afterId?: number
+        throughId?: number
+        limit?: number
+        descending?: boolean
+      }> = {},
+    ): Promise<PlaceholderRecord[]> {
+      if (!canManage(viewer)) throw forbidden()
+      const scope = definitionScope(viewer)
+      const conditions = [scope.sql],
+        params: unknown[] = [...scope.params]
+      if (filters.isActive !== undefined) {
+        conditions.push('ph.is_active=?')
+        params.push(filters.isActive ? 1 : 0)
+      }
+      if (filters.afterId !== undefined) {
+        conditions.push('ph.id>?')
+        params.push(filters.afterId)
+      }
+      if (filters.throughId !== undefined) {
+        conditions.push('ph.id<=?')
+        params.push(filters.throughId)
+      }
+      params.push(filters.limit ?? 200)
+      return (
+        await query<DefinitionRow>(
+          `SELECT ph.* FROM placeholders ph WHERE ${conditions.join(' AND ')} ORDER BY ph.id ${filters.descending ? 'DESC' : 'ASC'} LIMIT ?`,
+          params,
+        )
+      ).map(definition)
+    },
+
+    async updatePlaceholder(
+      viewer: Readonly<TeamViewer>,
+      id: number,
+      expectedRevision: number,
+      input: Readonly<{ name?: string; isActive?: false }>,
+      now: string,
+    ): Promise<PlaceholderRecord> {
+      const before = await readDefinition(viewer, id, true)
+      if (before.revision !== expectedRevision)
+        throw new PlaceholderAssignmentError(
+          'placeholder_stale',
+          'The placeholder changed. Read it again.',
+        )
+      if (before.is_active !== 1)
+        throw new PlaceholderAssignmentError(
+          'placeholder_not_open',
+          'Archived placeholders cannot be changed.',
+        )
+      const name = input.name === undefined ? before.name : input.name.trim()
+      if (name.length < 1 || name.length > 120)
+        throw new TrackedResourceInputError(
+          'name',
+          'invalid_name',
+          'name must be 1 to 120 characters',
+        )
+      const active = input.isActive === false ? 0 : 1
+      const scope = definitionScope(viewer, true)
+
+      const results = await atomic(client, [
+        {
+          sql: `UPDATE placeholders AS ph SET name=?,is_active=?,revision=revision+1,updated_at=?
+          WHERE ph.id=? AND ph.revision=? AND ph.is_active=1 AND ${scope.sql} RETURNING id`,
+          params: [name, active, now, id, expectedRevision, ...scope.params],
+        },
+        event(
+          'placeholder',
+          active === 0 ? 'placeholder.archived' : 'placeholder.updated',
+          viewer.userId,
+          {
+            placeholder: {
+              before: definition(before),
+              after: { id, name, isActive: active === 1, revision: expectedRevision + 1 },
+            },
+            archived_allocation_ids: [],
+          },
+          { expr: '?', params: [id] },
+          null,
+          now,
+          [
+            {
+              path: '$.archived_allocation_ids',
+              expr: `json(CASE WHEN ?=0 THEN (SELECT json_group_array(id) FROM (SELECT id FROM placeholder_allocations WHERE placeholder_id=? AND state='open' ORDER BY id)) ELSE '[]' END)`,
+              params: [active, id],
+            },
+          ],
+        ),
+        {
+          sql: `UPDATE placeholder_allocations SET state='archived',revision=revision+1,updated_at=?
+          WHERE placeholder_id=? AND state='open' AND changes()=1
+          AND EXISTS(SELECT 1 FROM placeholders WHERE id=? AND is_active=0 AND revision=?)`,
+          params: [now, id, id, expectedRevision + 1],
+        },
+      ])
+      if (!results[0]?.[0]) {
+        await readDefinition(viewer, id, true)
+        throw new PlaceholderAssignmentError(
+          'placeholder_stale',
+          'The placeholder changed. Read it again.',
+        )
+      }
+      return definition(await readDefinition(viewer, id))
+    },
+
+    async updateAllocation(
+      viewer: Readonly<TeamViewer>,
+      id: number,
+      expectedRevision: number,
+      patch: Readonly<{ startDate?: string; endDate?: string; plannedSecondsPerWeek?: number }>,
+      now: string,
+    ): Promise<PlaceholderAllocationRecord> {
+      const before = await refuse(viewer, id, expectedRevision)
+      const after = { ...before, ...patch }
+      assertAllocationFields(after)
+      const actor = liveActor(viewer),
+        scope = projectScope(viewer, 'project')
+      const results = await atomic(client, [
+        {
+          sql: `UPDATE placeholder_allocations SET start_date=?,end_date=?,planned_seconds_per_week=?,revision=revision+1,updated_at=?
+          WHERE id=? AND revision=? AND state='open' AND ${actor.sql}
+          AND EXISTS(SELECT 1 FROM projects project JOIN placeholders ph ON ph.id=placeholder_allocations.placeholder_id
+            WHERE project.id=placeholder_allocations.project_id AND project.is_active=1 AND ph.is_active=1 AND ${scope.sql}) RETURNING id`,
+          params: [
+            after.startDate,
+            after.endDate,
+            after.plannedSecondsPerWeek,
+            now,
+            id,
+            expectedRevision,
+            ...actor.params,
+            ...scope.params,
+          ],
+        },
+        event(
+          'placeholder_allocation',
+          'placeholder_allocation.updated',
+          viewer.userId,
+          {
+            placeholder_allocation: {
+              before: snapshot(before),
+              after: snapshot({ ...after, revision: expectedRevision + 1 }),
+            },
+          },
+          { expr: '?', params: [id] },
+          null,
+          now,
+        ),
+      ])
+      if (!results[0]?.[0]) {
+        await refuse(viewer, id, expectedRevision)
+        throw new PlaceholderAssignmentError(
+          'placeholder_stale',
+          'The placeholder or project changed. Read it again.',
+        )
+      }
+      return (await readOne(id))!
     },
 
     async createAllocation(
@@ -369,7 +632,10 @@ export const createPlaceholderAllocationRepository = (database: ActivityDatabase
       now: string,
     ): Promise<PlaceholderAllocationRecord> {
       if (!canManage(viewer)) throw forbidden()
+      if (!(await manages(viewer, input.projectId))) throw forbidden()
+      await readDefinition(viewer, input.placeholderId)
       assertAllocationFields(input)
+      const definitionAccess = definitionScope(viewer)
       const actor = liveActor(viewer)
       const scope = projectScope(viewer, 'project')
       const results = await atomic(client, [
@@ -378,7 +644,7 @@ export const createPlaceholderAllocationRepository = (database: ActivityDatabase
               (placeholder_id, project_id, start_date, end_date, planned_seconds_per_week, created_at, updated_at)
             SELECT ph.id, project.id, ?, ?, ?, ?, ?
             FROM projects project JOIN placeholders ph ON ph.id = ? AND ph.is_active = 1
-            WHERE project.id = ? AND project.is_active = 1 AND ${actor.sql} AND ${scope.sql}
+            WHERE project.id = ? AND project.is_active = 1 AND ${actor.sql} AND ${scope.sql} AND ${definitionAccess.sql}
             RETURNING id`,
           params: [
             input.startDate,
@@ -390,6 +656,7 @@ export const createPlaceholderAllocationRepository = (database: ActivityDatabase
             input.projectId,
             ...actor.params,
             ...scope.params,
+            ...definitionAccess.params,
           ],
         },
         event(
@@ -417,6 +684,7 @@ export const createPlaceholderAllocationRepository = (database: ActivityDatabase
       ])
       const id = results[0]?.[0]?.id
       if (typeof id !== 'number') {
+        if (!(await manages(viewer, input.projectId))) throw forbidden()
         const placeholder = (
           await query<{ is_active: number }>('SELECT is_active FROM placeholders WHERE id = ?', [
             input.placeholderId,
@@ -443,10 +711,12 @@ export const createPlaceholderAllocationRepository = (database: ActivityDatabase
     ): Promise<PlaceholderAllocationRecord[]> {
       if (!canManage(viewer)) throw forbidden()
       const scope = projectScope(viewer, 'project')
+      const actor = liveActor(viewer)
       const conditions = [
+        actor.sql,
         `EXISTS (SELECT 1 FROM projects project WHERE project.id = pa.project_id AND ${scope.sql})`,
       ]
-      const params: unknown[] = [...scope.params]
+      const params: unknown[] = [...actor.params, ...scope.params]
       if (filters.projectId !== undefined) {
         conditions.push('pa.project_id = ?')
         params.push(filters.projectId)
@@ -463,9 +733,18 @@ export const createPlaceholderAllocationRepository = (database: ActivityDatabase
         conditions.push('pa.start_date <= ?')
         params.push(filters.to)
       }
+      if (filters.afterId !== undefined) {
+        conditions.push('pa.id>?')
+        params.push(filters.afterId)
+      }
+      if (filters.throughId !== undefined) {
+        conditions.push('pa.id<=?')
+        params.push(filters.throughId)
+      }
+      params.push(filters.limit ?? 200)
       return (
         await query<Row>(
-          `${select} WHERE ${conditions.join(' AND ')} ORDER BY pa.start_date, pa.id LIMIT 200`,
+          `${select} WHERE ${conditions.join(' AND ')} ORDER BY pa.id ${filters.descending ? 'DESC' : 'ASC'} LIMIT ?`,
           params,
         )
       ).map(record)
@@ -535,26 +814,37 @@ export const createPlaceholderAllocationRepository = (database: ActivityDatabase
       const replay = async (): Promise<AssignmentResult | undefined> => {
         const prior = await stored(viewer, input.idempotencyKey)
         if (!prior) return undefined
+        const placeholder = await readOne(prior.placeholder_allocation_id)
+        if (!placeholder || !(await manages(viewer, Number(placeholder.projectId))))
+          throw forbidden()
         if (prior.fingerprint !== fingerprint)
           throw new PlaceholderAssignmentError(
             'idempotency_key_reused',
             'This key was already used for a different request.',
           )
-        const placeholder = await readOne(prior.placeholder_allocation_id)
-        if (!placeholder || !(await manages(viewer, Number(placeholder.projectId))))
-          throw forbidden()
-        return JSON.parse(prior.result_json) as AssignmentResult
+        const result = JSON.parse(prior.result_json) as AssignmentResult
+        const targetScope = teamPersonAccessPredicate(viewer, 'person')
+        const target = (
+          await query(
+            `SELECT 1 FROM users person WHERE person.id=? AND ${targetScope.sql}
+          AND NOT EXISTS(SELECT 1 FROM account_closures closed WHERE closed.user_id=person.id)`,
+            [Number(result.allocation.userId), ...targetScope.bindings],
+          )
+        )[0]
+        if (!target) throw forbidden()
+        return result
       }
 
       const replayed = await replay()
       if (replayed) return replayed
       const placeholder = await readOne(input.placeholderAllocationId)
-      const decision = decideAssignment(
-        command,
-        placeholder,
-        placeholder ? await context(viewer, placeholder, input.userId) : ({} as AssignmentContext),
-        '0',
-      )
+      const facts = placeholder
+        ? await context(viewer, placeholder, input.userId)
+        : ({} as AssignmentContext)
+      const completedDuringRead = await replay()
+      if (completedDuringRead) return completedDuringRead
+      const decision = decideAssignment(command, placeholder, facts, '0')
+      const personScope = teamPersonAccessPredicate(viewer, 'person')
       const actor = liveActor(viewer)
       const scope = projectScope(viewer, 'project')
       const id = input.placeholderAllocationId
@@ -566,10 +856,11 @@ export const createPlaceholderAllocationRepository = (database: ActivityDatabase
               SELECT person.id, pa.project_id, pa.start_date, pa.end_date, pa.planned_seconds_per_week, ?, ?
               FROM placeholder_allocations pa
                 JOIN projects project ON project.id = pa.project_id
+                JOIN placeholders ph ON ph.id=pa.placeholder_id AND ph.is_active=1
                 JOIN users person ON person.id = ?
               WHERE pa.id = ? AND pa.revision = ? AND pa.state = 'open'
                 AND project.is_active = 1 AND person.is_active = 1
-                AND ${actor.sql} AND ${scope.sql}
+                AND ${actor.sql} AND ${scope.sql} AND ${personScope.sql}
               RETURNING id`,
             params: [
               now,
@@ -579,6 +870,7 @@ export const createPlaceholderAllocationRepository = (database: ActivityDatabase
               input.expectedRevision,
               ...actor.params,
               ...scope.params,
+              ...personScope.bindings,
             ],
           },
           {
@@ -631,6 +923,8 @@ export const createPlaceholderAllocationRepository = (database: ActivityDatabase
           ),
         ])
         if (results[1]?.[0] === undefined) {
+          const raced = await replay()
+          if (raced) return raced
           await refuse(viewer, id, input.expectedRevision)
           throw new PlaceholderAssignmentError(
             'placeholder_stale',
@@ -638,6 +932,8 @@ export const createPlaceholderAllocationRepository = (database: ActivityDatabase
           )
         }
       } catch (error) {
+        const committed = await replay()
+        if (committed) return committed
         if (hasMessage(error, /allocation overlaps another allocation/))
           throw new PlaceholderAssignmentError(
             'allocation_overlap',

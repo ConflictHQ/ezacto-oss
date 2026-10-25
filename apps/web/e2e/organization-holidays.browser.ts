@@ -20,7 +20,10 @@ test('[e2e #1007] organization holidays reduce capacity once and can be edited a
   const root = page.locator('[data-organization-holidays]'),
     grid = page.locator('[data-capacity-grid]')
   await expect(root).toBeVisible()
-  for (const control of await page.locator('.capacity-form input:not([type="hidden"]), .capacity-form select, .capacity-form button:visible, [data-capacity-current]').all()) {
+  await expect(page.locator('[data-placeholder-assign-form]')).toBeHidden()
+  const visibleControls = await page.locator('.capacity-form input:not([type="hidden"]):visible, .capacity-form select:visible, .capacity-form button:visible, [data-capacity-current]:visible').all()
+  expect(visibleControls.length).toBeGreaterThan(0)
+  for (const control of visibleControls) {
     const box = await control.boundingBox()
     expect(box, 'visible capacity control has a target').not.toBeNull()
     expect(box!.height).toBeGreaterThanOrEqual(44)

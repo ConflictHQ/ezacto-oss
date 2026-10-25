@@ -20,6 +20,7 @@ export const renderCapacityPage = (view?: string): string => `
     <p class="form-result capacity-status" data-capacity-status role="status" aria-live="polite">Loading capacity…</p>
     <div class="capacity-grid" data-capacity-grid></div>
     <button type="button" data-capacity-retry hidden>Retry loading capacity</button>
+    <div data-capacity-placeholders hidden></div>
     <div data-capacity-planning hidden></div>
   </main>
 `
