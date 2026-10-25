@@ -13,7 +13,7 @@ import {
 import type { InvoiceGenerationDatabase } from '../src/invoice-generation.js'
 import { migrateContainer, migrateD1 } from '../src/migrate.js'
 import { createManagedQuickBooksGrantStore } from '../src/managed-quickbooks.js'
-import { createQuickBooksStore } from '../src/quickbooks.js'
+import { createManagedQuickBooksLifecycleStore } from '../src/managed-quickbooks-lifecycle.js'
 import type { ManagedQuickBooksGrantCommand } from '@ezacto/core'
 
 const now = '2026-09-09T12:00:00.000Z'
@@ -117,7 +117,7 @@ describe('demo reset', () => {
       .run(now, now)
     const db = createContainerDatabase(client)
     const grants = createManagedQuickBooksGrantStore(db)
-    const connections = createQuickBooksStore(db)
+    const lifecycle = createManagedQuickBooksLifecycleStore(db)
     const authority = { kind: 'guarded-session' as const, userId: 1 }
     const command: ManagedQuickBooksGrantCommand = {
       grantId: 'a'.repeat(64),
@@ -137,17 +137,30 @@ describe('demo reset', () => {
       },
     }
     await grants.accept(command, authority, now)
-    await connections.disconnect({ now })
+    await lifecycle.fence(
+      {
+        revocationId: 'e'.repeat(64),
+        grantId: command.grantId,
+        expectedActorUserId: 1,
+        expectedConnectionGeneration: 1,
+        environment: 'sandbox',
+        reason: 'disconnect',
+      },
+      authority,
+      now,
+    )
     const pending = { ...command, grantId: 'd'.repeat(64), expectedConnectionGeneration: 2 }
     expect(await grants.prepare(authority, now)).toEqual({
       connectionGeneration: 2,
       connected: false,
     })
     expect(count(client, 'quickbooks_managed_grants')).toBe(1)
+    expect(count(client, 'quickbooks_revocations')).toBe(1)
 
     await wipeAndSeedDemo(driver, { now, years, confirm: 'wipe-and-reload' })
 
     expect(count(client, 'quickbooks_managed_grants')).toBe(0)
+    expect(count(client, 'quickbooks_revocations')).toBe(0)
     expect(count(client, 'quickbooks_connections')).toBe(0)
     await expect(grants.accept(pending, authority, now)).rejects.toMatchObject({ kind: 'conflict' })
     expect(await grants.prepare(authority, now)).toEqual({

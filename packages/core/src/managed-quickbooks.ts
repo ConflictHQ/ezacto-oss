@@ -64,3 +64,73 @@ export class ManagedQuickBooksGrantError extends Error {
     this.name = 'ManagedQuickBooksGrantError'
   }
 }
+
+/** Managed lifecycle fence and revocation custody (issue 1236). The host calls
+ * Intuit outside any replayable tenant transaction and reports the outcome here;
+ * local disconnection alone never means the provider grant is revoked. */
+export type ManagedQuickBooksEnvironment = 'sandbox' | 'production'
+export type ManagedQuickBooksFenceReason = 'disconnect' | 'suspension' | 'erasure'
+export interface ManagedQuickBooksFenceCommand {
+  /** Opaque 64-hex idempotency key for this revocation intent. */
+  revocationId: string
+  /** The accepted grant receipt this connection came from. */
+  grantId: string
+  expectedActorUserId: number
+  expectedConnectionGeneration: number
+  environment: ManagedQuickBooksEnvironment
+  reason: ManagedQuickBooksFenceReason
+}
+/** pending: provider revocation owed. attempting: a call may have been made and
+ * its reply is unknown, so the credential is withheld until reconciled. */
+export type ManagedQuickBooksRevocationStatus = 'pending' | 'attempting' | 'revoked'
+export interface ManagedQuickBooksRevocationReceipt {
+  revocationId: string
+  grantId: string
+  actorUserId: number
+  realmId: string
+  environment: ManagedQuickBooksEnvironment
+  reason: ManagedQuickBooksFenceReason
+  fencedGeneration: number
+  status: ManagedQuickBooksRevocationStatus
+  attempts: number
+  /** True only once the provider revocation is recorded. */
+  complete: boolean
+}
+export interface ManagedQuickBooksFenceResult {
+  outcome: 'fenced' | 'replayed'
+  connectionGeneration: number
+  revocation: ManagedQuickBooksRevocationReceipt
+}
+/** Credential custody, handed only to the trusted host process. */
+export interface ManagedQuickBooksRevocationCustody {
+  revocationId: string
+  realmId: string
+  environment: ManagedQuickBooksEnvironment
+  refreshToken: string
+}
+export interface ManagedQuickBooksLifecycleStore {
+  fence(
+    command: ManagedQuickBooksFenceCommand,
+    authority: ManagedQuickBooksAuthority,
+    now: string,
+  ): Promise<ManagedQuickBooksFenceResult>
+  /** Safe status, never a credential. */
+  readRevocation(revocationId: string): Promise<ManagedQuickBooksRevocationReceipt | null>
+  /** Revocations whose provider outcome is not yet recorded. */
+  listUnresolved(): Promise<ManagedQuickBooksRevocationReceipt[]>
+  /** Moves pending to attempting and returns the credential once. An attempting
+   * revocation returns no credential: reconcile with the provider and settle. */
+  beginRevocation(
+    revocationId: string,
+    now: string,
+  ): Promise<{
+    revocation: ManagedQuickBooksRevocationReceipt
+    custody: ManagedQuickBooksRevocationCustody | null
+  }>
+  /** Records the observed provider result of an attempting revocation. */
+  settleRevocation(
+    revocationId: string,
+    outcome: 'revoked' | 'not_revoked',
+    now: string,
+  ): Promise<ManagedQuickBooksRevocationReceipt>
+}
