@@ -58,6 +58,19 @@ const codes = (issues: readonly { line: number; code: string }[]) =>
   issues.map((issue): [number, string] => [issue.line, issue.code])
 
 describe('Clockify browser adapter', () => {
+  it.each(['\n', '\r\n', '\r'])('[#1179] preserves physical diagnostic lines through the adapter: %j', (newline) => {
+    const notes = `first${newline}second`
+    const parsed = parseCsv(new TextEncoder().encode([
+      HEADER,
+      row(['2026-09-01', '09:00:00'], ['2026-09-01', '10:00:00'], '01:00:00', notes),
+      row(['2026-09-02', '09:00:00'], ['2026-09-02', '10:00:00'], 'bad'),
+    ].join(newline)), adapter)
+    expect(parsed.fileErrors).toEqual([])
+    expect(parsed.rows).toHaveLength(1)
+    expect(parsed.rows[0]).toMatchObject({ line: 2, notes })
+    expect(codes(parsed.invalid)).toEqual([[4, 'invalid_duration']])
+  })
+
   it('[#1179] requires an explicit exporter zone instead of falling back to the device zone', () => {
     expect(() => createClockifyBrowserAdapter({} as Parameters<typeof createClockifyBrowserAdapter>[0])).toThrow()
   })

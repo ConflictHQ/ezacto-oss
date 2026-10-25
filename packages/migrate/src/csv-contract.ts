@@ -161,7 +161,8 @@ const readRecords = (text: string, sourceLimits = false): { records: RawRecord[]
           afterQuote = true
         }
       } else {
-        if (char === '\n') line += 1
+        // CRLF is one physical break; preserve both bytes in the cell.
+        if (char === '\r' || (char === '\n' && text[index - 1] !== '\r')) line += 1
         field += char
       }
       continue
