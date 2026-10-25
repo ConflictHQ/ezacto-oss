@@ -43,6 +43,7 @@ for (const scenario of [
         screen: string
         inspected: number
         findings: ReturnType<typeof collectControlStyles>
+        controls: ReturnType<typeof collectControlStyles>
         coverage: string
       }[] = []
       const inspect = async (
@@ -66,6 +67,7 @@ for (const scenario of [
           screen,
           inspected: audited.length,
           findings,
+          controls: audited,
           coverage: options.coverage ?? 'rendered view',
         })
         if (!process.env.EZACTO_CONTROL_AUDIT_RECORD)
@@ -162,9 +164,12 @@ for (const scenario of [
           ['user', USER_SETTINGS_SECTIONS],
         ] as const) {
           for (const section of sections) {
-            expect(
-              (await page.goto(`/settings/${scope}#${section.id}`))?.status(),
-            ).toBe(200)
+            // A same-document hash navigation has no HTTP response. Reload it
+            // so every inspected section still proves its actual document is 200.
+            const response =
+              (await page.goto(`/settings/${scope}#${section.id}`)) ??
+              (await page.reload())
+            expect(response?.status()).toBe(200)
             await expect(page.locator('html')).toHaveAttribute(
               'data-app-view',
               `settings-${scope}`,
