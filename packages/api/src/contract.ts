@@ -1,6 +1,7 @@
 import { moduleForPath } from './module-availability.js'
 import { organizationHolidayOperations, organizationHolidaySchemas } from './organization-holiday-contract.js'
 import { placeholderPlanningOperations, placeholderPlanningSchemas } from './placeholder-planning-contract.js'
+import { resourceCalendarOperations, resourceCalendarSchemas } from './resource-calendar-contract.js'
 import { outboundWebhookOperations, outboundWebhookSchemas } from './outbound-webhook-contract.js'
 import { invoiceElevationOperations, invoiceElevationSchemas, documentInvoiceTokenElevation } from './invoice-elevation-contract.js'
 import { scheduledJobOperations, scheduledJobSchemas } from './scheduled-job-contract.js'
@@ -3794,6 +3795,7 @@ export const apiContractOperations: readonly ApiContractOperation[] = [
   ...timeOffOperations,
   ...organizationHolidayOperations,
   ...placeholderPlanningOperations,
+  ...resourceCalendarOperations,
   ...workItemOperations,
   ...timesheetApprovalOperations,
   ...timesheetLockPolicyOperations,
@@ -4079,6 +4081,7 @@ export const apiContractSchemas: Readonly<Record<string, JsonSchema>> = {
   ...invoiceElevationSchemas,
   ...organizationHolidaySchemas,
   ...placeholderPlanningSchemas,
+  ...resourceCalendarSchemas,
   ...attachmentContractSchemas,
   ...staffPaymentSchemas,
   ...deelSyncSchemas,

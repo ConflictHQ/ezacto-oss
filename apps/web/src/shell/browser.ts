@@ -1647,6 +1647,7 @@ export const mountShell = async (
     },
   })
   const capacity = createCapacityController({
+    ...(api.resourceCalendar ? { calendar: api.resourceCalendar } : {}),
     getCapacity: async (range, signal) => {
       if (api.getCapacity === undefined) throw new Error('Capacity is not available.')
       return api.getCapacity(range, signal)

@@ -31,6 +31,108 @@ interface KeysetCursorPayload {
   s: number
 }
 
+interface ProjectionCursorPayload {
+  v: 3;
+  a: number;
+  s: number;
+}
+
+/** A live, revisioned projection pages by id without claiming a frozen row snapshot. */
+export const projectionPage = async <
+  Projection extends { nextCursor: number | null },
+>({
+  requestUrl,
+  cursorSigningKey,
+  maximumSize,
+  read,
+}: {
+  requestUrl: URL;
+  cursorSigningKey: Uint8Array;
+  maximumSize: number;
+  read(afterId: number | undefined, size: number): Promise<Projection>;
+}) => {
+  assertSigningKey(cursorSigningKey);
+  const sizes = requestUrl.searchParams.getAll("per_page");
+  const cursors = requestUrl.searchParams.getAll("cursor");
+  if (sizes.length > 1 || cursors.length > 1)
+    throw invalidField(
+      "cursor",
+      "duplicate",
+      "pagination parameters may appear once",
+    );
+  const requested = parsePageSize(sizes[0]);
+  const scope = cursorScope(requestUrl);
+  let cursor: ProjectionCursorPayload | null = null;
+  if (cursors[0] !== undefined) {
+    try {
+      const signed = await readSignedPayload(
+        cursors[0],
+        cursorSigningKey,
+        scope,
+        maximumCursorLength,
+      );
+      const parsed = signed.parsed as Partial<ProjectionCursorPayload> | null;
+      if (
+        !parsed ||
+        parsed.v !== 3 ||
+        !Number.isSafeInteger(parsed.a) ||
+        parsed.a! < 1 ||
+        !Number.isSafeInteger(parsed.s) ||
+        parsed.s! < 1 ||
+        parsed.s! > maximumSize
+      )
+        throw new Error();
+      cursor = { v: 3, a: parsed.a!, s: parsed.s! };
+      if (
+        encodeBase64Url(new TextEncoder().encode(JSON.stringify(cursor))) !==
+        signed.encodedPayload
+      )
+        throw new Error();
+    } catch {
+      throw invalidField(
+        "cursor",
+        "invalid",
+        "cursor is malformed or unsupported",
+      );
+    }
+  }
+  if (cursor && requested !== null && requested !== cursor.s)
+    throw invalidField(
+      "per_page",
+      "cursor_mismatch",
+      "per_page must match the cursor",
+    );
+  const size = cursor?.s ?? requested ?? defaultPageSize;
+  if (size > maximumSize)
+    throw invalidField(
+      "per_page",
+      "invalid_integer",
+      `per_page must be at most ${maximumSize}`,
+    );
+  const { nextCursor: nextId, ...data } = await read(cursor?.a, size);
+  if (
+    nextId !== null &&
+    (!Number.isSafeInteger(nextId) || nextId <= (cursor?.a ?? 0))
+  )
+    throw new Error("projection returned an invalid next position");
+  const nextCursor =
+    nextId === null
+      ? null
+      : await encodeCursor(
+          { v: 3, a: nextId, s: size },
+          cursorSigningKey,
+          scope,
+        );
+  return {
+    data,
+    links: {
+      self: relativeLink(requestUrl),
+      next: nextCursor === null ? null : nextLink(requestUrl, nextCursor, size),
+    },
+    page: { per_page: size, next_cursor: nextCursor },
+  };
+};
+
 export interface CursorWindow {
   /** Last id returned by the previous page; null on the first page. */
   afterId: number | null
@@ -279,7 +381,7 @@ const invalidField = (field: string, code: string, message: string) =>
   validationError([{ field, code, message }])
 
 const encodeCursor = async (
-  payload: CursorPayload | KeysetCursorPayload,
+  payload: CursorPayload | KeysetCursorPayload | ProjectionCursorPayload,
   signingKey: Uint8Array,
   scope: string,
 ): Promise<string> => {

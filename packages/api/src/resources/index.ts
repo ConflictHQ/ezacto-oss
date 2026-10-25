@@ -81,3 +81,4 @@ export type {
   UpdateOrganizationTimeEntryNoteSettings,
   UpdateTimeEntryRequest,
 } from './tracked-repository.js'
+export { installResourceCalendarRoutes } from './resource-calendar.js'

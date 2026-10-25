@@ -329,6 +329,11 @@ const documentedApp = () =>
           }),
         },
       });
+      installResourceCalendarRoutes(api, {
+        repository: { read: unavailable, context: unavailable, allocations: unavailable, projects: unavailable },
+        cursorSigningKey: new Uint8Array(32),
+        now: () => new Date('2026-10-05T00:30:00.000Z'),
+      });
       installCalendarProposalRoutes(api, {
         repository: calendarProposals,
         cursorSigningKey: new Uint8Array(32),
@@ -806,3 +811,4 @@ describe("OpenAPI contract", () => {
     }
   });
 });
+import { installResourceCalendarRoutes } from '../src/resources/resource-calendar.js'

@@ -41,15 +41,17 @@ test("[e2e #1191] phone planning creates, edits, refuses overlap, resolves confl
     .fill(process.env.EZACTO_BROWSER_FIXTURE_PASSWORD!);
   const firstCapacity = page.waitForResponse(
     (response) =>
-      new URL(response.url()).pathname === "/api/v1/capacity" &&
+      new URL(response.url()).pathname === "/api/v1/resource-calendar" &&
       response.status() === 200,
   );
   await page.getByRole("button", { name: "Sign in", exact: true }).click();
-  const baseline = (await (await firstCapacity).json()).data;
-  const from = baseline.weeks[0] as string;
+  const initialCalendar = (await (await firstCapacity).json()).data;
+  const from = initialCalendar.week_starts[0] as string;
   const to = new Date(Date.parse(from + "T00:00:00Z") + 6 * 86400000)
     .toISOString()
     .slice(0, 10);
+  // Independent legacy capacity read is an oracle, never a production fallback.
+  const baseline = (await request(page, 'GET', `/api/v1/capacity?from=${from}&to=${to}`)).body.data;
   const suffix = crypto.randomUUID();
   let projectId: number | undefined,
     definitionId: number | undefined,
@@ -288,6 +290,8 @@ test("[e2e #1191] phone planning creates, edits, refuses overlap, resolves confl
     expect(personWeek(final.body.data).tracked_seconds).toBe(
       personWeek(baseline).tracked_seconds,
     );
+    await expect(page.locator('[data-capacity-status]')).toHaveText('');
+    await expect(host.locator('[data-placeholder-definition-form]')).toBeVisible();
     const controls = await host
       .locator("input:visible,select:visible,button:visible,summary:visible")
       .evaluateAll((elements) =>

@@ -44,6 +44,35 @@ const alloc = (over: object) => ({
 });
 
 describe("resource calendar contract (issue 1192)", () => {
+  it("[unit] keeps identical hidden-demand semantics without reading private placeholder identities", () => {
+    const hidden = {
+      id: 44,
+      projectId: 99,
+      projectArchived: false,
+      name: "Private demand",
+      startDate: "2026-10-12",
+      endDate: "2026-10-12",
+      plannedSecondsPerWeek: 3600,
+      revision: 0,
+    };
+    const expected = composeResourceCalendar(context, query, {
+      ...base,
+      placeholders: [hidden],
+    });
+    const minimized = { ...base, hasHiddenPlaceholderDemand: true };
+    expect(composeResourceCalendar(context, query, minimized)).toEqual(
+      expected,
+    );
+    expect(
+      composeResourceCalendar(context, { ...query, personId: 1 }, minimized)
+        .hasOtherScope,
+    ).toBe(false);
+    expect(
+      composeResourceCalendar(context, { ...query, cursor: 1 }, minimized)
+        .hasOtherScope,
+    ).toBe(false);
+    expect(JSON.stringify(expected)).not.toContain("Private demand");
+  });
   it("[unit] counts the full weekly amount for a single touched day and never prorates", () => {
     const out = composeResourceCalendar(context, query, {
       ...base,

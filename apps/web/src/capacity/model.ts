@@ -1,4 +1,5 @@
 import type { PlaceholderPlanningApi } from './placeholder-model.js'
+import type { ResourceCalendarApi } from './resource-calendar-model.js'
 
 /**
  * The capacity view's pure parts (issue 1007, slice 2): which days a screen asks
@@ -33,6 +34,7 @@ export interface CapacityData {
 }
 
 export interface CapacityApi {
+  readonly calendar?: ResourceCalendarApi
   readonly placeholders?: PlaceholderPlanningApi
   getCapacity(
     range: { readonly from: string; readonly to: string },

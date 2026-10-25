@@ -144,6 +144,7 @@ export interface ShellApi
     range: { readonly from: string; readonly to: string },
     signal?: AbortSignal,
   ): ReturnType<CapacityApi['getCapacity']>
+  resourceCalendar?: CapacityApi['calendar']
   /** Allocation and time off entry on the capacity screen, for an administrator (issue 1007). */
   planning?: PlanningApi
   placeholders?: CapacityApi['placeholders']
@@ -2071,6 +2072,18 @@ export const createShellApi = (client: EzactoClient): ShellApi => ({
     ).data,
   getCapacity: (range, signal) =>
     client.getCapacity({ query: range, ...withSignal(signal) }),
+  resourceCalendar: {
+    context: signal => client.getResourceCalendarContext(withSignal(signal)),
+    read: (query, cursor, signal) => client.getResourceCalendar({
+      query: { ...query, per_page: 50, ...(cursor === undefined ? {} : { cursor }) }, ...withSignal(signal),
+    }),
+    allocations: (query, cursor, signal) => client.getResourceCalendarAllocations({
+      query: { ...query, per_page: 100, ...(cursor === undefined ? {} : { cursor }) }, ...withSignal(signal),
+    }),
+    projects: (cursor, signal) => client.listResourceCalendarProjects({
+      query: { per_page: 100, ...(cursor === undefined ? {} : { cursor }) }, ...withSignal(signal),
+    }),
+  },
   placeholders: {
     list: (range, signal) => collectPlanned(cursor => client.listPlaceholderAllocations({
       query: { ...range, state: 'open', per_page: 200, ...(cursor === undefined ? {} : { cursor }) }, ...withSignal(signal),

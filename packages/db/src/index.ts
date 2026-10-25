@@ -174,3 +174,4 @@ export * from './webhooks.js'
 export * from './payout-preferences.js'
 
 export * from './project-missing-rates.js'
+export * from './resource-calendar.js'

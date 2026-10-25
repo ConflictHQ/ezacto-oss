@@ -569,3 +569,4 @@ export * from './project-missing-rates.js'
 export { retryTransientD1IdempotentOperation } from './d1-idempotent-retry.js'
 
 export * from './placeholder-allocations.js'
+export { createResourceCalendarRepository } from './resource-calendar.js'

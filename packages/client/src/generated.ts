@@ -310,6 +310,116 @@ export type PlaceholderAssignmentEnvelope = {
   "data": PlaceholderAssignment;
 };
 
+export type ResourceCalendarAllocation = {
+  "id": number;
+  "version": number;
+  "user_id": number;
+  "project_id": number;
+  "project_name": string;
+  "start_date": string;
+  "end_date": string;
+  "planned_seconds_per_week": number;
+};
+
+export type ResourceCalendarProject = {
+  "id": number;
+  "name": string;
+  "is_active": boolean;
+};
+
+export type ResourceCalendarAllocationPage = {
+  "data": Array<ResourceCalendarAllocation>;
+  "links": {
+  "self": string;
+  "next": string | null;
+};
+  "page": {
+  "per_page": number;
+  "next_cursor": string | null;
+};
+};
+
+export type ResourceCalendarProjectPage = {
+  "data": Array<ResourceCalendarProject>;
+  "links": {
+  "self": string;
+  "next": string | null;
+};
+  "page": {
+  "per_page": number;
+  "next_cursor": string | null;
+};
+};
+
+export type ResourceCalendarContextEnvelope = {
+  "data": ResourceCalendarContext;
+  "links": {
+  "self": string;
+};
+};
+
+export type ResourceCalendarContext = {
+  "time_zone": string;
+  "week_start_day": "saturday" | "sunday" | "monday";
+  "today": string;
+  "current_week_start": string;
+};
+
+export type ResourceCalendarProjectHours = {
+  "project_id": number;
+  "planned_seconds": number;
+};
+
+export type ResourceCalendarWeek = {
+  "week_start": string;
+  "planned_seconds": number;
+  "available_seconds": number;
+  "tracked_seconds": number;
+  "person_planned_seconds": number;
+  "person_other_scope_planned_seconds": number;
+  "over_allocated": boolean;
+  "projects": Array<ResourceCalendarProjectHours>;
+  "other_scope_planned_seconds": number;
+  "other_scope_tracked_seconds": number;
+};
+
+export type ResourceCalendarPerson = {
+  "person_id": number;
+  "name": string;
+  "weeks": Array<ResourceCalendarWeek>;
+};
+
+export type ResourceCalendarUnassigned = {
+  "week_start": string;
+  "placeholder_id": number;
+  "name": string;
+  "project_id": number;
+  "planned_seconds": number;
+};
+
+export type ResourceCalendar = {
+  "context": ResourceCalendarContext;
+  "view": "project" | "team";
+  "revision": string;
+  "week_starts": Array<string>;
+  "people": Array<ResourceCalendarPerson>;
+  "unassigned": Array<ResourceCalendarUnassigned>;
+  "unassigned_truncated": boolean;
+  "has_other_scope": boolean;
+};
+
+export type ResourceCalendarEnvelope = {
+  "data": ResourceCalendar;
+  "links": {
+  "self": string;
+  "next": string | null;
+};
+  "page": {
+  "per_page": number;
+  "next_cursor": string | null;
+};
+};
+
 export type AttachmentUploadInput = {
   "file": string;
 };
@@ -7082,6 +7192,45 @@ export class EzactoClient {
 
     return this.request<PlaceholderAssignmentEnvelope>("POST", "/api/v1/placeholder-allocations/:id/assign".replace(":id", encodeURIComponent(String(args["id"]))), {
       body: args.body,
+      signal: args.signal,
+      headers,
+    });
+  }
+
+  async getResourceCalendarContext(args: { signal?: AbortSignal; headers?: HeadersInit } = {}): Promise<ResourceCalendarContextEnvelope> {
+    const headers = new Headers(args.headers);
+
+    return this.request<ResourceCalendarContextEnvelope>("GET", "/api/v1/resource-calendar/context", {
+      signal: args.signal,
+      headers,
+    });
+  }
+
+  async getResourceCalendar(args: { query: { "view": "project" | "team"; "from": string; "to": string; "project_id"?: number; "person_id"?: number; "per_page"?: number; "cursor"?: string }; signal?: AbortSignal; headers?: HeadersInit }): Promise<ResourceCalendarEnvelope> {
+    const headers = new Headers(args.headers);
+
+    return this.request<ResourceCalendarEnvelope>("GET", "/api/v1/resource-calendar", {
+      query: args.query,
+      signal: args.signal,
+      headers,
+    });
+  }
+
+  async getResourceCalendarAllocations(args: { query: { "view": "project" | "team"; "from": string; "to": string; "project_id"?: number; "person_id"?: number; "per_page"?: number; "cursor"?: string }; signal?: AbortSignal; headers?: HeadersInit }): Promise<ResourceCalendarAllocationPage> {
+    const headers = new Headers(args.headers);
+
+    return this.request<ResourceCalendarAllocationPage>("GET", "/api/v1/resource-calendar/allocations", {
+      query: args.query,
+      signal: args.signal,
+      headers,
+    });
+  }
+
+  async listResourceCalendarProjects(args: { query?: { "is_active"?: boolean; "per_page"?: number; "cursor"?: string }; signal?: AbortSignal; headers?: HeadersInit } = {}): Promise<ResourceCalendarProjectPage> {
+    const headers = new Headers(args.headers);
+
+    return this.request<ResourceCalendarProjectPage>("GET", "/api/v1/resource-calendar/projects", {
+      query: args.query,
       signal: args.signal,
       headers,
     });
