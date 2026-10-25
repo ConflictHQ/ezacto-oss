@@ -76,6 +76,12 @@ Commands:
   backup-decrypt  Decrypt and verify a downloaded encrypted Worker logical bundle
   restore      Restore a backup bundle into a fresh database
 
+Availability:
+  Help and report list are offline inventories, not the connected instance's capabilities.
+  Remote commands require the instance module to be enabled and your token to have access.
+  A module_disabled response is an operator policy refusal; signing in again cannot enable it.
+  Local backup, restore, verification and decryption do not use the server backup module.
+
 Options:
   --org <name>              Organization config name (default: active or "default")
   --base-url <url>          ezacto API origin for login (default: https://ezacto.io)

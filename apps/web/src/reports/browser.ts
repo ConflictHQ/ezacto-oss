@@ -1,3 +1,4 @@
+import { moduleAvailable } from '../module-availability.js'
 import {
   EzactoApiError,
   type ClientRollupMetrics,
@@ -182,7 +183,7 @@ const isModuleDisabled = (error: unknown): boolean => {
 }
 
 const messageFor = (error: unknown): string => {
-  if (isModuleDisabled(error)) return 'The Activity log module is switched off.'
+  if (isModuleDisabled(error)) return 'The requested module is switched off.'
   if (error instanceof EzactoApiError) {
     if (error.status === 403) return 'Your profile does not have access to this report.'
     if (error.status === 404) return 'This report is unavailable or outside your project access.'
@@ -454,6 +455,9 @@ const renderMyHours = (report: Readonly<MyHoursReport>): DocumentFragment => {
   fragment.append(facts, wrapper)
   return fragment
 }
+
+const invoiceReference = (invoice: { id: number; number: string | null }, label: string): HTMLElement =>
+  moduleAvailable('invoices') ? linkElement(invoicePagePath(invoice), label) : textElement('span', label)
 
 const invoiceHref = (
   report: Readonly<UninvoicedReport>,
@@ -1000,7 +1004,7 @@ const renderInvoiced = (
     const invoice = element('th')
     invoice.scope = 'row'
     invoice.append(
-      linkElement(invoicePagePath({ id: row.invoice_id, number: row.number }), row.number),
+      invoiceReference({ id: row.invoice_id, number: row.number }, row.number),
     )
     line.append(invoice)
     const client = element('td')
@@ -1076,10 +1080,7 @@ const renderPaymentsReceived = (
     const invoice = element('th')
     invoice.scope = 'row'
     invoice.append(
-      linkElement(
-        invoicePagePath({ id: row.invoice_id, number: row.invoice_number }),
-        row.invoice_number,
-      ),
+      invoiceReference({ id: row.invoice_id, number: row.invoice_number }, row.invoice_number),
     )
     const client = element('td')
     client.append(linkElement(`/clients/${row.client_id}`, row.client_name))
@@ -2039,10 +2040,7 @@ const detailedTimeCells = (
       // and nobody can find an invoice by that.
       const number = row.invoice_number ?? null
       claim.append(
-        linkElement(
-          invoicePagePath({ id: row.invoice_id, number }),
-          number ?? `Invoice ${row.invoice_id}`,
-        ),
+        invoiceReference({ id: row.invoice_id, number }, number ?? `Invoice ${row.invoice_id}`),
       )
     }
     cells.push(claim)
@@ -2276,6 +2274,7 @@ const renderDetailedTime = (
       ['mark_uninvoiced', 'Mark uninvoiced'],
       ['move', 'Move hours'],
     ] as const) {
+      if (action !== 'move' && !moduleAvailable('invoices')) continue
       const button = textElement('button', label)
       button.type = 'button'
       button.disabled = true
@@ -2920,9 +2919,17 @@ export const createReportsController = (
   // The Activity log is a module: once the API says it is off, its kind leaves
   // the strip the way a kind a profile cannot read does.
   let activityLogOff = false
+  let expensesOff = false
+  let expenseDiscoverySignal: AbortSignal | null = null
   const hideActivityLogKind = (): void => {
     activityLogOff = true
     kindTabs.get('activity-log')?.remove()
+  }
+  const hideExpenseKind = (): void => {
+    expensesOff = true
+    kindTabs.get('detailed-expense')?.remove()
+    builderTemplate.querySelector('option[value="detailed-expense"]')?.remove()
+    form.hidden = true
   }
   /**
    * The two From/To fields the card used to carry, as the shared control. An
@@ -3019,6 +3026,7 @@ export const createReportsController = (
   const builderClose = required<HTMLButtonElement>('[data-report-builder-close]')
   const builderForm = required<HTMLFormElement>('[data-report-builder-form]')
   const builderTemplate = required<HTMLSelectElement>('[data-builder-template]')
+  const expenseTemplateOption = builderTemplate.querySelector('option[value="detailed-expense"]')
   const builderName = required<HTMLInputElement>('[data-builder-name]')
   const builderFields = required<HTMLSelectElement>('[data-builder-fields]')
   const builderMetrics = required<HTMLSelectElement>('[data-builder-metrics]')
@@ -3836,6 +3844,7 @@ export const createReportsController = (
             ['administrator', 'accounting', 'executive_manager'].includes(active.identity.profile)
             ? {
                 onAction: (action: 'mark_invoiced' | 'mark_uninvoiced' | 'move', entryIds: readonly number[]) => {
+                  if (action !== 'move' && !moduleAvailable('invoices')) return
                   const invoiceId = action === 'mark_invoiced' ? Number(globalThis.prompt('Draft invoice ID')) : undefined
                   const projectId = action === 'move' ? Number(globalThis.prompt('Destination project ID')) : undefined
                   const taskId = action === 'move' ? Number(globalThis.prompt('Destination task ID')) : undefined
@@ -3932,7 +3941,7 @@ export const createReportsController = (
       results.replaceChildren(
         renderUninvoiced(
           report as UninvoicedReport,
-          session !== null && invoiceIdentityCanWrite(session.identity),
+          moduleAvailable('invoices') && session !== null && invoiceIdentityCanWrite(session.identity),
         ),
       )
     } else if (filters.kind === 'invoiced') {
@@ -4040,6 +4049,16 @@ export const createReportsController = (
       if (!updateUrl) queuedLocationFilters = filters
       return
     }
+    // Organization modules are discovered through their native refusal. Once
+    // refused, bookmarks/popstate must not repeatedly call the withdrawn report.
+    if (expensesOff && filters.kind === 'detailed-expense') {
+      clearReportPresentation()
+      form.hidden = true
+      status.textContent = 'The Expenses module is switched off.'
+      retry.hidden = true
+      return
+    }
+    form.hidden = false
     const validation = validateReportFilters(filters)
     if (validation !== null) {
       clearReportPresentation()
@@ -4249,7 +4268,14 @@ export const createReportsController = (
       status.textContent = messageFor(error)
       if (isModuleDisabled(error)) {
         // A decision, not a failure: retrying would only be refused again.
-        if (filters.kind === 'activity-log') hideActivityLogKind()
+        if (filters.kind === 'activity-log') {
+          hideActivityLogKind()
+          status.textContent = 'The Activity log module is switched off.'
+        }
+        if (filters.kind === 'detailed-expense') {
+          hideExpenseKind()
+          status.textContent = 'The Expenses module is switched off.'
+        }
         return
       }
       retry.hidden = false
@@ -4573,6 +4599,11 @@ export const createReportsController = (
   return {
     async activate(identity, signal, onSessionFailure) {
       if (!reportsPage) return
+      if (expenseDiscoverySignal !== signal) {
+        expenseDiscoverySignal = signal
+        expensesOff = false
+        if (expenseTemplateOption !== null) builderTemplate.append(expenseTemplateOption)
+      }
       session = { identity, signal, onSessionFailure }
       clients = []
       projects = []
@@ -4697,7 +4728,9 @@ export const createReportsController = (
         ...[...kindTabs]
           .filter(
             ([tabKind]) =>
-              canReadKind(tabKind, identity) && !(activityLogOff && tabKind === 'activity-log'),
+              canReadKind(tabKind, identity) &&
+              !(activityLogOff && tabKind === 'activity-log') &&
+              !(expensesOff && tabKind === 'detailed-expense'),
           )
           .map(([, anchor]) => anchor),
         ...(savedTab !== null && canReadFinancialReports(identity.profile) ? [savedTab] : []),

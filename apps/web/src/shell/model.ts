@@ -1037,6 +1037,11 @@ const isModuleDisabled = (error: EzactoApiError): boolean => {
  * and the week only reads expenses to offer submitting it, which is the
  * owner's to do and is not offered on somebody else's week.
  */
+// An explicit module refusal lasts for this authenticated activation. A new
+// activation re-discovers availability, without retrying a withdrawn endpoint
+// on every week navigation. Weak ownership releases old sessions on abort/GC.
+const expensesUnavailable = new WeakSet<AbortSignal>()
+
 export const loadShellSnapshot = async (
   api: ShellApi,
   now = new Date(),
@@ -1051,11 +1056,12 @@ export const loadShellSnapshot = async (
   // Settings took the whole week with it ("your week could not load").
   // Only an explicit refusal hides the module: a build without the adapter,
   // or a route that 404s, says nothing about what the administrator chose.
-  let expensesAvailable = true
-  const expenseRequest = api.listExpenses?.(range, signal).catch((error: unknown) => {
+  let expensesAvailable = signal === undefined || !expensesUnavailable.has(signal)
+  const expenseRequest = !expensesAvailable ? Promise.resolve([]) : api.listExpenses?.(range, signal).catch((error: unknown) => {
     if (error instanceof EzactoApiError && error.status === 404) return []
     if (error instanceof EzactoApiError && error.status === 403 && isModuleDisabled(error)) {
       expensesAvailable = false
+      if (signal !== undefined) expensesUnavailable.add(signal)
       return []
     }
     throw error
