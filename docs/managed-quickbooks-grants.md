@@ -107,3 +107,41 @@ forced stale reads/concurrency, disconnect generations, refresh, rollback, respo
 loss and privacy. Provider exchange is intentionally absent. Hosted adoption must
 consume an actual reviewed public publication/pin; a local shim, vendor patch or
 compile-only declaration does not prove the host uses this contract.
+
+## Lifecycle fence and revocation custody
+
+Issue 1236 (hosted440) adds the lifecycle half. `createManagedQuickBooksLifecycleStore(database)`
+from `@ezacto/db` and `@ezacto/db/d1` implements `ManagedQuickBooksLifecycleStore`;
+`createManagedQuickBooksGrantCommands({ store, lifecycle, ... })` then exposes
+`fence(request, command)` under the same session-only authority, exact-origin
+policy and diagnostics as `accept`. Local disconnection is never reported as
+revoked or erased: only a recorded provider outcome sets `complete: true`.
+
+- `fence` takes an opaque 64-hex `revocationId`, the accepted `grantId`, the
+  expected actor and connection generation, `environment` (`sandbox` or
+  `production`) and `reason` (`disconnect`, `suspension` or `erasure`). In one
+  atomic commit it records the revocation intent, retires the stored access and
+  refresh tokens in the connection row and advances the generation, so a stale
+  callback, refresh, sync or webhook finds no live connection and cannot recreate
+  one. The intent retains only the refresh token, the single credential needed to
+  revoke the grant. Exact retries replay; a changed binding, grant, generation or
+  actor conflicts. A fresh administrator is rechecked in SQL.
+- Migration 0159 refuses to natively disconnect a managed connection, or point it
+  at another company, without such an intent (`managed_quickbooks_fence_required`),
+  so the native disconnect path cannot strand custody. Managed hosts must call
+  `fence`. A same-company native reconnect still advances the generation and
+  invalidates older handoffs, but is not a custody-preserving path.
+- The host performs the Intuit revocation outside any replayable tenant
+  transaction: `beginRevocation` moves `pending` to `attempting` and hands the
+  credential to exactly one caller. A second call (restart or lost reply)
+  returns no credential; the host reconciles with the provider and calls
+  `settleRevocation(id, 'revoked' | 'not_revoked')`. `not_revoked` returns to
+  `pending`, visibly owed; `revoked` deletes the credential and keeps a receipt
+  with no secret. `listUnresolved` is the host's completion gate.
+- The table references the actor, so account closure inventories it
+  automatically as billing and payments. A closure or drain must not claim
+  provider erasure while any revocation is unresolved; no terminal coordinator is
+  invented and no identity data is hidden to empty the inventory.
+- Demo resets, which never hold real grants, wipe the table with the rest.
+- Real revocation, deletion and provider/account changes are not exercised here;
+  that evidence belongs to hosted440's owned sandbox acceptance.

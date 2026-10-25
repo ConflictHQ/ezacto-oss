@@ -14,7 +14,7 @@ it('runs the public managed command inside workerd with real D1 session/CSRF and
       loader: 'ts',
       contents: `
       import { createManagedQuickBooksGrantCommands, createApiSessionService } from '../src/index.js'
-      import { createD1Database, createD1SessionStore, createManagedQuickBooksGrantStore, createQuickBooksStore } from '../../db/src/d1.js'
+      import { createD1Database, createD1SessionStore, createManagedQuickBooksGrantStore, createManagedQuickBooksLifecycleStore } from '../../db/src/d1.js'
       const now = '2026-10-24T18:00:00.000Z'
       const command = {
         grantId:'a'.repeat(64),browserHash:'b'.repeat(64),credentialHash:'c'.repeat(64),
@@ -28,7 +28,7 @@ it('runs the public managed command inside workerd with real D1 session/CSRF and
           authentication:{sessions:createApiSessionService(createD1SessionStore(env.DB,{now:()=>now}))},now:()=>now})
         const result = await commands.accept(request,command)
         if(result instanceof Response) return result
-        if(new URL(request.url).pathname==='/accept-and-disconnect') await createQuickBooksStore(db).disconnect({now})
+        if(new URL(request.url).pathname==='/accept-and-disconnect') await createManagedQuickBooksLifecycleStore(db).fence({revocationId:'d'.repeat(64),grantId:command.grantId,expectedActorUserId:2,expectedConnectionGeneration:1,environment:'sandbox',reason:'disconnect'},{kind:'guarded-session',userId:2},now)
         return Response.json(result)
       }}
     `,
