@@ -145,6 +145,7 @@ export {
 export { createMyPaymentsStore } from './my-payments.js'
 
 export * from './deel-time-sync.js'
+export { createDeelCredentialSource, createManagedDeelConnectionStore } from './managed-deel.js'
 export * from './client-rate-cards.js'
 
 export * from './contractor-advances.js'

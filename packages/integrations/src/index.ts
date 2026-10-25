@@ -138,6 +138,7 @@ export {
   type DeelSyncPreviewResult,
   type DeelSyncRunRequest,
   type DeelSyncRunResult,
+  type DeelTransferIntents,
   type DeelSyncRuntime,
   type DeelSyncRuntimeOptions,
   type DeelSyncSettingsSource,
@@ -145,6 +146,11 @@ export {
   type DeelSyncSummary,
   type DeelSyncWindow,
 } from './deel/runtime.js'
+export {
+  createManagedDeelSyncRuntime,
+  type ManagedDeelCredentialSource,
+  type ManagedDeelSyncRuntimeOptions,
+} from './deel/managed-runtime.js'
 export {
   QUICKBOOKS_ACCOUNTING_SCOPE,
   QUICKBOOKS_DEFAULT_ENDPOINTS,
