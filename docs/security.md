@@ -361,3 +361,22 @@ Settings → Company → Erasure and retention. See
 [the operator guide](account-erasure-retention.md) for configuration, API access
 and legal references. These settings do not execute account closure or delete
 backup copies; recording a request or archiving a user is not completed erasure.
+
+### Cloudflare Access session reuse
+
+Repeated requests with the same verified Access assertion and local user share
+one native session, including requests handled by separate runtime instances.
+The selector is derived from the entire verified assertion with provider-purpose
+separation; its cookie secret remains independently random. Only the creating
+response receives that cookie. Existing valid application cookies remain
+authoritative.
+
+Reused header authentication still checks native user state, role/grants, idle
+and absolute expiry, and revocation. A revoked or expired session is not
+recreated by presenting the same assertion. Privilege rotation also retires the
+old assertion-bound row. Cookie-less clients must refresh their Access assertion
+after revocation, expiry, or privilege rotation; a fresh valid assertion can
+establish a new session. Browsers retain the normal replacement cookie after
+privilege rotation. This limits amplification from repeated use of one
+assertion; it is not a rate limit on new assertions issued by the upstream
+identity provider. Raw Access assertions are not retained in the database.
