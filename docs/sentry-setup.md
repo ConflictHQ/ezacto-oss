@@ -34,7 +34,8 @@ That proves SDK wiring and request-ID propagation without sending an event to Se
 Runtime defaults remain `sendDefaultPii: false` and `tracesSampleRate: 0`.
 The Worker rebuilds every outgoing error event from a narrow allowlist: a static
 error message/class, known owned bundle/source filenames and line/column
-positions, release SHA, environment, static phase/status and server-generated
+positions with a canonical absolute path matching uploaded `~/` artifacts, release SHA,
+environment, static phase/operation/status, bounded causal failure category and server-generated
 request/trace IDs. Raw exception/provider text, URLs, headers, bodies, users,
 breadcrumbs, arbitrary scopes/contexts and source-line contents are omitted.
 When the original stack is unavailable, the reporter does not substitute its
@@ -88,3 +89,18 @@ project.
 For rotation, replace the relevant secret, deploy, and verify before retiring the old credential where overlap is supported. For disablement, remove `SENTRY_DSN` from the authoritative environment and redeploy; remove the CI upload token if uploads should also stop. Previously collected events remain subject to the project's retention/deletion controls.
 
 Implementation reference: `entries/worker/src/index.ts`, `entries/worker/src/app.ts`, `entries/worker/src/runtime.ts`, `scripts/render-deploy-secrets.mjs`, `.github/workflows/deploy.yml`.
+
+
+For scheduled failures, the static `operation` distinguishes the failing job
+(for example `QuickBooks catch-up` or `outbox drain`). `failure_code` is one of
+`d1_network_lost`, `database_query_failed`, or `unknown`; it inspects a bounded
+cause chain without emitting exception text, SQL or parameters. A parameter
+containing a network-error phrase cannot turn an unrelated query failure into
+a network diagnosis. These tags do not change retry or payment behavior.
+
+A successful source-map upload alone is insufficient. Verify an indexed event's
+actual mapped frames and `errors` field. An unqualified `workflow-main.js` frame
+misses the uploaded `~/workflow-main.js`; the canonical `/workflow-main.js`
+absolute path restores that match. The source-map debug endpoint can report a
+legacy lookup failure even when the actual indexed event successfully resolves
+against an artifact bundle. Use that event as the authoritative result.
