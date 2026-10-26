@@ -78,11 +78,14 @@ export const createBankDepositController = (api: Partial<BankDepositApi>) => {
     get("provider-status").textContent = "";
     verify.reset();
     assign.reset();
-    (assign.elements.namedItem("invoice") as HTMLSelectElement).replaceChildren();
+    (
+      assign.elements.namedItem("invoice") as HTMLSelectElement
+    ).replaceChildren();
     confirm.reset();
     get("confirm-summary").textContent = "";
     get("source-note").textContent = "";
     more.hidden = true;
+    get<HTMLButtonElement>("sync").hidden = true;
   };
   const presentRows = (): void => {
     list.replaceChildren(
@@ -133,15 +136,18 @@ export const createBankDepositController = (api: Partial<BankDepositApi>) => {
     );
     const closed = row.state === "confirmed" || row.state === "rejected";
     get("source-note").textContent =
-      row.source_status === "reversed"
-        ? "The provider reversed this credit. It cannot be confirmed."
-        : row.source_status === "pending"
-          ? "Wait for the provider to post these funds before confirming a payment."
-          : row.confirmation_basis === "operator"
-            ? "An administrator verified the source. This does not change the provider’s reported settlement status."
-            : row.confirmation_ready
-              ? "Review the invoice and amount before confirming."
-              : "Source verification is required before this credit can be recorded as a payment.";
+      row.source_status === "ineligible" ||
+      row.classification === "internal_transfer"
+        ? "This transaction is not an eligible customer receipt. It cannot be confirmed."
+        : row.source_status === "reversed"
+          ? "The provider reversed this credit. It cannot be confirmed."
+          : row.source_status === "pending"
+            ? "Wait for the provider to post these funds before confirming a payment."
+            : row.confirmation_basis === "operator"
+              ? "An administrator verified the source. This does not change the provider’s reported settlement status."
+              : row.confirmation_ready
+                ? "Review the invoice and amount before confirming."
+                : "Source verification is required before this credit can be recorded as a payment.";
     verify.hidden =
       closed ||
       session?.identity.profile !== "administrator" ||
@@ -176,7 +182,7 @@ export const createBankDepositController = (api: Partial<BankDepositApi>) => {
     get<HTMLButtonElement>("reject").hidden = closed;
     get<HTMLButtonElement>("reopen").hidden = row.state !== "rejected";
   };
-  const load = async (append = false): Promise<void> => {
+  const load = async (append = false): Promise<boolean> => {
     const owner = session,
       token = generation;
     if (
@@ -185,23 +191,33 @@ export const createBankDepositController = (api: Partial<BankDepositApi>) => {
       !api.bankDepositAccounts ||
       !api.bankDepositList
     )
-      return;
+      return false;
     setBusy(true);
     status.textContent = "Loading bank deposits…";
     try {
       const requestedPage = append ? page + 1 : 1;
-      const [accounts, result] = await Promise.all([
+      const [accounts, result, feedStatus] = await Promise.all([
         api.bankDepositAccounts(owner.signal),
         api.bankDepositList(
           filter.value ? (filter.value as BankDeposit["state"]) : undefined,
           requestedPage,
           owner.signal,
         ),
+        api.bankFeedStatus?.(owner.signal),
       ]);
-      if (!active(owner, token)) return;
-      get("provider-status").textContent = accounts.length
-        ? `Review accounts: ${accounts.map((account) => `${account.provider} · ${account.name}`).join("; ")}.`
-        : "No bank feed accounts are available. Incoming deposits will appear after a provider feed is connected.";
+      if (!active(owner, token)) return false;
+      get("provider-status").textContent = feedStatus
+        ? feedStatus
+            .map(
+              (feed) =>
+                `${feed.provider}: ${feed.configured ? `connected${feed.account_name ? ` · ${feed.account_name}` : ""}${feed.last_synced_at ? ` · last synced ${feed.last_synced_at}` : " · not synced yet"}${feed.last_error ? " · last sync failed; try again" : ""}` : "not configured"}`,
+            )
+            .join(". ")
+        : accounts.length
+          ? `Review accounts: ${accounts.map((account) => `${account.provider} · ${account.name}`).join("; ")}. Connection status unavailable.`
+          : "No bank feed accounts are available. Incoming deposits will appear after a provider feed is connected.";
+      get<HTMLButtonElement>("sync").hidden =
+        !api.bankFeedSync || !feedStatus?.some((feed) => feed.configured);
       rows = append ? [...rows, ...result.data] : result.data;
       page = requestedPage;
       total = result.total;
@@ -213,9 +229,11 @@ export const createBankDepositController = (api: Partial<BankDepositApi>) => {
       status.textContent = rows.length
         ? `${rows.length} of ${total} deposits loaded.`
         : "No deposits to review.";
+      return true;
     } catch (error) {
       if (active(owner, token) && !owner.failed(error))
         status.textContent = "Could not load bank deposits. Try Refresh.";
+      return false;
     } finally {
       if (active(owner, token)) setBusy(false);
     }
@@ -329,7 +347,7 @@ export const createBankDepositController = (api: Partial<BankDepositApi>) => {
     const body = {
       expected_version: selected.version,
       verification_reference: (
-        verify.elements.namedItem("reference") as HTMLInputElement
+        verify.elements.namedItem("verification-reference") as HTMLInputElement
       ).value.trim(),
       confirm_posted_funds: true as const,
       confirm_external_credit: true as const,
@@ -356,6 +374,35 @@ export const createBankDepositController = (api: Partial<BankDepositApi>) => {
   });
   more.addEventListener("click", () => {
     void load(true);
+  });
+  get<HTMLButtonElement>("sync").addEventListener("click", () => {
+    void (async () => {
+      const owner = session,
+        token = generation;
+      if (!active(owner) || busy || !api.bankFeedSync) return;
+      setBusy(true);
+      status.textContent = "Syncing bank deposits…";
+      try {
+        const result = await api.bankFeedSync(owner.signal);
+        if (!active(owner, token)) return;
+        setBusy(false);
+        const refreshed = await load();
+        if (active(owner, token))
+          status.textContent = !refreshed
+            ? "Bank feed sync finished, but the review queue could not refresh. Use Refresh before reviewing deposits."
+            : result.failed
+              ? "Some bank feeds could not be synced. Review connection status and try again."
+              : result.checked === 0
+                ? "No bank feeds were checked. Review connection status."
+                : "Bank feed sync complete. Review incoming deposits below.";
+      } catch (error) {
+        if (active(owner, token) && !owner.failed(error))
+          status.textContent =
+            "Bank feed sync could not be completed. Try again.";
+      } finally {
+        if (active(owner, token)) setBusy(false);
+      }
+    })();
   });
   filter.addEventListener("change", () => {
     selected = null;

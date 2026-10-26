@@ -10244,10 +10244,11 @@ input::file-selector-button:hover { background: var(--ez-surface-2); }
 .csv-import .settings-toggle { min-height: 44px; align-items: center; }
 .csv-import [hidden] { display: none !important; }
 
-.bank-deposit-workspace { display: grid; gap: 1rem; }
+.bank-deposit-workspace { display: grid; gap: 1rem; min-width: 0; }
+.bank-deposit-workspace button { min-height: 44px; }
 .bank-deposit-toolbar { display: flex; flex-wrap: wrap; align-items: center; gap: .75rem; }
 .bank-deposit-list { list-style: none; padding: 0; display: grid; gap: .5rem; }
-.bank-deposit-list button { width: 100%; min-height: 44px; text-align: left; }
+.bank-deposit-list button { width: 100%; min-height: 44px; text-align: left; white-space: normal; overflow-wrap: anywhere; }
 .bank-deposit-facts { display: grid; grid-template-columns: repeat(auto-fit, minmax(15rem, 1fr)); gap: 1rem; }
 .bank-deposit-facts dd { margin: .25rem 0 0; overflow-wrap: anywhere; }
 .bank-deposit-workspace form { display: grid; gap: .75rem; margin: 1rem 0; padding: 1rem; border: 1px solid var(--ez-border); border-radius: .5rem; }

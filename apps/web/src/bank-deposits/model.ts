@@ -8,6 +8,19 @@ import type {
   BankDepositVerifyInput,
 } from "@conflict-hq/ezacto-client";
 export interface BankDepositApi {
+  bankFeedStatus?(signal: AbortSignal): Promise<
+    {
+      provider: "mercury" | "wise";
+      configured: boolean;
+      account_name: string | null;
+      last_synced_at: string | null;
+      last_error: string | null;
+      next_poll_at: string | null;
+    }[]
+  >;
+  bankFeedSync?(
+    signal: AbortSignal,
+  ): Promise<{ checked: number; failed: number }>;
   bankDepositAccounts(signal: AbortSignal): Promise<BankFeedAccount[]>;
   bankDepositList(
     state: BankDeposit["state"] | undefined,
@@ -49,13 +62,18 @@ export interface BankDepositApi {
     signal: AbortSignal,
   ): Promise<BankDeposit>;
 }
-export const bankDepositSourceLabel = (row: BankDeposit): string =>
-  row.source_status === "pending"
-    ? "Pending at provider"
-    : row.source_status === "reversed"
-      ? "Reversed at provider"
-      : row.confirmation_basis === "operator"
-        ? "Source verified by an administrator"
-        : row.source_status === "final"
-          ? "Posted at provider"
-          : "Provider settlement unverified";
+export const bankDepositSourceLabel = (row: BankDeposit): string => {
+  const provider =
+    row.source_status === "ineligible"
+      ? "Not eligible at provider"
+      : row.source_status === "pending"
+        ? "Pending at provider"
+        : row.source_status === "reversed"
+          ? "Reversed at provider"
+          : row.source_status === "final"
+            ? "Posted at provider"
+            : "Provider settlement unverified";
+  return row.confirmation_basis === "operator"
+    ? `${provider}; source verified by an administrator`
+    : provider;
+};

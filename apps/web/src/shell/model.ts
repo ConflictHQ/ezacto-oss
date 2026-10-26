@@ -2249,6 +2249,8 @@ export const createShellApi = (client: EzactoClient): ShellApi => ({
         ...withSignal(signal),
       })
     ).data,
+  bankFeedStatus: async (signal) => (await client.getBankFeedStatus(withSignal(signal))).data,
+  bankFeedSync: async (signal) => (await client.syncBankFeeds({ body: {}, ...withSignal(signal) })).data,
   bankDepositAccounts: async (signal) => (await client.listBankDepositAccounts(withSignal(signal))).data,
   bankDepositList: (state, page, signal) => client.listBankDeposits({ query: { ...(state ? { state } : {}), page, per_page: 50 }, ...withSignal(signal) }),
   bankDepositInvoices: async (id, signal) => (await client.listBankDepositInvoices({ id, ...withSignal(signal) })).data,

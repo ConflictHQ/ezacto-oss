@@ -206,8 +206,9 @@ describe("bank-deposit review", () => {
     const form = find<HTMLFormElement>("verify");
     (form.elements.namedItem("posted") as HTMLInputElement).checked = true;
     (form.elements.namedItem("external") as HTMLInputElement).checked = true;
-    (form.elements.namedItem("reference") as HTMLInputElement).value =
-      "Statement reference";
+    (
+      form.elements.namedItem("verification-reference") as HTMLInputElement
+    ).value = "Statement reference";
     submit("verify");
     await flush();
     expect(f.api.bankDepositVerify.mock.calls[0]![2]).toMatchObject({
@@ -220,7 +221,7 @@ describe("bank-deposit review", () => {
     );
     expect(find("confirm").hidden).toBe(false);
   });
-  it.each(["pending", "reversed"] as const)(
+  it.each(["pending", "reversed", "ineligible"] as const)(
     "never offers verification or confirmation for %s credits",
     async (source_status) => {
       const f = fixture(
@@ -235,7 +236,11 @@ describe("bank-deposit review", () => {
       expect(find("verify").hidden).toBe(true);
       expect(find("confirm").hidden).toBe(true);
       expect(find("source-note").textContent).toMatch(
-        source_status === "pending" ? /Wait for/ : /reversed/,
+        source_status === "pending"
+          ? /Wait for/
+          : source_status === "ineligible"
+            ? /not an eligible/
+            : /reversed/,
       );
     },
   );
@@ -282,4 +287,75 @@ describe("bank-deposit review", () => {
     expect(find("list").querySelector("img")).toBeNull();
     expect(find("facts").textContent).toContain("<script>bad</script>");
   });
+});
+
+it("shows actual provider availability and serializes manual sync before refreshing the queue", async () => {
+  const f = fixture(),
+    running = pending<{ checked: number; failed: number }>();
+  const bankFeedStatus = vi.fn().mockResolvedValue([
+    {
+      provider: "mercury",
+      configured: false,
+      account_name: null,
+      last_synced_at: null,
+      last_error: null,
+      next_poll_at: null,
+    },
+    {
+      provider: "wise",
+      configured: true,
+      account_name: "Review balance",
+      last_synced_at: null,
+      last_error: "provider",
+      next_poll_at: null,
+    },
+  ]);
+  const bankFeedSync = vi.fn().mockReturnValue(running.promise);
+  const controller = createBankDepositController({
+    ...f.api,
+    bankFeedStatus,
+    bankFeedSync,
+  });
+  await controller.activate(identity(), f.abort.signal, () => false);
+  expect(find("provider-status").textContent).toContain(
+    "mercury: not configured",
+  );
+  expect(find("provider-status").textContent).toContain("last sync failed");
+  find<HTMLButtonElement>("sync").click();
+  find<HTMLButtonElement>("sync").click();
+  expect(bankFeedSync).toHaveBeenCalledTimes(1);
+  expect(find("status").textContent).toContain("Syncing bank deposits");
+  running.resolve({ checked: 1, failed: 0 });
+  await flush();
+  expect(f.api.bankDepositList).toHaveBeenCalledTimes(2);
+  expect(find("status").textContent).toContain("sync complete");
+});
+
+it("does not report a refreshed queue when sync succeeds but the subsequent list fails", async () => {
+  const f = fixture();
+  f.api.bankDepositList
+    .mockResolvedValueOnce({ data: [row()], total: 1 })
+    .mockRejectedValueOnce(new Error("private provider detail"));
+  const controller = createBankDepositController({
+    ...f.api,
+    bankFeedStatus: async () => [
+      {
+        provider: "wise",
+        configured: true,
+        account_name: "Review",
+        last_synced_at: null,
+        last_error: null,
+        next_poll_at: null,
+      },
+    ],
+    bankFeedSync: async () => ({ checked: 1, failed: 0 }),
+  });
+  await controller.activate(identity(), f.abort.signal, () => false);
+  find<HTMLButtonElement>("sync").click();
+  await flush();
+  expect(find("status").textContent).toContain(
+    "review queue could not refresh",
+  );
+  expect(find("status").textContent).not.toContain("sync complete");
+  expect(find("status").textContent).not.toContain("private provider detail");
 });

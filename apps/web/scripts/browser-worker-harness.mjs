@@ -4,7 +4,7 @@ import { Buffer } from 'node:buffer'
 import http from 'node:http'
 import { resolve } from 'node:path'
 import { URL } from 'node:url'
-import { createD1PasswordAuthService, createD1Database, createAccountDeletionRequestRepository, createMoneyResourceRepository } from '@ezacto/db/d1'
+import { createBankDepositIngestionService, createD1PasswordAuthService, createD1Database, createAccountDeletionRequestRepository, createMoneyResourceRepository } from '@ezacto/db/d1'
 import { build } from 'esbuild'
 import { Miniflare, NoOpLog } from 'miniflare'
 
@@ -18,6 +18,7 @@ if (!Number.isInteger(listenPort) || listenPort < 1 || listenPort > 65535) {
 const cursorSigningKey = 'AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA'
 const fixtureControlPath = '/__ezacto_browser_fixture__/start-end'
 const fixtureControlHeader = 'start-end-round-trip'
+let bankDepositFixture = null
 const clearFixtureTimers = async () => {
   // Browser tests share one D1 fixture. A preceding timer test can leave a
   // running row behind, and the database correctly refuses to change the
@@ -609,7 +610,31 @@ const fixtureControl = async (request, response) => {
     response.end()
     return
   }
-  if (action === 'deel-stage-seed' && deelStagingFixture) {
+  if (action === 'bank-deposit-seed') {
+    const db = createD1Database(database), ingestion = createBankDepositIngestionService(db)
+    const account = await ingestion.ensureAccount({ provider: 'mercury', externalAccountId: 'owned-browser-bank', name: 'Browser bank review' })
+    const now = new Date().toISOString(), invoiceIds = [], deposits = [], observations = {}
+    for (const [index, label] of ['Final', 'Unknown', 'Overpayment', 'Pending'].entries()) {
+      const client = await database.prepare("INSERT INTO clients(name,currency,created_at,updated_at) VALUES(?,'USD',?,?) RETURNING id").bind(`Bank customer ${label}`,now,now).first()
+      const invoice = await database.prepare("INSERT INTO invoices(client_id,number,currency,issue_date,due_date,created_at,updated_at) VALUES(?,?,'USD',?,?,?,?) RETURNING id").bind(client.id,`BANK-${label}`,now.slice(0,10),now.slice(0,10),now,now).first()
+      invoiceIds.push(invoice.id)
+      const amount = (index + 1) * 10000
+      await run("INSERT INTO invoice_line_items(invoice_id,position,kind,description,quantity,unit_price_cents,amount_cents,created_at,updated_at) VALUES(?,0,'Service','Owned bank review',1,?,?,?,?)",invoice.id,amount,amount,now,now)
+      await executeInvoiceLifecycleCommand(db,{invoiceId:invoice.id,commandId:`bank-fixture-send-${invoice.id}`,command:'send',actor:{type:'user',id:1},authorize:async()=>true,expectedVersion:0,occurredAt:now,messageId:2000000+invoice.id,eventId:`bank-fixture-sent-${invoice.id}`})
+      const reference = (await database.prepare('SELECT reference_token FROM invoices WHERE id=?').bind(invoice.id).first()).reference_token
+      const id = `browser-bank-${label}`
+      deposits.push({ provider_transaction_id: id, currency: 'USD', posted_at: now, amount_cents: amount + (label === 'Overpayment' ? 5000 : 0), memo: reference, counterparty: `Bank customer ${label}` })
+      observations[id] = { status: label === 'Unknown' ? 'unknown' : label === 'Pending' ? 'pending' : 'final', classification: 'external_credit' }
+    }
+    await ingestion.ingest({ command_id: 'owned-browser-bank-seed', account_id: account.id, deposits, observations })
+    bankDepositFixture = { invoiceIds }
+    response.writeHead(200,{'content-type':'application/json','cache-control':'no-store'}); response.end(JSON.stringify({ count: deposits.length })); return
+  } else if (action === 'bank-deposit-receipt') {
+    const ids = bankDepositFixture?.invoiceIds ?? []
+    const payments = await rows('SELECT invoice_id,amount_cents,bank_deposit_id FROM invoice_payments WHERE invoice_id IN (SELECT value FROM json_each(?)) ORDER BY invoice_id',JSON.stringify(ids))
+    const deposits = await rows('SELECT d.provider_transaction_id,d.match_state,r.source_status,r.verified_at FROM bank_deposits d JOIN bank_deposit_reviews r ON r.deposit_id=d.id WHERE d.provider_transaction_id LIKE ? ORDER BY d.id','browser-bank-%')
+    response.writeHead(200,{'content-type':'application/json','cache-control':'no-store'}); response.end(JSON.stringify({ payments, deposits })); return
+  } else if (action === 'deel-stage-seed' && deelStagingFixture) {
     const week = (await database.prepare('SELECT week_start_day FROM organizations WHERE id=1').first()).week_start_day
     const weekFrom = week === 'sunday' ? '2026-08-09' : week === 'saturday' ? '2026-08-08' : '2026-08-10'
     const weekTo = week === 'sunday' ? '2026-08-15' : week === 'saturday' ? '2026-08-14' : '2026-08-16'
