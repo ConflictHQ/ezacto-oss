@@ -1,3 +1,4 @@
+import { SQLiteSyncDialect } from 'drizzle-orm/sqlite-core'
 import BetterSqlite3 from 'better-sqlite3'
 import { Miniflare } from 'miniflare'
 import { sql } from 'drizzle-orm'
@@ -331,5 +332,200 @@ for (const kind of ['sqlite', 'd1'] as const)
       expect(await f.db.all(sql`SELECT due_amount_cents FROM invoices WHERE id=1`)).toEqual([
         { due_amount_cents: -5000 },
       ])
+    })
+    it('abandoned confirmation permits do not block other receipts and can recover an occupied reservation', async () => {
+      const f = await setup(kind)
+      const second = {
+        ...f.entry,
+        provider_transaction_id: 'credit_two',
+        amount_cents: 9000,
+        memo: null,
+      }
+      await f.service.ingest(f.who, {
+        command_id: 'two',
+        account_id: f.account.id,
+        deposits: [f.entry, second],
+        observations: {
+          owned_credit: { status: 'final', classification: 'external_credit' },
+          credit_two: { status: 'final', classification: 'external_credit' },
+        },
+      })
+      const rows = (await f.service.list(f.who)).data,
+        first = rows.find((r) => r.provider_transaction_id === 'owned_credit')!,
+        other = rows.find((r) => r.provider_transaction_id === 'credit_two')!
+      await f.db.run(
+        sql.raw(
+          `CREATE TRIGGER owned_block_first BEFORE INSERT ON invoice_payments WHEN NEW.bank_deposit_id=${first.id} BEGIN SELECT RAISE(ABORT,'owned_failure'); END`,
+        ),
+      )
+      const command = {
+        command_id: 'reserved',
+        deposit_id: first.id,
+        expected_version: first.version,
+        invoice_id: 1,
+        expected_invoice_version: 1,
+        confirm_overpayment: false,
+      }
+      await expect(f.service.confirm(f.who, command)).rejects.toMatchObject({ code: 'conflict' })
+      expect(
+        await f.db.all(
+          sql`SELECT payment_id FROM bank_deposit_confirmation_permits WHERE command_id='reserved'`,
+        ),
+      ).toEqual([{ payment_id: 1 }])
+      await f.db.run(sql`DROP TRIGGER owned_block_first`)
+      const assigned = await f.service.act(f.who, {
+        command_id: 'assign-two',
+        deposit_id: other.id,
+        expected_version: other.version,
+        operation: 'assign',
+        invoice_id: 2,
+      })
+      await f.service.confirm(f.who, {
+        command_id: 'other-confirm',
+        deposit_id: other.id,
+        expected_version: assigned!.version,
+        invoice_id: 2,
+        expected_invoice_version: 1,
+        confirm_overpayment: false,
+      })
+      const invoice = (
+        await f.db.all<{ version: number }>(sql`SELECT version FROM invoices WHERE id=2`)
+      )[0]!
+      await recordInvoicePayment(f.db, {
+        invoiceId: 2,
+        commandId: 'manual-uses-id',
+        actor: { type: 'user', id: 1 },
+        authorize: async () => true,
+        expectedVersion: invoice.version,
+        occurredAt: f.now,
+        eventIds: ['manual-recorded', 'manual-settled'],
+        payment: {
+          type: 'manual',
+          id: 1,
+          currency: 'USD',
+          amountCents: 500,
+          paidAt: null,
+          paidDate: f.now.slice(0, 10),
+        },
+      })
+      expect((await f.service.confirm(f.who, command))?.state).toBe('confirmed')
+      expect(
+        await f.db.all(
+          sql`SELECT payment_id FROM bank_deposit_confirmation_permits WHERE command_id='reserved'`,
+        ),
+      ).toEqual([{ payment_id: 3 }])
+    })
+    it('observation-only invalidation revokes operator verification without changing source money', async () => {
+      const f = await setup(kind),
+        feed = createBankDepositIngestionService(f.db)
+      const account = await feed.ensureAccount({
+        provider: 'mercury',
+        externalAccountId: 'attestation',
+        name: 'Owned',
+      })
+      await feed.ingest({
+        command_id: 'uncertain',
+        account_id: account.id,
+        deposits: [f.entry],
+        observations: { owned_credit: { status: 'final', classification: 'ambiguous_credit' } },
+      })
+      const row = (await f.service.list(f.who)).data[0]!
+      const session = (await f.sessions.issue(1)).session,
+        admin = { userId: 1, sessionId: String(session.id) }
+      const verified = (await f.service.act(admin, {
+        command_id: 'verify-final',
+        deposit_id: row.id,
+        expected_version: row.version,
+        operation: 'verify',
+        verification_reference: 'owned provider reference',
+      }))!
+      expect(verified.confirmation_basis).toBe('operator')
+      expect(verified.source_status).toBe('final')
+      const state = await feed.state(account.id)
+      await feed.ingest({
+        command_id: 'invalidated',
+        account_id: account.id,
+        deposits: [],
+        observations: {
+          owned_credit: {
+            status: 'ineligible',
+            classification: 'ambiguous_credit',
+            reason: 'mercury_not_receivable',
+          },
+        },
+        page: { expected_version: state!.version, cursor: null },
+      })
+      const changed = (await f.service.list(f.who)).data[0]!
+      const audit = (
+        await f.db.all<{ result_json: string }>(
+          sql`SELECT result_json FROM bank_deposit_audit WHERE command_id='verify-final'`,
+        )
+      )[0]!
+      expect(JSON.parse(audit.result_json)).toMatchObject({
+        verification_reference: 'owned provider reference',
+        source_status: 'final',
+        attested_posted: true,
+        attested_external: true,
+      })
+      expect(changed.amount_cents).toBe(row.amount_cents)
+      expect(changed.verified_at).toBeNull()
+      expect(changed.confirmation_ready).toBe(false)
+      await expect(
+        f.service.act(admin, {
+          command_id: 'cannot-override',
+          deposit_id: row.id,
+          expected_version: changed.version,
+          operation: 'verify',
+          verification_reference: 'no override',
+        }),
+      ).rejects.toMatchObject({ code: 'invalid' })
+      expect(await f.db.all(sql`SELECT id FROM invoice_payments`)).toHaveLength(0)
+    })
+    it('session revocation after permission read still prevents the atomic receipt', async () => {
+      const f = await setup(kind)
+      await f.service.ingest(f.who, {
+        command_id: 'import',
+        account_id: f.account.id,
+        deposits: [f.entry],
+        observations: { owned_credit: { status: 'final', classification: 'external_credit' } },
+      })
+      const row = (await f.service.list(f.who)).data[0]!
+      let revoked = false
+      const wrapped = new Proxy(f.db, {
+        get(target, key) {
+          if (key === 'all')
+            return async (query: Parameters<typeof f.db.all>[0]) => {
+              const result = await target.all(query)
+              const text =
+                typeof query === 'string'
+                  ? query
+                  : new SQLiteSyncDialect().sqlToQuery(query.getSQL()).sql
+              if (!revoked && text.includes('SELECT 1 AS ok')) {
+                const permits = await target.all(
+                  sql`SELECT command_id FROM bank_deposit_confirmation_permits WHERE command_id='race'`,
+                )
+                if (permits.length) {
+                  revoked = true
+                  await f.sessions.revoke(2, f.session.id)
+                }
+              }
+              return result
+            }
+          const value = Reflect.get(target, key, target)
+          return typeof value === 'function' ? value.bind(target) : value
+        },
+      })
+      await expect(
+        createBankDepositReviewService(wrapped).confirm(f.who, {
+          command_id: 'race',
+          deposit_id: row.id,
+          expected_version: row.version,
+          invoice_id: 1,
+          expected_invoice_version: 1,
+          confirm_overpayment: false,
+        }),
+      ).rejects.toThrow()
+      expect(revoked).toBe(true)
+      expect(await f.db.all(sql`SELECT id FROM invoice_payments`)).toHaveLength(0)
     })
   })

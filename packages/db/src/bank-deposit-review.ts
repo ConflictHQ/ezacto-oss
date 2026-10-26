@@ -563,12 +563,18 @@ export const createBankDepositReviewService = (
           text: 'UPDATE bank_deposit_reviews SET verified_at=?,verified_by_user_id=?,verification_reference=?,version=version+1 WHERE deposit_id=? RETURNING deposit_id',
           params: [stamp, who.userId, input.verification_reference!, deposit.id],
         })
-      } else if (input.operation === 'assign')
+      } else if (input.operation === 'assign') {
+        statements.push(
+          guard(
+            "EXISTS(SELECT 1 FROM invoices WHERE id=? AND currency=? AND state IN ('open','paid'))",
+            [input.invoice_id!, deposit.currency],
+          ),
+        )
         statements.push({
           text: `UPDATE bank_deposits SET match_state='suggested',suggested_invoice_id=?,updated_at=? WHERE id=? RETURNING id`,
           params: [input.invoice_id!, stamp, deposit.id],
         })
-      else {
+      } else {
         statements.push({
           text: `UPDATE bank_deposit_reviews SET rejected_at=?,rejected_by_user_id=? WHERE deposit_id=? RETURNING deposit_id`,
           params: [
@@ -593,7 +599,16 @@ export const createBankDepositReviewService = (
           input.invoice_id ?? null,
           deposit.version,
           deposit.version + 1,
-          { deposit_id: deposit.id },
+          input.operation === 'verify'
+            ? {
+                deposit_id: deposit.id,
+                verification_reference: input.verification_reference,
+                source_status: deposit.source_status,
+                classification: deposit.classification,
+                attested_posted: true,
+                attested_external: true,
+              }
+            : { deposit_id: deposit.id },
           stamp,
         ),
       )
@@ -719,7 +734,10 @@ export const createBankDepositReviewService = (
           },
           expectedVersion: input.expected_invoice_version,
           occurredAt: permit.occurred_at,
-          eventIds: [input.command_id + '-recorded', input.command_id + '-settled'],
+          eventIds: [
+            'bank-recorded-' + (await fingerprint([input.command_id, 'recorded'])),
+            'bank-settled-' + (await fingerprint([input.command_id, 'settled'])),
+          ],
           payment: {
             type: 'bank_deposit',
             id: permit.payment_id,

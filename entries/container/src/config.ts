@@ -1,69 +1,73 @@
-import type { BankFeedEnvironment } from '@ezacto/integrations'
-import { isAbsolute, normalize, resolve } from 'node:path'
-import { lastSeenIntervalFromSeconds } from '@ezacto/db'
-import { moduleAvailability, OPERATOR_MODULE_FLAGS, OPERATOR_MODULES } from '@ezacto/api'
-import type { AppEnv } from '../../worker/src/app.js'
+import type { BankFeedEnvironment } from "@ezacto/integrations";
+import { isAbsolute, normalize, resolve } from "node:path";
+import { lastSeenIntervalFromSeconds } from "@ezacto/db";
+import {
+  moduleAvailability,
+  OPERATOR_MODULE_FLAGS,
+  OPERATOR_MODULES,
+} from "@ezacto/api";
+import type { AppEnv } from "../../worker/src/app.js";
 
 export interface ContainerConfig {
-  host: string
-  port: number
+  host: string;
+  port: number;
   /**
    * How many proxies sit in front, for reading X-Forwarded-For (#729). Zero,
    * the default, ignores the header: behind no proxy it is pure forgery, and a
    * caller who can pick their own rate-limit bucket has no rate limit.
    */
-  trustedProxyHops: number
+  trustedProxyHops: number;
   /**
    * How long a session's last-seen time, or an API token's last-used time, may
    * age before a request writes it again (#951), from
    * `LAST_SEEN_INTERVAL_SECONDS`. Absent is the store default, five minutes.
    */
-  lastSeenIntervalMs?: number
-  dataDirectory: string
-  databasePath: string
-  attachmentDirectory: string
+  lastSeenIntervalMs?: number;
+  dataDirectory: string;
+  databasePath: string;
+  attachmentDirectory: string;
   /** Uploaded brand marks (#489), kept apart from the attachment content store. */
-  brandDirectory: string
-  appBaseUrl: string
-  webhookEncryptionKey?: string
-  cursorSigningKey: Uint8Array
+  brandDirectory: string;
+  appBaseUrl: string;
+  webhookEncryptionKey?: string;
+  cursorSigningKey: Uint8Array;
   /**
    * Portal magic-link signing key. Absent means portal auth is off: the routes
    * hand out sessions, so an install with no key must not serve them rather
    * than serve them with a weak one. Same rule as the Worker's.
    */
-  magicLinkSigningKey?: Uint8Array
+  magicLinkSigningKey?: Uint8Array;
   /** Contact sign-in for the in-app portal. Its own key; absent means off. */
-  portalMagicLinkSigningKey?: Uint8Array
+  portalMagicLinkSigningKey?: Uint8Array;
   /**
    * Intuit credentials. Both are required together: without them the QuickBooks
    * routes are not mounted, because a connect button that cannot connect is
    * worse than no button. Same rule as the Worker's.
    */
-  bankFeeds?: BankFeedEnvironment
-  stripe?: { apiKey: string; webhookSecret?: string }
+  bankFeeds?: BankFeedEnvironment;
+  stripe?: { apiKey: string; webhookSecret?: string };
   bill?: {
-    devKey: string
-    companyId: string
-    username: string
-    password: string
-    replyToUserId?: string
-    environment?: string
-  }
+    devKey: string;
+    companyId: string;
+    username: string;
+    password: string;
+    replyToUserId?: string;
+    environment?: string;
+  };
   quickBooks?: {
-    clientId: string
-    clientSecret: string
-    webhookVerifierToken?: string
-    environment?: string
-  }
-  deel?: { token?: string; startDate?: string }
+    clientId: string;
+    clientSecret: string;
+    webhookVerifierToken?: string;
+    environment?: string;
+  };
+  deel?: { token?: string; startDate?: string };
   wise?: {
-    token: string
-    profileId?: string
-    webhookPublicKey?: string
-  }
-  smtp: { url: string; from: string }
-  appEnv: AppEnv
+    token: string;
+    profileId?: string;
+    webhookPublicKey?: string;
+  };
+  smtp: { url: string; from: string };
+  appEnv: AppEnv;
 }
 
 const required = (
@@ -71,53 +75,53 @@ const required = (
   name: string,
   maximum: number,
 ): string => {
-  const value = environment[name]
+  const value = environment[name];
   if (
     value === undefined ||
     value.length < 1 ||
     value.length > maximum ||
     value.trim() !== value ||
     [...value].some((character) => {
-      const code = character.codePointAt(0)!
-      return code <= 31 || code === 127
+      const code = character.codePointAt(0)!;
+      return code <= 31 || code === 127;
     })
   ) {
-    throw new TypeError(`${name} is missing or invalid`)
+    throw new TypeError(`${name} is missing or invalid`);
   }
-  return value
-}
+  return value;
+};
 
 const optional = (
   environment: NodeJS.ProcessEnv,
   name: string,
   maximum: number,
 ): string | undefined => {
-  if (environment[name] === undefined) return undefined
-  return required(environment, name, maximum)
-}
+  if (environment[name] === undefined) return undefined;
+  return required(environment, name, maximum);
+};
 
 const origin = (value: string): string => {
-  let parsed: URL
+  let parsed: URL;
   try {
-    parsed = new URL(value)
+    parsed = new URL(value);
   } catch {
-    throw new TypeError('APP_BASE_URL must be an absolute application origin')
+    throw new TypeError("APP_BASE_URL must be an absolute application origin");
   }
   if (
-    parsed.username !== '' ||
-    parsed.password !== '' ||
-    parsed.pathname !== '/' ||
-    parsed.search !== '' ||
-    parsed.hash !== '' ||
-    (parsed.protocol !== 'https:' &&
-      !(parsed.protocol === 'http:' && parsed.hostname === 'localhost'))
+    parsed.username !== "" ||
+    parsed.password !== "" ||
+    parsed.pathname !== "/" ||
+    parsed.search !== "" ||
+    parsed.hash !== "" ||
+    (parsed.protocol !== "https:" &&
+      !(parsed.protocol === "http:" && parsed.hostname === "localhost"))
   ) {
     throw new TypeError(
-      'APP_BASE_URL must use HTTPS outside localhost and contain only an origin',
-    )
+      "APP_BASE_URL must use HTTPS outside localhost and contain only an origin",
+    );
   }
-  return parsed.origin
-}
+  return parsed.origin;
+};
 
 const signingKey = (encoded: string): Uint8Array => {
   if (
@@ -125,119 +129,168 @@ const signingKey = (encoded: string): Uint8Array => {
     encoded.length % 4 === 1 ||
     !/^[A-Za-z0-9_-]+$/u.test(encoded)
   ) {
-    throw new TypeError('API_CURSOR_SIGNING_KEY must be canonical base64url')
+    throw new TypeError("API_CURSOR_SIGNING_KEY must be canonical base64url");
   }
-  const bytes = Buffer.from(encoded, 'base64url')
-  if (bytes.byteLength !== 32 || bytes.toString('base64url') !== encoded) {
-    throw new TypeError('API_CURSOR_SIGNING_KEY must decode to exactly 32 bytes')
+  const bytes = Buffer.from(encoded, "base64url");
+  if (bytes.byteLength !== 32 || bytes.toString("base64url") !== encoded) {
+    throw new TypeError(
+      "API_CURSOR_SIGNING_KEY must decode to exactly 32 bytes",
+    );
   }
-  return new Uint8Array(bytes)
-}
+  return new Uint8Array(bytes);
+};
 
 const port = (value: string | undefined): number => {
-  const candidate = value ?? '3000'
+  const candidate = value ?? "3000";
   if (!/^[1-9][0-9]{0,4}$/u.test(candidate)) {
-    throw new TypeError('PORT must be an integer between 1 and 65535')
+    throw new TypeError("PORT must be an integer between 1 and 65535");
   }
-  const parsed = Number(candidate)
+  const parsed = Number(candidate);
   if (parsed > 65_535) {
-    throw new TypeError('PORT must be an integer between 1 and 65535')
+    throw new TypeError("PORT must be an integer between 1 and 65535");
   }
-  return parsed
-}
+  return parsed;
+};
 
 const trustedProxyHops = (value: string | undefined): number => {
-  if (value === undefined || value.trim() === '') return 0
+  if (value === undefined || value.trim() === "") return 0;
   if (!/^[0-9]{1,2}$/u.test(value.trim())) {
-    throw new TypeError('TRUSTED_PROXY_HOPS must be a whole number of proxies')
+    throw new TypeError("TRUSTED_PROXY_HOPS must be a whole number of proxies");
   }
-  return Number(value.trim())
-}
+  return Number(value.trim());
+};
 
 const dataDirectory = (value: string | undefined): string => {
-  const candidate = value ?? '/data'
+  const candidate = value ?? "/data";
   if (
     !isAbsolute(candidate) ||
     normalize(candidate) !== candidate ||
-    resolve(candidate) === '/' ||
+    resolve(candidate) === "/" ||
     candidate.length > 2_048
   ) {
     throw new TypeError(
-      'EZACTO_DATA_DIR must be a normalized absolute directory below root',
-    )
+      "EZACTO_DATA_DIR must be a normalized absolute directory below root",
+    );
   }
-  return candidate
-}
+  return candidate;
+};
 
 export const readContainerConfig = (
   environment: NodeJS.ProcessEnv,
 ): ContainerConfig => {
-  const directory = dataDirectory(environment.EZACTO_DATA_DIR)
-  const appBaseUrl = origin(required(environment, 'APP_BASE_URL', 2_048))
-  const googleClientId = optional(environment, 'OIDC_GOOGLE_CLIENT_ID', 512)
+  const directory = dataDirectory(environment.EZACTO_DATA_DIR);
+  const appBaseUrl = origin(required(environment, "APP_BASE_URL", 2_048));
+  const googleClientId = optional(environment, "OIDC_GOOGLE_CLIENT_ID", 512);
   const googleClientSecret = optional(
     environment,
-    'OIDC_GOOGLE_CLIENT_SECRET',
+    "OIDC_GOOGLE_CLIENT_SECRET",
     4_096,
-  )
-  const appleClientId = optional(environment, 'APPLE_CLIENT_ID', 1_024)
-  const bootstrapToken = optional(environment, 'EZACTO_BOOTSTRAP_TOKEN', 512)
-  const magicLinkKey = optional(environment, 'MAGIC_LINK_SIGNING_KEY', 128)
-  const portalMagicLinkKey = optional(environment, 'PORTAL_MAGIC_LINK_SIGNING_KEY', 128)
-  const stripeApiKey = optional(environment, 'STRIPE_API_KEY', 512)
-  const stripeWebhookSecret = optional(environment, 'STRIPE_WEBHOOK_SECRET', 512)
-  const billDevKey = optional(environment, 'BILL_DEV_KEY', 512)
-  const billOrganizationId = optional(environment, 'BILL_COMPANY_ID', 128)
-  const billUsername = optional(environment, 'BILL_USERNAME', 256)
-  const billPassword = optional(environment, 'BILL_PASSWORD', 512)
-  const billReplyToUserId = optional(environment, 'BILL_REPLY_TO_USER_ID', 128)
-  const billEnvironment = optional(environment, 'BILL_ENVIRONMENT', 32)
-  const billParts = [billDevKey, billOrganizationId, billUsername, billPassword]
+  );
+  const appleClientId = optional(environment, "APPLE_CLIENT_ID", 1_024);
+  const bootstrapToken = optional(environment, "EZACTO_BOOTSTRAP_TOKEN", 512);
+  const magicLinkKey = optional(environment, "MAGIC_LINK_SIGNING_KEY", 128);
+  const portalMagicLinkKey = optional(
+    environment,
+    "PORTAL_MAGIC_LINK_SIGNING_KEY",
+    128,
+  );
+  const stripeApiKey = optional(environment, "STRIPE_API_KEY", 512);
+  const stripeWebhookSecret = optional(
+    environment,
+    "STRIPE_WEBHOOK_SECRET",
+    512,
+  );
+  const billDevKey = optional(environment, "BILL_DEV_KEY", 512);
+  const billOrganizationId = optional(environment, "BILL_COMPANY_ID", 128);
+  const billUsername = optional(environment, "BILL_USERNAME", 256);
+  const billPassword = optional(environment, "BILL_PASSWORD", 512);
+  const billReplyToUserId = optional(environment, "BILL_REPLY_TO_USER_ID", 128);
+  const billEnvironment = optional(environment, "BILL_ENVIRONMENT", 32);
+  const billParts = [
+    billDevKey,
+    billOrganizationId,
+    billUsername,
+    billPassword,
+  ];
   // All four or none. BILL's sign-in takes every one of them, so a deployment
   // that set three has a configuration that cannot sign in and an operator who
   // believes it can.
-  if (billParts.some((part) => part !== undefined) && billParts.some((part) => part === undefined)) {
+  if (
+    billParts.some((part) => part !== undefined) &&
+    billParts.some((part) => part === undefined)
+  ) {
     throw new Error(
-      'BILL needs BILL_DEV_KEY, BILL_COMPANY_ID, BILL_USERNAME and BILL_PASSWORD together',
-    )
+      "BILL needs BILL_DEV_KEY, BILL_COMPANY_ID, BILL_USERNAME and BILL_PASSWORD together",
+    );
   }
-  const quickBooksClientId = optional(environment, 'QUICKBOOKS_CLIENT_ID', 512)
-  const quickBooksClientSecret = optional(environment, 'QUICKBOOKS_CLIENT_SECRET', 512)
-  const quickBooksVerifier = optional(environment, 'QUICKBOOKS_WEBHOOK_VERIFIER_TOKEN', 512)
-  const quickBooksEnvironment = optional(environment, 'QUICKBOOKS_ENVIRONMENT', 32)
-  if ((quickBooksClientId === undefined) !== (quickBooksClientSecret === undefined)) {
+  const quickBooksClientId = optional(environment, "QUICKBOOKS_CLIENT_ID", 512);
+  const quickBooksClientSecret = optional(
+    environment,
+    "QUICKBOOKS_CLIENT_SECRET",
+    512,
+  );
+  const quickBooksVerifier = optional(
+    environment,
+    "QUICKBOOKS_WEBHOOK_VERIFIER_TOKEN",
+    512,
+  );
+  const quickBooksEnvironment = optional(
+    environment,
+    "QUICKBOOKS_ENVIRONMENT",
+    32,
+  );
+  if (
+    (quickBooksClientId === undefined) !==
+    (quickBooksClientSecret === undefined)
+  ) {
     // Half a credential is a deployment that will fail at the token exchange
     // with a message about Intuit rather than about its own configuration.
     throw new TypeError(
-      'QUICKBOOKS_CLIENT_ID and QUICKBOOKS_CLIENT_SECRET must be set together',
-    )
+      "QUICKBOOKS_CLIENT_ID and QUICKBOOKS_CLIENT_SECRET must be set together",
+    );
   }
   // The operator's module switches (issue 1254; ACCOUNTING_ENABLED is #1217).
   // Invalid values throw here, at start-up.
   const moduleFlags = Object.fromEntries(
     OPERATOR_MODULES.flatMap((module) => {
-      const name = OPERATOR_MODULE_FLAGS[module]
-      const value = optional(environment, name, 5)
-      return value === undefined ? [] : [[name, value]]
+      const name = OPERATOR_MODULE_FLAGS[module];
+      const value = optional(environment, name, 5);
+      return value === undefined ? [] : [[name, value]];
     }),
-  )
-  const accounting = moduleAvailability(moduleFlags).accounting
-  const wiseToken = optional(environment, 'WISE_TOKEN', 512)
-  const deelToken = optional(environment, 'DEEL_TOKEN', 4096)
-  const deelStart = optional(environment, 'DEEL_SYNC_START_DATE', 10)
-  const githubWorkItemsCredential = optional(environment, 'GITHUB_WORK_ITEMS_CREDENTIAL', 4_096)
-  const wiseProfileId = optional(environment, 'WISE_PROFILE_ID', 64)
-  const wiseWebhookKey = optional(environment, 'WISE_WEBHOOK_PUBLIC_KEY', 4_096)
-  const brandName = optional(environment, 'BRAND_NAME', 200)
-  const brandTagline = optional(environment, 'BRAND_TAGLINE', 500)
-  const brandDescription = optional(environment, 'BRAND_DESCRIPTION', 1_000)
-  const brandFavicon = optional(environment, 'BRAND_FAVICON', 2_048)
-  const brandWordmarkLight = optional(environment, 'BRAND_WORDMARK_LIGHT', 2_048)
-  const brandWordmarkDark = optional(environment, 'BRAND_WORDMARK_DARK', 2_048)
-  const brandEmailSenderName = optional(environment, 'BRAND_EMAIL_SENDER_NAME', 200)
+  );
+  const accounting = moduleAvailability(moduleFlags).accounting;
+  const wiseToken = optional(environment, "WISE_TOKEN", 512);
+  const deelToken = optional(environment, "DEEL_TOKEN", 4096);
+  const deelStart = optional(environment, "DEEL_SYNC_START_DATE", 10);
+  const githubWorkItemsCredential = optional(
+    environment,
+    "GITHUB_WORK_ITEMS_CREDENTIAL",
+    4_096,
+  );
+  const wiseProfileId = optional(environment, "WISE_PROFILE_ID", 64);
+  const wiseWebhookKey = optional(
+    environment,
+    "WISE_WEBHOOK_PUBLIC_KEY",
+    4_096,
+  );
+  const brandName = optional(environment, "BRAND_NAME", 200);
+  const brandTagline = optional(environment, "BRAND_TAGLINE", 500);
+  const brandDescription = optional(environment, "BRAND_DESCRIPTION", 1_000);
+  const brandFavicon = optional(environment, "BRAND_FAVICON", 2_048);
+  const brandWordmarkLight = optional(
+    environment,
+    "BRAND_WORDMARK_LIGHT",
+    2_048,
+  );
+  const brandWordmarkDark = optional(environment, "BRAND_WORDMARK_DARK", 2_048);
+  const brandEmailSenderName = optional(
+    environment,
+    "BRAND_EMAIL_SENDER_NAME",
+    200,
+  );
   const appEnv: AppEnv = {
-    ENVIRONMENT: optional(environment, 'ENVIRONMENT', 64) ?? 'container',
-    RELEASE: optional(environment, 'RELEASE', 128) ?? 'container',
+    ENVIRONMENT: optional(environment, "ENVIRONMENT", 64) ?? "container",
+    RELEASE: optional(environment, "RELEASE", 128) ?? "container",
     APP_BASE_URL: appBaseUrl,
     ...(googleClientId === undefined
       ? {}
@@ -245,16 +298,28 @@ export const readContainerConfig = (
     ...(googleClientSecret === undefined
       ? {}
       : { OIDC_GOOGLE_CLIENT_SECRET: googleClientSecret }),
-    ...(appleClientId === undefined
-      ? {}
-      : { APPLE_CLIENT_ID: appleClientId }),
-    ...Object.fromEntries([
-      ['APPLE_WEB_ENABLED', optional(environment, 'APPLE_WEB_ENABLED', 5)],
-      ['APPLE_WEB_SERVICES_ID', optional(environment, 'APPLE_WEB_SERVICES_ID', 255)],
-      ['APPLE_WEB_CAPABILITY_KEYS', optional(environment, 'APPLE_WEB_CAPABILITY_KEYS', 4096)],
-      ['APPLE_WEB_ACTIVE_KEY_ID', optional(environment, 'APPLE_WEB_ACTIVE_KEY_ID', 32)],
-      ['APPLE_WEB_ROUTING_SECRET', optional(environment, 'APPLE_WEB_ROUTING_SECRET', 43)],
-    ].filter(([, value]) => value !== undefined)),
+    ...(appleClientId === undefined ? {} : { APPLE_CLIENT_ID: appleClientId }),
+    ...Object.fromEntries(
+      [
+        ["APPLE_WEB_ENABLED", optional(environment, "APPLE_WEB_ENABLED", 5)],
+        [
+          "APPLE_WEB_SERVICES_ID",
+          optional(environment, "APPLE_WEB_SERVICES_ID", 255),
+        ],
+        [
+          "APPLE_WEB_CAPABILITY_KEYS",
+          optional(environment, "APPLE_WEB_CAPABILITY_KEYS", 4096),
+        ],
+        [
+          "APPLE_WEB_ACTIVE_KEY_ID",
+          optional(environment, "APPLE_WEB_ACTIVE_KEY_ID", 32),
+        ],
+        [
+          "APPLE_WEB_ROUTING_SECRET",
+          optional(environment, "APPLE_WEB_ROUTING_SECRET", 43),
+        ],
+      ].filter(([, value]) => value !== undefined),
+    ),
     ...moduleFlags,
     ...(bootstrapToken === undefined
       ? {}
@@ -264,26 +329,60 @@ export const readContainerConfig = (
       : { GITHUB_WORK_ITEMS_CREDENTIAL: githubWorkItemsCredential }),
     ...(brandName === undefined ? {} : { BRAND_NAME: brandName }),
     ...(brandTagline === undefined ? {} : { BRAND_TAGLINE: brandTagline }),
-    ...(brandDescription === undefined ? {} : { BRAND_DESCRIPTION: brandDescription }),
+    ...(brandDescription === undefined
+      ? {}
+      : { BRAND_DESCRIPTION: brandDescription }),
     ...(brandFavicon === undefined ? {} : { BRAND_FAVICON: brandFavicon }),
-    ...(brandWordmarkLight === undefined ? {} : { BRAND_WORDMARK_LIGHT: brandWordmarkLight }),
-    ...(brandWordmarkDark === undefined ? {} : { BRAND_WORDMARK_DARK: brandWordmarkDark }),
-    ...(brandEmailSenderName === undefined ? {} : { BRAND_EMAIL_SENDER_NAME: brandEmailSenderName }),
-  }
+    ...(brandWordmarkLight === undefined
+      ? {}
+      : { BRAND_WORDMARK_LIGHT: brandWordmarkLight }),
+    ...(brandWordmarkDark === undefined
+      ? {}
+      : { BRAND_WORDMARK_DARK: brandWordmarkDark }),
+    ...(brandEmailSenderName === undefined
+      ? {}
+      : { BRAND_EMAIL_SENDER_NAME: brandEmailSenderName }),
+  };
+  const bankFeeds: BankFeedEnvironment = Object.fromEntries(
+    [
+      "MERCURY_BANK_FEED_TOKEN",
+      "MERCURY_BANK_FEED_ACCOUNT_ID",
+      "MERCURY_BANK_FEED_CURRENCY",
+      "WISE_BANK_FEED_TOKEN",
+      "WISE_BANK_FEED_PROFILE_ID",
+      "WISE_BANK_FEED_BALANCE_ID",
+      "WISE_BANK_FEED_CURRENCY",
+      "BANK_FEED_ENVIRONMENT",
+    ].flatMap((key) =>
+      environment[key] === undefined
+        ? []
+        : [[key, optional(environment, key, 1000)!]],
+    ),
+  );
   return {
-    bankFeeds: Object.fromEntries(['MERCURY_BANK_FEED_TOKEN','MERCURY_BANK_FEED_ACCOUNT_ID','MERCURY_BANK_FEED_CURRENCY','WISE_BANK_FEED_TOKEN','WISE_BANK_FEED_PROFILE_ID','WISE_BANK_FEED_BALANCE_ID','WISE_BANK_FEED_CURRENCY','BANK_FEED_ENVIRONMENT'].flatMap(key=>environment[key]===undefined?[]:[[key,optional(environment,key,1000)!]])),
-    host: optional(environment, 'HOST', 255) ?? '0.0.0.0',
+    ...(Object.keys(bankFeeds).length ? { bankFeeds } : {}),
+    host: optional(environment, "HOST", 255) ?? "0.0.0.0",
     port: port(environment.PORT),
     trustedProxyHops: trustedProxyHops(environment.TRUSTED_PROXY_HOPS),
-    lastSeenIntervalMs: lastSeenIntervalFromSeconds(environment.LAST_SEEN_INTERVAL_SECONDS),
+    lastSeenIntervalMs: lastSeenIntervalFromSeconds(
+      environment.LAST_SEEN_INTERVAL_SECONDS,
+    ),
     dataDirectory: directory,
     databasePath: `${directory}/db.sqlite`,
     attachmentDirectory: `${directory}/attachments`,
     brandDirectory: `${directory}/brand`,
     appBaseUrl,
-    ...(optional(environment, 'WEBHOOK_ENCRYPTION_KEY', 128) === undefined ? {} : { webhookEncryptionKey: optional(environment, 'WEBHOOK_ENCRYPTION_KEY', 128)! }),
+    ...(optional(environment, "WEBHOOK_ENCRYPTION_KEY", 128) === undefined
+      ? {}
+      : {
+          webhookEncryptionKey: optional(
+            environment,
+            "WEBHOOK_ENCRYPTION_KEY",
+            128,
+          )!,
+        }),
     cursorSigningKey: signingKey(
-      required(environment, 'API_CURSOR_SIGNING_KEY', 128),
+      required(environment, "API_CURSOR_SIGNING_KEY", 128),
     ),
     ...(magicLinkKey === undefined
       ? {}
@@ -312,11 +411,17 @@ export const readContainerConfig = (
             companyId: billOrganizationId,
             username: billUsername,
             password: billPassword,
-            ...(billReplyToUserId === undefined ? {} : { replyToUserId: billReplyToUserId }),
-            ...(billEnvironment === undefined ? {} : { environment: billEnvironment }),
+            ...(billReplyToUserId === undefined
+              ? {}
+              : { replyToUserId: billReplyToUserId }),
+            ...(billEnvironment === undefined
+              ? {}
+              : { environment: billEnvironment }),
           },
         }),
-    ...(!accounting || quickBooksClientId === undefined || quickBooksClientSecret === undefined
+    ...(!accounting ||
+    quickBooksClientId === undefined ||
+    quickBooksClientSecret === undefined
       ? {}
       : {
           quickBooks: {
@@ -330,23 +435,31 @@ export const readContainerConfig = (
               : { environment: quickBooksEnvironment }),
           },
         }),
-    ...(deelToken === undefined && deelStart === undefined ? {} : {deel: {
-      ...(deelToken === undefined ? {} : {token:deelToken}),
-      ...(deelStart === undefined ? {} : {startDate:deelStart}),
-    }}),
+    ...(deelToken === undefined && deelStart === undefined
+      ? {}
+      : {
+          deel: {
+            ...(deelToken === undefined ? {} : { token: deelToken }),
+            ...(deelStart === undefined ? {} : { startDate: deelStart }),
+          },
+        }),
     ...(wiseToken === undefined
       ? {}
       : {
           wise: {
             token: wiseToken,
-            ...(wiseProfileId === undefined ? {} : { profileId: wiseProfileId }),
-            ...(wiseWebhookKey === undefined ? {} : { webhookPublicKey: wiseWebhookKey }),
+            ...(wiseProfileId === undefined
+              ? {}
+              : { profileId: wiseProfileId }),
+            ...(wiseWebhookKey === undefined
+              ? {}
+              : { webhookPublicKey: wiseWebhookKey }),
           },
         }),
     smtp: {
-      url: required(environment, 'SMTP_URL', 8_192),
-      from: required(environment, 'SMTP_FROM', 320),
+      url: required(environment, "SMTP_URL", 8_192),
+      from: required(environment, "SMTP_FROM", 320),
     },
     appEnv,
-  }
-}
+  };
+};

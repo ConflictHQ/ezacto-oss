@@ -26,6 +26,7 @@ export interface BankDepositObservation {
 }
 export interface BankFeedPage {
   deposits: NeutralDeposit[];
+  /** May include previously seen IDs omitted from deposits to revoke eligibility. */
   observations?: Record<string, BankDepositObservation>;
   /** Opaque resume point; null when the feed has nothing newer. */
   cursor: string | null;
