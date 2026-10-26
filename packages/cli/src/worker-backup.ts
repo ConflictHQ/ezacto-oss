@@ -1,4 +1,4 @@
-import { workerBackupFiles, type WorkerBackupFileReceipt } from '@ezacto/core'
+import { WORKER_BACKUP_CLEAR_TABLES, workerBackupFiles, type WorkerBackupFileReceipt } from '@ezacto/core'
 import { constants } from "node:fs";
 import {
   chmod,
@@ -228,22 +228,7 @@ export async function restoreWorkerBackup(
           throw new Error("Worker snapshot row count mismatch.");
       }
       // Stateful credentials are evidence in the bundle, never reusable restored sessions.
-      const ephemeral = [
-        "api_tokens",
-        "sessions",
-        "contact_sessions",
-        "auth_tokens",
-        "auth_rate_limits",
-        "magic_link_tokens",
-        "staff_magic_links",
-        "two_factor_challenges",
-        "oidc_app_codes",
-        "oidc_transactions",
-        "quickbooks_oauth_states",
-        "backup_download_links",
-        "backup_download_limits",
-      ];
-      for (const table of ephemeral)
+      for (const table of WORKER_BACKUP_CLEAR_TABLES)
         if (tableNames.has(table))
           database.prepare(`DELETE FROM ${quote(table)}`).run();
       if (
@@ -259,6 +244,7 @@ export async function restoreWorkerBackup(
           if (tableNames.has(value.name) && /^\d+$/u.test(value.seq))
             sequence.run(value.name, BigInt(value.seq));
       }
+      if (tableNames.has('worker_backup_capture')) database.prepare('UPDATE worker_backup_capture SET admitted=0,estimated_bytes=0 WHERE singleton=1').run();
       for (const object of schema.objects)
         if (object.type !== "table") database.prepare(object.sql).run();
       database.pragma("foreign_keys = ON");

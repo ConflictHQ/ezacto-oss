@@ -1,3 +1,4 @@
+import { WORKER_BACKUP_CLEAR_TABLES } from '@ezacto/core'
 import { captureWorkerSnapshot, type WorkerBackupFile } from './worker-backup-snapshot.js'
 /**
  * D18 L1: nightly logical export. Produces the D18 bundle format as a set of
@@ -8,42 +9,11 @@ import { captureWorkerSnapshot, type WorkerBackupFile } from './worker-backup-sn
 const SCHEMA_VERSION = 1
 const BUNDLE_VERSION = '0038'
 
-/**
- * Tables a restore should skip, and why. Note what this is *not*: it is not a
- * list of tables to leave out of the bundle. The bundle takes everything.
- *
- * Those are two different decisions and conflating them was the earlier
- * mistake. Capturing is cheap and a backup is a record -- leaving a table out
- * destroys evidence you may want later, and "who held a session when this
- * happened" is exactly the question an incident asks. Loading is where the
- * judgement lives: restoring these would revive a session somebody revoked, a
- * password-reset link somebody already spent, a sign-in code already used.
- *
- * So they are captured, and named here so the restore can skip them.
+/** Captured for evidence, then cleared by the supported typed restore reader.
+ * Schema migration receipts are preserved; calendar connections are transformed
+ * into re-consent and cleanup custody, not silently dropped.
  */
-const EPHEMERAL_TABLES: readonly string[] = [
-  // Re-applied from source on first boot. Loading it would tell a fresh
-  // database it had already run migrations it has not run.
-  '_ezacto_migrations',
-  // Live credentials. Loading them revives what was deliberately killed.
-  'sessions',
-  'contact_sessions',
-  'auth_tokens',
-  'auth_first_run',
-  'auth_rate_limits',
-  'magic_link_tokens',
-  'staff_magic_links',
-  'two_factor_challenges',
-  'oidc_app_codes',
-  'oidc_transactions',
-  // OAuth grant and cursor envelopes are captured encrypted, but never restored.
-  'calendar_connections',
-  'quickbooks_oauth_states',
-  // A spent link restored as unspent, or a lapsed one as live, is a credential
-  // for a copy of the database (issue 39).
-  'backup_download_links',
-  'backup_download_limits',
-]
+const EPHEMERAL_TABLES: readonly string[] = WORKER_BACKUP_CLEAR_TABLES
 
 /**
  * Every table the database has, in a stable order.

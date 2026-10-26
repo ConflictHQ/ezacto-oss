@@ -24,6 +24,11 @@ export interface WorkerSnapshotSchema {
   attachments: Array<{ file_key: string; path: string; sha256: string; byte_size: number }>
 }
 const quote = (name: string) => '"' + name.replaceAll('"', '""') + '"'
+const combine = (parts: string[], operator: string): string => {
+  if (parts.length === 1) return parts[0]!
+  const middle = Math.floor(parts.length / 2)
+  return `(${combine(parts.slice(0,middle),operator)} ${operator} ${combine(parts.slice(middle),operator)})`
+}
 const schemaSql = `SELECT type,name,tbl_name,sql FROM sqlite_schema WHERE sql IS NOT NULL AND name NOT LIKE 'sqlite_%' AND name NOT LIKE '_cf_%' ORDER BY type,name`
 const maxObject = 16 * 1024 * 1024
 const maxSnapshot = 64 * 1024 * 1024
@@ -63,28 +68,35 @@ export async function captureWorkerSnapshot(
       name: o.name,
       columns: columns.filter((c) => c.table_name === o.name && c.hidden === 0).map((c) => c.name),
     }))
-  const statements = [
-    database.prepare(schemaSql),
-    ...tables.map((table) => {
-      if (!table.columns.length)
-        throw new Error('Worker backup cannot capture a table without writable columns.')
-      const cells = table.columns.map((name) => {
-        const q = quote(name)
-        return `json_array(typeof(${q}),CASE typeof(${q}) WHEN 'null' THEN NULL WHEN 'text' THEN hex(CAST(${q} AS BLOB)) WHEN 'blob' THEN hex(${q}) WHEN 'integer' THEN printf('%lld',${q}) WHEN 'real' THEN printf('%!.17g',${q}) END)`
-      })
-      return database.prepare(
-        `SELECT json_array(${cells.join(',')}) AS encoded FROM ${quote(table.name)}`,
-      )
-    }),
-    database.prepare(
-      sequenceExists!.results.length
-        ? `SELECT name,CAST(seq AS TEXT) AS seq FROM sqlite_sequence ORDER BY name`
-        : `SELECT '' AS name,'' AS seq WHERE 0`,
-    ),
-  ]
+  if (!tables.some(table => table.name === 'worker_backup_capture')) throw new Error('Worker backup requires migration 0176.')
+  // The conservative estimate includes SQL results, encoded/decoded cells and CSV
+  // copies: 160 bytes/cell, 256 bytes/row, eight bytes per source byte, plus
+  // schema/statement headroom. Oversized data never crosses the D1 binding.
+  const baseEstimate = encode.encode(JSON.stringify(objects)).length * 8 + tables.length * 4096
+  const statements = [database.prepare(schemaSql), database.prepare('UPDATE worker_backup_capture SET admitted=0,estimated_bytes=? WHERE singleton=1').bind(baseEstimate)]
+  for (const table of tables) {
+    if (!table.columns.length) throw new Error('Worker backup cannot capture a table without writable columns.')
+    const lengths = combine(table.columns.map(name => `coalesce(length(CAST(${quote(name)} AS BLOB)),0)`), '+')
+    statements.push(database.prepare(`UPDATE worker_backup_capture SET estimated_bytes=estimated_bytes+(SELECT coalesce(sum(256+${table.columns.length * 160}+8*(${lengths})),0) FROM ${quote(table.name)}) WHERE singleton=1 AND estimated_bytes<=${maxSnapshot}`))
+  }
+  statements.push(database.prepare(`UPDATE worker_backup_capture SET admitted=CASE WHEN estimated_bytes<=${maxSnapshot} THEN 1 ELSE 0 END WHERE singleton=1`))
+  const admissionIndex = statements.length
+  statements.push(database.prepare('SELECT admitted,estimated_bytes FROM worker_backup_capture WHERE singleton=1'))
+  const rowsIndex = statements.length
+  for (const table of tables) {
+    const cells = table.columns.map(name => {
+      const q = table.name === 'worker_backup_capture' && name !== 'singleton' ? '0' : quote(name)
+      return `json_array(typeof(${q}),CASE typeof(${q}) WHEN 'null' THEN NULL WHEN 'text' THEN hex(CAST(${q} AS BLOB)) WHEN 'blob' THEN hex(${q}) WHEN 'integer' THEN printf('%lld',${q}) WHEN 'real' THEN printf('%!.17g',${q}) END)`
+    })
+    statements.push(database.prepare(`SELECT '[' || ${combine(cells,"|| ',' ||")} || ']' AS encoded FROM ${quote(table.name)} WHERE EXISTS(SELECT 1 FROM worker_backup_capture WHERE singleton=1 AND admitted=1)`))
+  }
+  const sequenceIndex = statements.length
+  statements.push(database.prepare(sequenceExists!.results.length ? `SELECT name,CAST(seq AS TEXT) AS seq FROM sqlite_sequence WHERE EXISTS(SELECT 1 FROM worker_backup_capture WHERE singleton=1 AND admitted=1) ORDER BY name` : `SELECT '' AS name,'' AS seq WHERE 0`))
+  statements.push(database.prepare('UPDATE worker_backup_capture SET admitted=0,estimated_bytes=0 WHERE singleton=1'))
   const captured = await database.batch(statements)
   if (JSON.stringify(captured[0]!.results) !== JSON.stringify(objects))
     throw new Error('The database schema changed during backup; retry the export.')
+  if ((captured[admissionIndex]!.results[0] as {admitted:number}|undefined)?.admitted !== 1) throw new Error('Worker backup exceeds the 64 MiB conservative in-memory budget; use an operator SQL export.')
   const files: Record<string, WorkerBackupFile> = {}
   let totalBytes = 0
   const put = async (name: string, value: string) => {
@@ -101,13 +113,13 @@ export async function captureWorkerSnapshot(
     format: 'ezacto-worker-snapshot-1',
     objects,
     tables: [],
-    sequences: captured.at(-1)!.results as unknown as WorkerSnapshotSchema['sequences'],
+    sequences: captured[sequenceIndex]!.results as unknown as WorkerSnapshotSchema['sequences'],
     attachments: [],
   }
   const csvTables: Array<{ name: string; columns: string[]; rows: unknown[][] }> = []
   const decodedByName = new Map<string, Array<Record<string, unknown>>>()
   for (const [i, table] of tables.entries()) {
-    const encodedRows = captured[i + 1]!.results.map((row) =>
+    const encodedRows = captured[rowsIndex + i]!.results.map((row) =>
       String((row as { encoded: string }).encoded),
     )
     const chunks: string[] = []
