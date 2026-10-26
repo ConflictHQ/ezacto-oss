@@ -1,11 +1,42 @@
 import assert from "node:assert/strict";
-import { mkdtemp, readFile, writeFile } from "node:fs/promises";
+import { chmod, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { spawnSync } from "node:child_process";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
 import { SHARDS, exitCode, renderSummary, repeatShard, summarize, testCommand } from "./load-verify.mjs";
 
 const proxyHeap = "Native ../../node_modules/miniflare/src/workers/core/proxy.worker.ts:150:4";
+
+test("web load uses the full npm pipeline without passing Vitest flags to the browser", async () => {
+  const fixture = await mkdtemp(join(tmpdir(), "web-load-command-"));
+  try {
+    const web = JSON.parse(await readFile(new URL("../apps/web/package.json", import.meta.url), "utf8"));
+    const log = join(fixture, "calls.jsonl");
+    const probe = join(fixture, "probe.cjs");
+    await writeFile(probe, `require('node:fs').appendFileSync(process.env.PROBE_LOG, JSON.stringify(process.argv.slice(2))+'\\n'); if(process.env.FAIL_VITEST && process.argv[2]==='vitest') process.exit(23);`);
+    const bin = join(fixture, "node_modules", ".bin");
+    await mkdir(bin, { recursive: true });
+    const vitest = join(bin, "vitest");
+    await writeFile(vitest, `#!/bin/sh\nexec "${process.execPath}" "${probe}" vitest "$@"\n`);
+    await chmod(vitest, 0o700);
+    const phase = (name) => `"${process.execPath}" "${probe}" ${name}`;
+    await writeFile(join(fixture, "package.json"), JSON.stringify({ scripts: {
+      "test:load": web.scripts["test:load"],
+      "theme:check": phase("theme"), "shell:generate": phase("shell"),
+      "test:browser": phase("browser"),
+    } }));
+    const env = { ...process.env, PROBE_LOG: log };
+    const run = spawnSync("npm", ["run", "test:load"], { cwd: fixture, env, encoding: "utf8" });
+    assert.equal(run.status, 0, run.stderr);
+    assert.deepEqual((await readFile(log, "utf8")).trim().split("\n").map(JSON.parse),
+      [["theme"], ["shell"], ["vitest", "run", "--maxWorkers=1"], ["browser"]]);
+    await writeFile(log, "");
+    const failed = spawnSync("npm", ["run", "test:load"], { cwd: fixture, env: { ...env, FAIL_VITEST: "1" }, encoding: "utf8" });
+    assert.notEqual(failed.status, 0);
+    assert.ok(!(await readFile(log, "utf8")).includes('"browser"'));
+  } finally { await rm(fixture, { recursive: true, force: true }); }
+});
 
 test("a shard command is one worker plus the verify matrix selection", () => {
   assert.deepEqual(testCommand("migrate"), ["npm", "test", "-w", "@conflict-hq/ezacto-migrate", "--", "--maxWorkers=1"]);
