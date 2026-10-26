@@ -5,6 +5,7 @@ import { createDeelStagingRuntime, type DeelStageStore } from '@ezacto/integrati
 import { createContainerDatabase, createD1Database } from '../src/adapters.js'
 import { migrateContainer, migrateD1 } from '../src/migrate.js'
 import { createDeelStageStore } from '../src/deel-staging.js'
+import { createDeelSyncStore } from '../src/deel-time-sync.js'
 import type { InvoiceStateDatabase } from '../src/invoice-state.js'
 const now = '2026-10-26T12:00:00.000Z'
 for (const target of ['SQLite', 'D1'] as const)
@@ -237,6 +238,76 @@ for (const target of ['SQLite', 'D1'] as const)
         },
       }
     }
+    const addUnsubmitted = async (userId: number, entryId: number) => {
+      await run(
+        "INSERT INTO time_entries(id,user_id,project_id,task_id,user_assignment_id,task_assignment_id,spent_date,seconds,seconds_without_timer,rounded_seconds,billable,created_at,updated_at) VALUES(?,?,1,1,?,1,'2026-10-20',1800,1800,1800,0,?,?)",
+        entryId, userId, userId, now, now,
+      )
+    }
+    const submitEntry = async (userId: number, entryId: number) => {
+      const submissionId = entryId + 300000
+      await run(
+        "INSERT INTO timesheet_submissions(id,user_id,period_start,period_end,status,submitted_by_user_id,submitted_at,version,created_at,updated_at) VALUES(?,?,'2026-10-18','2026-10-24','submitted',?,?,0,?,?)",
+        submissionId, userId, userId, now, now, now,
+      )
+      await run("UPDATE time_entries SET approval_status='submitted',timesheet_submission_id=? WHERE id=?", submissionId, entryId)
+    }
+    it('manually stages stopped unsubmitted and submitted hours only after an exact administrator preview without changing approval', async () => {
+      const f = await fixture(), first = f.u * 10 + 1, second = f.v * 10 + 1
+      await addUnsubmitted(f.u, first)
+      await addUnsubmitted(f.v, second)
+      await submitEntry(f.v, second)
+      const selection = { from: '2026-10-20', to: '2026-10-25', userIds: [f.u, f.v] }
+      const states = () => rows('SELECT id,approval_status,timesheet_submission_id FROM time_entries WHERE id IN(?,?) ORDER BY id', first, second)
+      const before = await states()
+      expect(before).toEqual([
+        { id: first, approval_status: 'unsubmitted', timesheet_submission_id: null },
+        { id: second, approval_status: 'submitted', timesheet_submission_id: second + 300000 },
+      ])
+      expect(await createDeelSyncStore(db).entries(selection)).toEqual([])
+      const r = f.runtime(), preview = await r.preview(f.authority, selection)
+      expect(preview.entryIds).toEqual([first, second])
+      expect(preview.seconds).toBe(3600)
+      expect(f.posted).toEqual([])
+      const facts = JSON.parse((await f.native.snapshot(f.authority, selection, now)).sourceFacts)
+      expect(facts.entries.map((entry: { approvalStatus: string }) => entry.approvalStatus)).toEqual(['unsubmitted', 'submitted'])
+      await expect(r.stage(f.authority, { ...selection, id: crypto.randomUUID(), fingerprint: '0'.repeat(64) })).rejects.toMatchObject({ code: 'stale' })
+      expect(f.posted).toEqual([])
+      const command = { ...selection, id: crypto.randomUUID(), fingerprint: preview.fingerprint }
+      expect(await r.stage(f.authority, command)).toMatchObject({ status: 'staged', entriesStaged: 2 })
+      await r.stage(f.authority, command)
+      expect(f.posted.map((post) => [post.contract_id, post.quantity])).toEqual([[`c${f.u}`, 0.5], [`c${f.v}`, 0.5]])
+      expect(await states()).toEqual(before)
+      expect(await rows('SELECT status,version FROM timesheet_submissions WHERE id=?', second + 300000)).toEqual([{ status: 'submitted', version: 0 }])
+      expect(await createDeelSyncStore(db).entries(selection)).toEqual([])
+      expect(await rows('SELECT * FROM staff_payment_effective_events')).toEqual([])
+    })
+    it('excludes a running unsubmitted timer from manual review until it is stopped', async () => {
+      const f = await fixture(), entryId = f.u * 10 + 1
+      await addUnsubmitted(f.u, entryId)
+      await run('UPDATE time_entries SET timer_started_at=? WHERE id=?', now, entryId)
+      const selection = { ...f.selection, from: '2026-10-20' }
+      expect((await f.runtime().preview(f.authority, selection)).entryIds).toEqual([])
+      await run('UPDATE time_entries SET timer_started_at=NULL WHERE id=?', entryId)
+      expect((await f.runtime().preview(f.authority, selection)).entryIds).toEqual([entryId])
+      expect(f.posted).toEqual([])
+    })
+    it.each(['before_stage', 'before_claim'] as const)('fences approval changes %s for administrator-reviewed hours', async (phase) => {
+      const f = await fixture(), entryId = f.u * 10 + 1
+      await addUnsubmitted(f.u, entryId)
+      const selection = { ...f.selection, from: '2026-10-20' }
+      const store: DeelStageStore = phase === 'before_claim' ? { ...f.native, claim: async (...args) => {
+        await submitEntry(f.u, entryId)
+        return f.native.claim(...args)
+      } } : f.native
+      const runtime = f.runtime(store), preview = await runtime.preview(f.authority, selection)
+      expect(preview.entryIds).toEqual([entryId])
+      if (phase === 'before_stage') await submitEntry(f.u, entryId)
+      const command = { ...selection, id: crypto.randomUUID(), fingerprint: preview.fingerprint }
+      if (phase === 'before_stage') await expect(runtime.stage(f.authority, command)).rejects.toMatchObject({ code: 'stale' })
+      else expect(await runtime.stage(f.authority, command)).toMatchObject({ status: 'stale', code: 'source_changed' })
+      expect(f.posted).toEqual([])
+    })
     const linkDeel = async (userId: number, address = `person${userId}@example.test`, provider = 'deel') => {
       await run(
         "INSERT INTO user_payout_accounts(user_id,provider,external_id,kind,linked_by_user_id,linked_at,created_at,updated_at) VALUES(?,?,?,'account',1,?,?,?)",

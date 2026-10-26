@@ -609,14 +609,18 @@ const fixtureControl = async (request, response) => {
       await run("INSERT INTO user_assignments(id,project_id,user_id,created_at,updated_at) VALUES(?,1,?,?,?)",id,id,timestamp,timestamp)
       await run("INSERT INTO staff_payment_provider_events(id,user_id,scope,version,provider,command_json,actor_id,recorded_at,request_id) VALUES(?,?,?,1,'deel',?,1,?,?)",`deel-fixture-${id}`,id,`user:${id}`,JSON.stringify({id:`deel-fixture-${id}`,user_id:id,expected_version:0,provider:'deel',note:'Owned staging fixture'}),timestamp,`deel-fixture-${id}`)
       await run("INSERT INTO time_entries(id,user_id,project_id,task_id,user_assignment_id,task_assignment_id,spent_date,seconds,seconds_without_timer,rounded_seconds,billable,created_at,updated_at) VALUES(?,?,1,1,?,1,'2026-08-10',3600,3600,3600,0,?,?)",id,id,id,timestamp,timestamp)
-      await run("INSERT INTO timesheet_submissions(id,user_id,period_start,period_end,status,submitted_by_user_id,submitted_at,version,created_at,updated_at) VALUES(?,?,?,?,'submitted',?,?,0,?,?)",id,id,weekFrom,weekTo,id,timestamp,timestamp,timestamp)
-      await run("UPDATE time_entries SET approval_status='submitted',timesheet_submission_id=? WHERE id=?",id,id)
-      await run("UPDATE timesheet_submissions SET status='approved',version=1,reviewed_by_user_id=1,reviewed_at=? WHERE id=?",timestamp,id)
-      await run("UPDATE time_entries SET approval_status='approved' WHERE id=?",id)
+      // Keep one real unsubmitted entry: administrator staging review is its
+      // authorization to sync, and must not change the timesheet approval state.
+      if (id === 50002) {
+        await run("INSERT INTO timesheet_submissions(id,user_id,period_start,period_end,status,submitted_by_user_id,submitted_at,version,created_at,updated_at) VALUES(?,?,?,?,'submitted',?,?,0,?,?)",id,id,weekFrom,weekTo,id,timestamp,timestamp,timestamp)
+        await run("UPDATE time_entries SET approval_status='submitted',timesheet_submission_id=? WHERE id=?",id,id)
+        await run("UPDATE timesheet_submissions SET status='approved',version=1,reviewed_by_user_id=1,reviewed_at=? WHERE id=?",timestamp,id)
+        await run("UPDATE time_entries SET approval_status='approved' WHERE id=?",id)
+      }
     }
   } else if (action === 'deel-stage-receipt' && deelStagingFixture) {
     response.writeHead(200,{'content-type':'application/json','cache-control':'no-store'})
-    response.end(JSON.stringify({posts:deelStagingPosts,entries:(await database.prepare('SELECT entry_id FROM deel_transfer_log WHERE entry_id IN(50001,50002) ORDER BY entry_id').all()).results,payments:(await database.prepare("SELECT count(*) count FROM staff_payment_events WHERE kind='payment'").first()).count}))
+    response.end(JSON.stringify({posts:deelStagingPosts,entries:(await database.prepare('SELECT entry_id FROM deel_transfer_log WHERE entry_id IN(50001,50002) ORDER BY entry_id').all()).results,approvals:(await database.prepare('SELECT id,approval_status,timesheet_submission_id FROM time_entries WHERE id IN(50001,50002) ORDER BY id').all()).results,submissions:(await database.prepare('SELECT id,status,version FROM timesheet_submissions WHERE user_id IN(50001,50002) ORDER BY id').all()).results,payments:(await database.prepare("SELECT count(*) count FROM staff_payment_events WHERE kind='payment'").first()).count}))
     return
   } else if (action === 'first-run-create') {
     if (firstRunRuntime !== null || typeof payload.password !== 'string') {

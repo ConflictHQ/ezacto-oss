@@ -119,7 +119,7 @@ export const createDeelStageController = (
     clearPreview();
     busy = true;
     controls();
-    message.textContent = "Reviewing approved hours and Deel contracts…";
+    message.textContent = "Reviewing hours and Deel contracts…";
     try {
       const result = await api.previewDeelStaging!({
         body: { from: field("from").value, to: field("to").value, user_ids },

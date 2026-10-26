@@ -1,6 +1,6 @@
 import { expect, test } from "@playwright/test";
 const control = { "x-ezacto-browser-fixture-control": "start-end-round-trip" };
-test("stages selected approved hours once through the real Worker and leaves payment completion in Deel", async ({
+test("stages administrator-reviewed unsubmitted and approved hours once without changing approvals or recording payments", async ({
   page,
   request,
 }, testInfo) => {
@@ -31,7 +31,7 @@ test("stages selected approved hours once through the real Worker and leaves pay
   await page.getByRole("button", { name: "Refresh", exact: true }).click();
   await page
     .getByRole("button", {
-      name: "Stage approved hours in Deel: Deel 50001 Fixture",
+      name: "Stage hours in Deel: Deel 50001 Fixture",
       exact: true,
     })
     .click();
@@ -48,6 +48,23 @@ test("stages selected approved hours once through the real Worker and leaves pay
   await expect(section.locator("[data-deel-stage-preview]")).toContainText(
     "3600 seconds",
   );
+  await expect(
+    section.getByRole("button", { name: "Stage hours in Deel", exact: true }),
+  ).toBeDisabled();
+  const beforeReview = await (
+    await request.post("/__ezacto_browser_fixture__/start-end", {
+      headers: control,
+      data: { action: "deel-stage-receipt" },
+    })
+  ).json();
+  expect(beforeReview.posts).toEqual([]);
+  expect(beforeReview.approvals).toEqual([
+    { id: 50001, approval_status: "unsubmitted", timesheet_submission_id: null },
+    { id: 50002, approval_status: "approved", timesheet_submission_id: 50002 },
+  ]);
+  expect(beforeReview.submissions).toEqual([
+    { id: 50002, status: "approved", version: 1 },
+  ]);
   await section
     .getByRole("checkbox", {
       name: "I reviewed these people, dates, contracts and hours",
@@ -110,6 +127,8 @@ test("stages selected approved hours once through the real Worker and leaves pay
   expect(receipt.posts).toHaveLength(2);
   expect(receipt.entries).toEqual([{ entry_id: 50001 }, { entry_id: 50002 }]);
   expect(receipt.payments).toBe(0);
+  expect(receipt.approvals).toEqual(beforeReview.approvals);
+  expect(receipt.submissions).toEqual(beforeReview.submissions);
   for (const post of receipt.posts) {
     expect(post.data.quantity).toBe(1);
     expect(post.data).not.toHaveProperty("amount");

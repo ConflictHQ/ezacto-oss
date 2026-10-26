@@ -19872,7 +19872,7 @@
     "/api/v1/deel-staging": {
       "get": {
         "operationId": "getDeelStaging",
-        "summary": "Inspect configured approved-hour staging availability",
+        "summary": "Inspect configured administrator-reviewed hour staging availability",
         "tags": [
           "deel-sync"
         ],
@@ -19927,7 +19927,7 @@
     "/api/v1/deel-staging/preview": {
       "post": {
         "operationId": "previewDeelStaging",
-        "summary": "Review approved hours for selected Deel people",
+        "summary": "Review stopped hours for selected Deel people",
         "tags": [
           "deel-sync"
         ],
@@ -19992,7 +19992,7 @@
     "/api/v1/deel-staging/commands": {
       "post": {
         "operationId": "stageDeelHours",
-        "summary": "Stage reviewed approved hours once; payment completes in Deel",
+        "summary": "Stage administrator-reviewed hours once; payment completes in Deel",
         "tags": [
           "deel-sync"
         ],
