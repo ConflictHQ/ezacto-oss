@@ -1,5 +1,6 @@
 import type { Whoami } from '@conflict-hq/ezacto-client'
 import type { FirstRunApi, FirstRunStatus } from './model.js'
+import { setRequestBusy } from '../request-feedback.js'
 
 export const createFirstRunController = (api: Partial<FirstRunApi>) => {
   const panel = document.querySelector<HTMLElement>('[data-first-run-checklist]')
@@ -56,6 +57,8 @@ export const createFirstRunController = (api: Partial<FirstRunApi>) => {
       return
     const request = ++generation
     if (refresh) refresh.disabled = true
+    status.textContent = 'Checking setup…'
+    setRequestBusy(status, true)
     try {
       const state = await api.getFirstRunStatus(active.identity.user_id, active.signal, forceOpen)
       if (session !== active || active.signal.aborted || request !== generation) return
@@ -79,8 +82,10 @@ export const createFirstRunController = (api: Partial<FirstRunApi>) => {
         status.textContent = 'Setup could not be checked. Try checking again.'
       }
     } finally {
-      if (session === active && !active.signal.aborted && request === generation && refresh)
-        refresh.disabled = false
+      if (session === active && !active.signal.aborted && request === generation) {
+        if (refresh) refresh.disabled = false
+        setRequestBusy(status, false)
+      }
     }
   }
   help?.addEventListener('click', () => {
@@ -132,6 +137,8 @@ export const createFirstRunController = (api: Partial<FirstRunApi>) => {
           generation++
           if (panel) panel.hidden = true
           if (help) help.hidden = true
+          if (status) { status.textContent = ''; setRequestBusy(status, false) }
+          if (refresh) refresh.disabled = false
         },
         { once: true },
       )

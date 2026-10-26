@@ -1,3 +1,4 @@
+import { setRequestBusy } from '../request-feedback.js'
 import { EzactoApiError, type GeneralResource, type Whoami } from '@conflict-hq/ezacto-client'
 import { sessionPresenter, type SessionPresenter } from '../session.js'
 import {
@@ -101,6 +102,8 @@ export const createRoleAdminController = (
     createButton.disabled = !writable || mutationPending
     formSubmit.disabled = mutationPending
     deleteConfirm.disabled = mutationPending
+    setRequestBusy(formResult, mutationPending && formDialog.open)
+    setRequestBusy(deleteResult, mutationPending && deleteDialog.open)
   }
 
   const renderList = (): void => {
@@ -176,6 +179,7 @@ export const createRoleAdminController = (
       return
     }
     status.textContent = 'Loading roles…'
+    setRequestBusy(status, true)
     retry.hidden = true
     try {
       const [page, people] = await Promise.all([
@@ -198,6 +202,8 @@ export const createRoleAdminController = (
         status.textContent = messageFor(error)
         retry.hidden = false
       })
+    } finally {
+      if (currentSession() === active) setRequestBusy(status, false)
     }
   }
 
@@ -316,6 +322,23 @@ export const createRoleAdminController = (
       session = active
       syncMutationControls()
       if (signal.aborted) return
+      signal.addEventListener('abort', () => {
+        if (session !== active) return
+        session = null
+        roles = []
+        holders = new Map()
+        editingRole = null
+        deletingRole = null
+        mutationPending = false
+        closeDialogs()
+        list.replaceChildren()
+        setRequestBusy(status, false)
+        setRequestBusy(formResult, false)
+        setRequestBusy(deleteResult, false)
+        status.textContent = 'Sign in to view roles.'
+        formResult.textContent = deleteResult.textContent = ''
+        syncMutationControls()
+      }, { once: true })
       await loadRoles(active)
     },
   }

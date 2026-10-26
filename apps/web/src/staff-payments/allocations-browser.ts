@@ -1,3 +1,4 @@
+import { setRequestBusy } from '../request-feedback.js'
 // Provenance: ezacto-pvt #899. Review a payment allocation before confirming it,
 // and reconcile existing monthly payments explicitly. Additive: nothing here
 // changes a monthly total, and no hour split is ever inferred.
@@ -57,6 +58,7 @@ export const createAllocationsController = (
     selectedUser = ''
     content.replaceChildren()
     status.textContent = ''
+    setRequestBusy(status, false)
     refresh.disabled = true
   }
   refresh.addEventListener('click', () => {
@@ -92,6 +94,7 @@ export const createAllocationsController = (
     if (!current || !active || active.aborted || !api.getPaymentAllocationReport) return
     content.replaceChildren()
     status.textContent = 'Loading allocations…'
+    setRequestBusy(status, true)
     refresh.disabled = true
     try {
       const report = await api.getPaymentAllocationReport(current.month, active)
@@ -124,7 +127,10 @@ export const createAllocationsController = (
     } catch (error) {
       if (!active.aborted && own === generation) status.textContent = errorText(error)
     } finally {
-      if (!active.aborted && own === generation) refresh.disabled = false
+      if (!active.aborted && own === generation) {
+        setRequestBusy(status, false)
+        refresh.disabled = false
+      }
     }
   }
   // Reversal keeps the allocation row and records an audit event beside it.
@@ -152,6 +158,8 @@ export const createAllocationsController = (
           return
         }
         confirm.disabled = true
+        message.textContent = 'Reversing allocation…'
+        setRequestBusy(message, true)
         void api
           .reversePaymentAllocation!({ id: crypto.randomUUID(), allocation_id: a.id, reason: text }, active)
           .then(async () => {
@@ -165,6 +173,7 @@ export const createAllocationsController = (
               confirm.disabled = false
             }
           })
+          .finally(() => setRequestBusy(message, false))
       })
       for (const part of [reason, confirm, message]) wrap.appendChild(part)
     })
@@ -269,6 +278,7 @@ export const createAllocationsController = (
       go.disabled = true
       reason.disabled = true
       message.textContent = 'Adjusting…'
+      setRequestBusy(message, true)
       void (async () => {
         for (const a of live)
           await api.reversePaymentAllocation!({ id: `${id}-rev-${a.id}`, allocation_id: a.id, reason: reasonText }, active)
@@ -288,6 +298,7 @@ export const createAllocationsController = (
           message.textContent = `${errorText(error)} Retry to continue; steps already recorded are not repeated.`
           go.disabled = false
         })
+        .finally(() => setRequestBusy(message, false))
     })
     host.replaceChildren(grid)
     if (live.length === 0) {
@@ -613,6 +624,8 @@ export const createAllocationsController = (
       }
       saving = true
       review.disabled = true
+      message.textContent = 'Reviewing allocation…'
+      setRequestBusy(message, true)
       void api
         .previewPaymentAllocation(command, active)
         .then((preview) => {
@@ -620,11 +633,13 @@ export const createAllocationsController = (
           approved = command
           show(preview)
           confirm.hidden = false
+          message.textContent = 'Allocation reviewed. Confirm to record it.'
         })
         .catch((error: unknown) => {
           if (!active.aborted && own === generation) message.textContent = errorText(error)
         })
         .finally(() => {
+          setRequestBusy(message, false)
           saving = false
           review.disabled = false
         })
@@ -635,6 +650,8 @@ export const createAllocationsController = (
       saving = true
       confirm.disabled = true
       review.disabled = true
+      message.textContent = 'Recording allocation…'
+      setRequestBusy(message, true)
       void api
         .allocatePayment(command, active)
         .then(async () => {
@@ -646,6 +663,7 @@ export const createAllocationsController = (
           if (!active.aborted && own === generation) message.textContent = errorText(error)
         })
         .finally(() => {
+          setRequestBusy(message, false)
           saving = false
           confirm.disabled = false
           review.disabled = false

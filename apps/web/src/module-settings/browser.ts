@@ -1,3 +1,4 @@
+import { setRequestBusy } from '../request-feedback.js'
 import { accountingProviderAvailable } from '../accounting-providers.js'
 import {
   moduleAvailable,
@@ -1276,6 +1277,10 @@ export const createModuleSettingsController = (
     // whether or not the shell remembered to abort its signal on the way out.
     session = null
     loaded.clear()
+    for (const control of refreshControls) {
+      control.disabled = false
+      setRequestBusy(control, false)
+    }
     retention.clear()
     deletionRequests.clear()
     backupHistoryOwner?.abort()
@@ -2785,13 +2790,18 @@ export const createModuleSettingsController = (
   for (const control of refreshControls) {
     control.addEventListener('click', async () => {
       const section = control.dataset.settingsRefresh
-      if (section === undefined || currentSession() === null) return
+      const active = currentSession()
+      if (section === undefined || active === null || control.disabled) return
       loaded.delete(section)
       control.disabled = true
+      setRequestBusy(control, true)
       try {
         await load(section)
       } finally {
-        control.disabled = false
+        if (currentSession() === active) {
+          control.disabled = false
+          setRequestBusy(control, false)
+        }
       }
     })
   }

@@ -20,6 +20,7 @@ import {
   type EstimateWorkspaceApi,
 } from './model.js'
 import type { Whoami } from '@conflict-hq/ezacto-client'
+import { setRequestBusy } from '../request-feedback.js'
 
 /**
  * The estimates workspace: what was quoted, what happened to it, and the one
@@ -96,6 +97,11 @@ export const createEstimateWorkspaceController = (
   let converting = false
   let savingExpiry = false
   let shown: Estimate | null = null
+  let activeSignal: AbortSignal | null = null
+  let detailGeneration = 0
+  let listGeneration = 0
+  let listPending = false
+  const currentSession = (signal: AbortSignal) => activeSignal === signal && !signal.aborted
 
   const clientName = (estimate: Estimate): string =>
     clients.get(estimate.client_id) ?? `Client #${String(estimate.client_id)}`
@@ -183,6 +189,11 @@ export const createEstimateWorkspaceController = (
   }
 
   const showList = (): void => {
+    detailGeneration++
+    shown = null
+    savingExpiry = false
+    converting = false
+    for (const region of [detailStatus, expiryResult, convertResult]) setRequestBusy(region, false)
     listView.hidden = false
     detailView.hidden = true
   }
@@ -274,6 +285,7 @@ export const createEstimateWorkspaceController = (
    * text rather than a failed screen: the quote itself is what was asked for.
    */
   const showResponse = async (estimate: Estimate, signal: AbortSignal): Promise<void> => {
+    const own = detailGeneration
     const target = required<HTMLElement>('[data-estimate-response]')
     if (estimate.state !== 'accepted' && estimate.state !== 'declined') {
       target.textContent = estimateResponseText(null)
@@ -286,15 +298,27 @@ export const createEstimateWorkspaceController = (
     target.textContent = 'Loading response…'
     try {
       const messages = await api.listEstimateMessages(estimate.id, signal)
-      if (signal.aborted) return
+      if (!currentSession(signal) || own !== detailGeneration || shown?.id !== estimate.id) return
       target.textContent = estimateResponseText(estimateResponseSummary(estimate.state, messages))
     } catch {
-      if (signal.aborted) return
+      if (!currentSession(signal) || own !== detailGeneration || shown?.id !== estimate.id) return
       target.textContent = 'The response on file could not be loaded.'
     }
   }
 
   const openDetail = async (id: number, signal: AbortSignal): Promise<void> => {
+    if (!currentSession(signal)) return
+    const own = ++detailGeneration
+    const current = () => currentSession(signal) && own === detailGeneration
+    shown = null
+    savingExpiry = false
+    converting = false
+    expiryDate.disabled = false
+    expirySave.disabled = false
+    expiryClear.disabled = false
+    convert.disabled = false
+    setRequestBusy(expiryResult, false)
+    setRequestBusy(convertResult, false)
     listView.hidden = true
     detailView.hidden = false
     detailBody.hidden = true
@@ -302,32 +326,44 @@ export const createEstimateWorkspaceController = (
     convertResult.textContent = ''
     expiryResult.textContent = ''
     detailStatus.textContent = 'Loading estimate…'
+    setRequestBusy(detailStatus, true)
     if (api.getEstimate === undefined) {
       detailStatus.textContent = 'This deployment does not serve estimates.'
+      setRequestBusy(detailStatus, false)
       return
     }
     try {
       const estimate = await api.getEstimate(id, signal)
+      if (!current()) return
       renderDetail(estimate)
       void showResponse(estimate, signal)
     } catch (error) {
-      if (signal.aborted) return
+      if (!current()) return
       detailStatus.textContent = messageFor(error)
       detailRetry.hidden = false
       detailRetry.dataset.estimateId = String(id)
+    } finally {
+      if (current()) setRequestBusy(detailStatus, false)
     }
   }
 
   const loadPage = async (signal: AbortSignal, append: boolean): Promise<void> => {
+    if (!currentSession(signal) || (append && listPending)) return
     if (api.listEstimates === undefined) {
       listStatus.textContent = 'This deployment does not serve estimates.'
       return
     }
     listStatus.textContent = append ? 'Loading more estimates…' : 'Loading estimates…'
+    const own = ++listGeneration
+    const current = () => currentSession(signal) && own === listGeneration
+    listPending = true
+    loadMore.disabled = true
+    listRetry.disabled = true
+    setRequestBusy(listStatus, true)
     listRetry.hidden = true
     try {
       const page_ = await api.listEstimates(append ? (cursor ?? undefined) : undefined, signal)
-      if (signal.aborted) return
+      if (!current()) return
       loaded = append ? [...loaded, ...page_.data] : [...page_.data]
       cursor = page_.page.next_cursor
       loadMore.hidden = cursor === null
@@ -337,9 +373,16 @@ export const createEstimateWorkspaceController = (
           : `${String(loaded.length)} loaded.${cursor === null ? '' : loadedRowsSortNotice}`
       renderList()
     } catch (error) {
-      if (signal.aborted) return
+      if (!current()) return
       listStatus.textContent = messageFor(error)
       listRetry.hidden = false
+    } finally {
+      if (current()) {
+        listPending = false
+        loadMore.disabled = false
+        listRetry.disabled = false
+        setRequestBusy(listStatus, false)
+      }
     }
   }
 
@@ -347,7 +390,7 @@ export const createEstimateWorkspaceController = (
     if (api.listEstimateClients === undefined) return
     try {
       const page_ = await api.listEstimateClients(undefined, signal)
-      if (signal.aborted) return
+      if (!currentSession(signal)) return
       clients = new Map<number, string>(
         page_.data.map((client: GeneralResource) => [
           client.id,
@@ -368,7 +411,34 @@ export const createEstimateWorkspaceController = (
 
   return {
     async activate(identity, signal, onSessionFailure) {
-      if (!isPage) return
+      if (!isPage || signal.aborted) return
+      activeSignal = signal
+      detailGeneration++
+      listGeneration++
+      listPending = false
+      loaded = []
+      cursor = null
+      clients.clear()
+      shown = null
+      savingExpiry = false
+      converting = false
+      signal.addEventListener('abort', () => {
+        if (activeSignal !== signal) return
+        activeSignal = null
+        detailGeneration++
+        listGeneration++
+        listPending = false
+        shown = null
+        loaded = []
+        clients.clear()
+        page.hidden = true
+        list.replaceChildren()
+        detailBody.hidden = true
+        for (const status of [listStatus, detailStatus, expiryResult, convertResult]) {
+          status.textContent = ''
+          setRequestBusy(status, false)
+        }
+      }, { once: true })
       page.hidden = false
       writable = estimateIdentityCanWrite(identity)
       void composer.activate(identity, signal, onSessionFailure)
@@ -404,6 +474,7 @@ export const createEstimateWorkspaceController = (
         convertDue.value = estimateDueDate(convertIssued.value, convertTerms.value)
       }
       const saveExpiry = (expiresOn: string | null): void => {
+        if (!currentSession(signal)) return
         const current = shown
         if (current === null || savingExpiry || api.setEstimateExpiry === undefined) return
         if (expiresOn === '') {
@@ -411,9 +482,13 @@ export const createEstimateWorkspaceController = (
           return
         }
         savingExpiry = true
+        const own = detailGeneration
+        const isCurrent = () => currentSession(signal) && own === detailGeneration && shown?.id === current.id
         expirySave.disabled = true
         expiryClear.disabled = true
+        expiryDate.disabled = true
         expiryResult.textContent = 'Saving…'
+        setRequestBusy(expiryResult, true)
         void api
           .setEstimateExpiry(
             current.id,
@@ -421,19 +496,23 @@ export const createEstimateWorkspaceController = (
             signal,
           )
           .then((updated) => {
+            if (!isCurrent()) return
             renderDetail(updated)
             expiryResult.textContent =
               expiresOn === null ? 'Expiry cleared.' : 'Expiry saved.'
           })
           .catch((error: unknown) => {
-            if (signal.aborted) return
+            if (!isCurrent()) return
             if (onSessionFailure(error)) return
             expiryResult.textContent = estimateExpiryMessage(error)
           })
           .finally(() => {
+            if (!isCurrent()) return
             savingExpiry = false
             expirySave.disabled = false
             expiryClear.disabled = false
+            expiryDate.disabled = false
+            setRequestBusy(expiryResult, false)
           })
       }
       expiryForm.addEventListener('submit', (event) => {
@@ -447,6 +526,7 @@ export const createEstimateWorkspaceController = (
 
       convertForm.addEventListener('submit', (event) => {
         event.preventDefault()
+        if (!currentSession(signal)) return
         const id = estimateIdFrom(convert.dataset.estimateId)
         const version = Number(convertForm.dataset.estimateVersion ?? '')
         if (id === null || converting || api.convertEstimate === undefined) return
@@ -459,8 +539,11 @@ export const createEstimateWorkspaceController = (
         // that does so without asking is one somebody presses by accident.
         if (!window.confirm('Raise an invoice for what this estimate quoted?')) return
         converting = true
+        const own = detailGeneration
+        const isCurrent = () => currentSession(signal) && own === detailGeneration && shown?.id === id
         convert.disabled = true
         convertResult.textContent = 'Converting…'
+        setRequestBusy(convertResult, true)
         void api
           .convertEstimate(
             id,
@@ -475,6 +558,7 @@ export const createEstimateWorkspaceController = (
             signal,
           )
           .then((result) => {
+            if (!isCurrent()) return
             convertResult.textContent = estimateConversionMessage({
               kind: 'converted',
               invoiceId: result.invoice.id,
@@ -482,19 +566,22 @@ export const createEstimateWorkspaceController = (
             void openDetail(id, signal)
           })
           .catch((error: unknown) => {
-            if (signal.aborted) return
+            if (!isCurrent()) return
             if (onSessionFailure(error)) return
             convertResult.textContent = estimateConversionMessage(
               estimateConversionOutcome(error),
             )
           })
           .finally(() => {
+            if (!isCurrent()) return
             converting = false
             convert.disabled = false
+            setRequestBusy(convertResult, false)
           })
       })
 
       await Promise.all([loadPage(signal, false), loadClients(signal)])
+      if (!currentSession(signal)) return
       const opening = estimateIdFrom(
         new URL(window.location.href).searchParams.get('estimate') ?? undefined,
       )

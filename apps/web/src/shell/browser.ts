@@ -1,3 +1,4 @@
+import { setRequestBusy } from '../request-feedback.js'
 import { moduleAvailable, withdrawUnavailableSettingsSections } from '../module-availability.js'
 import {
   createCalendarProposalController,
@@ -856,8 +857,15 @@ const rowStopButton = (entryId: number, label: string, className: string, handle
   button.textContent = 'Stop'
   button.setAttribute('aria-label', `Stop the timer on ${label}`)
   button.addEventListener('click', () => {
+    if (button.disabled) return
     button.disabled = true
-    void handlers.stop(entryId).finally(() => { button.disabled = false })
+    button.textContent = 'Stopping…'
+    setRequestBusy(button, true)
+    void handlers.stop(entryId).finally(() => {
+      button.disabled = false
+      button.textContent = 'Stop'
+      setRequestBusy(button, false)
+    })
   })
   return button
 }
@@ -973,7 +981,10 @@ const renderDesktopGrid = (grid: WeekGrid, handlers: GridHandlers, today: string
             `Start a timer on ${row.projectLabel} / ${row.taskLabel}`,
           )
           start.addEventListener('click', () => {
+            if (start.disabled) return
             start.disabled = true
+            start.textContent = 'Starting…'
+            setRequestBusy(start, true)
             const started =
               restartId === undefined
                 ? handlers.startToday(
@@ -983,6 +994,8 @@ const renderDesktopGrid = (grid: WeekGrid, handlers: GridHandlers, today: string
                 : handlers.restart?.(restartId)
             void started?.finally(() => {
               start.disabled = false
+              start.textContent = 'Start'
+              setRequestBusy(start, false)
             })
           })
           label.append(start)
@@ -2488,10 +2501,16 @@ export const mountShell = async (
     const read = api.getProfileNotifications
     const write = api.updateProfileNotifications
     if (section === null || read === undefined || write === undefined) return
-    const status = required<HTMLElement>('[data-settings-notifications-status]')
+    // Company and personal settings each have a status with this data name.
+    const status = section.querySelector<HTMLElement>('[data-settings-notifications-status]')!
     const form = required<HTMLFormElement>('[data-settings-notifications-form]')
     const result = required<HTMLElement>('[data-settings-notifications-result]')
     const submit = required<HTMLButtonElement>('[data-settings-notifications-submit]')
+    const operation = sessionOperation()
+    if (operation === null) return
+    const currentRequest = () => isSessionCurrent(operation)
+    submit.disabled = false
+    setRequestBusy(result, false)
     section.hidden = false
     // The demo shares one workspace between strangers (issue 931); nobody there
     // has an inbox of their own to remind.
@@ -2501,18 +2520,25 @@ export const mountShell = async (
     }
     void (async () => {
       try {
-        paintNotificationFields(form, await read(), true)
+        status.textContent = 'Loading your reminders…'
+        setRequestBusy(status, true)
+        const preferences = await read(operation.signal)
+        if (!currentRequest()) return
+        paintNotificationFields(form, preferences, true)
         status.textContent = ''
         form.hidden = false
       } catch {
-        status.textContent = 'Your reminders could not be loaded.'
+        if (currentRequest()) status.textContent = 'Your reminders could not be loaded.'
+      } finally {
+        if (currentRequest()) setRequestBusy(status, false)
       }
     })()
     form.addEventListener('input', () => {
       result.textContent = ''
-    })
+    }, { signal: operation.signal })
     form.addEventListener('submit', (event) => {
       event.preventDefault()
+      if (!currentRequest() || submit.disabled) return
       const preferences = readNotificationFields(form)
       const problem = notificationFieldsProblem(preferences)
       if (problem !== null) {
@@ -2521,11 +2547,15 @@ export const mountShell = async (
       }
       submit.disabled = true
       result.textContent = 'Saving…'
+      setRequestBusy(result, true)
       void (async () => {
         try {
-          paintNotificationFields(form, await write(preferences), true)
+          const saved = await write(preferences, operation.signal)
+          if (!currentRequest()) return
+          paintNotificationFields(form, saved, true)
           result.textContent = 'Saved.'
         } catch (error) {
+          if (!currentRequest()) return
           const body =
             typeof error === 'object' && error !== null && 'body' in error
               ? (error as { body: unknown }).body
@@ -2536,10 +2566,10 @@ export const mountShell = async (
               : undefined
           result.textContent = first?.message ?? 'Your reminders could not be saved.'
         } finally {
-          submit.disabled = false
+          if (currentRequest()) { submit.disabled = false; setRequestBusy(result, false) }
         }
       })()
-    })
+    }, { signal: operation.signal })
   }
 
   const wireUserPayout = (identity: Readonly<Whoami>): void => {
@@ -2555,10 +2585,16 @@ export const mountShell = async (
     const form = required<HTMLFormElement>('[data-settings-payout-form]')
     const result = required<HTMLElement>('[data-settings-payout-result]')
     const submit = required<HTMLButtonElement>('[data-settings-payout-submit]')
+    const operation = sessionOperation()
+    if (operation === null) return
+    const currentRequest = () => isSessionCurrent(operation)
+    submit.disabled = false
+    setRequestBusy(result, false)
     section.hidden = false
+    remove.disabled = false
     const deelSection = section.querySelector<HTMLElement>('[data-settings-payout-deel]')
-    if (deelSection !== null) wireDeelSelfPayout(deelSection, api, identity.user_id)
-    wirePayoutDefaultSelf(section, api, identity.user_id)
+    if (deelSection !== null) wireDeelSelfPayout(deelSection, api, identity.user_id, operation.signal)
+    wirePayoutDefaultSelf(section, api, identity.user_id, operation.signal)
     // The public demo pays nobody (issue 931). It has no Wise to ask, so the
     // read could only fail; it says why instead, and offers no form.
     if (isDemoDeployment()) {
@@ -2587,18 +2623,23 @@ export const mountShell = async (
 
     const reload = async (): Promise<void> => {
       try {
-        paint(await read(identity.user_id))
+        status.textContent = 'Loading your payout destination…'
+        setRequestBusy(status, true)
+        const state = await read(identity.user_id, operation.signal)
+        if (currentRequest()) paint(state)
       } catch {
         // Its own line, in its own section. A payout destination that will not
         // load is not a reason to take the rest of the settings page down.
-        status.textContent = 'Your payout destination could not be loaded.'
+        if (currentRequest()) status.textContent = 'Your payout destination could not be loaded.'
+      } finally {
+        if (currentRequest()) setRequestBusy(status, false)
       }
     }
 
     const share = api.shareWiseProfile
     form.addEventListener('submit', (event) => {
       event.preventDefault()
-      if (share === undefined) return
+      if (share === undefined || !currentRequest() || submit.disabled || remove.disabled) return
       const data = new FormData(form)
       const identifier = String(data.get('identifier') ?? '').trim()
       const currency = String(data.get('currency') ?? '').trim().toUpperCase()
@@ -2607,10 +2648,13 @@ export const mountShell = async (
         return
       }
       submit.disabled = true
+      remove.disabled = true
       result.textContent = 'Asking Wise…'
+      setRequestBusy(result, true)
       void (async () => {
         try {
-          const shared = await share({ userId: identity.user_id, identifier, currency })
+          const shared = await share({ userId: identity.user_id, identifier, currency }, operation.signal)
+          if (!currentRequest()) return
           // Wise's own answer for whose profile that is. Shown back because a
           // mistyped tag that resolves resolves to somebody else.
           result.textContent =
@@ -2620,30 +2664,33 @@ export const mountShell = async (
           form.reset()
           await reload()
         } catch (error) {
-          result.textContent = payoutFailure(error)
+          if (currentRequest()) result.textContent = payoutFailure(error)
         } finally {
-          submit.disabled = false
+          if (currentRequest()) { submit.disabled = remove.disabled = false; setRequestBusy(result, false) }
         }
       })()
-    })
+    }, { signal: operation.signal })
 
     const detach = api.removeWisePayoutDestination
     remove.addEventListener('click', () => {
-      if (detach === undefined) return
+      if (detach === undefined || !currentRequest() || submit.disabled || remove.disabled) return
       remove.disabled = true
+      submit.disabled = true
       result.textContent = 'Removing…'
+      setRequestBusy(result, true)
       void (async () => {
         try {
-          await detach(identity.user_id)
+          await detach(identity.user_id, operation.signal)
+          if (!currentRequest()) return
           result.textContent = 'Payout destination removed.'
           await reload()
         } catch (error) {
-          result.textContent = payoutFailure(error)
+          if (currentRequest()) result.textContent = payoutFailure(error)
         } finally {
-          remove.disabled = false
+          if (currentRequest()) { submit.disabled = remove.disabled = false; setRequestBusy(result, false) }
         }
       })()
-    })
+    }, { signal: operation.signal })
 
     void reload()
   }

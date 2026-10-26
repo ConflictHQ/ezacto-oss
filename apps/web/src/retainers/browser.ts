@@ -1,3 +1,4 @@
+import { setRequestBusy } from '../request-feedback.js'
 import { renderDataTable, type CellContent } from '../components/data-table.js'
 import { loadedRowsSortNotice } from '../components/table-sort.js'
 import { markMoney, moneyText } from '../money-display.js'
@@ -348,6 +349,9 @@ export const createRetainerWorkspaceController = (
   }
 
   const syncWriteControls = (): void => {
+    if (!mutationPending) {
+      for (const region of [createResult, drawdownResult, movementResult, policyResult]) setRequestBusy(region, false)
+    }
     const writable = canWrite()
     createTrigger.hidden = !writable
     createTrigger.disabled = !writable || mutationPending || api.createRetainer === undefined
@@ -399,11 +403,13 @@ export const createRetainerWorkspaceController = (
     invoices = []
     invoiceCatalog = null
     mutationPending = false
+    for (const region of [createResult, drawdownResult, movementResult, policyResult, detailStatus]) setRequestBusy(region, false)
     createCommandId = null
     drawdownCommandId = null
     movementCommandId = null
     list.replaceChildren()
     list.removeAttribute('aria-busy')
+    setRequestBusy(listStatus, false)
     ledger.replaceChildren()
     notes.replaceChildren()
     notes.hidden = true
@@ -717,6 +723,7 @@ export const createRetainerWorkspaceController = (
     detailBody.hidden = true
     detailRetry.hidden = true
     detailStatus.textContent = 'Loading retainer…'
+    setRequestBusy(detailStatus, true)
     // Nothing may be written against a retainer whose current state is in
     // flight; `renderDetail` restores the controls with the values they act on.
     selected = null
@@ -735,6 +742,8 @@ export const createRetainerWorkspaceController = (
       detailBody.hidden = true
       detailStatus.textContent = messageFor(error)
       detailRetry.hidden = false
+    } finally {
+      if (current() === session && generation === detailGeneration) setRequestBusy(detailStatus, false)
     }
   }
 
@@ -744,6 +753,7 @@ export const createRetainerWorkspaceController = (
     if (api.listRetainers === undefined) {
       list.replaceChildren()
       list.removeAttribute('aria-busy')
+      setRequestBusy(listStatus, false)
       listStatus.textContent = 'Retainers are unavailable in this build.'
       loadMore.hidden = true
       listRetry.hidden = true
@@ -759,6 +769,7 @@ export const createRetainerWorkspaceController = (
     }
     listPending = true
     list.setAttribute('aria-busy', 'true')
+    setRequestBusy(listStatus, true)
     listStatus.textContent = reset ? 'Loading retainers…' : 'Loading more retainers…'
     loadMore.hidden = true
     listRetry.hidden = true
@@ -788,6 +799,7 @@ export const createRetainerWorkspaceController = (
       if (current() === session && generation === listGeneration) {
         listPending = false
         list.removeAttribute('aria-busy')
+        setRequestBusy(listStatus, false)
         syncPending()
       }
     }
@@ -1201,6 +1213,7 @@ export const createRetainerWorkspaceController = (
     const activeCommand = createCommandId
     mutationPending = true
     createResult.textContent = 'Creating retainer…'
+    setRequestBusy(createResult, true)
     syncWriteControls()
     void create(activeCommand, input, session.signal)
       .then(async (created) => {
@@ -1278,6 +1291,7 @@ export const createRetainerWorkspaceController = (
     const activeCommand = drawdownCommandId
     mutationPending = true
     drawdownResult.textContent = 'Recording drawdown…'
+    setRequestBusy(drawdownResult, true)
     syncWriteControls()
     void drawDown(retainer.id, activeCommand, body, session.signal)
       .then(async (mutation) => {
@@ -1366,6 +1380,7 @@ export const createRetainerWorkspaceController = (
     const activeCommand = movementCommandId
     mutationPending = true
     movementResult.textContent = 'Recording movement…'
+    setRequestBusy(movementResult, true)
     syncWriteControls()
     void append(retainer.id, activeCommand, body, session.signal)
       .then(async (mutation) => {
@@ -1419,6 +1434,7 @@ export const createRetainerWorkspaceController = (
     }
     mutationPending = true
     policyResult.textContent = 'Saving policy…'
+    setRequestBusy(policyResult, true)
     syncWriteControls()
     void update(retainer.id, patch, session.signal)
       .then(async () => {

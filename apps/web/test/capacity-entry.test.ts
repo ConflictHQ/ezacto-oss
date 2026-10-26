@@ -122,6 +122,24 @@ describe('precise planning form edits (#1193)',()=>{
 })
 
 describe("capacity entry model (issue 1007)", () => {
+  it('locks planning actions during a delayed save and restores them after rejection', async () => {
+    const planning = planningApi()
+    let reject!: (error: Error) => void
+    planning.createAllocation = vi.fn(() => new Promise((_resolve, fail) => { reject = fail }))
+    await open(true, planning)
+    input('[data-planning-allocation-form]', 'start_date').value = '2026-11-02'
+    input('[data-planning-allocation-form]', 'end_date').value = '2026-11-27'
+    input('[data-planning-allocation-form]', 'hours').value = '12'
+    submit('[data-planning-allocation-form]')
+    submit('[data-planning-allocation-form]')
+    expect(planning.createAllocation).toHaveBeenCalledTimes(1)
+    expect(input('[data-planning-allocation-form]', 'hours').disabled).toBe(true)
+    expect(document.querySelector('[data-planning-allocation-status]')?.getAttribute('aria-busy')).toBe('true')
+    reject(new Error('Save refused'))
+    await vi.waitFor(() => expect(text('[data-planning-allocation-status]')).toContain('Save refused'))
+    expect(input('[data-planning-allocation-form]', 'hours').disabled).toBe(false)
+    expect(document.querySelector('[data-planning-allocation-status]')?.getAttribute('aria-busy')).toBe('false')
+  })
   it("[unit] reads typed hours as whole seconds and refuses anything else", () => {
     expect(hoursToSeconds("16")).toBe(57_600);
     expect(hoursToSeconds(" 7.5 ")).toBe(27_000);
@@ -250,6 +268,7 @@ describe("capacity entry (issue 1007)", () => {
         seconds_per_day: 14_400,
       }),
     );
+    await vi.waitFor(() => expect(document.querySelector('[data-planning-timeoff-status]')?.getAttribute('aria-busy')).toBe('false'))
     buttonLabelled("Delete vacation of Maya Member").click();
     buttonLabelled("Confirm delete of vacation of Maya Member").click();
     await vi.waitFor(() =>

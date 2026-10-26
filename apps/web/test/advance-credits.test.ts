@@ -156,6 +156,32 @@ const mount = (api: AdvanceCreditsApi) => {
 beforeEach(() => {
   document.body.innerHTML = "";
 });
+it("shows progress for a delayed credit load, clears failures and cancels on session end", async () => {
+  let reject!: (error: Error) => void;
+  const first = new Promise<AdvanceCreditReport>((_, fail) => { reject = fail; });
+  let resolve!: (value: AdvanceCreditReport) => void;
+  const second = new Promise<AdvanceCreditReport>((done) => { resolve = done; });
+  const read = vi.fn().mockReturnValueOnce(first).mockReturnValueOnce(second);
+  const active = mount({ getAdvanceCreditReport: read });
+  const status = document.querySelector<HTMLElement>("[data-advance-status]")!;
+  const form = document.querySelector<HTMLFormElement>("[data-advance-period]")!;
+  form.dispatchEvent(new SubmitEvent("submit", { cancelable: true }));
+  form.dispatchEvent(new SubmitEvent("submit", { cancelable: true }));
+  expect(read).toHaveBeenCalledOnce();
+  expect(status.textContent).toBe("Loading advance credit…");
+  expect(status.getAttribute("aria-busy")).toBe("true");
+  reject(new Error("Credit service unavailable"));
+  await vi.waitFor(() => expect(status.textContent).toBe("Credit service unavailable"));
+  expect(status.getAttribute("aria-busy")).toBe("false");
+  form.dispatchEvent(new SubmitEvent("submit", { cancelable: true }));
+  expect(status.getAttribute("aria-busy")).toBe("true");
+  active.abort();
+  expect(status.getAttribute("aria-busy")).toBe("false");
+  resolve(report);
+  await Promise.resolve();
+  expect(status.textContent).toBe("");
+  expect(document.querySelector("[data-advance-content]")?.textContent).not.toContain("Person Two");
+});
 it("requires transfer review and explicit approval of an advance, retaining review when its fee limit changes", async () => {
   const api = {
     previewPaymentRun: vi.fn(async () => run),
@@ -279,7 +305,7 @@ it("reverses credit applications with a reason and records only a confirmed retu
   );
   await vi.waitFor(() =>
     expect(document.querySelector("[data-advance-status]")!.textContent).toBe(
-      "",
+      "Credit application reversed.",
     ),
   );
   await vi.waitFor(() =>

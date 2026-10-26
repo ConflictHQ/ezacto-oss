@@ -75,7 +75,7 @@ describe('your reminders in your own settings', () => {
       include_in_team_reminders: false,
       weekly_digest: false,
       notify_project_deleted: false,
-    })
+    }, expect.any(AbortSignal))
     expect(box('include_in_team_reminders').checked).toBe(false)
   })
 
@@ -135,7 +135,7 @@ describe('your reminders in your own settings', () => {
     await mountShell(api)
     await vi.waitFor(() =>
       expect(
-        document.querySelector<HTMLElement>('[data-settings-notifications-status]')!.textContent,
+        document.querySelector<HTMLElement>('[data-settings-notifications] [data-settings-notifications-status]')!.textContent,
       ).toBe('Setting reminders: not available on the public demo.'),
     )
     expect(form().hidden).toBe(true)
