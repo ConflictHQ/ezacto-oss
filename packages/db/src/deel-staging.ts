@@ -20,12 +20,18 @@ const commandData = (authority: DeelStageAuthority, c: DeelStageCommand) => ({
   userIds: [...c.userIds].sort((a, b) => a - b),
   fingerprint: c.fingerprint,
 })
+// An existing Team Deel link can designate payroll only through the same user's
+// live verified email. Freeze its identity as well as the chosen address so
+// detaching and relinking the same address invalidates an earlier review.
 const snapshotQuery = (a: DeelStageAuthority, s: DeelStageSelection, now: string) => {
   const text = `WITH selected AS(SELECT CAST(value AS INTEGER) id FROM json_each(?)),payees AS(
  SELECT u.id FROM users u JOIN selected s ON s.id=u.id WHERE u.is_active=1 AND NOT EXISTS(SELECT 1 FROM account_closures closed WHERE closed.user_id=u.id) AND COALESCE((SELECT e.provider FROM staff_payment_provider_events e WHERE e.scope='user:'||u.id ORDER BY e.version DESC LIMIT 1),(SELECT e.provider FROM staff_payment_provider_events e WHERE e.scope='organization' ORDER BY e.version DESC LIMIT 1),'wise')='deel'),
  entries AS(SELECT t.id,t.user_id,t.spent_date,t.rounded_seconds,t.timesheet_submission_id,(SELECT revision.version FROM timesheet_submissions revision WHERE revision.id=t.timesheet_submission_id) approval_version FROM time_entries t JOIN payees p ON p.id=t.user_id WHERE t.approval_status='approved' AND t.timer_started_at IS NULL AND(t.started_time IS NULL OR t.ended_time IS NOT NULL) AND t.spent_date>=? AND t.spent_date<=? ORDER BY t.spent_date,t.id LIMIT 1001),
- directory AS(SELECT p.id,COALESCE((SELECT json_group_array(json_object('address',address,'kind',kind)) FROM(SELECT address,kind FROM user_emails WHERE user_id=p.id AND invalidated_at IS NULL AND verified_at IS NOT NULL AND kind='payroll' ORDER BY id LIMIT 21)),'[]') emails FROM payees p ORDER BY p.id)
- SELECT json_object('authorized',${auth},'validPeople',(SELECT count(*) FROM payees),'facts',json_object('directory',json(COALESCE((SELECT json_group_array(json_object('userId',id,'emails',json(emails))) FROM directory),'[]')),'entries',json(COALESCE((SELECT json_group_array(json_object('id',id,'userId',user_id,'spentDate',spent_date,'roundedSeconds',rounded_seconds,'approvalSubmissionId',timesheet_submission_id,'approvalVersion',approval_version)) FROM entries),'[]'))),
+ payout_links AS(SELECT a.* FROM user_payout_accounts a JOIN payees p ON p.id=a.user_id WHERE a.provider='deel' AND a.detached_at IS NULL),
+ directory AS(SELECT p.id,COALESCE((SELECT json_group_array(json_object('address',address,'kind',kind)) FROM(
+ SELECT e.address,'payroll' kind FROM user_emails e WHERE e.user_id=p.id AND e.invalidated_at IS NULL AND e.verified_at IS NOT NULL AND(
+ e.kind='payroll' OR(NOT EXISTS(SELECT 1 FROM user_emails payroll WHERE payroll.user_id=p.id AND payroll.invalidated_at IS NULL AND payroll.kind='payroll') AND EXISTS(SELECT 1 FROM payout_links a WHERE a.user_id=p.id AND lower(trim(a.external_id))=lower(trim(e.address))))) ORDER BY e.id LIMIT 21)),'[]') emails FROM payees p ORDER BY p.id)
+ SELECT json_object('authorized',${auth},'validPeople',(SELECT count(*) FROM payees),'facts',json_object('directory',json(COALESCE((SELECT json_group_array(json_object('userId',id,'emails',json(emails))) FROM directory),'[]')),'payoutLinks',json(COALESCE((SELECT json_group_array(json_object('id',id,'userId',user_id,'externalId',external_id,'kind',kind,'linkedByUserId',linked_by_user_id,'linkedAt',linked_at)) FROM(SELECT * FROM payout_links ORDER BY user_id,id)),'[]')),'entries',json(COALESCE((SELECT json_group_array(json_object('id',id,'userId',user_id,'spentDate',spent_date,'roundedSeconds',rounded_seconds,'approvalSubmissionId',timesheet_submission_id,'approvalVersion',approval_version)) FROM entries),'[]'))),
  'log',json(COALESCE((SELECT json_group_array(json_object('entryId',entry_id,'fingerprint',fingerprint,'timesheetId',timesheet_id)) FROM(SELECT l.* FROM deel_transfer_log l JOIN entries e ON e.id=l.entry_id ORDER BY l.entry_id)),'[]')),
  'unresolved',json(COALESCE((SELECT json_group_array(entry_id) FROM(SELECT i.entry_id FROM deel_transfer_intents i JOIN entries e ON e.id=i.entry_id ORDER BY i.entry_id)),'[]'))) snapshot`
   return {
@@ -36,7 +42,7 @@ const snapshotQuery = (a: DeelStageAuthority, s: DeelStageSelection, now: string
 interface SnapshotWire {
   authorized: number
   validPeople: number
-  facts: { directory: DeelStageSnapshot['directory']; entries: DeelStageSnapshot['entries'] }
+  facts: { directory: DeelStageSnapshot['directory']; entries: DeelStageSnapshot['entries']; payoutLinks: readonly unknown[] }
   log: DeelStageSnapshot['log']
   unresolved: number[]
 }

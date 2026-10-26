@@ -237,6 +237,80 @@ for (const target of ['SQLite', 'D1'] as const)
         },
       }
     }
+    const linkDeel = async (userId: number, address = `person${userId}@example.test`, provider = 'deel') => {
+      await run(
+        "INSERT INTO user_payout_accounts(user_id,provider,external_id,kind,linked_by_user_id,linked_at,created_at,updated_at) VALUES(?,?,?,'account',1,?,?,?)",
+        userId, provider, address, now, now, now,
+      )
+    }
+    it('uses only explicit Deel links to same-user verified emails when payroll kind is absent, including grouped staging', async () => {
+      const f = await fixture()
+      for (const id of [f.u, f.v]) {
+        await run('UPDATE user_emails SET kind=NULL WHERE user_id=?', id)
+        await linkDeel(id)
+      }
+      const r = f.runtime(), group = { ...f.selection, userIds: [f.u, f.v] }
+      const preview = await r.preview(f.authority, group)
+      expect(preview.unmatched).toEqual([])
+      expect(preview.people.map((p) => [p.userId, p.contractId])).toEqual([[f.u, `c${f.u}`], [f.v, `c${f.v}`]])
+      expect(f.posted).toEqual([])
+      expect(await r.stage(f.authority, { ...group, id: crypto.randomUUID(), fingerprint: preview.fingerprint })).toMatchObject({ status: 'staged', entriesStaged: 2 })
+      expect(f.posted.map((p) => p.contract_id)).toEqual([`c${f.u}`, `c${f.v}`])
+      expect(await rows('SELECT * FROM staff_payment_effective_events')).toEqual([])
+    })
+    it.each(['no_link', 'wise_link', 'detached_link', 'unverified_email', 'invalidated_email', 'other_user_email'] as const)(
+      'does not infer payroll from %s', async (change) => {
+        const f = await fixture()
+        await run('UPDATE user_emails SET kind=NULL WHERE user_id=?', f.u)
+        if (change !== 'no_link') await linkDeel(f.u, `person${change === 'other_user_email' ? f.v : f.u}@example.test`, change === 'wise_link' ? 'wise' : 'deel')
+        if (change === 'detached_link') await run('UPDATE user_payout_accounts SET detached_at=? WHERE user_id=?', now, f.u)
+        if (change === 'unverified_email') await run('UPDATE user_emails SET verified_at=NULL WHERE user_id=?', f.u)
+        if (change === 'invalidated_email') await run("UPDATE user_emails SET invalidated_at=? WHERE user_id=?", now, f.u)
+        const preview = await f.runtime().preview(f.authority, f.selection)
+        expect(preview.unmatched).toEqual([{ userId: f.u, reason: 'no_payroll_address' }])
+        expect(preview.people[0]!.contractId).toBeNull()
+        expect(f.posted).toEqual([])
+      },
+    )
+    it('keeps explicit payroll kind authoritative over a different verified Deel link', async () => {
+      const f = await fixture()
+      await run('INSERT INTO user_emails(user_id,address,verified_at,created_at,updated_at) VALUES(?,?,?,?,?)', f.u, `alternate${f.u}@example.test`, now, now, now)
+      await linkDeel(f.u, `alternate${f.u}@example.test`)
+      expect((await f.runtime().preview(f.authority, f.selection)).people[0]!.contractId).toBe(`c${f.u}`)
+      await run("UPDATE user_emails SET verified_at=NULL WHERE user_id=? AND kind='payroll'", f.u)
+      expect((await f.runtime().preview(f.authority, f.selection)).unmatched).toEqual([{ userId: f.u, reason: 'no_payroll_address' }])
+      expect(f.posted).toEqual([])
+    })
+    it('rejects atomic admission after detaching and relinking the same verified address', async () => {
+      const f = await fixture()
+      await run('UPDATE user_emails SET kind=NULL WHERE user_id=?', f.u)
+      await linkDeel(f.u)
+      const preview = await f.runtime().preview(f.authority, f.selection)
+      const before = await f.native.snapshot(f.authority, f.selection, now)
+      await run('UPDATE user_payout_accounts SET detached_at=? WHERE user_id=? AND detached_at IS NULL', now, f.u)
+      await linkDeel(f.u)
+      const after = await f.native.snapshot(f.authority, f.selection, now)
+      expect(after.directory).toEqual(before.directory)
+      expect(after.sourceFacts).not.toBe(before.sourceFacts)
+      const command = { ...f.selection, id: crypto.randomUUID(), fingerprint: preview.fingerprint }
+      await expect(f.native.begin(f.authority, command, before, now)).rejects.toMatchObject({ code: 'stale' })
+      expect(await rows("SELECT id FROM deel_sync_runs WHERE json_extract(detail,'$.staging_command.id')=?", command.id)).toEqual([])
+      expect(f.posted).toEqual([])
+    })
+    it.each(['detach', 'relink_same_address'] as const)('fences %s after review and before claim even if the address is unchanged', async (change) => {
+      const f = await fixture()
+      await run('UPDATE user_emails SET kind=NULL WHERE user_id=?', f.u)
+      await linkDeel(f.u)
+      const r = f.runtime({ ...f.native, claim: async (...args) => {
+        await run('UPDATE user_payout_accounts SET detached_at=? WHERE user_id=? AND detached_at IS NULL', now, f.u)
+        if (change === 'relink_same_address') await linkDeel(f.u)
+        return f.native.claim(...args)
+      } })
+      const preview = await r.preview(f.authority, f.selection)
+      expect(preview.people[0]!.contractId).toBe(`c${f.u}`)
+      expect(await r.stage(f.authority, { ...f.selection, id: crypto.randomUUID(), fingerprint: preview.fingerprint })).toMatchObject({ status: 'stale', code: 'source_changed' })
+      expect(f.posted).toEqual([])
+    })
     it('stages one selected person, then an overlapping explicit group exactly once without recording payment', async () => {
       const f = await fixture(),
         r = f.runtime(),

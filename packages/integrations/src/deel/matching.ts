@@ -61,9 +61,11 @@ export const matchPayrollContracts = (input: {
 }): PayrollContractMatches => {
   const byAddress = new Map<string, DeelPerson[]>()
   for (const deelPerson of input.deelPeople) {
-    for (const address of deelPerson.emails) {
-      const found = byAddress.get(normalizedAddress(address))
-      if (found === undefined) byAddress.set(normalizedAddress(address), [deelPerson])
+    // Work and personal email slots can repeat one address. Deduplicate only
+    // within this row; separate directory rows must still remain ambiguous.
+    for (const address of new Set(deelPerson.emails.map(normalizedAddress))) {
+      const found = byAddress.get(address)
+      if (found === undefined) byAddress.set(address, [deelPerson])
       else found.push(deelPerson)
     }
   }
