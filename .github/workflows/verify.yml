@@ -49,6 +49,8 @@ jobs:
         run: node --test scripts/restore-drill.test.mjs scripts/monthly-restore-drill.test.mjs
       - name: load-verify gate and shard list match the verify matrix
         run: node --test scripts/load-verify.test.mjs
+      - name: Harvest collection adapter refuses unsafe execution
+        run: node --test scripts/harvest-postman-read-subset.test.mjs
       - name: no tracked symlink points outside the repo or into node_modules
         run: |
           node --test scripts/check-tracked-symlinks.test.mjs
