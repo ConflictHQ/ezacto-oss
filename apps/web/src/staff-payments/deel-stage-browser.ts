@@ -39,6 +39,23 @@ export const createDeelStageController = (
   const handoff = root.querySelector<HTMLAnchorElement>(
     "[data-deel-stage-handoff]",
   )!;
+  const warnBeforeUnload = (event: BeforeUnloadEvent) => {
+    if (!busy) return;
+    event.preventDefault();
+    event.returnValue = "";
+  };
+  const warnBeforeNavigation = (event: MouseEvent) => {
+    if (!busy || event.defaultPrevented || event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
+    const target = event.target;
+    if (!(target instanceof Element)) return;
+    const link = target.closest<HTMLAnchorElement>("a[href]");
+    if (!link || link.target === "_blank" || link.hasAttribute("download")) return;
+    if (!globalThis.confirm("Deel is still processing this request. Leave this screen?")) {
+      event.preventDefault();
+      event.stopImmediatePropagation();
+    }
+  };
+  let navigationGuard = false;
   let active: AbortSignal | null = null,
     generation = 0,
     enabled = false,
@@ -52,6 +69,18 @@ export const createDeelStageController = (
   const current = (signal: AbortSignal, revision: number) =>
     active === signal && !signal.aborted && generation === revision;
   const controls = () => {
+    message.setAttribute("aria-busy", String(busy));
+    message.dataset.busy = String(busy);
+    if (busy !== navigationGuard) {
+      navigationGuard = busy;
+      if (busy) {
+        globalThis.window.addEventListener("beforeunload", warnBeforeUnload);
+        globalThis.document.addEventListener("click", warnBeforeNavigation, true);
+      } else {
+        globalThis.window.removeEventListener("beforeunload", warnBeforeUnload);
+        globalThis.document.removeEventListener("click", warnBeforeNavigation, true);
+      }
+    }
     for (const node of form.querySelectorAll<
       HTMLInputElement | HTMLButtonElement
     >("input,button"))
@@ -138,16 +167,26 @@ export const createDeelStageController = (
         list.appendChild(li);
       }
       const summary = document.createElement("p");
-      summary.textContent = `${preview.from} to ${preview.to}: ${preview.seconds} seconds in ${preview.entry_ids.length} new entries; ${preview.already_staged} already staged. ${preview.conflict_entry_ids.length} changed entries, ${preview.unsyncable_entry_ids.length} entries that cannot be staged, ${preview.unmatched.length} unmatched people, ${preview.unresolved_entry_ids.length} awaiting reconciliation.`;
+      summary.textContent = `${preview.from} to ${preview.to}: ${preview.seconds} seconds in ${preview.entry_ids.length} new entries; ${preview.already_staged} already staged. ${preview.zero_duration_entry_ids.length} zero-duration entries skipped, ${preview.conflict_entry_ids.length} changed entries, ${preview.unsyncable_entry_ids.length} entries that cannot be staged, ${preview.unmatched.length} unmatched people, ${preview.unresolved_entry_ids.length} awaiting reconciliation.`;
       output.replaceChildren(summary, list);
       for (const [label, ids] of [
+        ["Already staged in Deel (will not be sent again)", preview.already_staged_entry_ids],
         ["Changed entries", preview.conflict_entry_ids],
         ["Entries that cannot be staged", preview.unsyncable_entry_ids],
         ["Entries awaiting Deel reconciliation", preview.unresolved_entry_ids],
       ] as const) {
         if (!ids.length) continue;
         const diagnostic = document.createElement("p");
-        diagnostic.textContent = `${label}: ${ids.join(", ")}. Review these entries before staging a new selection.`;
+        diagnostic.textContent = ids === preview.already_staged_entry_ids
+          ? `${label}: ${ids.join(", ")}. Other new eligible entries remain stageable.`
+          : `${label}: ${ids.join(", ")}. Review these entries before staging a new selection.`;
+        output.appendChild(diagnostic);
+      }
+      if (preview.zero_duration_entry_ids.length) {
+        const diagnostic = document.createElement("p");
+        diagnostic.textContent =
+          `Zero-duration entries skipped (not sent to Deel): ${preview.zero_duration_entry_ids.join(", ")}. ` +
+          "They are excluded from hours and do not block staging the remaining positive time.";
         output.appendChild(diagnostic);
       }
       for (const unmatched of preview.unmatched) {
@@ -221,7 +260,7 @@ export const createDeelStageController = (
       }
       message.textContent =
         result.status === "staged"
-          ? `${result.entries_staged} entries staged (${result.already_staged} already staged). Complete invoice and payment in Deel. Nothing is marked paid here.`
+          ? `${result.entries_staged} entries staged in Deel (${result.already_staged} already staged). Complete invoice and payment in Deel; these entries are not marked paid here.`
           : `Staging needs attention (${result.code ?? result.status}). ${result.entries_staged} entries staged. Uncertain entries will not be sent again automatically.`;
       handoff.hidden =
         result.status !== "staged" &&

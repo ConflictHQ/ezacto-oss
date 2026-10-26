@@ -19,9 +19,11 @@ const preview: DeelStagePreview = {
   seconds: 3600,
   timesheets: 1,
   already_staged: 0,
+  already_staged_entry_ids: [],
   people: [{ user_id: 2, contract_id: "contract2", seconds: 3600, entries: 1 }],
   conflict_entry_ids: [],
   unsyncable_entry_ids: [],
+  zero_duration_entry_ids: [],
   unmatched: [],
   unresolved_entry_ids: [],
 };
@@ -111,11 +113,52 @@ describe("selected Deel hour staging", () => {
     expect(call["Idempotency-Key"]).toBe(call.body.command_id);
     expect(call.body).not.toHaveProperty("amount");
     expect(el("[data-deel-stage-message]").textContent).toContain(
-      "Nothing is marked paid",
+      "not marked paid here",
     );
     expect(el<HTMLAnchorElement>("[data-deel-stage-handoff]").href).toBe(
       "https://app.deel.com/",
     );
+  });
+  it("shows an active indicator and asks before leaving while staging is processing", async () => {
+    let finish!: (value: { data: typeof result }) => void;
+    const { api, controller, abort } = mount();
+    api.stageDeelHours.mockImplementationOnce(
+      () => new Promise((resolve) => { finish = resolve; }),
+    );
+    await controller.activate(abort.signal);
+    controller.update(report);
+    controller.open();
+    await review();
+    el<HTMLInputElement>("[data-deel-stage-reviewed]").checked = true;
+    el("[data-deel-stage-reviewed]").dispatchEvent(new Event("change"));
+    el<HTMLButtonElement>("[data-deel-stage-send]").click();
+
+    const message = el<HTMLElement>("[data-deel-stage-message]");
+    expect(message.getAttribute("aria-busy")).toBe("true");
+    expect(message.dataset.busy).toBe("true");
+    const unload = new Event("beforeunload", { cancelable: true });
+    window.dispatchEvent(unload);
+    expect(unload.defaultPrevented).toBe(true);
+
+    const confirmSpy = vi.fn().mockReturnValue(false);
+    vi.stubGlobal("confirm", confirmSpy);
+    const linkClick = new MouseEvent("click", { bubbles: true, cancelable: true });
+    const navigation = document.createElement("a");
+    navigation.href = "/payments";
+    el("[data-deel-stage]").appendChild(navigation);
+    navigation.dispatchEvent(linkClick);
+    expect(linkClick.defaultPrevented).toBe(true);
+    expect(confirmSpy).toHaveBeenCalledWith(
+      "Deel is still processing this request. Leave this screen?",
+    );
+    vi.unstubAllGlobals();
+
+    finish({ data: result });
+    await flush();
+    expect(message.getAttribute("aria-busy")).toBe("false");
+    const completedUnload = new Event("beforeunload", { cancelable: true });
+    window.dispatchEvent(completedUnload);
+    expect(completedUnload.defaultPrevented).toBe(false);
   });
   it("requires an administrator's explicit review of unsubmitted hours without claiming timesheet approval", async () => {
     const { api, controller, abort } = mount();

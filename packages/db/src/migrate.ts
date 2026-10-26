@@ -1,5 +1,6 @@
 import { isOrdinaryD1SchemaStatement } from './internal/d1-cold-migrations.js'
 import { csvBrowserDatasetMigration } from './migrations/0164_csv_browser_dataset.js'
+import { nonzeroStoppedTimeMigration } from './migrations/0165_nonzero_stopped_time.js'
 import { placeholderPlanningMigration } from './migrations/0163_placeholder_planning.js'
 import { planningRevisionsMigration } from './migrations/0162_planning_revisions.js'
 import { managedDeelConnectionMigration } from './migrations/0160_managed_deel_connection.js'
@@ -1687,6 +1688,7 @@ const migrations = [
   { id: '0162_planning_revisions', statements: planningRevisionsMigration },
   { id: '0163_placeholder_planning', statements: placeholderPlanningMigration },
   { id: '0164_csv_browser_dataset', statements: csvBrowserDatasetMigration },
+  { id: '0165_nonzero_stopped_time', statements: nonzeroStoppedTimeMigration },
 ] as const
 
 // Fixtures assert against this rather than re-listing ids: a hand-copied ledger merges
@@ -1860,7 +1862,7 @@ const migrateD1Plan = async (
   ).first() === null
   // Newly added migrations default to isolated transactions until this reviewed
   // prefix is deliberately advanced. Their SQL must still pass the classifier.
-  const reviewedThrough = migrations.findIndex(({ id }) => id === '0164_csv_browser_dataset')
+  const reviewedThrough = migrations.findIndex(({ id }) => id === '0165_nonzero_stopped_time')
   const boundary = through === null ? -1 : migrations.findIndex(({ id }) => id === through)
   const planned = boundary === -1 ? migrations : migrations.slice(0, boundary + 1)
   const checksums = new Map(migrations.map((migration) => [migration.id, statementsChecksum(migration.statements)]))

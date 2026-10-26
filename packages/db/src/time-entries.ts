@@ -69,6 +69,13 @@ export interface CreateStoppedTimeEntryInput extends TimeEntryBaseInput {
   updatedAt: string
 }
 
+export class ZeroDurationTimeEntryError extends Error {
+  constructor() {
+    super('completed time entries must have a positive rounded duration')
+    this.name = 'ZeroDurationTimeEntryError'
+  }
+}
+
 type OrganizationTimeSettings = Pick<typeof organizations.$inferSelect, 'timeEntryMode'>
 
 const assertNonnegativeSeconds = (seconds: number, field = 'seconds'): void => {
@@ -393,6 +400,11 @@ export const createStoppedTimeEntry = async (
       true,
     )
   }
+  const roundedSeconds = roundTimeSeconds(
+    seconds,
+    await timeRoundingForProject(database, input.projectId),
+  )
+  if (seconds >= 0 && roundedSeconds === 0) throw new ZeroDurationTimeEntryError()
   const base = await valuesFromBase(database, input, input.spentDate)
   await assertStoredTimeEntryNoteRequirement(
     database,
@@ -414,7 +426,7 @@ export const createStoppedTimeEntry = async (
         ${input.spentDate},
         ${seconds},
         ${seconds},
-        ${roundTimeSeconds(seconds, await timeRoundingForProject(database, input.projectId))},
+        ${roundedSeconds},
         ${null},
         ${startedTime},
         ${endedTime},
@@ -489,6 +501,8 @@ export const stopTimeEntry = async (
   } else {
     throw new Error(`time entry ${timeEntryId} is not running`)
   }
+  const roundedSeconds = roundTimeSeconds(seconds, rounding)
+  if (seconds >= 0 && roundedSeconds === 0) throw new ZeroDurationTimeEntryError()
   const expectedCheckpoint = sql`
     ${timeEntries.userId} = ${entry.userId}
     AND
@@ -509,7 +523,7 @@ export const stopTimeEntry = async (
         .set({
           seconds,
           secondsWithoutTimer: seconds,
-          roundedSeconds: roundTimeSeconds(seconds, rounding),
+          roundedSeconds,
           timerStartedAt: null,
           endedTime,
           updatedAt: boundary.instant,

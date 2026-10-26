@@ -34,6 +34,7 @@ import {
   timeRoundingForProject,
   type TimeBoundary,
   type TimeEntry,
+  ZeroDurationTimeEntryError,
 } from './time-entries.js'
 import {
   assertStoredTimeEntryNoteRequirement,
@@ -102,6 +103,9 @@ export interface ResourceSource<Row extends { id: number }> {
 
 const inputProblem = (field: string, code: string, message: string) =>
   new TrackedResourceInputError(field, code, message)
+const isZeroDurationStorageError = (error: unknown) =>
+  error instanceof ZeroDurationTimeEntryError ||
+  (error instanceof Error && error.message.includes('time_entry_zero_duration'))
 
 const assignmentProblem = () => new TrackedResourceAssignmentError()
 const concurrentProblem = (resource: 'time entry' | 'expense') =>
@@ -1167,6 +1171,13 @@ export class DrizzleTrackedResourceRepository {
             runningEntryPolicyLocked,
           )
         } catch (error) {
+          if (isZeroDurationStorageError(error)) {
+            throw inputProblem(
+              'seconds',
+              'zero_duration',
+              'The running timer would round to zero. Add more time before starting another timer.',
+            )
+          }
           return this.#translateApprovalPeriodWriteError(error, userId, local.date, true)
         }
       } else {
@@ -1189,6 +1200,13 @@ export class DrizzleTrackedResourceRepository {
             [...followUps, ...onBehalfAudit(actor, userId, { action: 'create' }, boundary.instant)],
           )
         } catch (error) {
+          if (error instanceof ZeroDurationTimeEntryError) {
+            throw inputProblem(
+              'seconds',
+              'zero_duration',
+              'completed time entries must have a positive rounded duration',
+            )
+          }
           return this.#translateApprovalPeriodWriteError(error, userId, input.spentDate, false)
         }
       }
@@ -1241,6 +1259,13 @@ export class DrizzleTrackedResourceRepository {
             runningEntryPolicyLocked,
           )
         } catch (error) {
+          if (isZeroDurationStorageError(error)) {
+            throw inputProblem(
+              'started_time',
+              'zero_duration',
+              'The running timer would round to zero. Add more time before starting another timer.',
+            )
+          }
           return this.#translateApprovalPeriodWriteError(error, userId, local.date, true)
         }
       } else {
@@ -1268,6 +1293,13 @@ export class DrizzleTrackedResourceRepository {
             [...followUps, ...onBehalfAudit(actor, userId, { action: 'create' }, boundary.instant)],
           )
         } catch (error) {
+          if (error instanceof ZeroDurationTimeEntryError) {
+            throw inputProblem(
+              'seconds',
+              'zero_duration',
+              'completed time entries must have a positive rounded duration',
+            )
+          }
           return this.#translateApprovalPeriodWriteError(error, userId, input.spentDate, false)
         }
       }
@@ -1375,6 +1407,13 @@ export class DrizzleTrackedResourceRepository {
         seconds,
         await timeRoundingForProject(this.#database, projectId),
       )
+      if (roundedSeconds === 0) {
+        throw inputProblem(
+          'seconds',
+          'zero_duration',
+          'completed time entries must have a positive rounded duration',
+        )
+      }
     }
 
     const rates =
@@ -1522,6 +1561,13 @@ export class DrizzleTrackedResourceRepository {
         ),
       )
     } catch (error) {
+      if (error instanceof ZeroDurationTimeEntryError) {
+        throw inputProblem(
+          'seconds',
+          'zero_duration',
+          'completed time entries must have a positive rounded duration',
+        )
+      }
       return translateTrackedNotFound(error, 'time entry')
     }
   }

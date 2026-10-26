@@ -166,6 +166,15 @@ export const createDeelStagingRuntime = (options: {
       matches: matched.matches,
       log: snapshot.log,
     })
+    const entryById = new Map(snapshot.entries.map((entry) => [entry.id, entry]))
+    const zeroDurationEntryIds = plan.unsyncable
+      .filter(
+        (entry) =>
+          entry.reason === 'non_positive_seconds' &&
+          entryById.get(entry.entryId)?.roundedSeconds === 0,
+      )
+      .map((entry) => entry.entryId)
+    const zeroDuration = new Set(zeroDurationEntryIds)
     const open = new Set(snapshot.unresolved)
     const fingerprint = await digest([
       selection,
@@ -184,6 +193,7 @@ export const createDeelStagingRuntime = (options: {
       seconds: plan.submissions.reduce((n, x) => n + x.roundedSeconds, 0),
       timesheets: plan.submissions.length,
       alreadyStaged: plan.alreadyTransferred.length,
+      alreadyStagedEntryIds: plan.alreadyTransferred.map((entry) => entry.entryId),
       people: selection.userIds.map((userId) => ({
         userId,
         contractId: matched.matches.find((x) => x.userId === userId)?.contractId ?? null,
@@ -195,7 +205,10 @@ export const createDeelStagingRuntime = (options: {
           .reduce((n, x) => n + x.entries.length, 0),
       })),
       conflicts: plan.conflicts.map((x) => x.entryId),
-      unsyncable: plan.unsyncable.map((x) => x.entryId),
+      unsyncable: plan.unsyncable
+        .filter((entry) => !zeroDuration.has(entry.entryId))
+        .map((x) => x.entryId),
+      zeroDurationEntryIds,
       unmatched: matched.unmatched,
       unresolved: plan.submissions.flatMap((x) =>
         x.entries.filter((e) => open.has(e.entryId)).map((e) => e.entryId),
@@ -209,6 +222,7 @@ export const createDeelStagingRuntime = (options: {
       },
       plan,
       preview,
+      zeroDurationEntryIds,
     }
   }
   return {
@@ -250,7 +264,9 @@ export const createDeelStagingRuntime = (options: {
       if (prepared.preview.fingerprint !== command.fingerprint) throw new DeelStageError('stale')
       if (
         prepared.preview.conflicts.length ||
-        prepared.plan.unsyncable.length ||
+        prepared.plan.unsyncable.some(
+          (entry) => !prepared.zeroDurationEntryIds.includes(entry.entryId),
+        ) ||
         prepared.preview.unmatched.length ||
         prepared.preview.unresolved.length
       )
