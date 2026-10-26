@@ -1,17 +1,7 @@
 import { setRequestBusy } from '../request-feedback.js'
 import { invoiceApiMessage } from './model.js'
-
-export interface InvoiceProviderAlert {
-  readonly id: string
-  readonly event_type: string
-  readonly kind: 'refund' | 'dispute'
-  readonly amount_cents: number
-  readonly currency: string
-  readonly provider_status: string
-  readonly occurred_at: string
-  readonly reviewed_at: string | null
-  readonly reviewed_by: number | null
-}
+import type { InvoiceProviderAlert } from '@conflict-hq/ezacto-client'
+export type { InvoiceProviderAlert } from '@conflict-hq/ezacto-client'
 
 export interface InvoiceProviderAlertApi {
   listInvoiceProviderAlerts?(id: number, signal?: AbortSignal): Promise<readonly InvoiceProviderAlert[]>
