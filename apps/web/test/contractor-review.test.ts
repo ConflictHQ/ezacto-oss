@@ -287,3 +287,32 @@ it('withholds confirmation when the source token is absent or the proposal is bl
   await vi.waitFor(() => expect(content().textContent).toContain('projection'))
   expect(content().querySelector('form')).toBeNull()
 })
+
+it('keeps the selected review tab when provider discovery finishes after navigation', async () => {
+  let finishDiscovery!: () => void
+  const discovery = new Promise<void>((resolve) => { finishDiscovery = resolve })
+  const active = new AbortController()
+  const controller = createStaffPaymentsController({
+    getStaffPaymentReport: vi.fn(async () => ledger()),
+    recordStaffPaymentEvent: vi.fn(),
+    getContractorReview: vi.fn(async () => review()),
+    getDeelStaging: vi.fn(async () => {
+      await discovery
+      return { data: { configured: false, reason: null, start_date: null, last_complete_date: null } }
+    }),
+    previewDeelStaging: vi.fn(),
+    stageDeelHours: vi.fn(),
+    getDeelStageStatus: vi.fn(),
+  })
+  const activation = controller.activate({ profile: 'administrator' }, active.signal)
+  await vi.waitFor(() => expect(document.querySelector<HTMLElement>('[data-staff-payment-content]')!.hidden).toBe(false))
+  const tab = document.querySelector<HTMLButtonElement>('[data-payment-tab="reconcile"]')!
+  tab.click()
+  expect(tab.getAttribute('aria-selected')).toBe('true')
+  finishDiscovery()
+  await activation
+  expect(tab.getAttribute('aria-selected')).toBe('true')
+  expect(document.querySelector<HTMLElement>('[data-payment-panel="reconcile"]')!.hidden).toBe(false)
+  expect(document.querySelector<HTMLButtonElement>('[data-contractor-review-load]')!.disabled).toBe(false)
+  active.abort()
+})
