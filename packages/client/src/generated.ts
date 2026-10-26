@@ -420,6 +420,40 @@ export type ResourceCalendarEnvelope = {
 };
 };
 
+export type CalendarFeedInput = {
+  "scope": "self" | "project" | "team";
+  "project_id": number | null;
+  "from_date": string;
+  "through_date": string;
+  "include_names": boolean;
+  "expires_at"?: string;
+};
+
+export type CalendarFeed = {
+  "scope": "self" | "project" | "team";
+  "project_id": number | null;
+  "from_date": string;
+  "through_date": string;
+  "include_names": boolean;
+  "id": string;
+  "issued_at": string;
+  "expires_at": string;
+  "revoked_at": string | null;
+  "credential_generation": number;
+};
+
+export type CalendarFeedList = {
+  "data": Array<CalendarFeed>;
+};
+
+export type CalendarFeedIssued = {
+  "data": {
+  "feed": CalendarFeed;
+  "username": string;
+  "password": string;
+};
+};
+
 export type AttachmentUploadInput = {
   "file": string;
 };
@@ -7341,6 +7375,53 @@ export class EzactoClient {
     return this.request<ResourceCalendarProjectPage>("GET", "/api/v1/resource-calendar/projects", {
       query: args.query,
       signal: args.signal,
+      headers,
+    });
+  }
+
+  async listCalendarFeeds(args: { signal?: AbortSignal; headers?: HeadersInit } = {}): Promise<CalendarFeedList> {
+    const headers = new Headers(args.headers);
+
+    return this.request<CalendarFeedList>("GET", "/api/v1/calendar-feeds", {
+      signal: args.signal,
+      headers,
+    });
+  }
+
+  async createCalendarFeed(args: { body: CalendarFeedInput; signal?: AbortSignal; headers?: HeadersInit }): Promise<CalendarFeedIssued> {
+    const headers = new Headers(args.headers);
+
+    return this.request<CalendarFeedIssued>("POST", "/api/v1/calendar-feeds", {
+      body: args.body,
+      signal: args.signal,
+      headers,
+    });
+  }
+
+  async rotateCalendarFeed(args: { "id": string; signal?: AbortSignal; headers?: HeadersInit }): Promise<CalendarFeedIssued> {
+    const headers = new Headers(args.headers);
+
+    return this.request<CalendarFeedIssued>("POST", "/api/v1/calendar-feeds/:id/rotate".replace(":id", encodeURIComponent(String(args["id"]))), {
+      signal: args.signal,
+      headers,
+    });
+  }
+
+  async revokeCalendarFeed(args: { "id": string; signal?: AbortSignal; headers?: HeadersInit }): Promise<void> {
+    const headers = new Headers(args.headers);
+
+    return this.request<void>("DELETE", "/api/v1/calendar-feeds/:id".replace(":id", encodeURIComponent(String(args["id"]))), {
+      signal: args.signal,
+      headers,
+    });
+  }
+
+  async downloadCalendarFeed(args: { "id": string; signal?: AbortSignal; headers?: HeadersInit }): Promise<ArrayBuffer> {
+    const headers = new Headers(args.headers);
+
+    return this.request<ArrayBuffer>("GET", "/api/v1/calendar-feeds/:id/download".replace(":id", encodeURIComponent(String(args["id"]))), {
+      signal: args.signal,
+      binary: true,
       headers,
     });
   }

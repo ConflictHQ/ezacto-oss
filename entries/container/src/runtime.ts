@@ -1,3 +1,4 @@
+import { createCalendarFeedService } from '@ezacto/db'
 import { createDeelPaymentStatusStore } from '@ezacto/db'
 import { createDeelPaymentStatusRuntime } from '@ezacto/integrations'
 import { createDeelStageStore } from '@ezacto/db'
@@ -931,6 +932,7 @@ export const createContainerRuntime = async (
       calendarProposals: new DrizzleCalendarProposalRepository(drizzle, trackedResources),
       placeholderPlanning: createPlaceholderAllocationRepository(drizzle),
       allocations: new DrizzleAllocationRepository(drizzle),
+      calendarFeeds: createCalendarFeedService(drizzle),
       resourceCalendar: createResourceCalendarRepository(drizzle),
       organizationHolidays: createOrganizationHolidayRepository(drizzle),
       workItems: {

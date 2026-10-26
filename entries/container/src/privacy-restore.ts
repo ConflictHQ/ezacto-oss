@@ -78,6 +78,10 @@ export function quarantineRestoredDatabase(
   target: BetterSqlite3.Database,
 ): void {
   target.exec(guardSql);
+    // A restored database is a new credential incarnation; keep opaque UIDs stable.
+    if (target.prepare("SELECT 1 FROM sqlite_schema WHERE type='table' AND name='planning_calendar_instance'").get()) {
+      target.prepare("UPDATE planning_calendar_instance SET nonce=lower(hex(randomblob(32))) WHERE singleton=1").run()
+    }
   target
     .prepare(
       "INSERT INTO account_restore_quarantine(id,quarantined,source_digest,evidence,updated_at) VALUES(1,1,NULL,NULL,?) ON CONFLICT(id) DO UPDATE SET quarantined=1,source_digest=NULL,evidence=NULL,updated_at=excluded.updated_at",

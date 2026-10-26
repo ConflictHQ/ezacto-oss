@@ -55,6 +55,7 @@ const removedTables = new Set([
   'quickbooks_oauth_states',
   'quickbooks_managed_grants',
   'calendar_proposals',
+  'planning_calendar_feeds',
   'allocations',
   'placeholder_assignment_keys',
   'time_off',

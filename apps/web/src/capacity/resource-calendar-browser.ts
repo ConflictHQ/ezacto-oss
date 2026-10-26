@@ -1,3 +1,4 @@
+import { createCalendarFeedsController } from './calendar-feeds-browser.js'
 import type { ResourceCalendar, ResourceCalendarContext } from '@conflict-hq/ezacto-client'
 import { EzactoApiError } from '@conflict-hq/ezacto-client'
 import type { CapacityApi } from './model.js'
@@ -15,6 +16,7 @@ const element = <K extends keyof HTMLElementTagNameMap>(tag: K, text?: string): 
 
 export const createResourceCalendarController = (api: ResourceCalendarApi, legacy: CapacityApi) => {
   const page = document.querySelector<HTMLElement>('[data-capacity-page]')!
+  const feeds = api.feeds ? createCalendarFeedsController(page,api.feeds) : null
   const find = <T extends HTMLElement>(selector: string) => page.querySelector<T>(selector)!
   const grid = find<HTMLElement>('[data-capacity-grid]'), status = find<HTMLElement>('[data-capacity-status]')
   const label = find<HTMLElement>('[data-capacity-label]'), retry = find<HTMLButtonElement>('[data-capacity-retry]')
@@ -84,6 +86,7 @@ export const createResourceCalendarController = (api: ResourceCalendarApi, legac
     },
   }, () => void load()) : null
   const clear = () => {
+    feeds?.clear()
     gestures?.reset()
     generation++; operation?.abort(); operation = null
     planning?.unmount(); placeholders?.clear()
@@ -161,6 +164,7 @@ export const createResourceCalendarController = (api: ResourceCalendarApi, legac
       const range = calendarWindow(context, offset)
       if (scope.value === 'project' && project.value === '') { status.textContent = 'No projects are available in this scope.'; return false }
       query = { ...range, view: scope.value === 'project' ? 'project' : 'team', ...(scope.value === 'project' ? { project_id: Number(project.value) } : {}), ...(person.value === '' ? {} : { person_id: Number(person.value) }) }
+      feeds?.context(query)
       const selectedQuery = query
       const summary = api.read(selectedQuery, undefined, signal).then(response => {
         if (current(version, signal)) {
@@ -228,6 +232,7 @@ export const createResourceCalendarController = (api: ResourceCalendarApi, legac
       signal.addEventListener('abort', abort, { once: true }); release = () => signal.removeEventListener('abort', abort)
       if (signal.aborted) { abort(); return }
       await load()
+      await feeds?.activate(signal,scheduleManager,query)
     },
   }
 }

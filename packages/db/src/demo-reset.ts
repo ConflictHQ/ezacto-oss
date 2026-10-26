@@ -155,6 +155,8 @@ const runAll = (
  */
 export const PRESERVED_TABLES: ReadonlySet<string> = new Set([
   '_ezacto_migrations',
+  'planning_calendar_source',
+  'planning_calendar_instance',
   'invoice_number_sequence',
   'email_template_versions',
   'email_template_heads',
@@ -224,6 +226,8 @@ const wipeStatements = (objects: DemoSchemaObjects): readonly DemoSeedStatement[
   // needs a row to read, and reset because yesterday's demo took every number
   // below it and none of those invoices exist any more.
   { text: 'UPDATE invoice_number_sequence SET next_number = 1', bindings: [] },
+  { text: "UPDATE planning_calendar_instance SET nonce=lower(hex(randomblob(32))) WHERE singleton=1", bindings: [] },
+  { text: 'UPDATE planning_calendar_source SET revision=revision+1 WHERE singleton=1', bindings: [] },
   // Authority changed while its triggers were lifted. Advance the preserved
   // revision in the wipe transaction, even if bootstrap/seed never resumes.
   { text: 'UPDATE idempotency_authorization SET revision = revision + 1 WHERE id = 1', bindings: [] },

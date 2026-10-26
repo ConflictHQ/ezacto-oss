@@ -26,6 +26,7 @@ interface CalendarSnapshot extends ResourceCalendarRows {
   personAllowed: number
   rangeAllowed: number
   timeZone: string
+  feedRevision?: number
 }
 
 const peopleAccess = (viewer: Readonly<TeamViewer>) =>
@@ -77,6 +78,7 @@ const select = async <Row>(
  */
 export const createResourceCalendarRepository = (
   database: InvoiceStateDatabase,
+  options: { captureFeedRevision?: (revision: number) => void; planningOnly?: boolean } = {},
 ): ResourceCalendarRepository => ({
   async projects(viewer, query) {
     const limit = query.limit ?? 50
@@ -271,7 +273,7 @@ export const createResourceCalendarRepository = (
       tracked_facts AS (
         SELECT entry.user_id,entry.project_id,entry.spent_date,sum(entry.rounded_seconds) AS rounded_seconds
         FROM time_entries entry CROSS JOIN bounds
-        WHERE entry.user_id IN(SELECT id FROM page_facts_people) AND entry.spent_date BETWEEN first_day AND last_day
+        WHERE ${options.planningOnly ? '0' : '1'} AND entry.user_id IN(SELECT id FROM page_facts_people) AND entry.spent_date BETWEEN first_day AND last_day
         GROUP BY entry.user_id,entry.project_id,entry.spent_date
         ORDER BY entry.user_id,entry.project_id,entry.spent_date LIMIT ${factsLimit}
       ),
@@ -288,6 +290,7 @@ export const createResourceCalendarRepository = (
         ORDER BY demand.id LIMIT 101
       )
       SELECT json_object(
+        ${options.captureFeedRevision ? "'feedRevision',(SELECT revision FROM planning_calendar_source WHERE singleton=1)," : ''}
         'actorAllowed',EXISTS(SELECT 1 FROM actor),
         'rangeAllowed',EXISTS(SELECT 1 FROM bounds),
         'projectAllowed',${query.projectId === undefined ? '1' : `EXISTS(SELECT 1 FROM allowed_projects WHERE id=${bind(query.projectId)})`},
@@ -329,6 +332,10 @@ export const createResourceCalendarRepository = (
       )
     )
       throw new ResourceCalendarReadError('range_too_large')
+    if (options.captureFeedRevision) {
+      if (!Number.isSafeInteger(snapshot.feedRevision)) throw new ResourceCalendarReadError('actor_required')
+      options.captureFeedRevision(snapshot.feedRevision!)
+    }
     const context = resourceCalendarContext(
       now,
       effectiveTimeZone(null, snapshot.timeZone),
