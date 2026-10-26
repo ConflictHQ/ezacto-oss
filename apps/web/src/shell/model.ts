@@ -1204,6 +1204,27 @@ const clientInvoiceSending = (
 })
 
 export const createShellApi = (client: EzactoClient): ShellApi => ({
+  githubReader: {
+    getGithubReaderStatus: (args) => client.getGithubReaderStatus(args),
+    beginGithubAppSetup: (args) => client.beginGithubAppSetup(args),
+    listGithubReaderInstallations: (args) => client.listGithubReaderInstallations(args),
+    listGithubReaderRepositories: (args) => client.listGithubReaderRepositories(args),
+    mapGithubRepository: (args) => client.mapGithubRepository(args),
+    disconnectGithubReader: (args) => client.disconnectGithubReader(args),
+    reconcileGithubReader: (args) => client.reconcileGithubReader(args),
+    catalog: async (signal) => {
+      const [projects, tasks, assignments] = await Promise.all([
+        collectPlanned(cursor => client.listProjects({ query: { is_active: true, per_page: 200, ...(cursor ? { cursor } : {}) }, ...withSignal(signal) }), signal),
+        collectPlanned(cursor => client.listTasks({ query: { is_active: true, per_page: 200, ...(cursor ? { cursor } : {}) }, ...withSignal(signal) }), signal),
+        collectPlanned(cursor => client.listTaskAssignments({ query: { is_active: true, per_page: 200, ...(cursor ? { cursor } : {}) }, ...withSignal(signal) }), signal),
+      ])
+      return {
+        projects: projects.map(row => ({ id: row.id, name: String(row.name ?? `Project ${row.id}`) })),
+        tasks: tasks.map(row => ({ id: row.id, name: String(row.name ?? `Task ${row.id}`) })),
+        assignments: assignments.map(row => ({ project_id: Number(row.project_id), task_id: Number(row.task_id) })),
+      }
+    },
+  },
   getDeelStaging: (args) => client.getDeelStaging(args),
   previewDeelStaging: (args) => client.previewDeelStaging(args),
   stageDeelHours: (args) => client.stageDeelHours(args),

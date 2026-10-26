@@ -4,6 +4,7 @@ import { renderWebhookSettings } from './webhooks-render.js'
 import { renderCompanyDataTools } from './data-tools.js'
 import { renderEmailSuppressionReview } from './email-suppressions-render.js'
 import { renderTimeRoundingSection } from './time-rounding-render.js'
+import { renderGithubReaderSettings } from './github-reader-render.js'
 import { renderRetentionSection } from './retention.js'
 import { iconMarkup } from '../components/icons.js'
 import { demoUnavailable } from '../demo.js'
@@ -55,6 +56,7 @@ export const renderModuleSettingsPage = (view?: string, providers?: AccountingPr
       <section class="module-settings-list" data-settings-sign-in-list aria-label="Sign-in methods" hidden></section>
     </section>
     ${renderWebhookSettings()}
+    ${renderGithubReaderSettings()}
     ${renderRetentionSection()}
     <section class="settings-section" data-settings-section="time" aria-labelledby="settings-time-title">
       <header><h2 id="settings-time-title">Time tracking</h2>
