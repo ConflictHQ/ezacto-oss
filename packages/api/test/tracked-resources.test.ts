@@ -518,6 +518,37 @@ for (const [runtime, factory] of factories) {
       return active
     }
 
+    it('[issue 1284] does not replace a timer with zero rounded time', async () => {
+      const test = await setup()
+      const running = await data<{ id: number }>(
+        await test.request(
+          '/api/v1/time-entries',
+          jsonRequest('POST', { project_id: 1, task_id: 1 }),
+        ),
+      )
+      const prematureStop = await test.request(
+        `/api/v1/time-entries/${running.id}/stop`,
+        { method: 'POST' },
+      )
+      expect(prematureStop.status).toBe(422)
+      expect(await prematureStop.json()).toMatchObject({
+        error: { fields: [{ code: 'zero_duration' }] },
+      })
+      const replacement = await test.request(
+        '/api/v1/time-entries',
+        jsonRequest('POST', { project_id: 1, task_id: 1 }),
+      )
+      expect(replacement.status).toBe(422)
+      expect(await replacement.json()).toMatchObject({
+        error: { fields: [{ code: 'zero_duration' }] },
+      })
+      expect(
+        await data<{ is_running: boolean }>(
+          await test.request(`/api/v1/time-entries/${running.id}`),
+        ),
+      ).toMatchObject({ is_running: true })
+    }, slowRuntimeTimeout)
+
     it('[api] translates a policy lock created after the time-entry precheck to 422', async () => {
       active = await harness(factory, interleavedLock)
       const test = active
@@ -1033,6 +1064,11 @@ for (const [runtime, factory] of factories) {
         ),
       ).toMatchObject({ is_running: true })
 
+      test.setBoundary({
+        instant: '2026-08-28T09:20:00.000Z',
+        date: '2026-08-28',
+        time: '09:20',
+      })
       const stopped = await test.request(
         `/api/v1/time-entries/${running.id}/stop`,
         { method: 'POST' },

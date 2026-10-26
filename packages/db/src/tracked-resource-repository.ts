@@ -1561,7 +1561,7 @@ export class DrizzleTrackedResourceRepository {
         ),
       )
     } catch (error) {
-      if (error instanceof ZeroDurationTimeEntryError) {
+      if (isZeroDurationStorageError(error)) {
         throw inputProblem(
           'seconds',
           'zero_duration',

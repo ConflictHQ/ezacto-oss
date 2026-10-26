@@ -502,7 +502,6 @@ export const stopTimeEntry = async (
     throw new Error(`time entry ${timeEntryId} is not running`)
   }
   const roundedSeconds = roundTimeSeconds(seconds, rounding)
-  if (seconds >= 0 && roundedSeconds === 0) throw new ZeroDurationTimeEntryError()
   const expectedCheckpoint = sql`
     ${timeEntries.userId} = ${entry.userId}
     AND
