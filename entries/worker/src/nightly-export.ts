@@ -8,6 +8,11 @@ import {
 } from '@ezacto/db/d1'
 
 const createR2BackupStore = (bucket: R2Bucket): BackupObjectStore => ({
+  async get(key) {
+    const object = await bucket.get(key)
+    return object ? new Uint8Array(await object.arrayBuffer()) : null
+  },
+  async putBytes(key, body) { await bucket.put(key, body) },
   async put(key, body) {
     await bucket.put(key, body)
   },

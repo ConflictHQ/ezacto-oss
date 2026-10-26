@@ -1,3 +1,4 @@
+import { restoreWorkerBackup } from './worker-backup.js'
 import { createHash, randomUUID } from 'node:crypto'
 import {
   copyFile,
@@ -389,6 +390,7 @@ const recordRestoreActivity = (
 }
 
 export interface RestoreResult {
+  quarantined?: boolean
   tablesRestored: number
   totalRows: number
   attachmentsRestored: number
@@ -418,6 +420,7 @@ export const restoreBackup = async (
   const manifest = JSON.parse(
     await readFile(manifestPath, 'utf8'),
   ) as BackupManifest
+  if ('bundle_version' in manifest) return restoreWorkerBackup(options, manifest as never, restoreBackup)
   if (manifest.format_version !== BACKUP_FORMAT_VERSION) {
     throw new Error(
       `unsupported backup format version: ${String(manifest.format_version)}`,

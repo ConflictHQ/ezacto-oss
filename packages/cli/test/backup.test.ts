@@ -357,16 +357,8 @@ describe('ez backup / restore / verify', () => {
     expect(verifyResult.errors).toEqual([])
   })
 
-  it('[e2e:backup-restore] runs the ez restore command both RESTORE.md files print', async () => {
-    // RESTORE.md ships inside every bundle and is the only instruction a
-    // self-hoster has. Asserting it exists and reads well -- which the bundle
-    // test above does -- does not catch it naming a flag the CLI rejects.
-    //
-    // There are two of these documents and they had drifted apart: the one in
-    // this package was right, and the one the Worker writes into R2 said
-    // `ez restore --from <dir>`, which parses `--from` as the report-range flag,
-    // leaves no positional argument, and exits on the usage line. Both are read
-    // here so neither can drift alone (issue 99).
+  it('[e2e:backup-restore] runs the Container RESTORE.md command against its own bundle', async () => {
+    // Worker document execution uses a real Worker export in worker-backup.test.ts.
     const backup = await createBackup({
       databasePath,
       attachmentDirectory,
@@ -374,19 +366,12 @@ describe('ez backup / restore / verify', () => {
       now: new Date('2026-08-30T12:00:00.000Z'),
     })
     const bundleDoc = await readFile(join(backup.bundleDirectory, 'RESTORE.md'), 'utf8')
-    const workerDoc = await readFile(
-      fileURLToPath(new URL('../../db/src/backup.ts', import.meta.url)),
-      'utf8',
-    )
-
     const documented = [...bundleDoc.matchAll(/ez restore [^`\n]+/gu)].map((m) => m[0].trim())
-    const fromWorker = [...workerDoc.matchAll(/ez restore [^`\n]+/gu)].map((m) => m[0].trim())
     expect(documented.length).toBeGreaterThan(0)
-    expect(fromWorker.length).toBeGreaterThan(0)
 
     const cliPath = fileURLToPath(new URL('../dist/cli.js', import.meta.url))
     let attempt = 0
-    for (const command of [...documented, ...fromWorker]) {
+    for (const command of documented) {
       attempt += 1
       const target = join(directory, `restored-${String(attempt)}.sqlite`)
       const args = command

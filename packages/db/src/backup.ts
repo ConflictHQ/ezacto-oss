@@ -1,11 +1,12 @@
+import { captureWorkerSnapshot, type WorkerBackupFile } from './worker-backup-snapshot.js'
 /**
  * D18 L1: nightly logical export. Produces the D18 bundle format as a set of
- * objects under an R2 prefix. The same format is consumed by `ez backup` (CLI)
+ * objects under an R2 prefix. The versioned Worker format is restored by `ez restore` (CLI)
  * and surfaced in the settings backup-status widget (A-4).
  */
 
 const SCHEMA_VERSION = 1
-const BUNDLE_VERSION = '0037'
+const BUNDLE_VERSION = '0038'
 
 /**
  * Tables a restore should skip, and why. Note what this is *not*: it is not a
@@ -77,6 +78,8 @@ const backupTables = async (database: D1Database): Promise<readonly string[]> =>
 
 export interface BackupObjectStore {
   put(key: string, body: string): Promise<void>
+  get?(key: string): Promise<Uint8Array | null>
+  putBytes?(key: string, body: Uint8Array): Promise<void>
 }
 
 export interface BackupManifest {
@@ -92,6 +95,7 @@ export interface BackupManifest {
    * version of ezacto that wrote it.
    */
   restore_skips: readonly string[]
+  files?: Record<string, WorkerBackupFile>
 }
 
 export interface BackupRunRecord {
@@ -130,13 +134,13 @@ const sha256Hex = async (data: string): Promise<string> => {
 
 const RESTORE_MD = `# Restoring from this backup
 
-This backup was produced by ezacto's nightly export (D18 L1). Each table is
-a CSV file with a header row. You can open these in any spreadsheet, import
+This backup was produced by ezacto's nightly export (D18 L1). CSV files are human-readable views. The authoritative schema and typed rows
+preserve NULL, empty text, binary values, and numeric precision. You can open these in any spreadsheet, import
 them into any database, or use the ezacto CLI to restore.
 
 ## Handle this like the database itself
 
-The bundle carries everything a working instance needs, and that includes the
+The bundle carries database rows and verified attachment bytes, including the
 credential material: password hashes, authenticator seeds, recovery-code hashes
 and API-token hashes. It has to — an instance whose people cannot sign in has
 not been restored — but it means these files are exactly as sensitive as the
@@ -144,20 +148,21 @@ database they came from, and more portable. Store them accordingly.
 
 ## Tables to skip when loading
 
-Everything the database had is here, including live sessions, sign-in links and
-OAuth transactions. They are kept because a backup is a record and you may want
-to know who held a session when something happened -- but **do not load them**.
-Doing so revives a session somebody revoked, a password-reset link somebody
-already spent, a sign-in code already used.
+The snapshot retains credential evidence. The supported restore clears live
+sessions, API tokens, sign-in codes and OAuth transactions before publication;
+calendar grants become cleanup obligations requiring fresh consent. It preserves
+the migration ledger so schema migrations are not replayed into an existing schema.
 
-\`manifest.json\` names them in \`restore_skips\`, so whatever loads these CSVs can
-read the list rather than carry its own copy of it.
+\`restore_skips\` is the historical safety inventory, not an instruction to
+blindly import CSV or discard migration history. Use the typed snapshot reader.
 
 ## Files
 
 - \`tables/<name>.csv\` — one file per table, UTF-8, RFC 4180 CSV.
 - \`manifest.json\` — metadata: schema version, export timestamp, row counts,
   and SHA-256 checksums for every file.
+- \`schema.json\`, \`rows/\` — lossless versioned schema and typed rows.
+- \`attachments/sha256/\` — verified file and brand asset bytes.
 - \`RESTORE.md\` — this file.
 
 ## Verify integrity
@@ -173,13 +178,18 @@ The bundle path is positional, and the database to write is required -- a
 restore never guesses which instance it is for.
 
 \`\`\`
-ez restore <path-to-this-directory> --database <target.sqlite>
+ez restore <path-to-this-directory> --database <target.sqlite> --attachments <new-attachments-directory>
 \`\`\`
 
-## Restore without ezacto
+The result is quarantined. Keep it offline and follow the current-evidence replay
+and reviewed release procedure in the repository RESTORE.md before serving traffic.
+Legacy Worker bundles (0037 and older) cannot be restored losslessly and are refused.
 
-Import the CSVs into any SQLite database. The column names in each CSV match
-the schema exactly. Refer to the ezacto source for the CREATE TABLE DDL.
+## Read without ezacto
+
+CSV files are for inspection, not lossless restoration. schema.json and rows/
+contain the versioned typed snapshot. Attachments are verified content-addressed
+bytes under attachments/sha256/. Keep every manifest-listed file together.
 `
 
 export const exportBundle = async (
@@ -191,23 +201,14 @@ export const exportBundle = async (
   const tables: BackupManifest['tables'] = {}
   let totalRows = 0
 
-  const backedUp = await backupTables(database)
-  for (const table of backedUp) {
-    const { results } = await database
-      .prepare(`SELECT * FROM ${table}`)
-      .all<Record<string, unknown>>()
-
-    const columns = results.length > 0 ? Object.keys(results[0]!) : []
-    const lines = [toCsvRow(columns)]
-    for (const row of results) {
-      lines.push(toCsvRow(columns.map((col) => row[col])))
-    }
+  const snapshot = await captureWorkerSnapshot(database, store, prefix)
+  const backedUp = snapshot.tables.map((table) => table.name)
+  for (const table of snapshot.tables) {
+    const lines = [toCsvRow(table.columns), ...table.rows.map(toCsvRow)]
     const csv = lines.join('\n') + '\n'
-    const hash = await sha256Hex(csv)
-
-    await store.put(`${prefix}tables/${table}.csv`, csv)
-    tables[table] = { row_count: results.length, sha256: hash }
-    totalRows += results.length
+    await store.put(`${prefix}tables/${table.name}.csv`, csv)
+    tables[table.name] = { row_count: table.rows.length, sha256: await sha256Hex(csv) }
+    totalRows += table.rows.length
   }
 
   const manifest: BackupManifest = {
@@ -220,6 +221,7 @@ export const exportBundle = async (
     // bundle outlives the version of ezacto that wrote it.
     restore_skips: EPHEMERAL_TABLES.filter((table) => backedUp.includes(table)),
     total_rows: totalRows,
+    files: snapshot.files,
   }
 
   await store.put(`${prefix}manifest.json`, JSON.stringify(manifest, null, 2))
@@ -311,7 +313,9 @@ export interface BackupRunPageWindow extends BackupRunFilter {
   take: number
 }
 
-const backupRunFilter = (filter: BackupRunFilter): { conditions: string[]; bindings: unknown[] } => {
+const backupRunFilter = (
+  filter: BackupRunFilter,
+): { conditions: string[]; bindings: unknown[] } => {
   const conditions: string[] = []
   const bindings: unknown[] = []
   if (filter.status !== undefined) {
@@ -376,10 +380,7 @@ export const countBackupRuns = async (
  * Returns true when no nightly backup has started today (UTC date boundary).
  * The scheduled handler calls this every minute but only proceeds when due.
  */
-export const shouldRunNightlyBackup = async (
-  database: D1Database,
-  now: Date,
-): Promise<boolean> => {
+export const shouldRunNightlyBackup = async (database: D1Database, now: Date): Promise<boolean> => {
   const todayStart = now.toISOString().slice(0, 10) + 'T00:00:00.000Z'
   const { results } = await database
     .prepare(

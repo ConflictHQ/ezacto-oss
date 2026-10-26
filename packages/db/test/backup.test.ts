@@ -142,7 +142,7 @@ describe('backup module', () => {
       const manifest = await exportBundle(database, store, 'backups/2026-09-01/')
 
       expect(manifest.schema_version).toBe(1)
-      expect(manifest.bundle_version).toBe('0037')
+      expect(manifest.bundle_version).toBe('0038')
       expect(manifest.exported_at).toMatch(/^\d{4}-\d{2}-\d{2}T/)
       const expected = await backupTables(database)
       expect(manifest.table_count).toBe(expected.length)
