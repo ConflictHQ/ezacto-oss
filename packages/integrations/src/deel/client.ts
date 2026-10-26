@@ -1,5 +1,5 @@
 /**
- * Deel `/rest/v2` client. The transport is injected rather than reached for:
+ * Deel `/rest` client. The transport is injected rather than reached for:
  * this package runs on the Worker and in the container, and its tests are not
  * allowed to touch the real API, where a stray POST creates a timesheet that
  * somebody then has to void by hand.
@@ -30,6 +30,27 @@ export interface DeelTimesheetInput {
 
 export interface DeelTimesheetReceipt {
   timesheetId: string
+}
+
+export type DeelTimesheetStatus =
+  | 'approved'
+  | 'declined'
+  | 'not_payable'
+  | 'paid'
+  | 'pending'
+  | 'processing'
+  | 'unknown'
+
+/** Read-side receipt. Only the documented, exact `paid` status confirms payment. */
+export interface DeelTimesheetStatusReceipt {
+  timesheetId: string
+  contractId: string
+  status: DeelTimesheetStatus
+  providerStatus: string | null
+  quantity: number | null
+  totalAmount: string
+  currency: string
+  spentDate: string
 }
 
 /**
@@ -133,6 +154,36 @@ const person = (value: unknown): DeelPerson => {
   }
 }
 
+// 2026-01-01: /timesheets/{timesheet_id} returns string or integer IDs and a
+// nullable status. Keep future statuses available for diagnosis, but never
+// interpret an unrecognized response as approval or payment.
+const timesheet = (value: unknown, requestedId: string): DeelTimesheetStatusReceipt => {
+  const raw = record(value, 'timesheet data')
+  const id = typeof raw.id === 'number' && Number.isSafeInteger(raw.id) && raw.id >= 0
+    ? String(raw.id)
+    : text(raw.id, 'timesheet id')
+  if (id !== requestedId) throw new DeelResponseError('timesheet id does not match the requested receipt')
+  const contractId = text(record(raw.contract, 'timesheet contract').id, 'timesheet contract id')
+  const providerStatus = raw.status === null ? null : text(raw.status, 'timesheet status')
+  const known: readonly string[] = ['approved', 'declined', 'not_payable', 'paid', 'pending', 'processing']
+  const status = providerStatus !== null && raw.status === providerStatus && known.includes(providerStatus)
+    ? providerStatus as DeelTimesheetStatus
+    : 'unknown'
+  if (raw.quantity !== null && (typeof raw.quantity !== 'number' || !Number.isFinite(raw.quantity)))
+    throw new DeelResponseError('timesheet quantity must be a finite number or null')
+  const totalAmount = text(raw.total_amount, 'timesheet total amount')
+  if (!/^-?\d+(?:\.\d+)?$/.test(totalAmount)) throw new DeelResponseError('timesheet total amount must be decimal text')
+  const currency = text(raw.currency_code, 'timesheet currency')
+  if (!/^[A-Z]{3}$/.test(currency)) throw new DeelResponseError('timesheet currency must be an ISO currency code')
+  const submitted = text(raw.date_submitted, 'timesheet date submitted')
+  const spentDate = submitted.slice(0, 10)
+  const date = new Date(`${spentDate}T00:00:00Z`)
+  if (!isoDate.test(spentDate) || !Number.isFinite(Date.parse(submitted)) ||
+      !Number.isFinite(date.getTime()) || date.toISOString().slice(0, 10) !== spentDate)
+    throw new DeelResponseError('timesheet date submitted must be an ISO calendar date')
+  return { timesheetId: id, contractId, status, providerStatus, quantity: raw.quantity as number | null, totalAmount, currency, spentDate }
+}
+
 export class DeelClient implements DeelTimesheetSink {
   readonly #token: string
   readonly #fetch: (request: Request) => Promise<Response>
@@ -183,6 +234,23 @@ export class DeelClient implements DeelTimesheetSink {
       if (rows.length < this.#pageSize) return people
     }
     throw new DeelResponseError('people listing did not reach a final page')
+  }
+
+  /** Read one staged receipt; no timesheets or payment records are created. */
+  async getTimesheet(timesheetId: string): Promise<DeelTimesheetStatusReceipt> {
+    if (typeof timesheetId !== 'string' || !timesheetId.trim())
+      throw new RangeError('a Deel timesheet id is required')
+    const id = timesheetId.trim()
+    if (id === '.' || id === '..') throw new RangeError('a Deel timesheet id is required')
+    const body = await this.#send(new Request(`${this.#baseUrl}/timesheets/${encodeURIComponent(id)}`, {
+      method: 'GET',
+      headers: {
+        accept: 'application/json',
+        authorization: `Bearer ${this.#token}`,
+        'x-version': apiVersion,
+      },
+    }))
+    return timesheet(body.data, id)
   }
 
   async createTimesheet(input: DeelTimesheetInput): Promise<DeelTimesheetReceipt> {

@@ -8,6 +8,7 @@ test("stages administrator-reviewed unsubmitted and approved hours once without 
     process.env.EZACTO_BROWSER_DEEL_STAGING_FIXTURE !== "1",
     "Owned Deel HTTP fixture only",
   );
+  await page.clock.install();
   expect(
     (
       await request.post("/__ezacto_browser_fixture__/start-end", {
@@ -154,4 +155,21 @@ test("stages administrator-reviewed unsubmitted and approved hours once without 
     await expect(page.locator(`[data-payment-list] [data-deel-staging-status="${userId}"]`)).toContainText('Staged in Deel');
     await expect(page.locator(`[data-payment-list] [data-deel-staging-status="${userId}"]`)).toContainText('1.00 h staged');
   }
+  await request.post('/__ezacto_browser_fixture__/start-end', {
+    headers: control, data: { action: 'deel-status-paid', timesheets: [1] },
+  });
+  await page.clock.fastForward(31_000);
+  await expect(page.locator('[data-payment-list] [data-deel-staging-label="50001"]')).toHaveText('Paid in Deel');
+  await expect(page.locator('[data-payment-list] [data-deel-staging-label="50002"]')).toHaveText('Staged in Deel');
+  await request.post('/__ezacto_browser_fixture__/start-end', {
+    headers: control, data: { action: 'deel-status-paid', timesheets: [2] },
+  });
+  await page.clock.fastForward(31_000);
+  await expect(page.locator('[data-payment-list] [data-deel-staging-label="50002"]')).toHaveText('Paid in Deel');
+  await page.screenshot({ path: testInfo.outputPath('deel-paid-phone.png'), fullPage: true });
+  const afterPaymentStatus = await (await request.post('/__ezacto_browser_fixture__/start-end', {
+    headers: control, data: { action: 'deel-stage-receipt' },
+  })).json();
+  expect(afterPaymentStatus.posts).toHaveLength(2);
+  expect(afterPaymentStatus.payments).toBe(0);
 });

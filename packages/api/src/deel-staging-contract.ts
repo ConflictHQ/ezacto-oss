@@ -22,6 +22,8 @@ const selected = {
   },
 };
 export const deelStagingSchemas = {
+  DeelPaymentStatusMonth: obj({ month: s }),
+  DeelPaymentStatusRefreshEnvelope: obj({ data: obj({ configured: { type: 'boolean' }, checked: n, failed: n, remaining: n }) }),
   DeelStagingStatusEnvelope: obj({
     data: obj({
       configured: { type: "boolean" },
@@ -77,6 +79,12 @@ export const deelStagingSchemas = {
   DeelStageStatusEnvelope: obj({ data: nullable(ref("DeelStageResult")) }),
 } as const;
 export const deelStagingOperations: readonly ApiContractOperation[] = [
+  {
+    method: 'post', path: '/api/v1/deel-staging/payment-status', operationId: 'refreshDeelPaymentStatus',
+    summary: 'Refresh provider payment status for previously staged timesheets', tag: 'deel-sync', sessionOnly: true,
+    requestRequired: true, requestSchema: 'DeelPaymentStatusMonth', responseStatus: 200,
+    responseSchema: 'DeelPaymentStatusRefreshEnvelope',
+  },
   {
     method: "get",
     path: "/api/v1/deel-staging",

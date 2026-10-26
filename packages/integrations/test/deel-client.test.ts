@@ -1,11 +1,89 @@
 import { describe, expect, it } from 'vitest'
-import { DeelApiError, DeelClient } from '../src/deel/client.js'
+import { DeelApiError, DeelClient, DeelResponseError } from '../src/deel/client.js'
 import { peoplePageOne, peoplePageTwo, timesheetCreated } from './fixtures/deel-api.js'
 
 const json = (body: unknown, status = 200): Response =>
   new Response(JSON.stringify(body), { status, headers: { 'content-type': 'application/json' } })
 
+const stagedTimesheet = {
+  id: 'tms_0001', status: 'approved', contract: { id: 'con_ana_hourly' },
+  quantity: 7.5, total_amount: '375.0000', currency_code: 'USD',
+  date_submitted: '2026-08-14T00:00:00.000Z',
+}
+
 describe('Deel API client', () => {
+  it('[unit] reads a specific timesheet with pinned version and returns only status receipt fields', async () => {
+    const requests: Request[] = []
+    const client = new DeelClient({
+      token: 'deel-token-for-tests',
+      fetch: async (request) => {
+        requests.push(request)
+        return json({ data: { ...stagedTimesheet, status: 'paid', description: 'Private work notes', reported_by: { full_name: 'Private name' } } })
+      },
+    })
+    await expect(client.getTimesheet('tms_0001')).resolves.toEqual({
+      timesheetId: 'tms_0001', contractId: 'con_ana_hourly', status: 'paid', providerStatus: 'paid',
+      quantity: 7.5, totalAmount: '375.0000', currency: 'USD', spentDate: '2026-08-14',
+    })
+    expect(requests).toHaveLength(1)
+    expect(requests[0]!.url).toBe('https://api.letsdeel.com/rest/timesheets/tms_0001')
+    expect(requests[0]!.method).toBe('GET')
+    expect(requests[0]!.headers.get('authorization')).toBe('Bearer deel-token-for-tests')
+    expect(requests[0]!.headers.get('x-version')).toBe('2026-01-01')
+    expect(requests[0]!.body).toBeNull()
+  })
+
+  it.each(['approved', 'declined', 'not_payable', 'paid', 'pending', 'processing'])('[unit] preserves documented timesheet status %s', async (status) => {
+    const client = new DeelClient({ token: 'test', fetch: async () => json({ data: { ...stagedTimesheet, status } }) })
+    await expect(client.getTimesheet('tms_0001')).resolves.toMatchObject({ status, providerStatus: status })
+  })
+
+  it.each([null, 'new_status', 'PAID', ' paid '])('[unit] treats unrecognized status %j as unknown rather than paid', async (providerStatus) => {
+    const client = new DeelClient({ token: 'test', fetch: async () => json({ data: { ...stagedTimesheet, status: providerStatus } }) })
+    await expect(client.getTimesheet('tms_0001')).resolves.toMatchObject({ status: 'unknown', providerStatus: typeof providerStatus === 'string' ? providerStatus.trim() : null })
+  })
+
+  it('[unit] accepts documented integer IDs and nullable quantities', async () => {
+    const client = new DeelClient({ token: 'test', fetch: async () => json({ data: { ...stagedTimesheet, id: 1234, quantity: null } }) })
+    await expect(client.getTimesheet('1234')).resolves.toMatchObject({ timesheetId: '1234', quantity: null })
+  })
+
+  it.each([
+    { id: 'other-timesheet' },
+    { id: 9007199254740992 },
+    { contract: {} },
+    { status: undefined },
+    { status: 123 },
+    { quantity: '7.5' },
+    { total_amount: '375 USD' },
+    { currency_code: 'usd' },
+    { date_submitted: '2026-02-30' },
+  ])('[unit] rejects malformed or mismatched timesheet receipt %j', async (fields) => {
+    const client = new DeelClient({ token: 'test', fetch: async () => json({ data: { ...stagedTimesheet, ...fields } }) })
+    await expect(client.getTimesheet('tms_0001')).rejects.toBeInstanceOf(DeelResponseError)
+  })
+
+  it.each([403, 404, 429, 500])('[unit] exposes provider read failure %s without inventing a receipt status', async (status) => {
+    const client = new DeelClient({ token: 'test', fetch: async () => json({ data: stagedTimesheet }, status) })
+    await expect(client.getTimesheet('tms_0001')).rejects.toMatchObject({ name: 'DeelApiError', status })
+  })
+
+  it('[unit] encodes opaque timesheet IDs as one path segment', async () => {
+    const requests: Request[] = []
+    const id = 'id/with?special#characters'
+    const client = new DeelClient({ token: 'test', fetch: async (request) => {
+      requests.push(request)
+      return json({ data: { ...stagedTimesheet, id } })
+    } })
+    await client.getTimesheet(id)
+    expect(requests[0]!.url).toBe('https://api.letsdeel.com/rest/timesheets/id%2Fwith%3Fspecial%23characters')
+  })
+
+  it.each(['', ' ', '.', '..'])('[unit] refuses invalid timesheet id %j before making a request', async (id) => {
+    const client = new DeelClient({ token: 'test', fetch: async () => { throw new Error('unexpected request') } })
+    await expect(client.getTimesheet(id)).rejects.toBeInstanceOf(RangeError)
+  })
+
   it('[unit] reads every page of /people with a bearer token and normalizes the payload', async () => {
     const requests: Request[] = []
     const client = new DeelClient({

@@ -90,12 +90,18 @@ export const createStaffPaymentStore = (database: Database): StaffPaymentStore =
         fingerprint: string | null
         transferred_at: string | null
         unresolved: number
+        provider_status: string | null
+        status_checked_at: string | null
+        status_error: string | null
       }>(sql`
         SELECT entry.user_id, entry.spent_date, entry.rounded_seconds,
           receipt.fingerprint, receipt.transferred_at,
+          provider.status AS provider_status, provider.checked_at AS status_checked_at,
+          provider.last_error AS status_error,
           EXISTS(SELECT 1 FROM deel_transfer_intents intent WHERE intent.entry_id=entry.id) AS unresolved
         FROM time_entries entry
         LEFT JOIN deel_transfer_log receipt ON receipt.entry_id=entry.id
+        LEFT JOIN deel_timesheet_status provider ON provider.timesheet_id=receipt.timesheet_id
         WHERE entry.spent_date BETWEEN ${month + '-01'} AND ${paymentMonthEnd(month)}
           AND entry.timer_started_at IS NULL
           AND (entry.started_time IS NULL OR entry.ended_time IS NOT NULL)`),
@@ -106,6 +112,8 @@ export const createStaffPaymentStore = (database: Database): StaffPaymentStore =
       if (!staging) {
         staging = {
           status: 'no_hours',
+          paid_entries: 0, paid_seconds: 0, approved_entries: 0, rejected_entries: 0,
+          unchecked_entries: 0, status_checked_at: null, status_check_failed: false,
           staged_entries: 0,
           unstaged_entries: 0,
           unresolved_entries: 0,
@@ -124,6 +132,16 @@ export const createStaffPaymentStore = (database: Database): StaffPaymentStore =
         // duration without claiming to have rechecked the remote contract.
         const sent = /:(\d{4}-\d{2}-\d{2}):([1-9]\d*)$/.exec(entry.fingerprint)
         staging.staged_entries++
+        if (entry.provider_status === 'paid') {
+          staging.paid_entries++
+          if (sent) staging.paid_seconds += Number(sent[2])
+        }
+        if (entry.provider_status === 'approved') staging.approved_entries++
+        if (entry.provider_status === 'declined' || entry.provider_status === 'not_payable') staging.rejected_entries++
+        if (entry.provider_status === null) staging.unchecked_entries++
+        if (entry.status_error !== null) staging.status_check_failed = true
+        if (entry.status_checked_at !== null && (staging.status_checked_at === null || entry.status_checked_at < staging.status_checked_at))
+          staging.status_checked_at = entry.status_checked_at
         if (sent) staging.staged_seconds += Number(sent[2])
         if (!sent || sent[1] !== entry.spent_date || Number(sent[2]) !== entry.rounded_seconds)
           staging.changed_entries++
@@ -145,9 +163,11 @@ export const createStaffPaymentStore = (database: Database): StaffPaymentStore =
     }
     for (const staging of stagingByUser.values()) {
       staging.status =
-        staging.changed_entries + staging.unresolved_entries + staging.unsyncable_entries > 0
+        staging.changed_entries + staging.unresolved_entries + staging.unsyncable_entries + staging.rejected_entries > 0
           ? 'attention'
-          : staging.staged_entries > 0
+          : staging.paid_entries > 0
+          ? staging.paid_entries === staging.staged_entries && staging.unstaged_entries === 0 ? 'paid' : 'partially_paid'
+        : staging.staged_entries > 0
             ? staging.unstaged_entries > 0
               ? 'partially_staged'
               : 'staged'
@@ -186,6 +206,8 @@ export const createStaffPaymentStore = (database: Database): StaffPaymentStore =
             ? {
                 deel_staging: stagingByUser.get(person.user_id) ?? {
                   status: 'no_hours' as const,
+                  paid_entries: 0, paid_seconds: 0, approved_entries: 0, rejected_entries: 0,
+                  unchecked_entries: 0, status_checked_at: null, status_check_failed: false,
                   staged_entries: 0,
                   unstaged_entries: 0,
                   unresolved_entries: 0,

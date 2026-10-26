@@ -574,7 +574,14 @@ export type StaffPaymentEvent = {
 
 export type StaffPaymentRow = {
   "deel_staging"?: {
-  "status": "not_staged" | "partially_staged" | "staged" | "attention" | "no_hours";
+  "status": "not_staged" | "partially_staged" | "staged" | "attention" | "no_hours" | "partially_paid" | "paid";
+  "paid_entries": number;
+  "paid_seconds": number;
+  "approved_entries": number;
+  "rejected_entries": number;
+  "unchecked_entries": number;
+  "status_checked_at": string | null;
+  "status_check_failed": boolean;
   "staged_entries": number;
   "unstaged_entries": number;
   "unresolved_entries": number;
@@ -830,6 +837,19 @@ export type DeelSyncRunResult = {
   "failed": Array<unknown>;
   "reconciliation": unknown | null;
   "error": string | null;
+};
+
+export type DeelPaymentStatusMonth = {
+  "month": string;
+};
+
+export type DeelPaymentStatusRefreshEnvelope = {
+  "data": {
+  "configured": boolean;
+  "checked": number;
+  "failed": number;
+  "remaining": number;
+};
 };
 
 export type DeelStagingStatusEnvelope = {
@@ -8326,6 +8346,16 @@ export class EzactoClient {
     const headers = new Headers(args.headers);
 
     return this.request<DeelSyncRunResult>("POST", "/api/v1/deel-sync/runs", {
+      body: args.body,
+      signal: args.signal,
+      headers,
+    });
+  }
+
+  async refreshDeelPaymentStatus(args: { body: DeelPaymentStatusMonth; signal?: AbortSignal; headers?: HeadersInit }): Promise<DeelPaymentStatusRefreshEnvelope> {
+    const headers = new Headers(args.headers);
+
+    return this.request<DeelPaymentStatusRefreshEnvelope>("POST", "/api/v1/deel-staging/payment-status", {
       body: args.body,
       signal: args.signal,
       headers,

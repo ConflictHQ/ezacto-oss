@@ -1,5 +1,6 @@
 import { createDeelStageController, type DeelStageApi } from './deel-stage-browser.js'
 import { deelStagingLabel, renderDeelStagingStatus } from './deel-status.js'
+import { createDeelPaymentStatusController, type DeelPaymentStatusApi } from './deel-payment-status-browser.js'
 import { createContractorReviewController, type ContractorReviewApi } from './reconciliation-browser.js'
 import { createStaffInvoicesController, type StaffInvoicesApi } from './invoices-browser.js'
 import { createAdvanceCreditsController, type AdvanceCreditsApi } from './advances-browser.js'
@@ -37,6 +38,7 @@ export interface StaffPaymentsApi
     PaymentAllocationsApi,
     DeelSyncApi,
     DeelStageApi,
+    DeelPaymentStatusApi,
     AdvanceCreditsApi,
     StaffInvoicesApi {
   configureStaffPaymentProvider?(
@@ -134,6 +136,23 @@ export const createStaffPaymentsController = (api: StaffPaymentsApi) => {
     failure,
   )
   const allocations = createAllocationsController(page, api, failure)
+  const deelPaymentStatus = createDeelPaymentStatusController(page, api, async (requestedMonth, active) => {
+    const revision = generation
+    if (!api.getStaffPaymentReport) return
+    const latest = await api.getStaffPaymentReport(requestedMonth, active)
+    if (active.aborted || signal !== active || revision !== generation || report?.month !== requestedMonth || busy) return
+    const byUser = new Map(latest.rows.map(row => [row.user_id, row.deel_staging]))
+    if (report.rows.every(row => JSON.stringify(row.deel_staging) === JSON.stringify(byUser.get(row.user_id)))) return
+    report = { ...report, rows: report.rows.map(row => {
+      const progress = byUser.get(row.user_id)
+      return progress ? { ...row, deel_staging: progress } : row
+    }) }
+    paintList()
+    const selectedRow = rowForSelection()
+    if (selectedRow) element<HTMLElement>(person, '[data-payment-person-deel]').replaceChildren(
+      ...(selectedRow.deel_staging ? [renderDeelStagingStatus(selectedRow)] : []),
+    )
+  })
   const payNow = element<HTMLButtonElement>(page, '[data-payment-pay-now]')
   payNow.addEventListener('click', () => {
     tabs.select('send')
@@ -380,13 +399,13 @@ export const createStaffPaymentsController = (api: StaffPaymentsApi) => {
           },
           {
             key: 'status',
-            label: 'Status',
+            label: 'Recorded payment',
             sortValue: staffPaymentStatus,
             render: (row) => staffPaymentStatus(row),
           },
           {
             key: 'deel-staging',
-            label: 'Deel staging',
+            label: 'Deel status',
             sortValue: deelStagingLabel,
             render: renderDeelStagingStatus,
           },
@@ -624,6 +643,7 @@ export const createStaffPaymentsController = (api: StaffPaymentsApi) => {
       advances.ledger(response)
       staffInvoices.ledger(response)
       reconciliation.ledger(response, active)
+      deelPaymentStatus.update(response)
       status.textContent = ''
     } catch (error) {
       if (!active.aborted && generation === ownGeneration) status.textContent = failure(error)
@@ -866,6 +886,7 @@ export const createStaffPaymentsController = (api: StaffPaymentsApi) => {
         status.textContent = 'The payment register is unavailable on this instance.'
         return
       }
+      deelPaymentStatus.activate(active)
       active.addEventListener(
         'abort',
         () => {
