@@ -7,10 +7,46 @@
     "tasks": 21,
     "users": 60,
     "time_entries": 20,
-    "expenses": 8
+    "expenses": 8,
+    "invoices": 20
   },
   "project_assignments": "Not generated: no recorded endpoint response in source",
   "projection_fields": {
+    "invoices": [
+      "id",
+      "number",
+      "purchase_order",
+      "amount",
+      "due_amount",
+      "tax",
+      "tax_amount",
+      "tax2",
+      "tax2_amount",
+      "discount",
+      "discount_amount",
+      "subject",
+      "notes",
+      "state",
+      "period_start",
+      "period_end",
+      "issue_date",
+      "due_date",
+      "payment_term",
+      "sent_at",
+      "paid_at",
+      "paid_date",
+      "closed_at",
+      "recurring_invoice_id",
+      "created_at",
+      "updated_at",
+      "currency",
+      "payment_options",
+      "client",
+      "estimate",
+      "retainer",
+      "creator",
+      "line_items"
+    ],
     "clients": [
       "id",
       "name",
@@ -130,11 +166,12 @@
   "source_revision": "9d20989d5fdebce7772a38af10edcd8cf31a8d25",
   "source": "Existing private recorded Harvest snapshot; source path and rows intentionally excluded",
   "redaction": "Synthetic IDs, references, dates, personal text, contacts, URLs and monetary/duration magnitudes. Representation classes and structural flags/enums retained.",
-  "verification": "217 independent redacted recorded-subset projections byte-match current shim serializers",
+  "verification": "237 independent redacted recorded-subset projections byte-match the current shim serializers",
   "limitations": [
-    "Six directly recorded resource families only; existing project_assignments cases remain invented, not recorded endpoint responses",
-    "Unsupported provider fields deliberately excluded; this is not full raw response byte equivalence",
-    "Original eight-family criterion remains unfulfilled; invoices and write compatibility remain separate #11 work"
+    "Eight total resource families: seven directly recorded families plus existing invented project_assignments cases; no original recorded project-assignment endpoint response exists",
+    "143 invoice rows with unresolved/deleted creator names are outside the represented invoice cases; native creator remains null rather than reviving source personal data",
+    "Unsupported provider fields deliberately excluded; this is not full raw-response byte equivalence",
+    "Locked-expense write compatibility is not implemented"
   ],
   "unsupported_field_counts": {
     "clients": 1,
@@ -142,6 +179,15 @@
     "tasks": 0,
     "users": 6,
     "time_entries": 1,
-    "expenses": 3
+    "expenses": 3,
+    "invoices": 1
+  },
+  "invoice_unrepresented_creator_records": 143,
+  "matrix": {
+    "total_pairs": 265,
+    "total_resource_families": 8,
+    "snapshot_derived_pairs": 237,
+    "directly_recorded_families": 7,
+    "invented_project_assignment_pairs": 3
   }
 }

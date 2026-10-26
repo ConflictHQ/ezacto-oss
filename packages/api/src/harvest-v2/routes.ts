@@ -1,3 +1,4 @@
+import { installHarvestInvoiceRoutes, type HarvestInvoiceSource } from './invoices.js'
 import {
   canReviewSubmissions,
   canViewMoneyField,
@@ -74,6 +75,7 @@ export interface HarvestExpenseSource {
 }
 
 export interface HarvestV2RouteOptions {
+  invoices?: HarvestInvoiceSource
   repository: GeneralResourceRepository
   timeEntries: HarvestTimeEntrySource
   expenses: HarvestExpenseSource
@@ -96,6 +98,7 @@ export const installHarvestV2Routes = <Bindings extends object>(
   harvest: Hono<ApiContext<Bindings>>,
   options: HarvestV2RouteOptions,
 ): void => {
+  if (options.invoices) installHarvestInvoiceRoutes(harvest, options.invoices)
   const { repository } = options
   const clock = options.clock ?? (() => new Date().toISOString())
 

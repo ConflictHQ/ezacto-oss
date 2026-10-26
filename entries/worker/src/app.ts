@@ -73,6 +73,7 @@ import {
   installGeneralResourceRoutes,
   installHarvestV2Routes,
   type HarvestExpenseSource,
+  type HarvestInvoiceSource,
   type HarvestTimeEntrySource,
   installMagicLinkRoutes,
   installModuleSettingsRoutes,
@@ -490,6 +491,7 @@ export interface RuntimeServices {
   timesheetApprovals: TimesheetApprovalService
   timesheetLockPolicy: TimesheetLockPolicyService
   moneyResources: MoneyResourceRouteOptions['service']
+  harvestInvoices?: HarvestInvoiceSource
   invoiceGeneration: NonNullable<MoneyResourceRouteOptions['generation']>
   /**
    * Issues the invoice a recurring definition is due for. The whole engine
@@ -1227,6 +1229,7 @@ export const createApp = (
           },
           installHarvestV2: (harvest) =>
             installHarvestV2Routes(harvest, {
+              ...(services.harvestInvoices ? {invoices:services.harvestInvoices} : {}),
               repository: services.generalResources,
               timeEntries: services.trackedResources,
               expenses: services.trackedResources,

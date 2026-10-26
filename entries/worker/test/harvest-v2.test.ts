@@ -42,7 +42,7 @@ describe('Worker /harvest/v2 composition', () => {
       await services.tokens.issue({
         userId: 1,
         name: 'Harvest client',
-        scopes: ['clients:read', 'projects:read', 'team:read', 'time_entries:read'],
+        scopes: ['clients:read', 'projects:read', 'team:read', 'time_entries:read', 'invoices:read'],
       })
     ).token
     app = createApp(services)
@@ -112,4 +112,21 @@ describe('Worker /harvest/v2 composition', () => {
     expect(unknown.headers.get('content-type')).toContain('application/json')
     expect(await unknown.text()).not.toContain('data-not-found-page')
   })
+  it('[api] reads native invoices through the wired Worker source', async () => {
+    const at='2026-10-01T12:00:00.000Z'
+    await env.DB.prepare("INSERT INTO clients(id,name,currency,created_at,updated_at)VALUES(1,'Sample Client','USD',?,?)").bind(at,at).run()
+    await env.DB.prepare("INSERT INTO invoices(id,client_id,created_by_user_id,number,currency,issue_date,due_date,state,amount_cents,due_amount_cents,created_at,updated_at)VALUES(1,1,1,'SMP-1','USD','2026-10-01','2026-11-01','draft',2500,2500,?,?)").bind(at,at).run()
+    await env.DB.prepare("INSERT INTO invoice_line_items(id,invoice_id,position,kind,description,quantity,unit_price_cents,amount_cents,taxed,taxed2,created_at,updated_at)VALUES(1,1,0,'Service','Sample line',1,2500,2500,0,0,?,?)").bind(at,at).run()
+    const headers={authorization:`Bearer ${bearer}`}
+    const page=await app.request('/harvest/v2/invoices',{headers},env)
+    expect(page.status).toBe(200)
+    expect(await page.json()).toMatchObject({invoices:[{id:1,number:'SMP-1',amount:25,client:{id:1,name:'Sample Client'}}],total_entries:1,per_page:100})
+    const detail=await app.request('/harvest/v2/invoices/1',{headers},env)
+    expect(detail.status).toBe(200)
+    expect(await detail.json()).toMatchObject({id:1,amount:25,creator:{id:1,name:'Sample Owner'}})
+    const disabled=await app.request('/harvest/v2/invoices',{headers},{...env,INVOICES_ENABLED:'false'})
+    expect(disabled.status).toBe(403)
+    expect(await disabled.json()).toMatchObject({error:{code:'module_disabled'}})
+  })
+
 })

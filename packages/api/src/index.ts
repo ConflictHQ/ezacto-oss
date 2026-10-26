@@ -588,3 +588,4 @@ export { isCsvStagingPath, csvStagingAuthority, csvStagingSafeFailure } from './
 
 export * from './csv-import-apply-port.js'
 export { installInvoiceProviderAlertRoutes, type InvoiceProviderAlertService } from './invoice-provider-alerts.js'
+export { installHarvestInvoiceRoutes, serializeHarvestInvoice, parseHarvestInvoiceQuery, type HarvestInvoiceSource, type HarvestInvoiceRecord, type HarvestInvoiceFilters } from './harvest-v2/invoices.js'

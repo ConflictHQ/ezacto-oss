@@ -1292,6 +1292,7 @@ export const createRuntimeServices = async (
     estimateTemplates: createEstimateTemplateRepository(drizzle),
     clientRateCards: createClientRateCardRepository(drizzle),
     moneyResources,
+    harvestInvoices: moneyResources,
     invoiceGeneration: createInvoiceGenerationService(drizzle),
     recurringInvoices: createRecurringInvoiceEngine(drizzle),
     reminders: { processDue: processDueReminders },
