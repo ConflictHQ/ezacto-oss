@@ -33,7 +33,8 @@
   "validation": {
     "touched_lint": "passed",
     "dependency_builds_and_worker_dry_run": "passed",
-    "final_contract_and_typecheck": "running in consolidation handoff"
+    "final_contract_and_typecheck": "passed (core, db, api, integrations, worker, container, web)",
+    "container_fixture_typecheck": "passed"
   },
   "browser_receipt": "docs/evidence/101-bank-review-native.json",
   "remaining_acceptance": [

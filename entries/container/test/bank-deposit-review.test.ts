@@ -1,7 +1,6 @@
 import { mkdtemp, realpath, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { randomBytes } from "node:crypto";
 import { expect, it } from "vitest";
 import {
   createBankDepositIngestionService,
@@ -44,7 +43,7 @@ it("stages a feed credit and confirms it through native Container session APIs",
       ownerFirstName: "Owned",
       ownerLastName: "Admin",
       ownerEmail: "owned@example.test",
-      token: `ezacto_${randomBytes(12).toString("base64url")}_${randomBytes(32).toString("base64url")}`,
+      token: `ezacto_abcdefghijklmnop_${"A".repeat(43)}`,
     });
     const session = await runtime.services.sessions.issue(1),
       cookie = session.setCookie.split(";")[0]!;
