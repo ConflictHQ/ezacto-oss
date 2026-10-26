@@ -148,6 +148,32 @@ test("stages administrator-reviewed unsubmitted and approved hours once without 
     path: testInfo.outputPath("deel-staging-phone.png"),
     fullPage: true,
   });
+  // Keep the first real status response in flight across a timer advance.
+  // Advancing the browser clock is not a barrier for network or D1 work.
+  let releaseInitialRefresh!: () => void;
+  let capturedInitialRefresh!: () => void;
+  const initialRefreshCaptured = new Promise<void>(resolve => { capturedInitialRefresh = resolve; });
+  const initialRefreshRelease = new Promise<void>(resolve => { releaseInitialRefresh = resolve; });
+  let heldInitialRefresh = false;
+  await page.route('**/api/v1/deel-staging/payment-status', async route => {
+    const response = await route.fetch();
+    if (!heldInitialRefresh) {
+      heldInitialRefresh = true;
+      capturedInitialRefresh();
+      await initialRefreshRelease;
+    }
+    await route.fulfill({ response });
+  });
+  const refreshStatus = page.locator('[data-deel-payment-refresh]');
+  const advanceToNextStatusCheck = async () => {
+    const response = page.waitForResponse(response =>
+      new URL(response.url()).pathname === '/api/v1/deel-staging/payment-status' &&
+      response.request().method() === 'POST');
+    await page.clock.fastForward(31_000);
+    expect((await response).ok()).toBe(true);
+    // The status POST is followed by a real report read and DOM update.
+    await expect(refreshStatus).toHaveAttribute('aria-busy', 'false');
+  };
   await page.reload();
   await page.locator("[data-payment-month]").fill("2026-08");
   await page.getByRole("button", { name: "Refresh", exact: true }).click();
@@ -155,23 +181,28 @@ test("stages administrator-reviewed unsubmitted and approved hours once without 
     await expect(page.locator(`[data-payment-list] [data-deel-staging-status="${userId}"]`)).toContainText('Staged in Deel');
     await expect(page.locator(`[data-payment-list] [data-deel-staging-status="${userId}"]`)).toContainText('1.00 h staged');
   }
+  await initialRefreshCaptured;
+  await expect(refreshStatus).toHaveAttribute('aria-busy', 'true');
+  await page.clock.fastForward(31_000);
+  releaseInitialRefresh();
+  await expect(refreshStatus).toHaveAttribute('aria-busy', 'false');
   await request.post('/__ezacto_browser_fixture__/start-end', {
     headers: control, data: { action: 'deel-status-processing', timesheets: [1, 2] },
   });
-  await page.clock.fastForward(31_000);
+  await advanceToNextStatusCheck();
   for (const userId of [50001, 50002]) {
     await expect(page.locator(`[data-payment-list] [data-deel-staging-label="${userId}"]`)).toHaveText('Payment processing in Deel');
   }
   await request.post('/__ezacto_browser_fixture__/start-end', {
     headers: control, data: { action: 'deel-status-paid', timesheets: [1] },
   });
-  await page.clock.fastForward(31_000);
+  await advanceToNextStatusCheck();
   await expect(page.locator('[data-payment-list] [data-deel-staging-label="50001"]')).toHaveText('Paid in Deel');
   await expect(page.locator('[data-payment-list] [data-deel-staging-label="50002"]')).toHaveText('Payment processing in Deel');
   await request.post('/__ezacto_browser_fixture__/start-end', {
     headers: control, data: { action: 'deel-status-paid', timesheets: [2] },
   });
-  await page.clock.fastForward(31_000);
+  await advanceToNextStatusCheck();
   await expect(page.locator('[data-payment-list] [data-deel-staging-label="50002"]')).toHaveText('Paid in Deel');
   await page.screenshot({ path: testInfo.outputPath('deel-paid-phone.png'), fullPage: true });
   const afterPaymentStatus = await (await request.post('/__ezacto_browser_fixture__/start-end', {
