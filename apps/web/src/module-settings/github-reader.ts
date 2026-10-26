@@ -1,6 +1,7 @@
 import { EzactoApiError, type EzactoClient, type GithubReaderStatusEnvelope, type GithubReaderMapRequest, type GithubReaderDisconnectRequest } from '@conflict-hq/ezacto-client'
 import type { SessionPresenter } from '../session.js'
 import { isDemoDeployment } from '../demo.js'
+import { setRequestBusy } from '../request-feedback.js'
 
 type Choice = { id: number; name: string }
 type SelectControl = HTMLElement & { value: string; disabled: boolean; options: HTMLOptionsCollection }
@@ -53,7 +54,7 @@ export const createGithubReaderController = (api: GithubReaderUiApi | undefined)
   const pendingDisconnects = new Map<string, GithubReaderDisconnectRequest>()
   const current = (owner: Active, generation = revision) => active === owner && !owner.signal.aborted && generation === revision
   const controls = () => {
-    status.setAttribute('aria-busy', String(busy))
+    setRequestBusy(status, busy)
     for (const node of root.querySelectorAll<HTMLElement & { disabled: boolean }>('input,button,select')) node.disabled = busy || active === null
     field('repository').disabled = busy || repositories.length === 0
     field('task').disabled = busy || !field('project').value || field('task').options.length < 2
