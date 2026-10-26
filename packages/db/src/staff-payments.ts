@@ -112,7 +112,7 @@ export const createStaffPaymentStore = (database: Database): StaffPaymentStore =
       if (!staging) {
         staging = {
           status: 'no_hours',
-          paid_entries: 0, paid_seconds: 0, approved_entries: 0, rejected_entries: 0,
+          paid_entries: 0, paid_seconds: 0, processing_entries: 0, pending_entries: 0, approved_entries: 0, rejected_entries: 0,
           unchecked_entries: 0, status_checked_at: null, status_check_failed: false,
           staged_entries: 0,
           unstaged_entries: 0,
@@ -136,6 +136,8 @@ export const createStaffPaymentStore = (database: Database): StaffPaymentStore =
           staging.paid_entries++
           if (sent) staging.paid_seconds += Number(sent[2])
         }
+        if (entry.provider_status === 'processing') staging.processing_entries++
+        if (entry.provider_status === 'pending') staging.pending_entries++
         if (entry.provider_status === 'approved') staging.approved_entries++
         if (entry.provider_status === 'declined' || entry.provider_status === 'not_payable') staging.rejected_entries++
         if (entry.provider_status === null) staging.unchecked_entries++
@@ -167,6 +169,7 @@ export const createStaffPaymentStore = (database: Database): StaffPaymentStore =
           ? 'attention'
           : staging.paid_entries > 0
           ? staging.paid_entries === staging.staged_entries && staging.unstaged_entries === 0 ? 'paid' : 'partially_paid'
+        : staging.processing_entries > 0 ? 'processing'
         : staging.staged_entries > 0
             ? staging.unstaged_entries > 0
               ? 'partially_staged'
@@ -206,7 +209,7 @@ export const createStaffPaymentStore = (database: Database): StaffPaymentStore =
             ? {
                 deel_staging: stagingByUser.get(person.user_id) ?? {
                   status: 'no_hours' as const,
-                  paid_entries: 0, paid_seconds: 0, approved_entries: 0, rejected_entries: 0,
+                  paid_entries: 0, paid_seconds: 0, processing_entries: 0, pending_entries: 0, approved_entries: 0, rejected_entries: 0,
                   unchecked_entries: 0, status_checked_at: null, status_check_failed: false,
                   staged_entries: 0,
                   unstaged_entries: 0,

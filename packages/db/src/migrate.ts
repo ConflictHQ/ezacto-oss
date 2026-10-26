@@ -1,3 +1,4 @@
+import { deelStatusThrottleMigration } from './migrations/0167_deel_status_throttle.js'
 import { deelPaymentStatusMigration } from './migrations/0166_deel_payment_status.js'
 import { isOrdinaryD1SchemaStatement } from './internal/d1-cold-migrations.js'
 import { csvBrowserDatasetMigration } from './migrations/0164_csv_browser_dataset.js'
@@ -1691,6 +1692,7 @@ const migrations = [
   { id: '0164_csv_browser_dataset', statements: csvBrowserDatasetMigration },
   { id: '0165_nonzero_stopped_time', statements: nonzeroStoppedTimeMigration },
   { id: '0166_deel_payment_status', statements: deelPaymentStatusMigration },
+  { id: '0167_deel_status_throttle', statements: deelStatusThrottleMigration },
 ] as const
 
 // Fixtures assert against this rather than re-listing ids: a hand-copied ledger merges

@@ -631,9 +631,10 @@ const fixtureControl = async (request, response) => {
         await run("UPDATE time_entries SET approval_status='approved' WHERE id=?",id)
       }
     }
-  } else if (action === 'deel-status-paid' && deelStagingFixture) {
-    for (const index of payload.timesheets ?? []) deelTimesheetStatuses.set(`owned-timesheet-${index}`, 'paid')
-    await run("UPDATE deel_timesheet_status SET last_attempt_at='2000-01-01T00:00:00.000Z'")
+  } else if ((action === 'deel-status-paid' || action === 'deel-status-processing') && deelStagingFixture) {
+    for (const index of payload.timesheets ?? []) deelTimesheetStatuses.set(`owned-timesheet-${index}`, action === 'deel-status-paid' ? 'paid' : 'processing')
+    await run("UPDATE deel_timesheet_status SET last_attempt_at='2000-01-01T00:00:00.000Z',checked_at=CASE WHEN status IS NULL THEN NULL ELSE '2000-01-01T00:00:00.000Z' END")
+    await run("UPDATE deel_status_refresh_lock SET lease_id=NULL,lease_until=NULL,cooldown_until='1970-01-01T00:00:00.000Z' WHERE id=1")
   } else if (action === 'deel-stage-receipt' && deelStagingFixture) {
     response.writeHead(200,{'content-type':'application/json','cache-control':'no-store'})
     response.end(JSON.stringify({posts:deelStagingPosts,entries:(await database.prepare('SELECT entry_id FROM deel_transfer_log WHERE entry_id IN(50001,50002) ORDER BY entry_id').all()).results,approvals:(await database.prepare('SELECT id,approval_status,timesheet_submission_id FROM time_entries WHERE id IN(50001,50002) ORDER BY id').all()).results,submissions:(await database.prepare('SELECT id,status,version FROM timesheet_submissions WHERE user_id IN(50001,50002) ORDER BY id').all()).results,payments:(await database.prepare("SELECT count(*) count FROM staff_payment_events WHERE kind='payment'").first()).count}))

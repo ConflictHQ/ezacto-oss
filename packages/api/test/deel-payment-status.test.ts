@@ -5,7 +5,7 @@ import { installDeelPaymentStatusRoutes } from '../src/deel-payment-status.js'
 
 const fixture = () => {
   const runtime = {
-    refresh: vi.fn(async () => ({ configured: true, checked: 20, failed: 1, remaining: 4 })),
+    refresh: vi.fn(async () => ({ configured: true, checked: 5, failed: 1, remaining: 4, retry_after_ms: 300_000 })),
   }
   const app = createApiApp({
     authentication: {
@@ -45,7 +45,7 @@ describe('Deel payment status HTTP boundary', () => {
     expect(response.status).toBe(200)
     expect(response.headers.get('cache-control')).toBe('no-store')
     expect(runtime.refresh).toHaveBeenCalledExactlyOnceWith('2026-09', { userId: 1, sessionId: 7 })
-    expect(await response.json()).toEqual({ data: { configured: true, checked: 20, failed: 1, remaining: 4 } })
+    expect(await response.json()).toEqual({ data: { configured: true, checked: 5, failed: 1, remaining: 4, retry_after_ms: 300_000 } })
   })
 
   it.each([
@@ -70,10 +70,10 @@ describe('Deel payment status HTTP boundary', () => {
 
   it('returns unconfigured explicitly without inventing a successful provider check', async () => {
     const { post, runtime } = fixture()
-    runtime.refresh.mockResolvedValueOnce({ configured: false, checked: 0, failed: 0, remaining: 0 })
+    runtime.refresh.mockResolvedValueOnce({ configured: false, checked: 0, failed: 0, remaining: 0, retry_after_ms: 0 })
     const response = await post()
     expect(response.status).toBe(200)
-    expect(await response.json()).toEqual({ data: { configured: false, checked: 0, failed: 0, remaining: 0 } })
+    expect(await response.json()).toEqual({ data: { configured: false, checked: 0, failed: 0, remaining: 0, retry_after_ms: 0 } })
   })
 
   it('refuses a session revoked between authentication and the store check', async () => {

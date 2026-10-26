@@ -36970,6 +36970,8 @@
               "status",
               "paid_entries",
               "paid_seconds",
+              "processing_entries",
+              "pending_entries",
               "approved_entries",
               "rejected_entries",
               "unchecked_entries",
@@ -36996,13 +36998,20 @@
                   "attention",
                   "no_hours",
                   "partially_paid",
-                  "paid"
+                  "paid",
+                  "processing"
                 ]
               },
               "paid_entries": {
                 "type": "integer"
               },
               "paid_seconds": {
+                "type": "integer"
+              },
+              "processing_entries": {
+                "type": "integer"
+              },
+              "pending_entries": {
                 "type": "integer"
               },
               "approved_entries": {
@@ -38310,7 +38319,8 @@
               "configured",
               "checked",
               "failed",
-              "remaining"
+              "remaining",
+              "retry_after_ms"
             ],
             "additionalProperties": false,
             "properties": {
@@ -38324,6 +38334,9 @@
                 "type": "integer"
               },
               "remaining": {
+                "type": "integer"
+              },
+              "retry_after_ms": {
                 "type": "integer"
               }
             }

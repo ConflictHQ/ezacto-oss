@@ -18,6 +18,15 @@ entries. The page checks while open, and the worker also refreshes statuses on
 its minute schedule, in bounded batches. The last successful check is shown; unavailable responses
 retain the last confirmed status with a warning instead of implying payment.
 
+Deel's `processing` state is displayed as **Payment processing in Deel**, with
+the number of affected entries. It is not treated as a paid receipt. Checks are
+paced and share a database lease between the page and background worker;
+rate-limited reads pause for the provider's retry interval. Successfully checked
+statuses are cached for five minutes to leave room for other Deel activity.
+Deel's [rate limit](https://developer.deel.com/api/rate-limits) is shared across
+the organization. The status-polling lease coordinates this instance's page and
+scheduled checks; other applications still share that provider quota.
+
 These checks require `timesheets:read` on the existing Deel token and only make
 read requests to Deel. They never submit hours, approve timesheets, or initiate
 payment. Provider status describes the submitted hours, while **Recorded

@@ -88,6 +88,7 @@ for (const target of ['SQLite', 'D1'] as const)
     }, 60000)
     afterAll(async () => close?.())
     const fixture = async () => {
+      await run("UPDATE deel_status_refresh_lock SET lease_id=NULL,lease_until=NULL,cooldown_until='1970-01-01T00:00:00.000Z' WHERE id=1")
       const n = ++serial,
         a = 1000 + n,
         u = 10 + n * 10,
@@ -255,6 +256,27 @@ for (const target of ['SQLite', 'D1'] as const)
       }, 1, `report-deel-${userId}`, now)
       return store
     }
+    it('serializes status refreshers globally, retains cooldown and bounds the claim batch', async () => {
+      const f = await fixture(), store = createDeelPaymentStatusStore(db as Parameters<typeof createDeelPaymentStatusStore>[0])
+      const attempts = await Promise.all([store.acquireRefresh(now, f.authority), store.acquireRefresh(now, f.authority)])
+      const held = attempts.find((result) => result.leaseId !== null)!
+      expect(attempts.filter((result) => result.leaseId !== null)).toHaveLength(1)
+      expect(attempts.find((result) => result.leaseId === null)?.retryAfterMs).toBe(60000)
+      await store.releaseRefresh(held.leaseId!, 90000, now)
+      expect((await store.acquireRefresh(new Date(Date.parse(now)+30000).toISOString(), f.authority)).retryAfterMs).toBe(60000)
+      const later = new Date(Date.parse(now)+91000).toISOString(), next = await store.acquireRefresh(later, f.authority)
+      expect(next.leaseId).not.toBeNull()
+      expect(await store.touchRefresh(held.leaseId!, later, f.authority)).toBe(false)
+      expect(await store.touchRefresh(next.leaseId!, later, f.authority)).toBe(true)
+      await store.releaseRefresh(held.leaseId!, 3600000, later)
+      expect(await store.touchRefresh(next.leaseId!, later, f.authority)).toBe(false)
+      expect((await store.acquireRefresh(later, f.authority)).retryAfterMs).toBe(3600000)
+      for (let index=0; index<12; index++) await run('INSERT INTO deel_transfer_log(entry_id,fingerprint,timesheet_id,transferred_at) VALUES(?,?,?,?)', 900000+f.u*100+index, `c${f.u}:2026-10-13:3600`, `batch-${f.u}-${index}`, now)
+      const claims = await store.claim(null, later, f.authority)
+      expect(claims).toHaveLength(5)
+      await store.releaseClaims(claims)
+      expect(await store.claim(null, later, f.authority)).toHaveLength(5)
+    })
     it('refreshes authoritative paid status once, retains it on failures, and never fabricates ledger payments', async () => {
       const f = await fixture()
       await reportingStore(f.u)
@@ -264,7 +286,7 @@ for (const target of ['SQLite', 'D1'] as const)
       let remoteStatus: 'paid' | 'pending' | 'declined' = 'paid'
       const status = createDeelPaymentStatusRuntime({
         token: 'owned-token', store: createDeelPaymentStatusStore(db as Parameters<typeof createDeelPaymentStatusStore>[0]),
-        now: () => clock, fetch: async () => { throw new Error('fake client owns reads') },
+        now: () => clock, sleep: async () => undefined, fetch: async () => { throw new Error('fake client owns reads') },
         client: { getTimesheet: async (timesheetId) => {
           calls++
           if (fail) throw new Error('unavailable')
@@ -279,20 +301,23 @@ for (const target of ['SQLite', 'D1'] as const)
       expect(await report()).toMatchObject({ paid_cents: 0, deel_staging: {
         status: 'paid', paid_entries: 1, paid_seconds: 3600, unchecked_entries: 0, status_check_failed: false,
       } })
-      clock = new Date(clock.getTime() + 61000); fail = true
+      clock = new Date(clock.getTime() + 61000)
+      expect(await status.refresh('2026-10', f.authority)).toMatchObject({ checked: 0 })
+      expect(calls).toBe(1)
+      clock = new Date(clock.getTime() + 240000); fail = true
       expect(await status.refresh('2026-10', f.authority)).toMatchObject({ checked: 0, failed: 1 })
       expect((await report()).deel_staging).toMatchObject({ status: 'paid', paid_entries: 1, status_check_failed: true })
       clock = new Date(clock.getTime() + 61000); fail = false; remoteStatus = 'pending'
       await status.refresh('2026-10', f.authority)
       expect((await report()).deel_staging).toMatchObject({ status: 'staged', paid_entries: 0, status_check_failed: false })
-      clock = new Date(clock.getTime() + 61000); wrongContract = true; remoteStatus = 'paid'
+      clock = new Date(clock.getTime() + 301000); wrongContract = true; remoteStatus = 'paid'
       expect(await status.refresh('2026-10', f.authority)).toMatchObject({ checked: 0, failed: 1 })
       expect((await report()).deel_staging).toMatchObject({ status: 'staged', paid_entries: 0, status_check_failed: true })
       clock = new Date(clock.getTime() + 61000); wrongContract = false; remoteStatus = 'declined'
       await status.refresh('2026-10', f.authority)
       expect((await report()).deel_staging).toMatchObject({ status: 'attention', rejected_entries: 1, paid_entries: 0 })
       const cache = createDeelPaymentStatusStore(db as Parameters<typeof createDeelPaymentStatusStore>[0])
-      clock = new Date(clock.getTime() + 61000)
+      clock = new Date(clock.getTime() + 301000)
       const [oldLease] = await cache.claim('2026-10', clock.toISOString(), f.authority)
       clock = new Date(clock.getTime() + 61000)
       const [newLease] = await cache.claim('2026-10', clock.toISOString(), f.authority)
@@ -314,7 +339,7 @@ for (const target of ['SQLite', 'D1'] as const)
       let clock = new Date(now), allPaid = false, calls = 0
       const status = createDeelPaymentStatusRuntime({
         token: 'owned-token', store: createDeelPaymentStatusStore(db as Parameters<typeof createDeelPaymentStatusStore>[0]),
-        now: () => clock, fetch: async () => { throw new Error('fake client owns reads') },
+        now: () => clock, sleep: async () => undefined, fetch: async () => { throw new Error('fake client owns reads') },
         client: { getTimesheet: async (timesheetId) => {
           calls++
           const firstDay = timesheetId.endsWith('-1'), remoteStatus = firstDay || allPaid ? 'paid' : 'approved'
@@ -328,7 +353,7 @@ for (const target of ['SQLite', 'D1'] as const)
       expect((await report()).deel_staging).toMatchObject({
         status: 'partially_paid', staged_entries: 3, paid_entries: 1, paid_seconds: 3600, approved_entries: 2,
       })
-      clock = new Date(clock.getTime() + 61000); allPaid = true
+      clock = new Date(clock.getTime() + 301000); allPaid = true
       await status.refresh('2026-10', f.authority)
       expect(await report()).toMatchObject({ paid_cents: 0, deel_staging: { status: 'paid', paid_entries: 3, paid_seconds: 7200 } })
     })

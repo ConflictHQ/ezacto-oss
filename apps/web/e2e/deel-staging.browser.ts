@@ -156,11 +156,18 @@ test("stages administrator-reviewed unsubmitted and approved hours once without 
     await expect(page.locator(`[data-payment-list] [data-deel-staging-status="${userId}"]`)).toContainText('1.00 h staged');
   }
   await request.post('/__ezacto_browser_fixture__/start-end', {
+    headers: control, data: { action: 'deel-status-processing', timesheets: [1, 2] },
+  });
+  await page.clock.fastForward(31_000);
+  for (const userId of [50001, 50002]) {
+    await expect(page.locator(`[data-payment-list] [data-deel-staging-label="${userId}"]`)).toHaveText('Payment processing in Deel');
+  }
+  await request.post('/__ezacto_browser_fixture__/start-end', {
     headers: control, data: { action: 'deel-status-paid', timesheets: [1] },
   });
   await page.clock.fastForward(31_000);
   await expect(page.locator('[data-payment-list] [data-deel-staging-label="50001"]')).toHaveText('Paid in Deel');
-  await expect(page.locator('[data-payment-list] [data-deel-staging-label="50002"]')).toHaveText('Staged in Deel');
+  await expect(page.locator('[data-payment-list] [data-deel-staging-label="50002"]')).toHaveText('Payment processing in Deel');
   await request.post('/__ezacto_browser_fixture__/start-end', {
     headers: control, data: { action: 'deel-status-paid', timesheets: [2] },
   });

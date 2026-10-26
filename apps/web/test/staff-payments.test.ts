@@ -62,6 +62,8 @@ const stagingProgress = (
   paid_entries: 0,
   paid_seconds: 0,
   approved_entries: 0,
+  processing_entries: 0,
+  pending_entries: 0,
   rejected_entries: 0,
   unchecked_entries: 0,
   status_checked_at: null,
@@ -78,7 +80,7 @@ beforeEach(() => {
   HTMLElement.prototype.scrollIntoView = vi.fn()
 })
 describe('monthly payment register', () => {
-  it('automatically moves staged hours through partial and full Deel payment without clearing edits', async () => {
+  it('automatically moves staged hours through processing, partial and full Deel payment without clearing edits', async () => {
     vi.useFakeTimers()
     const active = new AbortController()
     Object.defineProperty(document, 'hidden', { configurable: true, value: false })
@@ -91,12 +93,14 @@ describe('monthly payment register', () => {
       const refreshDeelPaymentStatus = vi.fn(async () => {
         checks += 1
         row.deel_staging = stagingProgress({
-          status: checks === 1 ? 'partially_paid' : 'paid',
+          status: checks === 1 ? 'processing' : checks === 2 ? 'partially_paid' : 'paid',
           staged_entries: 2, staged_seconds: 10800, unstaged_entries: 0, unstaged_seconds: 0,
-          paid_entries: checks === 1 ? 1 : 2, paid_seconds: checks === 1 ? 3600 : 10800,
+          paid_entries: checks === 1 ? 0 : checks === 2 ? 1 : 2,
+          paid_seconds: checks === 1 ? 0 : checks === 2 ? 3600 : 10800,
+          processing_entries: checks === 1 ? 2 : checks === 2 ? 1 : 0,
           status_checked_at: '2026-09-24T12:00:00Z',
         })
-        return { data: { configured: true, checked: 2, failed: 0, remaining: 0 } }
+        return { data: { configured: true, checked: 2, failed: 0, remaining: 0, retry_after_ms: 0 } }
       })
       await createStaffPaymentsController({
         getStaffPaymentReport: async () => structuredClone(value),
@@ -111,6 +115,12 @@ describe('monthly payment register', () => {
       field('amount').value = '123.45'
       field('note').value = 'Keep this unsaved note'
       await vi.advanceTimersByTimeAsync(0)
+      expect(progress().textContent).toContain('Payment processing in Deel')
+      expect(progress().textContent).toContain('2 payment processing in Deel')
+      expect(progress().textContent).not.toContain('paid in Deel')
+      expect(field('amount').value).toBe('123.45')
+      expect(field('note').value).toBe('Keep this unsaved note')
+      await vi.advanceTimersByTimeAsync(30_000)
       expect(progress().textContent).toContain('Partially paid in Deel')
       expect(progress().textContent).toContain('1.00 h paid in Deel')
       expect(document.querySelector('[data-payment-person-deel]')!.textContent).toContain('Partially paid in Deel')
@@ -121,7 +131,7 @@ describe('monthly payment register', () => {
       expect(progress().textContent).toContain('3.00 h paid in Deel')
       expect(field('amount').value).toBe('123.45')
       expect(field('note').value).toBe('Keep this unsaved note')
-      expect(refreshDeelPaymentStatus).toHaveBeenCalledTimes(2)
+      expect(refreshDeelPaymentStatus).toHaveBeenCalledTimes(3)
       expect(row.paid_cents).toBe(0)
       expect(row.status).toBe('pending')
     } finally {
@@ -134,6 +144,7 @@ describe('monthly payment register', () => {
     const value = report()
     value.rows[0]!.deel_staging = stagingProgress({
       status: 'partially_paid', paid_entries: 1, paid_seconds: 3600, approved_entries: 1,
+      processing_entries: 1, pending_entries: 1,
       unchecked_entries: 1, status_check_failed: true, status_checked_at: '2026-09-24T12:00:00Z',
     })
     const active = new AbortController()
@@ -142,6 +153,8 @@ describe('monthly payment register', () => {
     expect(progress.textContent).toContain('Partially paid in Deel')
     expect(progress.textContent).toContain('1.00 h paid in Deel')
     expect(progress.textContent).toContain('approved in Deel, awaiting payment')
+    expect(progress.textContent).toContain('1 payment processing in Deel')
+    expect(progress.textContent).toContain('1 awaiting approval in Deel')
     expect(progress.textContent).toContain('Showing the last confirmed status')
     expect(progress.textContent).toContain('2026-09-24T12:00:00Z')
     active.abort()

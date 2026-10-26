@@ -20,7 +20,7 @@ export const createDeelPaymentStatusController = (
   }
   const schedule = (delay: number) => {
     cancelTimer()
-    if (active && !active.aborted && month) timer = setTimeout(() => void poll(), delay)
+    if (active && !active.aborted && month) timer = setTimeout(() => void poll(), Math.min(delay, 2_147_483_647))
   }
   const poll = async () => {
     const signal = active
@@ -50,6 +50,10 @@ export const createDeelPaymentStatusController = (
           ? 'Updating payment status for the remaining Deel hours…'
           : 'Showing the latest confirmed Deel statuses. Checking automatically while this page is open.'
       if (response.data.remaining > 0) delay = 1_500
+      delay = Math.max(delay, response.data.retry_after_ms ?? 0)
+      if ((response.data.retry_after_ms ?? 0) >= 30_000) {
+        message.textContent = 'Waiting before the next Deel status check. Showing the latest confirmed statuses.'
+      }
     } catch {
       if (current()) message.textContent = 'Deel payment status could not be checked. Showing the last confirmed status; retrying automatically.'
     } finally {
