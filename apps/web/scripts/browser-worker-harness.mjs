@@ -80,7 +80,12 @@ const workerOptions = {
   ...(deelStagingFixture ? {outboundService: async request => {
     const url = new URL(request.url)
     if (url.origin !== 'https://api.letsdeel.com') throw new Error('Unexpected fixture outbound origin')
-    if (request.method === 'GET' && url.pathname.endsWith('/people')) return globalThis.Response.json({data:[50001,50002].map(id=>({id:`p${id}`,full_name:`Deel owned ${id}`,emails:[{value:`deel${id}@example.test`}],employments:[{id:`contract${id}`,contract_status:'in_progress'}]}))})
+    if (request.method === 'GET' && url.pathname.endsWith('/people')) return globalThis.Response.json({data:[
+      // Optional/null email values occur in real Deel directories. Keep an
+      // unrelated same-name person so preview must still match actual addresses.
+      {id:'unrelated',full_name:'Deel owned 50001',emails:[{value:null},{},{value:'  '}],employments:[{id:'unrelated-contract',contract_status:'in_progress'}]},
+      ...[50001,50002].map(id=>({id:`p${id}`,full_name:`Deel owned ${id}`,emails:[{value:null},{},{value:`deel${id}@example.test`}],employments:[{id:`contract${id}`,contract_status:'in_progress'}]})),
+    ]})
     if (request.method === 'POST' && url.pathname.endsWith('/timesheets')) {
       const body=await request.json(); deelStagingPosts.push(body)
       return globalThis.Response.json({data:{id:`owned-timesheet-${deelStagingPosts.length}`}})

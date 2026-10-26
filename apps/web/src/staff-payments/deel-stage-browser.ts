@@ -172,9 +172,17 @@ export const createDeelStageController = (
         clear();
         return;
       }
-      if (current(signal, revision))
-        message.textContent =
-          "The preview could not be loaded. Check the selection and try again.";
+      if (current(signal, revision)) {
+        const note =
+          error instanceof EzactoApiError && error.status === 503
+            ? "Deel could not be reached for review. Nothing was staged. Try again."
+            : "The preview could not be loaded. Check the selection and try again.";
+        const reference =
+          error instanceof EzactoApiError && error.requestId
+            ? ` Reference: ${error.requestId}`
+            : "";
+        message.textContent = note + reference;
+      }
     } finally {
       if (current(signal, revision)) {
         busy = false;

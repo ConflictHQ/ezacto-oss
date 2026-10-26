@@ -261,3 +261,28 @@ describe("selected Deel hour staging", () => {
     expect(el<HTMLInputElement>("input[name=from]").min).toBe("2026-10-01");
   });
 });
+
+it("keeps September payroll within the configured historical sync range", async () => {
+  const { api, controller, abort } = mount();
+  api.getDeelStaging.mockResolvedValue({ data: { configured: true, reason: null, start_date: "2026-09-01", last_complete_date: "2026-10-25" } });
+  await controller.activate(abort.signal);
+  controller.update({ ...report, month: "2026-09" });
+  controller.open();
+  expect(el<HTMLInputElement>('input[name="from"]').value).toBe("2026-09-01");
+  expect(el<HTMLInputElement>('input[name="to"]').value).toBe("2026-09-30");
+  await review();
+  expect(api.previewDeelStaging).toHaveBeenCalledWith({ body: { from: "2026-09-01", to: "2026-09-30", user_ids: [2] }, signal: abort.signal });
+  expect(api.stageDeelHours).not.toHaveBeenCalled();
+});
+it.each([503, 500])("shows a safe request reference when preview returns %s", async (status) => {
+  const { api, controller, abort } = mount();
+  await controller.activate(abort.signal);
+  controller.update(report);
+  controller.open();
+  api.previewDeelStaging.mockRejectedValueOnce(new EzactoApiError(status, { error: { message: "private provider payload" } }, "preview-request-123"));
+  await review();
+  expect(el('[data-deel-stage-message]').textContent).toContain('Reference: preview-request-123');
+  expect(document.body.textContent).not.toContain('private provider payload');
+  expect(api.stageDeelHours).not.toHaveBeenCalled();
+  expect(el<HTMLButtonElement>('[data-deel-stage-send]').disabled).toBe(true);
+});
