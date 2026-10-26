@@ -82,6 +82,7 @@ const bundle = await build({
 
 const deelStagingFixture = process.env.EZACTO_BROWSER_DEEL_STAGING_FIXTURE === '1'
 const deelStagingPosts = []
+const deelTimesheetStatuses = new Map()
 const workerOptions = {
   ...(deelStagingFixture ? {outboundService: async request => {
     const url = new URL(request.url)
@@ -95,6 +96,12 @@ const workerOptions = {
     if (request.method === 'POST' && url.pathname.endsWith('/timesheets')) {
       const body=await request.json(); deelStagingPosts.push(body)
       return globalThis.Response.json({data:{id:`owned-timesheet-${deelStagingPosts.length}`}})
+    }
+    if (request.method === 'GET' && /\/timesheets\/owned-timesheet-\d+$/.test(url.pathname)) {
+      const id = url.pathname.split('/').at(-1)
+      const submitted = deelStagingPosts[Number(id.split('-').at(-1)) - 1]?.data
+      if (!submitted) return globalThis.Response.json({error:'not found'}, {status:404})
+      return globalThis.Response.json({data:{id,status:deelTimesheetStatuses.get(id) ?? 'approved',contract:{id:submitted.contract_id},quantity:submitted.quantity,total_amount:String(submitted.quantity * 25),currency_code:'USD',date_submitted:submitted.date_submitted}})
     }
     throw new Error('Unexpected fixture outbound operation')
   }} : {}),
@@ -624,6 +631,9 @@ const fixtureControl = async (request, response) => {
         await run("UPDATE time_entries SET approval_status='approved' WHERE id=?",id)
       }
     }
+  } else if (action === 'deel-status-paid' && deelStagingFixture) {
+    for (const index of payload.timesheets ?? []) deelTimesheetStatuses.set(`owned-timesheet-${index}`, 'paid')
+    await run("UPDATE deel_timesheet_status SET last_attempt_at='2000-01-01T00:00:00.000Z'")
   } else if (action === 'deel-stage-receipt' && deelStagingFixture) {
     response.writeHead(200,{'content-type':'application/json','cache-control':'no-store'})
     response.end(JSON.stringify({posts:deelStagingPosts,entries:(await database.prepare('SELECT entry_id FROM deel_transfer_log WHERE entry_id IN(50001,50002) ORDER BY entry_id').all()).results,approvals:(await database.prepare('SELECT id,approval_status,timesheet_submission_id FROM time_entries WHERE id IN(50001,50002) ORDER BY id').all()).results,submissions:(await database.prepare('SELECT id,status,version FROM timesheet_submissions WHERE user_id IN(50001,50002) ORDER BY id').all()).results,payments:(await database.prepare("SELECT count(*) count FROM staff_payment_events WHERE kind='payment'").first()).count}))

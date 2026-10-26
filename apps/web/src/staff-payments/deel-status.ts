@@ -9,6 +9,8 @@ export const deelStagingLabel = (row: StaffPaymentRow): string => {
     staged: 'Staged in Deel',
     attention: 'Needs attention',
     no_hours: 'No hours to stage',
+    partially_paid: 'Partially paid in Deel',
+    paid: 'Paid in Deel',
   }[progress.status]
 }
 
@@ -26,6 +28,10 @@ export const renderDeelStagingStatus = (row: StaffPaymentRow): HTMLElement => {
     node.appendChild(line)
   }
   const hours = (seconds: number) => `${(seconds / 3600).toFixed(2)} h`
+  if (progress.paid_entries) detail(`${hours(progress.paid_seconds)} paid in Deel · ${progress.paid_entries} entries`)
+  if (progress.approved_entries) detail(`${progress.approved_entries} approved in Deel, awaiting payment`)
+  if (progress.rejected_entries) detail(`${progress.rejected_entries} declined or not payable in Deel`)
+  if (progress.unchecked_entries) detail(`${progress.unchecked_entries} awaiting payment status check`)
   detail(`${hours(progress.staged_seconds)} staged · ${progress.staged_entries} entries`)
   detail(`${hours(progress.unstaged_seconds)} remaining · ${progress.unstaged_entries} entries`)
   if (progress.unresolved_entries) detail(`${progress.unresolved_entries} awaiting reconciliation`)
@@ -33,6 +39,8 @@ export const renderDeelStagingStatus = (row: StaffPaymentRow): HTMLElement => {
   if (progress.unsyncable_entries) detail(`${progress.unsyncable_entries} invalid entries need review`)
   if (progress.zero_duration_entries) detail(`${progress.zero_duration_entries} zero-hour entries skipped`)
   if (progress.last_staged_at) detail(`Last staged: ${progress.last_staged_at}`)
-  if (progress.staged_entries) detail('Complete invoice and payment in Deel.')
+  if (progress.status_checked_at) detail(`Payment status checked: ${progress.status_checked_at}`)
+  if (progress.status_check_failed) detail('Could not refresh Deel status. Showing the last confirmed status.')
+  if (progress.staged_entries && progress.status !== 'paid') detail('Complete any remaining invoice and payment in Deel.')
   return node
 }

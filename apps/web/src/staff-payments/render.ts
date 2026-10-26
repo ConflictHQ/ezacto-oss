@@ -47,6 +47,8 @@ export const renderStaffPayments = (view?: string): string =>
       <section data-payment-summary aria-label="Monthly totals" class="staff-payment-summary"></section>
       <div data-payment-ledger>
       <h2>Payment ledger</h2>
+      <p data-deel-payment-refresh role="status" aria-live="polite" hidden></p>
+      <p class="hint">Deel status reflects payment for submitted hours. Recorded payment totals reflect the payment receipts entered here.</p>
       <div data-payment-list></div>${renderDeelStage()}
       <section data-payment-person hidden class="staff-payment-person" aria-labelledby="staff-payment-person-title">
         <header><h2 id="staff-payment-person-title" data-payment-person-title></h2><a data-payment-destination href="/team">Manage Wise destination</a></header>

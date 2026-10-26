@@ -1,3 +1,4 @@
+export { createDeelPaymentStatusRuntime, type DeelPaymentStatusRuntime, type DeelPaymentStatusStore, type DeelPaymentStatusClaim, type DeelPaymentStatusResult } from './deel/payment-status.js'
 export {
   createStripeRuntime,
   type StripeConfig,
@@ -117,6 +118,8 @@ export {
   type DeelPerson,
   type DeelTimesheetInput,
   type DeelTimesheetReceipt,
+  type DeelTimesheetStatus,
+  type DeelTimesheetStatusReceipt,
   type DeelTimesheetSink,
 } from './deel/client.js'
 export {

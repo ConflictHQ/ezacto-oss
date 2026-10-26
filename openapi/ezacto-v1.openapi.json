@@ -19869,6 +19869,71 @@
         }
       }
     },
+    "/api/v1/deel-staging/payment-status": {
+      "post": {
+        "operationId": "refreshDeelPaymentStatus",
+        "summary": "Refresh provider payment status for previously staged timesheets",
+        "tags": [
+          "deel-sync"
+        ],
+        "security": [
+          {
+            "cookieSession": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DeelPaymentStatusRefreshEnvelope"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/MalformedRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/AuthenticationRequired"
+          },
+          "403": {
+            "$ref": "#/components/responses/InsufficientPermission"
+          },
+          "404": {
+            "$ref": "#/components/responses/ResourceNotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/StateConflict"
+          },
+          "413": {
+            "$ref": "#/components/responses/PayloadTooLarge"
+          },
+          "422": {
+            "$ref": "#/components/responses/ValidationFailed"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "503": {
+            "$ref": "#/components/responses/ServiceUnavailable"
+          }
+        },
+        "x-ezacto-runtime-path": "/api/v1/deel-staging/payment-status",
+        "x-ezacto-generate-client": true,
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DeelPaymentStatusMonth"
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/deel-staging": {
       "get": {
         "operationId": "getDeelStaging",
@@ -36903,6 +36968,13 @@
             "type": "object",
             "required": [
               "status",
+              "paid_entries",
+              "paid_seconds",
+              "approved_entries",
+              "rejected_entries",
+              "unchecked_entries",
+              "status_checked_at",
+              "status_check_failed",
               "staged_entries",
               "unstaged_entries",
               "unresolved_entries",
@@ -36922,8 +36994,38 @@
                   "partially_staged",
                   "staged",
                   "attention",
-                  "no_hours"
+                  "no_hours",
+                  "partially_paid",
+                  "paid"
                 ]
+              },
+              "paid_entries": {
+                "type": "integer"
+              },
+              "paid_seconds": {
+                "type": "integer"
+              },
+              "approved_entries": {
+                "type": "integer"
+              },
+              "rejected_entries": {
+                "type": "integer"
+              },
+              "unchecked_entries": {
+                "type": "integer"
+              },
+              "status_checked_at": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "status_check_failed": {
+                "type": "boolean"
               },
               "staged_entries": {
                 "type": "integer"
@@ -38180,6 +38282,51 @@
                 "type": "null"
               }
             ]
+          }
+        }
+      },
+      "DeelPaymentStatusMonth": {
+        "type": "object",
+        "required": [
+          "month"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "month": {
+            "type": "string"
+          }
+        }
+      },
+      "DeelPaymentStatusRefreshEnvelope": {
+        "type": "object",
+        "required": [
+          "data"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "data": {
+            "type": "object",
+            "required": [
+              "configured",
+              "checked",
+              "failed",
+              "remaining"
+            ],
+            "additionalProperties": false,
+            "properties": {
+              "configured": {
+                "type": "boolean"
+              },
+              "checked": {
+                "type": "integer"
+              },
+              "failed": {
+                "type": "integer"
+              },
+              "remaining": {
+                "type": "integer"
+              }
+            }
           }
         }
       },

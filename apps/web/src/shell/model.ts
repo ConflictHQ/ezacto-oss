@@ -1204,6 +1204,7 @@ export const createShellApi = (client: EzactoClient): ShellApi => ({
   previewDeelStaging: (args) => client.previewDeelStaging(args),
   stageDeelHours: (args) => client.stageDeelHours(args),
   getDeelStageStatus: (args) => client.getDeelStageStatus(args),
+  refreshDeelPaymentStatus: (args) => client.refreshDeelPaymentStatus(args),
   getPaymentRunReport: async (from,to,signal) => (await client.getPaymentRunReport({query:{from,to},...withSignal(signal)})).data,
   previewPaymentRun: async (body,signal) => (await client.previewPaymentRun({body,...withSignal(signal)})).data,
   approvePaymentRun: async (id,body,signal) => (await client.approvePaymentRun({id,body,...withSignal(signal)})).data,

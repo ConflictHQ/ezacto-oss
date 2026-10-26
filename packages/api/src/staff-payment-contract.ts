@@ -121,7 +121,14 @@ export const staffPaymentSchemas = {
   }),
   StaffPaymentRow: object({
     deel_staging: object({
-      status: { type: 'string', enum: ['not_staged', 'partially_staged', 'staged', 'attention', 'no_hours'] },
+      status: { type: 'string', enum: ['not_staged', 'partially_staged', 'staged', 'attention', 'no_hours', 'partially_paid', 'paid'] },
+      paid_entries: integer,
+      paid_seconds: integer,
+      approved_entries: integer,
+      rejected_entries: integer,
+      unchecked_entries: integer,
+      status_checked_at: nullable(string),
+      status_check_failed: bool,
       staged_entries: integer,
       unstaged_entries: integer,
       unresolved_entries: integer,

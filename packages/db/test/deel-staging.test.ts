@@ -1,3 +1,5 @@
+import { createDeelPaymentStatusStore } from '../src/deel-payment-status.js'
+import { createDeelPaymentStatusRuntime } from '@ezacto/integrations'
 import BetterSqlite3 from 'better-sqlite3'
 import { Miniflare } from 'miniflare'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
@@ -253,6 +255,83 @@ for (const target of ['SQLite', 'D1'] as const)
       }, 1, `report-deel-${userId}`, now)
       return store
     }
+    it('refreshes authoritative paid status once, retains it on failures, and never fabricates ledger payments', async () => {
+      const f = await fixture()
+      await reportingStore(f.u)
+      const staging = f.runtime(), preview = await staging.preview(f.authority, f.selection)
+      await staging.stage(f.authority, { ...f.selection, id: crypto.randomUUID(), fingerprint: preview.fingerprint })
+      let clock = new Date(now), calls = 0, fail = false, wrongContract = false
+      let remoteStatus: 'paid' | 'pending' | 'declined' = 'paid'
+      const status = createDeelPaymentStatusRuntime({
+        token: 'owned-token', store: createDeelPaymentStatusStore(db as Parameters<typeof createDeelPaymentStatusStore>[0]),
+        now: () => clock, fetch: async () => { throw new Error('fake client owns reads') },
+        client: { getTimesheet: async (timesheetId) => {
+          calls++
+          if (fail) throw new Error('unavailable')
+          return { timesheetId, contractId: wrongContract ? 'wrong-contract' : `c${f.u}`, status: remoteStatus,
+            providerStatus: remoteStatus, quantity: 1, totalAmount: '10.00', currency: 'EUR', spentDate: '2026-10-13' }
+        } },
+      })
+      const report = async () => (await createStaffPaymentStore(db as Parameters<typeof createStaffPaymentStore>[0]).report('2026-10', '2026-10-26')).rows.find((row) => row.user_id === f.u)!
+      expect((await report()).deel_staging).toMatchObject({ status: 'staged', unchecked_entries: 1 })
+      await Promise.all([status.refresh('2026-10', f.authority), status.refresh('2026-10', f.authority)])
+      expect(calls).toBe(1)
+      expect(await report()).toMatchObject({ paid_cents: 0, deel_staging: {
+        status: 'paid', paid_entries: 1, paid_seconds: 3600, unchecked_entries: 0, status_check_failed: false,
+      } })
+      clock = new Date(clock.getTime() + 61000); fail = true
+      expect(await status.refresh('2026-10', f.authority)).toMatchObject({ checked: 0, failed: 1 })
+      expect((await report()).deel_staging).toMatchObject({ status: 'paid', paid_entries: 1, status_check_failed: true })
+      clock = new Date(clock.getTime() + 61000); fail = false; remoteStatus = 'pending'
+      await status.refresh('2026-10', f.authority)
+      expect((await report()).deel_staging).toMatchObject({ status: 'staged', paid_entries: 0, status_check_failed: false })
+      clock = new Date(clock.getTime() + 61000); wrongContract = true; remoteStatus = 'paid'
+      expect(await status.refresh('2026-10', f.authority)).toMatchObject({ checked: 0, failed: 1 })
+      expect((await report()).deel_staging).toMatchObject({ status: 'staged', paid_entries: 0, status_check_failed: true })
+      clock = new Date(clock.getTime() + 61000); wrongContract = false; remoteStatus = 'declined'
+      await status.refresh('2026-10', f.authority)
+      expect((await report()).deel_staging).toMatchObject({ status: 'attention', rejected_entries: 1, paid_entries: 0 })
+      const cache = createDeelPaymentStatusStore(db as Parameters<typeof createDeelPaymentStatusStore>[0])
+      clock = new Date(clock.getTime() + 61000)
+      const [oldLease] = await cache.claim('2026-10', clock.toISOString(), f.authority)
+      clock = new Date(clock.getTime() + 61000)
+      const [newLease] = await cache.claim('2026-10', clock.toISOString(), f.authority)
+      expect(newLease!.leaseId).not.toBe(oldLease!.leaseId)
+      await cache.complete(newLease!, { status: 'approved' }, clock.toISOString(), f.authority)
+      await cache.complete(oldLease!, { status: 'paid' }, clock.toISOString(), f.authority)
+      expect((await report()).deel_staging).toMatchObject({ status: 'staged', paid_entries: 0, approved_entries: 1 })
+      await run("UPDATE sessions SET revoked_at=?,revocation_reason='user_revoked',updated_at=? WHERE id=?", clock.toISOString(), clock.toISOString(), f.a)
+      await expect(status.refresh('2026-10', f.authority)).rejects.toMatchObject({ code: 'forbidden' })
+      expect(await rows('SELECT * FROM staff_payment_effective_events')).toEqual([])
+    })
+    it('projects grouped timesheet receipts as partially paid until every staged day is paid', async () => {
+      const f = await fixture(), sameDay = f.u * 10 + 1, otherDay = sameDay + 1
+      await reportingStore(f.u)
+      await addUnsubmitted(f.u, sameDay)
+      await addUnsubmitted(f.u, otherDay)
+      const staging = f.runtime(), preview = await staging.preview(f.authority, f.selection)
+      await staging.stage(f.authority, { ...f.selection, id: crypto.randomUUID(), fingerprint: preview.fingerprint })
+      let clock = new Date(now), allPaid = false, calls = 0
+      const status = createDeelPaymentStatusRuntime({
+        token: 'owned-token', store: createDeelPaymentStatusStore(db as Parameters<typeof createDeelPaymentStatusStore>[0]),
+        now: () => clock, fetch: async () => { throw new Error('fake client owns reads') },
+        client: { getTimesheet: async (timesheetId) => {
+          calls++
+          const firstDay = timesheetId.endsWith('-1'), remoteStatus = firstDay || allPaid ? 'paid' : 'approved'
+          return { timesheetId, contractId: `c${f.u}`, status: remoteStatus,
+            providerStatus: remoteStatus, quantity: 1, totalAmount: '10.00', currency: 'EUR', spentDate: firstDay ? '2026-10-13' : '2026-10-20' }
+        } },
+      })
+      const report = async () => (await createStaffPaymentStore(db as Parameters<typeof createStaffPaymentStore>[0]).report('2026-10', '2026-10-26')).rows.find((row) => row.user_id === f.u)!
+      expect(await status.refresh('2026-10', f.authority)).toMatchObject({ checked: 2, failed: 0 })
+      expect(calls).toBe(2)
+      expect((await report()).deel_staging).toMatchObject({
+        status: 'partially_paid', staged_entries: 3, paid_entries: 1, paid_seconds: 3600, approved_entries: 2,
+      })
+      clock = new Date(clock.getTime() + 61000); allPaid = true
+      await status.refresh('2026-10', f.authority)
+      expect(await report()).toMatchObject({ paid_cents: 0, deel_staging: { status: 'paid', paid_entries: 3, paid_seconds: 7200 } })
+    })
     it('persists monthly per-person staging progress across batches and exposes changed or uncertain receipts', async () => {
       const f = await fixture(),
         extra = f.u * 10 + 1

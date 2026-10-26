@@ -1,3 +1,5 @@
+import { installDeelPaymentStatusRoutes } from '@ezacto/api'
+import type { DeelPaymentStatusRuntime } from '@ezacto/integrations'
 import { billConfigured, deelConfigurationProblem, quickBooksConfigured, wiseConfigured, parseWiseMode } from '@ezacto/integrations'
 import { installOrganizationHolidayRoutes } from '@ezacto/api'
 import { installModuleGate, moduleAvailability } from '@ezacto/api'
@@ -645,6 +647,7 @@ export interface RuntimeServices {
   recurringRepair?: RecurringRepairService
   bill?: BillRuntime
   /** Deel time sync, run from the daily cron. Absent on the demo. */
+  deelPaymentStatus?: DeelPaymentStatusRuntime
   deelStaging?: DeelStagingApiRuntime
   deelSync?: DeelSyncRuntime
   /** Administrator control of the Deel sync (#1102): the mode, the schedule and the run history. */
@@ -1032,6 +1035,7 @@ export const createApp = (
             if (services.staffPayments !== undefined) {
               installStaffPaymentRoutes(api, services.staffPayments)
             }
+            if (services.deelPaymentStatus !== undefined) installDeelPaymentStatusRoutes(api, services.deelPaymentStatus)
             if (services.deelStaging !== undefined) installDeelStagingRoutes(api, services.deelStaging)
             if (services.deelSync !== undefined && services.deelSyncAdmin !== undefined) {
               installDeelSyncRoutes(api, {

@@ -64,12 +64,20 @@ export interface StaffPaymentPerson {
   provider_override?: StaffPaymentProvider | null
   provider_version?: number
 }
-/** Local receipts for this person's existing, stopped time in the selected month.
- * Staging does not imply that a Deel invoice was approved or paid.
+/** Local staging receipts and cached provider observations for this person's
+ * existing, stopped time in the selected month. Only an explicit provider paid
+ * response contributes to paid_entries; staging alone never does.
  */
 export interface StaffPaymentDeelStaging {
   status:
-    "not_staged" | "partially_staged" | "staged" | "attention" | "no_hours";
+    "not_staged" | "partially_staged" | "staged" | "attention" | "no_hours" | "partially_paid" | "paid";
+  paid_entries: number
+  paid_seconds: number
+  approved_entries: number
+  rejected_entries: number
+  unchecked_entries: number
+  status_checked_at: string | null
+  status_check_failed: boolean
   staged_entries: number;
   unstaged_entries: number;
   unresolved_entries: number;

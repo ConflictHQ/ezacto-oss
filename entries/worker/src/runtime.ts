@@ -1,3 +1,5 @@
+import { createDeelPaymentStatusStore } from '@ezacto/db/d1'
+import { createDeelPaymentStatusRuntime } from '@ezacto/integrations'
 import { createDeelStageStore } from '@ezacto/db/d1'
 import { createDeelStagingRuntime } from '@ezacto/integrations'
 import { parseWiseMode } from '@ezacto/integrations'
@@ -1707,6 +1709,7 @@ export const createRuntimeServices = async (
     // Always composed; it reports itself unconfigured, and does nothing, until
     // the deployment carries both a token and a start date. Never on the demo,
     // whose `credentials` are empty.
+    deelPaymentStatus: createDeelPaymentStatusRuntime({ token: credentials.DEEL_TOKEN, store: createDeelPaymentStatusStore(drizzle), fetch: (request: Request) => fetch(request), now: () => new Date() }),
     deelStaging: createDeelStagingRuntime({token:credentials.DEEL_TOKEN,startDate:credentials.DEEL_SYNC_START_DATE,store:createDeelStageStore(drizzle),fetch:(request:Request)=>fetch(request),now:()=>new Date(),reportError:(error)=>reportWorkerError(options.reportError,error,{phase:'api',traceId:runtimeTraceId()})}),
     deelSyncAdmin: {
       settings: createDeelSyncSettingsStore(drizzle),

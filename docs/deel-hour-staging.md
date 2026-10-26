@@ -11,6 +11,21 @@ link to inspect the invoice and finish payment. This flow does not create a
 payment statement, submit an off-cycle amount, or mark a local payment settled.
 Existing explicit receipt recording remains separate.
 
+Payments automatically checks the saved Deel timesheet IDs and shows **Paid in
+Deel** once Deel reports those hours paid. It shows partial payment when only
+some submitted hours are paid, and retains warnings for changed or uncertain
+entries. The page checks while open, and the worker also refreshes statuses on
+its minute schedule, in bounded batches. The last successful check is shown; unavailable responses
+retain the last confirmed status with a warning instead of implying payment.
+
+These checks require `timesheets:read` on the existing Deel token and only make
+read requests to Deel. They never submit hours, approve timesheets, or initiate
+payment. Provider status describes the submitted hours, while **Recorded
+payment** describes the local monetary ledger. No payment amount or date is
+invented from a timesheet's status; explicit receipt records stay separate.
+Migration `0166_deel_payment_status` adds the durable status cache and polling
+leases; it is applied by the normal release migration gate.
+
 The deployment needs `DEEL_TOKEN` and `DEEL_SYNC_START_DATE`. The start date is a
 lower bound, and only completed days may be selected (up to 366 days and 100
 explicit people per command). Preview refuses more than 1,000 eligible entries;

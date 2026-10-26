@@ -59,6 +59,13 @@ const stagingProgress = (
   staged_seconds: 3600,
   unstaged_seconds: 7200,
   last_staged_at: '2026-09-24T10:00:00Z',
+  paid_entries: 0,
+  paid_seconds: 0,
+  approved_entries: 0,
+  rejected_entries: 0,
+  unchecked_entries: 0,
+  status_checked_at: null,
+  status_check_failed: false,
   ...overrides,
 })
 const form = (): HTMLFormElement => document.querySelector('[data-payment-entry-form]')!
@@ -71,6 +78,74 @@ beforeEach(() => {
   HTMLElement.prototype.scrollIntoView = vi.fn()
 })
 describe('monthly payment register', () => {
+  it('automatically moves staged hours through partial and full Deel payment without clearing edits', async () => {
+    vi.useFakeTimers()
+    const active = new AbortController()
+    Object.defineProperty(document, 'hidden', { configurable: true, value: false })
+    try {
+      const value = report()
+      const row = value.rows[0]!
+      row.payout_provider = 'deel'
+      row.deel_staging = stagingProgress({ status: 'staged', staged_entries: 2, staged_seconds: 10800, unstaged_entries: 0, unstaged_seconds: 0 })
+      let checks = 0
+      const refreshDeelPaymentStatus = vi.fn(async () => {
+        checks += 1
+        row.deel_staging = stagingProgress({
+          status: checks === 1 ? 'partially_paid' : 'paid',
+          staged_entries: 2, staged_seconds: 10800, unstaged_entries: 0, unstaged_seconds: 0,
+          paid_entries: checks === 1 ? 1 : 2, paid_seconds: checks === 1 ? 3600 : 10800,
+          status_checked_at: '2026-09-24T12:00:00Z',
+        })
+        return { data: { configured: true, checked: 2, failed: 0, remaining: 0 } }
+      })
+      await createStaffPaymentsController({
+        getStaffPaymentReport: async () => structuredClone(value),
+        recordStaffPaymentEvent: vi.fn(),
+        refreshDeelPaymentStatus,
+      }).activate({ profile: 'administrator' }, active.signal)
+      const progress = () => document.querySelector('[data-payment-list] [data-deel-staging-status="2"]')!
+      expect(progress().textContent).toContain('Staged in Deel')
+      document.querySelector<HTMLButtonElement>('[data-payment-list] tbody button')!.click()
+      field('kind').value = 'payment'
+      field('kind').dispatchEvent(new Event('change'))
+      field('amount').value = '123.45'
+      field('note').value = 'Keep this unsaved note'
+      await vi.advanceTimersByTimeAsync(0)
+      expect(progress().textContent).toContain('Partially paid in Deel')
+      expect(progress().textContent).toContain('1.00 h paid in Deel')
+      expect(document.querySelector('[data-payment-person-deel]')!.textContent).toContain('Partially paid in Deel')
+      expect(field('amount').value).toBe('123.45')
+      expect(field('note').value).toBe('Keep this unsaved note')
+      await vi.advanceTimersByTimeAsync(30_000)
+      expect(progress().textContent).toContain('Paid in Deel')
+      expect(progress().textContent).toContain('3.00 h paid in Deel')
+      expect(field('amount').value).toBe('123.45')
+      expect(field('note').value).toBe('Keep this unsaved note')
+      expect(refreshDeelPaymentStatus).toHaveBeenCalledTimes(2)
+      expect(row.paid_cents).toBe(0)
+      expect(row.status).toBe('pending')
+    } finally {
+      active.abort()
+      vi.clearAllTimers()
+      vi.useRealTimers()
+    }
+  })
+  it('shows the last confirmed Deel payment and stale warning when a provider refresh failed', async () => {
+    const value = report()
+    value.rows[0]!.deel_staging = stagingProgress({
+      status: 'partially_paid', paid_entries: 1, paid_seconds: 3600, approved_entries: 1,
+      unchecked_entries: 1, status_check_failed: true, status_checked_at: '2026-09-24T12:00:00Z',
+    })
+    const active = new AbortController()
+    await createStaffPaymentsController({ getStaffPaymentReport: async () => value, recordStaffPaymentEvent: vi.fn() }).activate({ profile: 'administrator' }, active.signal)
+    const progress = document.querySelector('[data-payment-list] [data-deel-staging-status="2"]')!
+    expect(progress.textContent).toContain('Partially paid in Deel')
+    expect(progress.textContent).toContain('1.00 h paid in Deel')
+    expect(progress.textContent).toContain('approved in Deel, awaiting payment')
+    expect(progress.textContent).toContain('Showing the last confirmed status')
+    expect(progress.textContent).toContain('2026-09-24T12:00:00Z')
+    active.abort()
+  })
   it('refreshes staged batches in the ledger and restores saved progress when Payments is reopened', async () => {
     const value = report()
     const row = value.rows[0]!
