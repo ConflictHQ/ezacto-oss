@@ -189,14 +189,24 @@ NULL with empty text and do not carry the schema or attachment bytes. The CLI
 explicitly refuses them. Use a separately retained SQL/physical backup or D1 Time
 Travel for those generations; do not infer missing values from the CSV.
 
-The exporter admits its snapshot inside one atomic D1 transaction before returning
-rows. A conservative 64 MiB live-memory estimate includes cell/row overhead,
-encoding and CSV copies; it is **not** a 64 MiB database-size allowance. Over-limit
-exports fail before materializing rows and never publish a completed manifest.
-Each typed chunk and attachment is limited to 16 MiB, matching the encrypted-copy
-format. Larger books/files require the operator SQL and independent attachment
-copy path until a paged snapshot exporter is supported. Backup status reports the
-failure; operators must verify a completed current backup rather than assume one.
+The exporter freezes typed rows in temporary D1 tables within one transaction,
+then publishes pages of at most 500 rows and approximately 1 MiB into R2. Ordinary
+edits do not disturb the captured point in time. Account closure, explicit
+retention erasure and organization/user deletion invalidate and purge active
+copies; completion rechecks that authority atomically. Staging tables are present
+but empty in restored bundles, so backups never recursively capture themselves.
+
+Temporary D1 rows expire after one hour. Invalidated or failed R2 prefixes remain
+private and unavailable through backup downloads, then a durable cleanup queue
+removes them after an additional one-hour grace period for in-flight writes.
+Only newly created capture-specific prefixes are eligible; completed historical
+backups remain subject to the existing retention and restore-review policy.
+
+Each encoded row must fit D1's 2 MB value limit. Typed pages, schema, individual
+CSV views and attachment objects must fit the existing 16 MiB encrypted-copy
+limit. Exceeding those bounds fails the export without a completed receipt; use
+an operator SQL export and independent attachment copies for those cases. This
+limit is per object, not the entire database.
 
 ## D1 Time Travel recovery
 

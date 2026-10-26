@@ -1,5 +1,5 @@
 import { WORKER_BACKUP_CLEAR_TABLES } from '@ezacto/core'
-import { captureWorkerSnapshot, type WorkerBackupFile } from './worker-backup-snapshot.js'
+import { captureWorkerSnapshot, discardWorkerSnapshot, type WorkerBackupFile } from './worker-backup-snapshot.js'
 /**
  * D18 L1: nightly logical export. Produces the D18 bundle format as a set of
  * objects under an R2 prefix. The versioned Worker format is restored by `ez restore` (CLI)
@@ -66,6 +66,7 @@ export interface BackupManifest {
    */
   restore_skips: readonly string[]
   files?: Record<string, WorkerBackupFile>
+  capture_id?: string
 }
 
 export interface BackupRunRecord {
@@ -168,19 +169,9 @@ export const exportBundle = async (
   prefix: string,
 ): Promise<BackupManifest> => {
   const exportedAt = new Date().toISOString()
-  const tables: BackupManifest['tables'] = {}
-  let totalRows = 0
-
-  const snapshot = await captureWorkerSnapshot(database, store, prefix)
-  const backedUp = snapshot.tables.map((table) => table.name)
-  for (const table of snapshot.tables) {
-    const lines = [toCsvRow(table.columns), ...table.rows.map(toCsvRow)]
-    const csv = lines.join('\n') + '\n'
-    await store.put(`${prefix}tables/${table.name}.csv`, csv)
-    tables[table.name] = { row_count: table.rows.length, sha256: await sha256Hex(csv) }
-    totalRows += table.rows.length
-  }
-
+  const snapshot = await captureWorkerSnapshot(database, store, prefix, toCsvRow)
+  const tables = snapshot.tables
+  const backedUp = Object.keys(tables)
   const manifest: BackupManifest = {
     schema_version: SCHEMA_VERSION,
     bundle_version: BUNDLE_VERSION,
@@ -190,14 +181,19 @@ export const exportBundle = async (
     // Carried in the manifest rather than left to a reader of the source: the
     // bundle outlives the version of ezacto that wrote it.
     restore_skips: EPHEMERAL_TABLES.filter((table) => backedUp.includes(table)),
-    total_rows: totalRows,
+    total_rows: snapshot.totalRows,
     files: snapshot.files,
+    capture_id: snapshot.captureId,
   }
 
-  await store.put(`${prefix}manifest.json`, JSON.stringify(manifest, null, 2))
-  await store.put(`${prefix}RESTORE.md`, RESTORE_MD)
-
-  return manifest
+  try {
+    await store.put(`${prefix}RESTORE.md`, RESTORE_MD)
+    await store.put(`${prefix}manifest.json`, JSON.stringify(manifest, null, 2))
+    return manifest
+  } catch (error) {
+    await discardWorkerSnapshot(database,snapshot.captureId)
+    throw error
+  }
 }
 
 export const recordBackupStart = async (
@@ -222,22 +218,19 @@ export const completeBackupRun = async (
   prefix: string,
   now: string,
 ): Promise<void> => {
-  await database
-    .prepare(
-      `UPDATE backup_runs SET status = 'completed', completed_at = ?,
-       r2_prefix = ?, manifest_json = ?, table_count = ?, total_rows = ?,
-       updated_at = ? WHERE id = ?`,
-    )
-    .bind(
-      now,
-      prefix,
-      JSON.stringify(manifest),
-      manifest.table_count,
-      manifest.total_rows,
-      now,
-      runId,
-    )
-    .run()
+  if (manifest.bundle_version === '0038') {
+    if (!manifest.capture_id) throw new Error('Worker backup completion requires its capture receipt.')
+    const results = await database.batch([
+      database.prepare(`UPDATE backup_runs SET status='completed',completed_at=?,r2_prefix=?,manifest_json=?,table_count=?,total_rows=?,updated_at=? WHERE id=? AND ((status='running' AND EXISTS(SELECT 1 FROM worker_backup_snapshots WHERE id=? AND prefix=? AND state='ready')) OR (status='completed' AND r2_prefix=? AND manifest_json=?))`)
+        .bind(now,prefix,JSON.stringify(manifest),manifest.table_count,manifest.total_rows,now,runId,manifest.capture_id,prefix,prefix,JSON.stringify(manifest)),
+      database.prepare(`UPDATE worker_backup_snapshots SET state='completed' WHERE id=? AND EXISTS(SELECT 1 FROM backup_runs WHERE id=? AND status='completed' AND manifest_json=?)`).bind(manifest.capture_id,runId,JSON.stringify(manifest)),
+      database.prepare(`DELETE FROM worker_backup_snapshots WHERE id=? AND state='completed'`).bind(manifest.capture_id),
+    ])
+    if (!results[0]?.meta.changes) throw new Error('Worker backup was invalidated before completion.')
+    return
+  }
+  await database.prepare(`UPDATE backup_runs SET status='completed',completed_at=?,r2_prefix=?,manifest_json=?,table_count=?,total_rows=?,updated_at=? WHERE id=?`)
+    .bind(now,prefix,JSON.stringify(manifest),manifest.table_count,manifest.total_rows,now,runId).run()
 }
 
 export const failBackupRun = async (
@@ -249,7 +242,7 @@ export const failBackupRun = async (
   await database
     .prepare(
       `UPDATE backup_runs SET status = 'failed', completed_at = ?,
-       error_message = ?, updated_at = ? WHERE id = ?`,
+       error_message = ?, updated_at = ? WHERE id = ? AND status <> 'completed'`,
     )
     .bind(now, error, now, runId)
     .run()

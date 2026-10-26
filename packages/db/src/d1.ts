@@ -583,3 +583,5 @@ export { previewTimesheetLockedDates, type TimesheetLockPreviewWindow } from './
 export * from './stripe-payment-alerts.js'
 
 export * from './bank-deposit-review.js'
+
+export { expireWorkerSnapshots } from './worker-backup-snapshot.js'

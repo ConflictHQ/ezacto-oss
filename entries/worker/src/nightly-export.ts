@@ -1,6 +1,7 @@
 import {
   completeBackupRun,
   exportBundle,
+  expireWorkerSnapshots,
   failBackupRun,
   recordBackupStart,
   shouldRunNightlyBackup,
@@ -18,6 +19,27 @@ const createR2BackupStore = (bucket: R2Bucket): BackupObjectStore => ({
   },
 })
 
+/** Delete only capture-specific failed prefixes after in-flight writers have expired. */
+export const cleanupAbandonedWorkerBackups = async (database:D1Database,bucket:R2Bucket):Promise<void> => {
+  await expireWorkerSnapshots(database)
+  const cleanup = await database.prepare("SELECT prefix FROM worker_backup_cleanup WHERE julianday(available_at)<=julianday('now') AND (last_error IS NULL OR last_error<>'invalid_prefix') ORDER BY available_at LIMIT 1").first<{prefix:string}>()
+  if (cleanup && /^backups\/\d{4}-\d{2}-\d{2}\/[0-9a-f-]{36}\/$/u.test(cleanup.prefix)) {
+    try {
+      let empty = false
+      for (let page = 0; page < 2; page++) {
+        const objects = await bucket.list({prefix:cleanup.prefix,limit:1000})
+        if (!objects.objects.length) { empty=true;break }
+        await bucket.delete(objects.objects.map(object=>object.key))
+      }
+      if (empty) await database.prepare('DELETE FROM worker_backup_cleanup WHERE prefix=?').bind(cleanup.prefix).run()
+    } catch {
+      await database.prepare("UPDATE worker_backup_cleanup SET attempts=attempts+1,last_error='storage_unavailable' WHERE prefix=?").bind(cleanup.prefix).run()
+    }
+  } else if (cleanup) {
+    await database.prepare("UPDATE worker_backup_cleanup SET last_error='invalid_prefix' WHERE prefix=?").bind(cleanup.prefix).run()
+  }
+}
+
 /**
  * D18 L1: runs the nightly logical export to R2. Idempotent per UTC day —
  * if a nightly backup already started today, this is a no-op.
@@ -26,11 +48,12 @@ export const runNightlyExport = async (
   database: D1Database,
   bucket: R2Bucket,
 ): Promise<void> => {
+  await cleanupAbandonedWorkerBackups(database,bucket)
   if (!(await shouldRunNightlyBackup(database, new Date()))) return
 
   const now = new Date().toISOString()
   const date = now.slice(0, 10)
-  const prefix = `backups/${date}/`
+  const prefix = `backups/${date}/${crypto.randomUUID()}/`
 
   const runId = await recordBackupStart(database, 'nightly', now)
   try {

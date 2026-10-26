@@ -8,7 +8,7 @@ import { createHash } from "node:crypto";
 import BetterSqlite3 from "better-sqlite3";
 import { Miniflare } from "miniflare";
 import { describe, it, expect } from "vitest";
-import { workerBackupCaptureMigration } from '../../db/src/migrations/0176_worker_backup_capture.js'
+import { workerBackupCaptureMigration } from "../../db/src/migrations/0176_worker_backup_capture.js";
 import { migrateD1 } from "../../db/src/migrate.js";
 import { exportBundle } from "../../db/src/backup.js";
 import { restoreBackup } from "../src/backup.js";
@@ -78,7 +78,10 @@ describe("actual Worker bundle restore", () => {
     try {
       const db = await mf.getD1Database("DB"),
         bucket = await mf.getR2Bucket("BUCKET");
-      await db.batch(workerBackupCaptureMigration.map(sql => db.prepare(sql)))
+      await db.exec("CREATE TABLE account_closures(id INTEGER); CREATE TABLE account_retention_review_events(decision TEXT); CREATE TABLE organizations(id INTEGER); CREATE TABLE users(id INTEGER);");
+      await db.batch(
+        workerBackupCaptureMigration.map((sql) => db.prepare(sql)),
+      );
       await db.exec(
         `CREATE TABLE sample(id INTEGER PRIMARY KEY AUTOINCREMENT, nullable TEXT, empty TEXT, text_value TEXT, binary BLOB, int_value INTEGER, real_value REAL); CREATE TABLE file_objects(id INTEGER PRIMARY KEY,content_hash TEXT,file_key TEXT,byte_size INTEGER); CREATE TABLE sessions(id TEXT);`,
       );
@@ -192,9 +195,7 @@ describe("actual Worker bundle restore", () => {
           targetAttachmentDirectory: join(root, "other"),
         }),
       ).rejects.toThrow();
-      const chunk = Object.keys(manifest.files!).find((n) =>
-        n.startsWith("rows/"),
-      )!;
+      const chunk = "rows/sample/000000.json";
       await writeFile(join(bundle, chunk), "[]");
       await expect(
         restoreBackup({

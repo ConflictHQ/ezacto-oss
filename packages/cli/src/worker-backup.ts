@@ -1,4 +1,8 @@
-import { WORKER_BACKUP_CLEAR_TABLES, workerBackupFiles, type WorkerBackupFileReceipt } from '@ezacto/core'
+import {
+  WORKER_BACKUP_CLEAR_TABLES,
+  workerBackupFiles,
+  type WorkerBackupFileReceipt,
+} from "@ezacto/core";
 import { constants } from "node:fs";
 import {
   chmod,
@@ -20,7 +24,7 @@ import type {
   RestoreResult,
 } from "./backup.js";
 
-type FileReceipt = WorkerBackupFileReceipt
+type FileReceipt = WorkerBackupFileReceipt;
 
 interface Schema {
   format: string;
@@ -227,6 +231,18 @@ export async function restoreWorkerBackup(
         if (count !== table.row_count)
           throw new Error("Worker snapshot row count mismatch.");
       }
+      const attachmentMappings = new Map(schema.attachments.map(item => [item.file_key,item]))
+      if (attachmentMappings.size !== schema.attachments.length) throw new Error('Duplicate Worker attachment mapping.')
+      const referencedKeys = new Set<string>()
+      for (const table of ['file_objects','brand_assets']) if (tableNames.has(table)) {
+        const referenced = database.prepare(`SELECT file_key,content_hash,byte_size FROM ${quote(table)}`).all() as Array<{file_key:string;content_hash:string;byte_size:number}>
+        for (const item of referenced) {
+          const mapped=attachmentMappings.get(item.file_key)
+          if (!mapped || mapped.sha256!==item.content_hash || mapped.byte_size!==item.byte_size) throw new Error('Worker attachment inventory differs from database references.')
+          referencedKeys.add(item.file_key)
+        }
+      }
+      if (referencedKeys.size!==attachmentMappings.size) throw new Error('Worker attachment inventory includes an unreferenced object.')
       // Stateful credentials are evidence in the bundle, never reusable restored sessions.
       for (const table of WORKER_BACKUP_CLEAR_TABLES)
         if (tableNames.has(table))
@@ -244,7 +260,6 @@ export async function restoreWorkerBackup(
           if (tableNames.has(value.name) && /^\d+$/u.test(value.seq))
             sequence.run(value.name, BigInt(value.seq));
       }
-      if (tableNames.has('worker_backup_capture')) database.prepare('UPDATE worker_backup_capture SET admitted=0,estimated_bytes=0 WHERE singleton=1').run();
       for (const object of schema.objects)
         if (object.type !== "table") database.prepare(object.sql).run();
       database.pragma("foreign_keys = ON");

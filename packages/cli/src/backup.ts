@@ -475,6 +475,12 @@ export const restoreBackup = async (
       }
       totalRows += result.count
     }
+    if (database.prepare("SELECT 1 FROM sqlite_schema WHERE type='table' AND name='worker_backup_snapshots'").get()) {
+      database.prepare("UPDATE worker_backup_snapshots SET state='completed'").run()
+      database.prepare('DELETE FROM worker_backup_snapshots').run()
+      database.prepare('DELETE FROM worker_backup_rows').run()
+      database.prepare('DELETE FROM worker_backup_cleanup').run()
+    }
     // OAuth grants belong to one live instance incarnation. A restored copy
     // retains accepted time and proposal history, but must obtain fresh consent.
     if (database.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name='calendar_sync_instance'").get()) {
