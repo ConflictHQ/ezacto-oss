@@ -52,6 +52,8 @@ try:
   payload=response.read()
   if response.status!=expected:raise RuntimeError(f'{path} expected {expected}, got {response.status}: '+payload.decode()[:300])
   return json.loads(payload) if payload else None
+ step=0
+ while not req('/__proof/schema',{'step':step})['done']:step+=1
  tokens=req('/__proof/seed',{},token=None)
  admin=tokens['admin'];req('/api/v1/csv-import-capabilities',token=admin)
  data=b'Email,Client,Project,Task,Description,Billable,Start Date,Start Time,End Date,End Time,Duration (h)\nowned@example.test,C,P,T,Owned proof one,Yes,2026-09-01,09:00:00,2026-09-01,10:00:00,01:00:00\nowned@example.test,C,P,T,Owned proof two,Yes,2026-09-02,09:00:00,2026-09-02,10:00:00,01:00:00\n'
@@ -67,10 +69,26 @@ try:
   if result['stages'][0]['status']=='completed':break
   if time.time()>deadline:raise RuntimeError('Queue completion deadline; safe status '+json.dumps(result))
   time.sleep(2)
+ altered=dict(command,version=command['version']+1)
+ req(base+'/apply',altered,token=admin,expected=409)
  req(base+'/apply',command,token=admin);req('/__proof/duplicate',{'stage_id':stage['id']});time.sleep(5)
  result=req('/__proof/inspect');assert result['time']=={'count':2,'seconds':7200},result['time'];assert max(result['calls'])<=50,result['calls'];assert result['money']==before['money']
  req(base+'/input',method='DELETE',token=admin,expected=204);final=req('/__proof/inspect');assert not final['objects'];assert final['time']==result['time']
- evidence={'manifest':manifest,'checks':{'ordinary_native_auth':True,'other_admin_denied':True,'staff_denied':True,'anonymous_denied':True,'preview_time_writes':0,'lost_publication_repaired':True,'replay_and_duplicate_safe':True,'time':final['time'],'money_before':before['money'],'money_after':final['money'],'queue_d1_calls':result['calls'],'private_objects_after_purge':len(final['objects'])}}
+ # A second actual API import pauses after one durable row, then native
+ # cancellation must survive queued redelivery and retain exactly that row.
+ second=data.replace(b'2026-09-01',b'2026-10-01').replace(b'2026-09-02',b'2026-10-02')
+ two=req('/api/v1/csv-imports',second,token=admin,raw=True,expected=201)['data'];base2='/api/v1/csv-imports/'+two['id']
+ req(base2+'/mapping',{'version':two['version'],'workspace_identity':name,'exporter_zone':'UTC','date_format':'iso','destination_interpretation':'source_wall_time','currency_policy':'destination_rates','mapping':{},'excluded_lines':[]},method='PATCH',token=admin)
+ prev2=req(base2+'/preview',{},token=admin)['data'];cmd2=dict(command,command_id=str(uuid.uuid4()),preview_id=prev2['preview_id'],version=prev2['run']['version'])
+ req('/__proof/hold',{'stage_id':two['id']});req(base2+'/apply',cmd2,token=admin);deadline=time.time()+120
+ while req('/__proof/inspect')['time']['count']<3:
+  if time.time()>deadline:raise RuntimeError('Partial cancellation proof did not commit first row')
+  time.sleep(2)
+ req(base2+'/cancel',{'command_id':str(uuid.uuid4())},token=admin);req('/__proof/hold',{'stage_id':None});req('/__proof/duplicate',{'stage_id':two['id']});time.sleep(6)
+ cancelled=req('/__proof/inspect');assert cancelled['time']=={'count':3,'seconds':10800},cancelled['time']
+ assert [r for r in cancelled['stages'] if r['id']==two['id']][0]['status']=='cancelled'
+ req(base2+'/input',method='DELETE',token=admin,expected=204);cancelled=req('/__proof/inspect');assert not cancelled['objects'];assert cancelled['money']==before['money']
+ evidence={'manifest':manifest,'checks':{'ordinary_native_auth':True,'other_admin_denied':True,'staff_denied':True,'anonymous_denied':True,'preview_time_writes':0,'lost_publication_repaired':True,'replay_and_duplicate_safe':True,'time':final['time'],'money_before':before['money'],'money_after':final['money'],'queue_d1_calls':result['calls'],'private_objects_after_purge':len(cancelled['objects']),'partial_cancel_retains_exactly_one_row':True,'after_partial_cancel_time':cancelled['time'],'altered_command_denied':True}}
  (out/'evidence.json').write_text(json.dumps(evidence,indent=2)+'\n');print('Owned deployed proof passed; evidence '+str(out/'evidence.json'),flush=True)
 finally:
  errors=[]

@@ -1,6 +1,7 @@
 // Disposable proof target only. Never imported by a production entry.
 import worker from '../../entries/worker/src/index.ts'
-import {migrateD1,createD1SessionStore} from '@ezacto/db/d1'
+import {migrateD1,migrationIds,createD1SessionStore} from '@ezacto/db/d1'
+import {migrateD1Through} from '../../packages/db/src/migrate.ts'
 const json=value=>Response.json(value)
 const observe=db=>{let calls=0;const originals=new WeakMap();const wrap=p=>{const s={bind:(...v)=>wrap(p.bind(...v)),first:(...v)=>{calls++;return p.first(...v)},all:(...v)=>{calls++;return p.all(...v)},run:(...v)=>{calls++;return p.run(...v)},raw:(...v)=>{calls++;return p.raw(...v)}};originals.set(s,p);return s};return{database:{prepare:sql=>wrap(db.prepare(sql)),batch:items=>{calls++;return db.batch(items.map(s=>originals.get(s)||s))},exec:sql=>{calls++;return db.exec(sql)}},calls:()=>calls}}
 export default {
@@ -8,6 +9,12 @@ export default {
     if(!env.PROOF_SECRET||request.headers.get('x-owned-proof')!==env.PROOF_SECRET)return new Response(null,{status:404})
     if(!/^ezacto-csv1184-proof-[a-f0-9]+$/.test(env.PROOF_ID??''))return new Response(null,{status:404})
     const url=new URL(request.url)
+    if(url.pathname==='/__proof/schema'){
+      const input=await request.json()
+      if(!Number.isInteger(input.step)||input.step<0||input.step>Math.ceil(migrationIds.length/10))return new Response(null,{status:400})
+      const through=migrationIds[Math.min((input.step+1)*10,migrationIds.length)-1]
+      try{await migrateD1Through(env.DB,through);return json({done:(input.step+1)*10>=migrationIds.length,through})}catch(error){return new Response(JSON.stringify({fixture_error:String(error)}),{status:500})}
+    }
     if(url.pathname==='/__proof/seed'){
       try{
       await migrateD1(env.DB)
@@ -18,7 +25,7 @@ export default {
         env.DB.prepare('CREATE TABLE csv_proof_control(singleton INTEGER PRIMARY KEY,lose_send INTEGER NOT NULL,hold_stage TEXT)'),
         env.DB.prepare('INSERT INTO csv_proof_control VALUES(1,1,NULL)'),
         env.DB.prepare("INSERT INTO organizations(id,name,modules,created_at,updated_at) VALUES(1,'Owned CSV proof','{}',?,?)").bind(now,now),
-        env.DB.prepare("INSERT INTO users(id,first_name,last_name,profile,manager_grants,created_at,updated_at) VALUES(2,'Owned','Admin','administrator','[]',?,?),(3,'Owned','Other','administrator','[]',?,?),(4,'Owned','Staff','employee','[]',?,?)").bind(now,now,now,now,now,now),
+        env.DB.prepare("INSERT INTO users(id,first_name,last_name,profile,manager_grants,created_at,updated_at) VALUES(2,'Owned','Admin','administrator','[]',?,?),(3,'Owned','Other','administrator','[]',?,?),(4,'Owned','Staff','member','[]',?,?)").bind(now,now,now,now,now,now),
         env.DB.prepare("INSERT INTO user_emails(user_id,address,is_primary,verified_at,created_at,updated_at) VALUES(2,'owned@example.test',1,?,?,?),(3,'other@example.test',1,?,?,?),(4,'staff@example.test',1,?,?,?)").bind(now,now,now,now,now,now,now,now,now),
         env.DB.prepare("INSERT INTO clients(id,name,currency,created_at,updated_at) VALUES(1,'C','USD',?,?)").bind(now,now),
         env.DB.prepare("INSERT INTO projects(id,name,client_id,created_at,updated_at) VALUES(1,'P',1,?,?)").bind(now,now),
