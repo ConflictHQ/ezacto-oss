@@ -10243,6 +10243,3 @@ input::file-selector-button:hover { background: var(--ez-surface-2); }
 }
 .csv-import .settings-toggle { min-height: 44px; align-items: center; }
 .csv-import [hidden] { display: none !important; }
-
-[data-request-busy]::before { content: ''; display: inline-block; vertical-align: middle; margin-inline-end: 9px; width: 14px; height: 14px; border: 2px solid var(--ez-border); border-top-color: var(--ez-action); border-radius: 50%; animation: auth-spin 900ms linear infinite; }
-@media (prefers-reduced-motion: reduce) { [data-request-busy]::before { animation: none; } }
