@@ -1,0 +1,76 @@
+{
+  "issue": 1299,
+  "parent_issue": 428,
+  "source_commit": "e162adab9f5301ddea716eab133e3be1640d8c78",
+  "implementation_commit": "680e1eb2",
+  "integrated_main": "9d20989d",
+  "migration": "0173_calendar_connections",
+  "scope": {
+    "provider_adapters_enabled": false,
+    "provider_permissions_granted": false,
+    "provider_ui_added": false,
+    "fake_source_shipped": false,
+    "external_provider_requests": false,
+    "production_writes": false
+  },
+  "native_runtime_proofs": [
+    "Container runtime + native session HTTP + SQLite connection/proposal store",
+    "Worker runtime + native session HTTP + Miniflare D1 connection/proposal store"
+  ],
+  "checks": {
+    "core_custody_and_sync_tests": 22,
+    "full_premerge_connection_and_closure_tests_passed": 57,
+    "post_merge_connection_and_closure_tests_passed": 31,
+    "full_demo_reset_tests": 18,
+    "post_merge_reset_integration_tests": 3,
+    "runtime_and_contract_cases": 6,
+    "api_connection_and_contract_cases": 8,
+    "legacy_proposal_api_cases": 6,
+    "post_merge_cli_backup_restore_cases": 14,
+    "worker_route_contract_cases": 4
+  },
+  "boundaries_proved": [
+    "Grant/cursor ciphertext binds instance, principal, provider, connection generation, credential revision and purpose",
+    "Native-session ownership; administrator-only cross-incarnation cleanup counts; API-token and cross-origin denial",
+    "Atomic proposal actions plus encrypted cursor; lost response resumes from committed cursor without duplication",
+    "Concurrent token rotations have one valid credential revision; disconnect/nonce/session/closure fences refuse stale work",
+    "Accepted time remains unchanged; source edits/cancellation surface on proposals",
+    "Closure review acknowledgement is invalidated by credential changes; local erasure retains encrypted unresolved external-cleanup custody",
+    "Physical restore and demo reset rotate the instance and retain manual-required custody; logical backups flag live connections non-restorable",
+    "Aborted/timed-out provider work cannot rotate credentials late; bounded event/page input and configurable date windows"
+  ],
+  "verification": {
+    "typecheck": [
+      "core",
+      "db",
+      "api",
+      "integrations",
+      "container",
+      "worker"
+    ],
+    "build": [
+      "core",
+      "db",
+      "api",
+      "integrations",
+      "mailer",
+      "web",
+      "client",
+      "cli",
+      "worker dry-run",
+      "container"
+    ],
+    "touched_lint": "passed",
+    "contract_check": "passed"
+  },
+  "remaining_parent_scope": [
+    "Google/Microsoft verified read-only adapters and OAuth consent",
+    "Evidence-backed provider revocation/cleanup processing; no arbitrary completion setter",
+    "Week-calendar proposal UI and project/task last-choice prefill"
+  ],
+  "notes": [
+    "This is local native-runtime acceptance, not Google or Microsoft provider acceptance.",
+    "Source code stays on its branch for review; no PR push or deployment was performed.",
+    "CSV migration0172 is intentionally not incorporated until its release lands; this branch preserves main migrations0168/0169 and reserves0173."
+  ]
+}
