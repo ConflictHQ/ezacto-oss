@@ -32,6 +32,7 @@ import type {
 } from '@conflict-hq/ezacto-client'
 import { inspectEmailTemplateVariables, invoicePeriodLabel, sendWeekday } from '@ezacto/core'
 import { parseDurationSeconds } from '../shell/model.js'
+import type { InvoiceProviderAlertApi } from './provider-alerts.js'
 
 /**
  * The sentence to show for a failed invoice request: the first field the API
@@ -124,7 +125,7 @@ export const invoiceStatesFor = (
 
 export type InvoiceHoursReportFormat = 'pdf' | 'csv' | 'xlsx'
 
-export interface InvoicePaymentApi {
+export interface InvoicePaymentApi extends InvoiceProviderAlertApi {
   getInvoiceHoursReconciliation?(id: number, signal?: AbortSignal): Promise<InvoiceHoursReview>
   getInvoice(id: number, signal?: AbortSignal): Promise<Invoice>
   /**

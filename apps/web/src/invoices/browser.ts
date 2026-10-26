@@ -1,4 +1,5 @@
 import { setRequestBusy } from '../request-feedback.js'
+import { createInvoiceProviderAlerts } from './provider-alerts.js'
 import { accountingProviderAvailable } from '../accounting-providers.js'
 import { renderDataTable, type CellContent, type DataTableSort } from '../components/data-table.js'
 import { rememberedSort, resolveSort } from '../components/table-sort.js'
@@ -567,6 +568,7 @@ export interface InvoicePaymentController {
 export const createInvoicePaymentController = (
   api: Partial<InvoicePaymentApi>,
 ): InvoicePaymentController => {
+  const providerAlerts = createInvoiceProviderAlerts(api)
   const detailPage = document.documentElement.dataset.appView === 'invoice-detail'
   const status = required<HTMLElement>('[data-invoice-detail-status]')
   const retry = required<HTMLButtonElement>('[data-invoice-detail-retry]')
@@ -1487,6 +1489,7 @@ export const createInvoicePaymentController = (
   }
 
   const clearPrivatePresentation = (): void => {
+    providerAlerts.clear()
     invoice = null
     mutationFeedback = null
     for (const region of [status, paymentResult, deleteResult, composerResult, transitionResult, attachmentStatus, composerPreviewResult, remindersLine]) setRequestBusy(region, false)
@@ -1789,6 +1792,15 @@ export const createInvoicePaymentController = (
       void loadAttachments(session, invoiceId!)
       void loadQuickBooks(session, invoiceId!)
       void loadReminders(session, invoiceId!)
+      if (session.identity.authentication.kind === 'session') {
+        void providerAlerts.load(invoiceId!, {
+          key: session,
+          signal: session.signal,
+          administrator: session.identity.profile === 'administrator',
+          isCurrent: () => current() === session && invoice?.id === invoiceId,
+          onSessionFailure: session.onSessionFailure,
+        })
+      } else providerAlerts.clear()
       syncControls()
       return true
     } catch (error) {
