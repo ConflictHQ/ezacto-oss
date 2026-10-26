@@ -11,6 +11,7 @@ export interface CreateStaffMagicLinkInput {
   userId: number
   tokenHash: string
   codeHash: string
+  requesterHash?: string
   flow: StaffMagicLinkFlow
   expiresAt: string
   createdAt: string
@@ -37,7 +38,8 @@ export interface StaffMagicLinkStore {
     userId: number,
     codeHash: string,
     now: string,
-    maxAttempts: number
+    maxAttempts: number,
+    requesterHash: string
   ): Promise<StaffMagicLinkRedemption | null>
   /**
    * Whether the user already has an unconsumed, unexpired link created at or
@@ -113,6 +115,7 @@ const createStaffMagicLinkStore = (
     const userId = userIdentifier(input.userId)
     const tokenHash = digest(input.tokenHash, 'staff magic link token hash')
     const codeHash = digest(input.codeHash, 'staff magic link code hash')
+    const requesterHash = input.requesterHash === undefined ? null : digest(input.requesterHash, 'staff code requester hash')
     const flow = flowValue(input.flow)
     const createdAt = canonicalTimestamp(input.createdAt, 'creation time')
     const expiresAt = canonicalTimestamp(input.expiresAt, 'expiry')
@@ -131,16 +134,23 @@ const createStaffMagicLinkStore = (
         bindings: [createdAt, cleanupBefore],
       },
       {
+        // Keep only the latest code binding; old high-entropy links remain valid.
+        query: `UPDATE staff_magic_links SET requester_hash = NULL
+          WHERE user_id = ? AND requester_hash = ? AND consumed_at IS NULL
+            AND NOT EXISTS(SELECT 1 FROM staff_magic_links WHERE token_hash = ?)`,
+        bindings: [userId, requesterHash, tokenHash],
+      },
+      {
         query: `INSERT INTO staff_magic_links (
-            user_id, token_hash, code_hash, flow, attempts,
+            user_id, token_hash, code_hash, requester_hash, flow, attempts,
             expires_at, consumed_at, created_at, updated_at
-          ) VALUES (?, ?, ?, ?, 0, ?, NULL, ?, ?)
+          ) VALUES (?, ?, ?, ?, ?, 0, ?, NULL, ?, ?)
           ON CONFLICT(token_hash) DO NOTHING
           RETURNING id`,
-        bindings: [userId, tokenHash, codeHash, flow, expiresAt, createdAt, createdAt],
+        bindings: [userId, tokenHash, codeHash, requesterHash, flow, expiresAt, createdAt, createdAt],
       },
     ])
-    return rows[1]?.length === 1 ? 'created' : 'collision'
+    return rows[2]?.length === 1 ? 'created' : 'collision'
   },
   consumeByToken: async (presentedTokenHash, now) => {
     const tokenHash = digest(presentedTokenHash, 'staff magic link token hash')
@@ -157,9 +167,10 @@ const createStaffMagicLinkStore = (
     ])
     return redemption(rows[0]?.[0] as unknown as RedemptionRow | undefined)
   },
-  consumeByCode: async (presentedUserId, presentedCodeHash, now, maxAttempts) => {
+  consumeByCode: async (presentedUserId, presentedCodeHash, now, maxAttempts, presentedRequesterHash) => {
     const userId = userIdentifier(presentedUserId)
     const codeHash = digest(presentedCodeHash, 'staff magic link code hash')
+    const requesterHash = digest(presentedRequesterHash, 'staff code requester hash')
     const consumedAt = canonicalTimestamp(now, 'consumption time')
     if (!Number.isSafeInteger(maxAttempts) || maxAttempts < 1) {
       throw new RangeError('staff magic link max attempts must be a positive integer')
@@ -170,10 +181,10 @@ const createStaffMagicLinkStore = (
       {
         query: `UPDATE staff_magic_links
           SET consumed_at = ?, updated_at = ?
-          WHERE user_id = ? AND code_hash = ? AND consumed_at IS NULL
+          WHERE user_id = ? AND requester_hash = ? AND code_hash = ? AND consumed_at IS NULL
             AND julianday(expires_at) > julianday(?) AND attempts < ?
           RETURNING user_id AS userId, flow`,
-        bindings: [consumedAt, consumedAt, userId, codeHash, consumedAt, maxAttempts],
+        bindings: [consumedAt, consumedAt, userId, requesterHash, codeHash, consumedAt, maxAttempts],
       },
       // A wrong code (nothing consumed above) burns one attempt on the still
       // active record; a consumed row no longer matches, so a success never
@@ -181,9 +192,9 @@ const createStaffMagicLinkStore = (
       {
         query: `UPDATE staff_magic_links
           SET attempts = attempts + 1, updated_at = ?
-          WHERE user_id = ? AND consumed_at IS NULL
+          WHERE user_id = ? AND requester_hash = ? AND consumed_at IS NULL
             AND julianday(expires_at) > julianday(?) AND attempts < ?`,
-        bindings: [consumedAt, userId, consumedAt, maxAttempts],
+        bindings: [consumedAt, userId, requesterHash, consumedAt, maxAttempts],
       },
     ])
     return redemption(rows[0]?.[0] as unknown as RedemptionRow | undefined)

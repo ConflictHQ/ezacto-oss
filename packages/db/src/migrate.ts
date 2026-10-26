@@ -1,3 +1,4 @@
+import { staffCodeRequesterMigration } from './migrations/0175_staff_code_requester.js'
 import { calendarConnectionsMigration } from './migrations/0172_calendar_connections.js'
 import { stripePaymentAlertsMigration } from './migrations/0173_stripe_payment_alerts.js'
 import { bankDepositReviewMigration } from './migrations/0174_bank_deposit_review.js'
@@ -1707,6 +1708,7 @@ const migrations = [
   { id: '0172_calendar_connections', statements: calendarConnectionsMigration },
   { id: '0173_stripe_payment_alerts', statements: stripePaymentAlertsMigration },
   { id: '0174_bank_deposit_review', statements: bankDepositReviewMigration },
+  { id: '0175_staff_code_requester', statements: staffCodeRequesterMigration },
 ] as const
 
 // Fixtures assert against this rather than re-listing ids: a hand-copied ledger merges
