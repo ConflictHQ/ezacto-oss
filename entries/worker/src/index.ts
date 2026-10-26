@@ -418,7 +418,7 @@ export const createWorker = (options: WorkerOptions = {}): ExportedHandler<Worke
     }
     if (controller.cron === '* * * * *' && invoices && services.deelPaymentStatus !== undefined) {
       try { await services.deelPaymentStatus.refresh(null) }
-      catch (error) { report(error, { phase: 'scheduled' }) }
+      catch (error) { report(error, { phase: 'scheduled', operation: 'Deel payment status' }) }
     }
     if (controller.cron === '0 * * * *' && services.deelSync !== undefined) {
       // Deel time sync (issue 103, #1102). Runs only when the organization has

@@ -92,7 +92,7 @@ Implementation reference: `entries/worker/src/index.ts`, `entries/worker/src/app
 
 
 For scheduled failures, the static `operation` distinguishes the failing job
-(for example `QuickBooks catch-up` or `outbox drain`). `failure_code` is one of
+(for example `QuickBooks catch-up`, `Deel payment status` or `outbox drain`). `failure_code` is one of
 `d1_network_lost`, `database_query_failed`, or `unknown`; it inspects a bounded
 cause chain without emitting exception text, SQL or parameters. A parameter
 containing a network-error phrase cannot turn an unrelated query failure into
@@ -104,3 +104,20 @@ misses the uploaded `~/workflow-main.js`; the canonical `/workflow-main.js`
 absolute path restores that match. The source-map debug endpoint can report a
 legacy lookup failure even when the actual indexed event successfully resolves
 against an artifact bundle. Use that event as the authoritative result.
+
+### Recorded source-map lookup proof
+
+On 2026-10-26, the locally exercised SDK/scrubber produced the explicitly labeled
+`synthetic-verification` event `36676a3e8b234af7a87c7f94bb1ad166` at informational
+level, using the already uploaded release
+`3a9f2d67eb2ef1168dd9a072f159fe56bc1c3dca`. The submitted bundle frames used
+`filename: workflow-main.js` and `abs_path: /workflow-main.js`.
+
+An authenticated read of the indexed event returned six mapped frames and an
+empty processing `errors` list. Those frames included the scheduled handler in
+`entries/worker/src/index.ts`, QuickBooks `catchUp`, and `readConnection` in the
+database package. The event source-map debug endpoint was also checked. This
+proves matching against that uploaded bundle; it does not prove that this change
+is deployed, reproduce a production database failure, or establish its cause.
+Repeat the lookup with a labeled synthetic event for the deployed release when
+verifying a new deployment.

@@ -9,7 +9,7 @@ export const workerScheduledOperations = [
   'off-site backup checkpoint', 'scheduled job proposal sweep',
   'scheduled manifest notice', 'scheduled run dispatch', 'scheduled run expiry',
   'nightly export', 'recurring invoice generation', 'payment reminders',
-  'BILL reconciliation', 'QuickBooks catch-up', 'Deel time sync',
+  'BILL reconciliation', 'QuickBooks catch-up', 'Deel time sync', 'Deel payment status',
   'demo maintenance', 'demo sender seed', 'outbox drain',
 ] as const
 export type WorkerScheduledOperation = (typeof workerScheduledOperations)[number]
@@ -46,7 +46,7 @@ const errorClass = (error: unknown): string => {
     return typeof name === 'string' && classes.has(name) ? name : 'Error'
   } catch { return 'Error' }
 }
-/** Inspect at most eight own data properties; no getters or private text survive. */
+/** Inspect at most eight cause-chain objects through own data properties. */
 const failureCode = (error: unknown): WorkerFailureCode => {
   const seen = new Set<object>()
   let current: unknown = error
