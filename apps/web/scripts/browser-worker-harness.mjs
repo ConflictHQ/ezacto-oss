@@ -602,7 +602,10 @@ const fixtureControl = async (request, response) => {
     const weekTo = week === 'sunday' ? '2026-08-15' : week === 'saturday' ? '2026-08-14' : '2026-08-16'
     for (const id of [50001,50002]) {
       await run("INSERT INTO users(id,first_name,last_name,profile,manager_grants,created_at,updated_at) VALUES(?,?,'Fixture','member','[]',?,?)",id,`Deel ${id}`,timestamp,timestamp)
-      await run("INSERT INTO user_emails(user_id,address,kind,verified_at,created_at,updated_at) VALUES(?,?,'payroll',?,?,?)",id,`deel${id}@example.test`,timestamp,timestamp,timestamp)
+      // Existing verified login addresses can predate email kinds; the saved
+      // Deel destination is the explicit payroll choice for these people.
+      await run("INSERT INTO user_emails(user_id,address,verified_at,created_at,updated_at) VALUES(?,?,?,?,?)",id,`deel${id}@example.test`,timestamp,timestamp,timestamp)
+      await run("INSERT INTO user_payout_accounts(user_id,provider,external_id,kind,linked_by_user_id,linked_at,created_at,updated_at) VALUES(?,'deel',?,'account',1,?,?,?)",id,`deel${id}@example.test`,timestamp,timestamp,timestamp)
       await run("INSERT INTO user_assignments(id,project_id,user_id,created_at,updated_at) VALUES(?,1,?,?,?)",id,id,timestamp,timestamp)
       await run("INSERT INTO staff_payment_provider_events(id,user_id,scope,version,provider,command_json,actor_id,recorded_at,request_id) VALUES(?,?,?,1,'deel',?,1,?,?)",`deel-fixture-${id}`,id,`user:${id}`,JSON.stringify({id:`deel-fixture-${id}`,user_id:id,expected_version:0,provider:'deel',note:'Owned staging fixture'}),timestamp,`deel-fixture-${id}`)
       await run("INSERT INTO time_entries(id,user_id,project_id,task_id,user_assignment_id,task_assignment_id,spent_date,seconds,seconds_without_timer,rounded_seconds,billable,created_at,updated_at) VALUES(?,?,1,1,?,1,'2026-08-10',3600,3600,3600,0,?,?)",id,id,id,timestamp,timestamp)
