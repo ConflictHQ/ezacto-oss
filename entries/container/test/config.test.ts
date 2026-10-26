@@ -50,6 +50,14 @@ describe('container configuration', () => {
     }
   })
 
+  it('[unit] keeps Deel staging credentials private and independent of the QuickBooks switch', () => {
+    const config = readContainerConfig({...valid(),DEEL_TOKEN:'owned-fixture-token',DEEL_SYNC_START_DATE:'2026-10-01',ACCOUNTING_ENABLED:'false'})
+    expect(config.deel).toEqual({token:'owned-fixture-token',startDate:'2026-10-01'})
+    expect(config.appEnv).not.toHaveProperty('DEEL_TOKEN')
+    expect(config.appEnv).not.toHaveProperty('DEEL_SYNC_START_DATE')
+    expect(readContainerConfig(valid()).deel).toBeUndefined()
+  })
+
   it('[unit] reads how often a signed-in request records last-seen (#951)', () => {
     expect(readContainerConfig(valid()).lastSeenIntervalMs).toBe(300_000)
     expect(

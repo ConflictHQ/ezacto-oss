@@ -1,3 +1,4 @@
+import { installDeelStagingRoutes } from '../src/deel-staging.js'
 import { installOrganizationHolidayRoutes } from '../src/organization-holidays.js'
 import { installPlaceholderPlanningRoutes } from '../src/resources/placeholder-allocations.js'
 import { installOutboundWebhookRoutes } from '../src/outbound-webhooks.js'
@@ -448,6 +449,7 @@ const documentedApp = () =>
         releaseInvoicedTime: async () => ({ kind: "released", released: 0 }),
       });
       installMyPaymentRoutes(api, { read: async () => null });
+      installDeelStagingRoutes(api, { configured: false, bounds: () => null, preview: unavailable, stage: unavailable, lookup: unavailable });
       installDeelSyncRoutes(api, { runtime: { status: () => ({ configured: false, reason: 'contract fixture' }), preview: unavailable, run: unavailable }, settings: { get: unavailable, save: unavailable }, recentRuns: async () => [], clock: () => '2026-10-09T00:00:00.000Z' });
       installStaffPaymentRoutes(api, { configureProvider: async () => {}, report: async (month, as_of) => ({ month, as_of, rows: [], provider_settings: { default_provider: "wise", version: 0, events: [] } }), append: async () => {} });
       installContractorReviewRoutes(api, new Proxy({}, { get: () => unavailable }) as never);

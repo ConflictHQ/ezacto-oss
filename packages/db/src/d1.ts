@@ -570,3 +570,5 @@ export { retryTransientD1IdempotentOperation } from './d1-idempotent-retry.js'
 
 export * from './placeholder-allocations.js'
 export { createResourceCalendarRepository } from './resource-calendar.js'
+
+export { createDeelStageStore } from './deel-staging.js'

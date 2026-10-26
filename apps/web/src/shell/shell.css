@@ -10187,3 +10187,11 @@ input::file-selector-button:hover { background: var(--ez-surface-2); }
   margin: 3px 0 0;
   accent-color: var(--ez-data);
 }
+
+/* Approved-hour staging keeps selection and confirmation targets usable on phones. */
+[data-deel-stage-people] { display: grid; gap: 8px; }
+[data-deel-stage-people] label, [data-deel-stage] > label { display: flex; align-items: center; gap: 8px; min-height: 44px; }
+[data-deel-stage] input[type='checkbox'] { width: 18px; height: 18px; flex: 0 0 auto; }
+[data-deel-stage-preview] { overflow-wrap: anywhere; }
+[data-deel-stage] fieldset { min-width: 0; }
+[data-deel-stage-people] label { overflow-wrap: anywhere; }

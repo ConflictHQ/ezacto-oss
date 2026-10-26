@@ -577,3 +577,5 @@ export { installOrganizationHolidayRoutes } from './organization-holidays.js'
 export { installOutboundWebhookRoutes } from './outbound-webhooks.js'
 
 export { installPlaceholderPlanningRoutes, type PlaceholderPlanningRepository } from './resources/placeholder-allocations.js'
+
+export { installDeelStagingRoutes, type DeelStagingApiRuntime } from './deel-staging.js'

@@ -1,3 +1,4 @@
+import { createDeelStageController, type DeelStageApi } from './deel-stage-browser.js'
 import { createContractorReviewController, type ContractorReviewApi } from './reconciliation-browser.js'
 import { createStaffInvoicesController, type StaffInvoicesApi } from './invoices-browser.js'
 import { createAdvanceCreditsController, type AdvanceCreditsApi } from './advances-browser.js'
@@ -34,6 +35,7 @@ export interface StaffPaymentsApi
     PaymentActualsApi,
     PaymentAllocationsApi,
     DeelSyncApi,
+    DeelStageApi,
     AdvanceCreditsApi,
     StaffInvoicesApi {
   configureStaffPaymentProvider?(
@@ -163,6 +165,7 @@ export const createStaffPaymentsController = (api: StaffPaymentsApi) => {
     ))
       control.disabled = value
     configureForm()
+    deelStage.setParentBusy(value)
   }
   const rowForSelection = (): StaffPaymentRow | undefined =>
     report?.rows.find((row) => row.user_id === selected)
@@ -320,6 +323,14 @@ export const createStaffPaymentsController = (api: StaffPaymentsApi) => {
             key: 'pay',
             label: 'Action',
             render: (row) => {
+              if (row.active && row.payout_provider === 'deel' && deelStage.available()) {
+                const button = document.createElement('button')
+                button.type = 'button'
+                button.textContent = 'Stage in Deel'
+                button.setAttribute('aria-label', `Stage approved hours in Deel: ${row.name}`)
+                button.addEventListener('click', () => deelStage.open(row.user_id))
+                return button
+              }
               if (api.previewPaymentRun && canPayNow(row)) {
                 const button = document.createElement('button')
                 button.type = 'button'
@@ -587,6 +598,7 @@ export const createStaffPaymentsController = (api: StaffPaymentsApi) => {
       const response = await api.getStaffPaymentReport(month.value, active)
       if (active.aborted || generation !== ownGeneration) return
       report = response
+      deelStage.update(response)
       paint()
       runs.ledger(response)
       actuals.ledger(response, active)
@@ -815,6 +827,9 @@ export const createStaffPaymentsController = (api: StaffPaymentsApi) => {
   element<HTMLElement>(page, '[data-payment-audit-export]').addEventListener('click', () =>
     download(true),
   )
+  const stageButton = element<HTMLButtonElement>(page, '[data-payment-stage-deel]')
+  const deelStage = createDeelStageController(page, api, () => { stageButton.hidden = !deelStage.available(); if (report) paintList() })
+  stageButton.addEventListener('click', () => { tabs.select('balances'); deelStage.open() })
   const deelSync = createDeelSyncController(page, api)
   const advances = createAdvanceCreditsController(page, api, failure)
   const staffInvoices = createStaffInvoicesController(page, api, failure)
@@ -822,6 +837,7 @@ export const createStaffPaymentsController = (api: StaffPaymentsApi) => {
 
   return {
     activate: async (identity: { profile: string }, active: AbortSignal): Promise<void> => {
+      deelStage.clear()
       signal = active
       content.hidden = true
       if (identity.profile !== 'administrator') {
@@ -885,8 +901,11 @@ export const createStaffPaymentsController = (api: StaffPaymentsApi) => {
       staffInvoices.activate(active)
       reconciliation.activate(active)
       await runs.activate(active)
-      await deelSync.activate(active)
+      // Establish the default before provider discovery so a later response cannot
+      // replace a tab the administrator has already selected.
       tabs.activate(reportMode, api.previewPaymentRun !== undefined)
+      await deelSync.activate(active)
+      if (!reportMode) await deelStage.activate(active)
       if (!reportMode) await load()
     },
   }

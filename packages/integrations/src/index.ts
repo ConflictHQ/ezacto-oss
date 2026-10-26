@@ -311,4 +311,5 @@ export * from './work-items/github-read.js'
 
 export { createWorkerWebhookTransport } from './outbound-webhooks.js'
 
+export * from './deel/staging.js'
 export { wiseConfigured, parseWiseMode } from './wise/runtime.js'
