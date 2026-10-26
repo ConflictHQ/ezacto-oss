@@ -19,7 +19,7 @@ export const isCsvStagingPath = (path: string): boolean =>
 export const csvStagingCapabilities = (port?: CsvImportStagingPort) => ({
   runtime: port ? "container" : "worker",
   staging_supported: port !== undefined,
-  browser_ready: false,
+  browser_ready: port !== undefined,
   apply_supported: false,
   max_csv_bytes: CSV_STAGING_LIMITS.maxBytes,
   max_mapping_bytes: CSV_STAGING_LIMITS.maxMappingBytes,

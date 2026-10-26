@@ -3,6 +3,7 @@ import type { Whoami } from '@conflict-hq/ezacto-client'
 import { detailedExpenseCsv } from '../reports/model.js'
 import type { SessionPresenter } from '../session.js'
 import type { CompanySettingsApi } from './model.js'
+import { renderCsvImportPanel } from '../csv-import/render.js'
 interface ModuleState {
   module: string
   enabled: boolean
@@ -51,7 +52,7 @@ export const companyBulkActions: readonly BulkAction[] = [
 ]
 export const renderCompanyDataTools = () => `
 <section class="settings-section" data-settings-section="import-export" aria-labelledby="settings-data-title">
- <header><h2 id="settings-data-title">Import and export</h2><p>Download authorized report data, or use the operator migration tool to bring time into this instance.</p></header>
+ <header><h2 id="settings-data-title">Import and export</h2><p>Download authorized report data, review a supported Clockify browser import, or use the operator migration tool.</p></header>
  <p class="form-result" data-settings-data-status role="status" aria-live="polite">Loading available exports…</p>
  <div data-settings-data-content hidden>
   <form class="settings-form" data-settings-data-export>
@@ -83,6 +84,7 @@ node packages/migrate/dist/cli.js import-csv --database /data/db.sqlite --file t
   <p>Use the migration guide to extract, verify, rehearse, reconcile and cut over. Keep credentials and snapshots on the operator's machine.</p>
   <p><a href="https://ezacto.dev/docs/migrating-from-harvest/" target="_blank" rel="noopener">Harvest migration and parallel-run guide</a></p>
  </div>
+ ${renderCsvImportPanel()}
 </section>
 <section class="settings-section" data-settings-section="bulk-actions" aria-labelledby="settings-bulk-title">
  <header><h2 id="settings-bulk-title">Bulk actions</h2><p>Open a workflow to choose records and review the change. Permissions, invoice rules and locked periods are checked there.</p></header>

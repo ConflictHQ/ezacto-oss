@@ -64551,7 +64551,7 @@
             "type": "boolean"
           },
           "browser_ready": {
-            "const": false
+            "type": "boolean"
           },
           "apply_supported": {
             "const": false

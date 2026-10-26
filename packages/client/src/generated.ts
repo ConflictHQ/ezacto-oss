@@ -5906,7 +5906,7 @@ export type CsvImportUploadBytes = Blob | Uint8Array;
 export type CsvImportCapabilities = {
   "runtime": "container" | "worker";
   "staging_supported": boolean;
-  "browser_ready": false;
+  "browser_ready": boolean;
   "apply_supported": false;
   "max_csv_bytes": number;
   "max_mapping_bytes": number;

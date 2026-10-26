@@ -3,8 +3,8 @@
 Refs #1181 and #1012. The Container implements private administrator staging
 and immutable preview over the portable planner from #1180. This slice does not
 confirm or apply time. `getCsvImportCapabilities` reports
-`staging_supported: true` only on that Container, and `browser_ready: false` and
-`apply_supported: false`. Worker discovery reports all three false; its private
+`staging_supported: true` and `browser_ready: true` only on that Container.
+`apply_supported` remains false: browser review does not enable writes. Worker discovery reports all three false; its private
 CSV paths refuse before constructing database services or reading the body.
 
 The canonical DTOs and operations are in

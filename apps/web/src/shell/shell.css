@@ -10206,3 +10206,41 @@ input::file-selector-button:hover { background: var(--ez-surface-2); }
 [data-calendar-feeds] { margin-top: 24px; }
 [data-calendar-feed-secret] label { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin-block: 8px; }
 @media (prefers-reduced-motion: reduce) { .calendar-feed-status[aria-busy='true']::before { animation: none; } }
+/* Browser CSV review stays within the Company pane at phone and desktop widths. */
+.csv-import {
+  border-top: 1px solid var(--ez-border);
+  margin-top: 24px;
+  padding-top: 24px;
+  min-width: 0;
+}
+.csv-import :where(button, input:not([type='checkbox']), select) {
+  min-height: 44px;
+  max-width: 100%;
+  box-sizing: border-box;
+}
+.csv-import :where(button, .settings-toggle) { min-width: 44px; }
+.csv-import :where(.csv-import-actions, .csv-import-kinds) {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.csv-import-card {
+  border: 1px solid var(--ez-border);
+  border-radius: 8px;
+  padding: 16px;
+  margin-block: 12px;
+  overflow-wrap: anywhere;
+}
+.csv-import :where(dl, dd, p, li, h5) { overflow-wrap: anywhere; }
+.csv-import dd { margin-inline-start: 0; }
+.csv-import dt { font-weight: 600; }
+.csv-import :where(.csv-import-facts, .csv-import-parents) {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 2fr);
+  gap: 8px 16px;
+}
+.csv-import .settings-toggle { min-height: 44px; align-items: center; }
+.csv-import [hidden] { display: none !important; }
+
+[data-request-busy]::before { content: ''; display: inline-block; vertical-align: middle; margin-inline-end: 9px; width: 14px; height: 14px; border: 2px solid var(--ez-border); border-top-color: var(--ez-action); border-radius: 50%; animation: auth-spin 900ms linear infinite; }
+@media (prefers-reduced-motion: reduce) { [data-request-busy]::before { animation: none; } }
