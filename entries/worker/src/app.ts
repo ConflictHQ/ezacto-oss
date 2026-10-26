@@ -1,5 +1,7 @@
 import { installCalendarConnectionRoutes, type CalendarConnectionPort } from '@ezacto/api'
 import { installInvoiceProviderAlertRoutes, type InvoiceProviderAlertService } from '@ezacto/api'
+import type { BankFeedEnvironment } from '@ezacto/integrations'
+import { installBankDepositRoutes, type BankDepositReviewApi } from '@ezacto/api'
 import { installCalendarFeedRoutes, installCalendarSubscriptionRoute } from '@ezacto/api'
 import type { CalendarFeedService } from '@ezacto/core'
 import { installDeelPaymentStatusRoutes } from '@ezacto/api'
@@ -299,7 +301,7 @@ export type AppEnv = Env & {
   BACKUPS_ENABLED?: string
 }
 
-export type WorkerEnv = AppEnv & OffsiteBackupEnvironment & {
+export type WorkerEnv = AppEnv & OffsiteBackupEnvironment & BankFeedEnvironment & {
   DB: D1Database
   SCHEDULED_RUN_WORKFLOW?: Workflow<{runId: number; proposedAt: string}>
   /** Sentry DSN. Absent means error reporting is off (a no-op wrapper). */
@@ -490,6 +492,8 @@ export interface RuntimeServices {
   isOwnMoneyVisible(): Promise<boolean>
   timesheetApprovals: TimesheetApprovalService
   timesheetLockPolicy: TimesheetLockPolicyService
+  bankFeeds?: {status():Promise<import('@ezacto/integrations').BankFeedStatus[]>;processDue():Promise<{checked:number;failed:number}>}
+  bankDeposits?: BankDepositReviewApi
   moneyResources: MoneyResourceRouteOptions['service']
   harvestInvoices?: HarvestInvoiceSource
   invoiceGeneration: NonNullable<MoneyResourceRouteOptions['generation']>
@@ -1087,6 +1091,7 @@ export const createApp = (
             // Mounted whether or not BILL is reachable: there is nothing to
             // connect, so the honest answer to "is this configured?" is a
             // route that says so rather than a route that is missing.
+            if(services.bankDeposits) installBankDepositRoutes(api,services.bankDeposits,services.bankFeeds)
             if (services.stripe !== undefined) {
               installStripeRoutes(api, services.stripe)
               if (services.invoiceProviderAlerts) installInvoiceProviderAlertRoutes(api, services.invoiceProviderAlerts)
@@ -1880,6 +1885,32 @@ export const createApp = (
         )
       })
 
+      app.get('/invoices/bank-deposits', async (context) =>
+        context.html(
+          renderAppShell({
+            environment: context.env.ENVIRONMENT,
+            release: context.env.RELEASE,
+            ...(await shellChrome(context.env, context.req.raw)),
+            activeSection: 'Invoices',
+            view: 'invoice-bank-deposits',
+            tabs: invoiceTabs('invoice-bank-deposits'),
+            demoAccounts: publishedDemoAccounts(context.env),
+            sessionCookiePresent: hasSessionCookie(context.req.raw),
+          }),
+          200,
+          {
+            'cache-control': 'no-store',
+            'content-security-policy': shellContentSecurityPolicy,
+            'permissions-policy': 'camera=(), microphone=(), geolocation=()',
+            'referrer-policy': 'same-origin',
+            'x-content-type-options': 'nosniff',
+          },
+        ),
+      )
+
+      // Moved to Settings (issue 546). A bookmark and every link that shipped
+      // still work: 301, the same way /settings/modules kept working when it
+      // folded into /settings/company.
       app.get('/invoices/retainers', async (context) =>
         context.html(
           renderAppShell({

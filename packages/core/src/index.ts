@@ -119,3 +119,5 @@ export * from './calendar-feeds.js'
 export type { CsvStagingAuthority } from './csv-staging.js'
 
 export * from './csv-apply-runtime.js'
+
+export * from './bank-deposit-review.js'

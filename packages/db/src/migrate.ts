@@ -1,5 +1,6 @@
 import { calendarConnectionsMigration } from './migrations/0172_calendar_connections.js'
 import { stripePaymentAlertsMigration } from './migrations/0173_stripe_payment_alerts.js'
+import { bankDepositReviewMigration } from './migrations/0174_bank_deposit_review.js'
 import { deelStatusThrottleMigration } from './migrations/0167_deel_status_throttle.js'
 import { csvWorkerStagingMigration } from './migrations/0171_csv_worker_staging.js'
 import { planningCalendarFeedsMigration } from './migrations/0168_planning_calendar_feeds.js'
@@ -1705,6 +1706,7 @@ const migrations = [
   { id: '0171_csv_worker_staging', statements: csvWorkerStagingMigration },
   { id: '0172_calendar_connections', statements: calendarConnectionsMigration },
   { id: '0173_stripe_payment_alerts', statements: stripePaymentAlertsMigration },
+  { id: '0174_bank_deposit_review', statements: bankDepositReviewMigration },
 ] as const
 
 // Fixtures assert against this rather than re-listing ids: a hand-copied ledger merges

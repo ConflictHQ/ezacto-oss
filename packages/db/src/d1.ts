@@ -581,3 +581,5 @@ export { csvStagingSessionFence } from './csv-staging-authority.js'
 export { csvWorkerDatabase, type CsvWorkerExecution } from './csv-worker-database.js'
 export { previewTimesheetLockedDates, type TimesheetLockPreviewWindow } from './timesheet-lock-policy.js'
 export * from './stripe-payment-alerts.js'
+
+export * from './bank-deposit-review.js'

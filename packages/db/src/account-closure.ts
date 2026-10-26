@@ -84,7 +84,7 @@ const category = (table: string): AccountRetentionCategory => {
     ].includes(table)
   )
     return 'time_and_worker_attribution'
-  if (/invoice|estimate|payment|payout|expense|receivable|quickbooks|wise/.test(table))
+  if (/invoice|estimate|payment|payout|expense|receivable|quickbooks|wise|bank_deposit|bank_feed/.test(table))
     return 'billing_and_payments'
   return 'audit_and_security'
 }

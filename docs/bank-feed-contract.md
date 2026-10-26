@@ -1,8 +1,9 @@
 # Bank feed contract (issue 101)
 
-Contract only. No ingest service, route, UI, provider client or migration exists
-yet; this fixes the seam so the Mercury and Wise adapters and the review queue
-can be built against it independently.
+The provider-neutral seam is implemented by the Mercury and Wise read adapters,
+the durable staging/review service, and the native review UI. See
+[setup, safety boundaries and recovery](bank-deposit-review.md). Provider acceptance
+still requires operator verification; synthetic fixtures do not prove live accounts.
 
 ## Neutral deposit
 
@@ -31,15 +32,16 @@ issue date. The best rank wins; a tie at it leaves the deposit `unmatched`.
 Invoices of another currency are never candidates. A suggestion creates no
 payment; confirmation is explicit and creates exactly one (domain-model 2.16).
 
-## Delivery still required
+## Provider observations
 
-Storage-side behaviour (idempotent ingest, atomic confirm, audit rows, a
-rejected/ignored state, `/api/v1/bank-deposits`), provider adapters and the review
-UI remain unimplemented. The [Mercury feasibility spike](mercury-bank-feed-spike.md)
-identifies its read API and the sandbox evidence still needed.
+A page may carry observations for IDs omitted from its deposit list. The store
+applies these to previously staged rows so a later rejection or internal-transfer
+classification cannot leave stale confirmation eligibility. Missing observations
+never imply settlement. Known nonpayable observations use `ineligible`; an
+operator cannot override them.
 
-The owner decisions recorded in #101 on 2026-10-24 are: pursue Wise and Mercury
-in parallel (D23); one deposit to one invoice in v1, with multi-invoice detection
-left for later (D24); leave cross-currency deposits unmatched (D25). Wise must
-exclude our own outgoing payouts. These decisions do not constitute provider
-acceptance or permission to move money.
+The owner decisions are Wise and Mercury in parallel, one deposit per invoice,
+and cross-currency deposits unmatched. Multi-invoice allocation and full historical
+account import remain outside this slice.
+
+See the [Mercury feasibility spike](mercury-bank-feed-spike.md) for verified API capabilities and remaining owned-sandbox acceptance. Provider configuration and synthetic tests do not constitute live-provider acceptance.

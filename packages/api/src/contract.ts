@@ -1,5 +1,6 @@
 import { calendarConnectionOperations, calendarConnectionSchemas } from './calendar-connection-contract.js'
 import { invoiceProviderAlertOperations, invoiceProviderAlertSchemas } from './invoice-provider-alert-contract.js'
+import { bankDepositOperations, bankDepositSchemas } from './bank-deposit-contract.js'
 import { calendarFeedOperations, calendarFeedSchemas } from './calendar-feed-contract.js'
 import { deelStagingOperations, deelStagingSchemas } from './deel-staging-contract.js'
 import { csvImportApplyOperations, csvImportApplySchemas } from './csv-import-apply-contract.js'
@@ -3814,6 +3815,7 @@ export const apiContractOperations: readonly ApiContractOperation[] = [
   ...attachmentContractOperations,
   ...staffPaymentOperations,
   ...invoiceProviderAlertOperations,
+  ...bankDepositOperations,
   ...deelSyncOperations,
   ...deelStagingOperations,
   ...paymentRunOperations,
@@ -4101,6 +4103,7 @@ export const apiContractSchemas: Readonly<Record<string, JsonSchema>> = {
   ...attachmentContractSchemas,
   ...staffPaymentSchemas,
   ...invoiceProviderAlertSchemas,
+  ...bankDepositSchemas,
   ...deelSyncSchemas,
   ...deelStagingSchemas,
   ...paymentRunSchemas,

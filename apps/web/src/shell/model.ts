@@ -64,6 +64,7 @@ import type { CompanySettingsApi } from '../module-settings/model.js'
 import type { EmailConfigurationApi } from '../email-config/model.js'
 import type { RecurringWorkspaceApi } from '../recurring/model.js'
 import type { EstimateWorkspaceApi } from '../estimates/model.js'
+import type { BankDepositApi } from '../bank-deposits/model.js'
 import type { RetainerWorkspaceApi } from '../retainers/model.js'
 import { shellFetch } from './net.js'
 
@@ -101,6 +102,7 @@ export interface ShellApi
     Partial<EstimateWorkspaceApi>,
     Partial<EstimateComposerApi>,
     Partial<RetainerWorkspaceApi>,
+    Partial<BankDepositApi>,
     Partial<InvoicePaymentApi>,
     Partial<InvoiceEditorApi>,
     Partial<RoleAdminApi>,
@@ -2247,6 +2249,16 @@ export const createShellApi = (client: EzactoClient): ShellApi => ({
         ...withSignal(signal),
       })
     ).data,
+  bankFeedStatus: async (signal) => (await client.getBankFeedStatus(withSignal(signal))).data,
+  bankFeedSync: async (signal) => (await client.syncBankFeeds({ body: {}, ...withSignal(signal) })).data,
+  bankDepositAccounts: async (signal) => (await client.listBankDepositAccounts(withSignal(signal))).data,
+  bankDepositList: (state, page, signal) => client.listBankDeposits({ query: { ...(state ? { state } : {}), page, per_page: 50 }, ...withSignal(signal) }),
+  bankDepositInvoices: async (id, signal) => (await client.listBankDepositInvoices({ id, ...withSignal(signal) })).data,
+  bankDepositAssign: async (id, key, body, signal) => (await client.assignBankDeposit({ id, 'Idempotency-Key': key, body, ...withSignal(signal) })).data,
+  bankDepositReject: async (id, key, body, signal) => (await client.rejectBankDeposit({ id, 'Idempotency-Key': key, body, ...withSignal(signal) })).data,
+  bankDepositReopen: async (id, key, body, signal) => (await client.reopenBankDeposit({ id, 'Idempotency-Key': key, body, ...withSignal(signal) })).data,
+  bankDepositConfirm: async (id, key, body, signal) => (await client.confirmBankDeposit({ id, 'Idempotency-Key': key, body, ...withSignal(signal) })).data,
+  bankDepositVerify: async (id, key, body, signal) => (await client.verifyBankDepositSource({ id, 'Idempotency-Key': key, body, ...withSignal(signal) })).data,
   listEstimates: (cursor, signal) =>
     client.listEstimates({
       query: { per_page: 50, ...(cursor === undefined ? {} : { cursor }) },

@@ -870,6 +870,109 @@ export type InvoiceProviderAlertListEnvelope = {
 
 export type ReviewInvoiceProviderAlertInput = Record<string, unknown>;
 
+export type BankFeedStatusEnvelope = {
+  "data": Array<{
+  "provider": "mercury" | "wise";
+  "configured": boolean;
+  "account_name": string | null;
+  "last_synced_at": string | null;
+  "last_error": string | null;
+  "next_poll_at": string | null;
+}>;
+};
+
+export type BankFeedSyncInput = Record<string, unknown>;
+
+export type BankFeedSyncEnvelope = {
+  "data": {
+  "checked": number;
+  "failed": number;
+};
+};
+
+export type BankReviewInvoice = {
+  "id": number;
+  "number": string;
+  "currency": string;
+  "due_amount_cents": number;
+  "version": number;
+  "state": string;
+};
+
+export type BankFeedAccount = {
+  "id": number;
+  "provider": "mercury" | "wise";
+  "name": string;
+};
+
+export type BankDeposit = {
+  "id": number;
+  "account_id": number;
+  "account_name": string;
+  "provider": "mercury" | "wise";
+  "provider_transaction_id": string;
+  "currency": string;
+  "posted_at": string;
+  "amount_cents": number;
+  "memo": string | null;
+  "counterparty": string | null;
+  "state": "unmatched" | "suggested" | "confirmed" | "rejected";
+  "version": number;
+  "suggested_invoice": BankReviewInvoice | null;
+  "source_status": "final" | "pending" | "reversed" | "ineligible" | "unknown";
+  "classification": "external_credit" | "internal_transfer" | "ambiguous_credit";
+  "source_reason": string | null;
+  "verified_at": string | null;
+  "verified_by_user_id": number | null;
+  "verification_reference": string | null;
+  "confirmation_basis": "provider" | "operator" | null;
+  "confirmation_ready": boolean;
+  "payment_id": number | null;
+  "confirmed_invoice_id": number | null;
+};
+
+export type BankDepositAccountsEnvelope = {
+  "data": Array<BankFeedAccount>;
+};
+
+export type BankDepositListEnvelope = {
+  "data": Array<BankDeposit>;
+  "page": number;
+  "per_page": number;
+  "total": number;
+};
+
+export type BankDepositInvoicesEnvelope = {
+  "data": Array<BankReviewInvoice>;
+};
+
+export type BankDepositEnvelope = {
+  "data": BankDeposit;
+};
+
+export type BankDepositAssignInput = {
+  "expected_version": number;
+  "invoice_id": number;
+};
+
+export type BankDepositDecisionInput = {
+  "expected_version": number;
+};
+
+export type BankDepositConfirmInput = {
+  "expected_version": number;
+  "invoice_id": number;
+  "expected_invoice_version": number;
+  "confirm_overpayment": boolean;
+};
+
+export type BankDepositVerifyInput = {
+  "expected_version": number;
+  "verification_reference": string;
+  "confirm_posted_funds": true;
+  "confirm_external_credit": true;
+};
+
 export type DeelSyncSettingsCommand = {
   "mode": "manual" | "automatic";
   "run_time": string;
@@ -8761,6 +8864,104 @@ export class EzactoClient {
     const headers = new Headers(args.headers);
 
     return this.request<InvoiceProviderAlertEnvelope>("POST", "/api/v1/invoices/:id/provider-alerts/:alertId/review".replace(":id", encodeURIComponent(String(args["id"]))).replace(":alertId", encodeURIComponent(String(args["alertId"]))), {
+      body: args.body,
+      signal: args.signal,
+      headers,
+    });
+  }
+
+  async getBankFeedStatus(args: { signal?: AbortSignal; headers?: HeadersInit } = {}): Promise<BankFeedStatusEnvelope> {
+    const headers = new Headers(args.headers);
+
+    return this.request<BankFeedStatusEnvelope>("GET", "/api/v1/bank-feed-status", {
+      signal: args.signal,
+      headers,
+    });
+  }
+
+  async syncBankFeeds(args: { body: BankFeedSyncInput; signal?: AbortSignal; headers?: HeadersInit }): Promise<BankFeedSyncEnvelope> {
+    const headers = new Headers(args.headers);
+
+    return this.request<BankFeedSyncEnvelope>("POST", "/api/v1/bank-feeds/sync", {
+      body: args.body,
+      signal: args.signal,
+      headers,
+    });
+  }
+
+  async listBankDepositAccounts(args: { signal?: AbortSignal; headers?: HeadersInit } = {}): Promise<BankDepositAccountsEnvelope> {
+    const headers = new Headers(args.headers);
+
+    return this.request<BankDepositAccountsEnvelope>("GET", "/api/v1/bank-deposit-accounts", {
+      signal: args.signal,
+      headers,
+    });
+  }
+
+  async listBankDeposits(args: { query?: { "state"?: "unmatched" | "suggested" | "confirmed" | "rejected"; "page"?: number; "per_page"?: number }; signal?: AbortSignal; headers?: HeadersInit } = {}): Promise<BankDepositListEnvelope> {
+    const headers = new Headers(args.headers);
+
+    return this.request<BankDepositListEnvelope>("GET", "/api/v1/bank-deposits", {
+      query: args.query,
+      signal: args.signal,
+      headers,
+    });
+  }
+
+  async listBankDepositInvoices(args: { "id": number; query?: { "query"?: string }; signal?: AbortSignal; headers?: HeadersInit }): Promise<BankDepositInvoicesEnvelope> {
+    const headers = new Headers(args.headers);
+
+    return this.request<BankDepositInvoicesEnvelope>("GET", "/api/v1/bank-deposits/:id/invoices".replace(":id", encodeURIComponent(String(args["id"]))), {
+      query: args.query,
+      signal: args.signal,
+      headers,
+    });
+  }
+
+  async assignBankDeposit(args: { "id": number; "Idempotency-Key": string; body: BankDepositAssignInput; signal?: AbortSignal; headers?: HeadersInit }): Promise<BankDepositEnvelope> {
+    const headers = new Headers(args.headers);
+    if (args["Idempotency-Key"] !== undefined) headers.set("Idempotency-Key", String(args["Idempotency-Key"]));
+    return this.request<BankDepositEnvelope>("POST", "/api/v1/bank-deposits/:id/assign".replace(":id", encodeURIComponent(String(args["id"]))), {
+      body: args.body,
+      signal: args.signal,
+      headers,
+    });
+  }
+
+  async rejectBankDeposit(args: { "id": number; "Idempotency-Key": string; body: BankDepositDecisionInput; signal?: AbortSignal; headers?: HeadersInit }): Promise<BankDepositEnvelope> {
+    const headers = new Headers(args.headers);
+    if (args["Idempotency-Key"] !== undefined) headers.set("Idempotency-Key", String(args["Idempotency-Key"]));
+    return this.request<BankDepositEnvelope>("POST", "/api/v1/bank-deposits/:id/reject".replace(":id", encodeURIComponent(String(args["id"]))), {
+      body: args.body,
+      signal: args.signal,
+      headers,
+    });
+  }
+
+  async reopenBankDeposit(args: { "id": number; "Idempotency-Key": string; body: BankDepositDecisionInput; signal?: AbortSignal; headers?: HeadersInit }): Promise<BankDepositEnvelope> {
+    const headers = new Headers(args.headers);
+    if (args["Idempotency-Key"] !== undefined) headers.set("Idempotency-Key", String(args["Idempotency-Key"]));
+    return this.request<BankDepositEnvelope>("POST", "/api/v1/bank-deposits/:id/reopen".replace(":id", encodeURIComponent(String(args["id"]))), {
+      body: args.body,
+      signal: args.signal,
+      headers,
+    });
+  }
+
+  async confirmBankDeposit(args: { "id": number; "Idempotency-Key": string; body: BankDepositConfirmInput; signal?: AbortSignal; headers?: HeadersInit }): Promise<BankDepositEnvelope> {
+    const headers = new Headers(args.headers);
+    if (args["Idempotency-Key"] !== undefined) headers.set("Idempotency-Key", String(args["Idempotency-Key"]));
+    return this.request<BankDepositEnvelope>("POST", "/api/v1/bank-deposits/:id/confirm".replace(":id", encodeURIComponent(String(args["id"]))), {
+      body: args.body,
+      signal: args.signal,
+      headers,
+    });
+  }
+
+  async verifyBankDepositSource(args: { "id": number; "Idempotency-Key": string; body: BankDepositVerifyInput; signal?: AbortSignal; headers?: HeadersInit }): Promise<BankDepositEnvelope> {
+    const headers = new Headers(args.headers);
+    if (args["Idempotency-Key"] !== undefined) headers.set("Idempotency-Key", String(args["Idempotency-Key"]));
+    return this.request<BankDepositEnvelope>("POST", "/api/v1/bank-deposits/:id/verify-source".replace(":id", encodeURIComponent(String(args["id"]))), {
       body: args.body,
       signal: args.signal,
       headers,

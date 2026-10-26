@@ -1,4 +1,5 @@
 import { installInvoiceProviderAlertRoutes } from '../src/invoice-provider-alerts.js'
+import { installBankDepositRoutes } from '../src/bank-deposits.js'
 import { installCalendarFeedRoutes } from '../src/calendar-feeds.js'
 import { installDeelStagingRoutes } from '../src/deel-staging.js'
 import { installDeelPaymentStatusRoutes } from '../src/deel-payment-status.js'
@@ -237,6 +238,7 @@ const documentedApp = () =>
     csvImportApply: {apply:unavailable,resume:unavailable,status:unavailable,cancel:unavailable},
     installApi: (api) => {
       installInvoiceProviderAlertRoutes(api, new Proxy({}, { get: () => unavailable }) as never);
+      installBankDepositRoutes(api,new Proxy({}, {get:()=>unavailable}) as never);
       installPlaceholderPlanningRoutes(api, new Proxy({}, { get: () => unavailable }) as never, { cursorSigningKey: new Uint8Array(32), clock: () => '2026-10-25T00:00:00.000Z' });
       installOrganizationHolidayRoutes(api,new Proxy({}, {get:()=>unavailable}) as never,{cursorSigningKey:new Uint8Array(32),clock:()=> '2026-10-22T00:00:00.000Z'});
       installSessionRoutes(api, sessions);
