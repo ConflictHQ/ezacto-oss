@@ -59,7 +59,7 @@ it('serves private staging and zero-write preview through the bundled Container 
     })
     const capability = await request('/csv-import-capabilities')
     expect(capability.status).toBe(200)
-    expect(await capability.json()).toMatchObject({ data: { runtime: 'container', staging_supported: true, browser_ready: true, apply_supported: false } })
+    expect(await capability.json()).toMatchObject({ data: { runtime: 'container', staging_supported: true, browser_ready: true, apply_supported: true } })
     const csv = new TextEncoder().encode('Email,Client,Project,Task,Description,Billable,Start Date,Start Time,End Date,End Time,Duration (h)\nann@example.test,C,P,T,owned process private note,Yes,2026-09-01,09:00:00,2026-09-01,09:01:00,00:01:00\n')
     const headers = { 'content-type': 'application/octet-stream', 'x-csv-bytes': String(csv.length), 'x-csv-sha256': createHash('sha256').update(csv).digest('hex') }
     expect((await request('/csv-imports', { method: 'POST', headers, body: csv }, false)).status).toBe(401)

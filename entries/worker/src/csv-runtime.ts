@@ -9,7 +9,8 @@ export interface CsvWorkerBindings {
   CSV_IMPORT_QUEUE?:Queue<CsvWorkerMessage|CsvMaintenanceMessage>
   CSV_IMPORT_QUEUE_NAME?:string
 }
-export const csvWorkerConfigured=(env:CsvWorkerBindings):boolean=>!!(env.DB&&env.ATTACHMENTS&&env.CSV_IMPORT_QUEUE&&env.CSV_IMPORT_QUEUE_NAME&&/^[A-Za-z0-9_-]{1,63}$/.test(env.CSV_IMPORT_QUEUE_NAME))
+// Refuse an unconfigured opt-in before resolving database/object bindings.
+export const csvWorkerConfigured=(env:CsvWorkerBindings):boolean=>!!(env.CSV_IMPORT_QUEUE&&env.CSV_IMPORT_QUEUE_NAME&&/^[A-Za-z0-9_-]{1,63}$/.test(env.CSV_IMPORT_QUEUE_NAME)&&env.DB&&env.ATTACHMENTS)
 
 /** Queue processing never performs DDL. The API/scheduler owns upgrades; an
  * old queued delivery waits for that barrier instead of exceeding its budget. */
