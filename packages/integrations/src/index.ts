@@ -316,3 +316,12 @@ export { createWorkerWebhookTransport } from './outbound-webhooks.js'
 
 export * from './deel/staging.js'
 export { wiseConfigured, parseWiseMode } from './wise/runtime.js'
+
+export {
+  createMercuryBankFeed,
+  type MercuryBankFeedOptions,
+  type ObservedBankFeed,
+  type ObservedBankFeedPage,
+} from './bank-feed/mercury.js'
+export { createWiseBankFeed, type WiseBankFeedOptions } from './bank-feed/wise.js'
+export { BankFeedError, type FeedObservation, type FeedObservations } from './bank-feed/shared.js'
