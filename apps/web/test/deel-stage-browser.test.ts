@@ -72,9 +72,10 @@ const mount = () => {
       async () => ({ data: result }),
     ),
   } satisfies DeelStageApi;
-  const controller = createDeelStageController(document.body, api, () => {});
+  const progressChanged = vi.fn(async () => {});
+  const controller = createDeelStageController(document.body, api, () => {}, progressChanged);
   const abort = new AbortController();
-  return { api, controller, abort };
+  return { api, controller, abort, progressChanged };
 };
 const el = <T extends HTMLElement>(s: string) => document.querySelector<T>(s)!;
 const review = async () => {
@@ -93,6 +94,33 @@ describe("selected Deel hour staging", () => {
   beforeEach(() => {
     document.body.innerHTML = "";
     HTMLElement.prototype.scrollIntoView = vi.fn();
+  });
+  it("refreshes saved progress after staging and preserves the completion message", async () => {
+    const { controller, abort, progressChanged } = mount();
+    await controller.activate(abort.signal);
+    controller.update(report);
+    controller.open();
+    await review();
+    expect(progressChanged).not.toHaveBeenCalled();
+    confirm();
+    await vi.waitFor(() => expect(progressChanged).toHaveBeenCalledOnce());
+    expect(el("[data-deel-stage-message]").textContent).toContain("1 entries staged in Deel");
+    expect(el("[data-deel-stage-message]").textContent).toContain("not marked paid here");
+    abort.abort();
+  });
+  it("refreshes durable progress for an uncertain outcome without releasing the pending command", async () => {
+    const { api, controller, abort, progressChanged } = mount();
+    api.stageDeelHours.mockRejectedValueOnce(new Error("Connection lost"));
+    await controller.activate(abort.signal);
+    controller.update(report);
+    controller.open();
+    await review();
+    confirm();
+    await vi.waitFor(() => expect(progressChanged).toHaveBeenCalledOnce());
+    expect(el("[data-deel-stage-message]").textContent).toContain("outcome is unknown");
+    expect(el<HTMLButtonElement>("[data-deel-stage-check]").hidden).toBe(false);
+    expect(el<HTMLButtonElement>("[data-deel-stage-send]").disabled).toBe(true);
+    abort.abort();
   });
   it("requires explicit people and reviewed preview; sends hours not a local amount and never claims paid", async () => {
     const { api, controller, abort } = mount();

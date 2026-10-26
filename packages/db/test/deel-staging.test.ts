@@ -6,6 +6,7 @@ import { createContainerDatabase, createD1Database } from '../src/adapters.js'
 import { migrateContainer, migrateD1 } from '../src/migrate.js'
 import { createDeelStageStore } from '../src/deel-staging.js'
 import { createDeelSyncStore } from '../src/deel-time-sync.js'
+import { createStaffPaymentStore } from '../src/staff-payments.js'
 import type { InvoiceStateDatabase } from '../src/invoice-state.js'
 const now = '2026-10-26T12:00:00.000Z'
 for (const target of ['SQLite', 'D1'] as const)
@@ -244,6 +245,131 @@ for (const target of ['SQLite', 'D1'] as const)
         entryId, userId, userId, now, now,
       )
     }
+    const reportingStore = async (...userIds: number[]) => {
+      const store = createStaffPaymentStore(db as Parameters<typeof createStaffPaymentStore>[0])
+      for (const userId of userIds) await store.configureProvider({
+        id: `report-deel-${userId}`, user_id: userId, expected_version: 1,
+        provider: 'deel', note: 'Fixture report preference',
+      }, 1, `report-deel-${userId}`, now)
+      return store
+    }
+    it('persists monthly per-person staging progress across batches and exposes changed or uncertain receipts', async () => {
+      const f = await fixture(),
+        extra = f.u * 10 + 1
+      await addUnsubmitted(f.u, extra)
+      await reportingStore(f.u, f.v)
+      const report = async (userId = f.u, month = '2026-10') =>
+        (
+          await createStaffPaymentStore(db as Parameters<typeof createStaffPaymentStore>[0]).report(
+            month,
+            '2026-10-26',
+          )
+        ).rows.find((row) => row.user_id === userId)!
+      expect((await report()).deel_staging).toMatchObject({
+        status: 'not_staged',
+        staged_entries: 0,
+        unstaged_entries: 2,
+        unstaged_seconds: 5400,
+      })
+      const stage = async (selection: typeof f.selection) => {
+        const runtime = f.runtime(),
+          preview = await runtime.preview(f.authority, selection)
+        return runtime.stage(f.authority, {
+          ...selection,
+          id: crypto.randomUUID(),
+          fingerprint: preview.fingerprint,
+        })
+      }
+      await stage({ ...f.selection, to: '2026-10-13' })
+      expect((await report()).deel_staging).toMatchObject({
+        status: 'partially_staged',
+        staged_entries: 1,
+        staged_seconds: 3600,
+        unstaged_entries: 1,
+        unstaged_seconds: 1800,
+        last_staged_at: now,
+      })
+      expect((await report(f.v)).deel_staging).toMatchObject({
+        status: 'not_staged',
+        staged_entries: 0,
+      })
+      expect((await report(f.u, '2026-09')).deel_staging).toMatchObject({
+        status: 'no_hours',
+        staged_entries: 0,
+      })
+      await stage(f.selection)
+      expect(await report()).toMatchObject({
+        paid_cents: 0,
+        deel_staging: {
+          status: 'staged',
+          staged_entries: 2,
+          staged_seconds: 5400,
+          unstaged_entries: 0,
+        },
+      })
+      await run(
+        'UPDATE time_entries SET seconds=2000,seconds_without_timer=2000,rounded_seconds=2000 WHERE id=?',
+        extra,
+      )
+      expect((await report()).deel_staging).toMatchObject({
+        status: 'attention',
+        changed_entries: 1,
+        staged_seconds: 5400,
+      })
+      await run(
+        'INSERT INTO deel_transfer_intents(entry_id,contract_id,fingerprint,started_at) VALUES(?,?,?,?)',
+        f.u * 10,
+        `c${f.u}`,
+        `c${f.u}:2026-10-13:3600`,
+        now,
+      )
+      expect((await report()).deel_staging).toMatchObject({
+        status: 'attention',
+        staged_entries: 2,
+        unresolved_entries: 1,
+      })
+      await run('UPDATE users SET is_active=0 WHERE id=?', f.u)
+      expect(await report()).toMatchObject({
+        active: false,
+        deel_staging: { status: 'attention', staged_entries: 2, unresolved_entries: 1 },
+      })
+      expect(await rows('SELECT * FROM staff_payment_effective_events')).toEqual([])
+    })
+    it('excludes running placeholders and counts zero or negative stopped entries without calling them staged', async () => {
+      const f = await fixture(),
+        zero = f.u * 10 + 1,
+        negative = zero + 1,
+        running = zero + 2
+      await addUnsubmitted(f.u, zero)
+      await addUnsubmitted(f.u, negative)
+      await addUnsubmitted(f.u, running)
+      // Imported negative corrections may round to zero; completed positive
+      // zero entries are separately prohibited by the write gate.
+      await run(
+        'UPDATE time_entries SET seconds=-1,seconds_without_timer=-1,rounded_seconds=0 WHERE id=?',
+        zero,
+      )
+      await run(
+        'UPDATE time_entries SET seconds=-1800,seconds_without_timer=-1800,rounded_seconds=-1800 WHERE id=?',
+        negative,
+      )
+      await run('UPDATE time_entries SET timer_started_at=? WHERE id=?', now, running)
+      await reportingStore(f.u)
+      const row = (
+        await createStaffPaymentStore(db as Parameters<typeof createStaffPaymentStore>[0]).report(
+          '2026-10',
+          '2026-10-26',
+        )
+      ).rows.find((person) => person.user_id === f.u)!
+      expect(row.deel_staging).toMatchObject({
+        status: 'attention',
+        staged_entries: 0,
+        unstaged_entries: 1,
+        unstaged_seconds: 3600,
+        zero_duration_entries: 1,
+        unsyncable_entries: 1,
+      })
+    })
     const submitEntry = async (userId: number, entryId: number) => {
       const submissionId = entryId + 300000
       await run(

@@ -573,6 +573,18 @@ export type StaffPaymentEvent = {
 };
 
 export type StaffPaymentRow = {
+  "deel_staging"?: {
+  "status": "not_staged" | "partially_staged" | "staged" | "attention" | "no_hours";
+  "staged_entries": number;
+  "unstaged_entries": number;
+  "unresolved_entries": number;
+  "changed_entries": number;
+  "zero_duration_entries": number;
+  "unsyncable_entries": number;
+  "staged_seconds": number;
+  "unstaged_seconds": number;
+  "last_staged_at": string | null;
+};
   "is_contractor": boolean;
   "user_id": number;
   "name": string;

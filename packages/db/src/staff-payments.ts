@@ -15,6 +15,7 @@ import {
   type StaffPaymentCommand,
   type StaffPaymentEvent,
   type StaffPaymentStore,
+  type StaffPaymentDeelStaging,
 } from '@ezacto/core'
 
 type Database = BetterSQLite3Database<typeof schema> | DrizzleD1Database<typeof schema>
@@ -46,7 +47,7 @@ const eventSelect = sql`SELECT event.command_json, event.version, event.actor_id
 export const createStaffPaymentStore = (database: Database): StaffPaymentStore => {
   const providers = createStaffPaymentProviderStore(database)
   const report: StaffPaymentStore['report'] = async (month, today) => {
-    const [people, history, providerSettings] = await Promise.all([
+    const [people, history, providerSettings, stagingEntries] = await Promise.all([
       database.all<{
         user_id: number
         name: string
@@ -73,12 +74,87 @@ export const createStaffPaymentStore = (database: Database): StaffPaymentStore =
         FROM users person WHERE person.is_active = 1 OR EXISTS(
           SELECT 1 FROM staff_payment_effective_events event WHERE event.user_id = person.id
             AND (event.month = ${month} OR (event.kind = 'opening' AND event.month >= ${month})))
+          OR EXISTS(SELECT 1 FROM time_entries entry WHERE entry.user_id=person.id
+            AND entry.spent_date BETWEEN ${month + '-01'} AND ${paymentMonthEnd(month)}
+            AND (EXISTS(SELECT 1 FROM deel_transfer_log receipt WHERE receipt.entry_id=entry.id)
+              OR EXISTS(SELECT 1 FROM deel_transfer_intents intent WHERE intent.entry_id=entry.id)))
         ORDER BY person.first_name, person.last_name, person.id`),
       database.all<EventRow>(sql`${eventSelect}
         WHERE event.month = ${month} OR (event.kind = 'opening' AND event.month >= ${month})
         ORDER BY event.month, event.version`),
       providers.read(),
+      database.all<{
+        user_id: number
+        spent_date: string
+        rounded_seconds: number
+        fingerprint: string | null
+        transferred_at: string | null
+        unresolved: number
+      }>(sql`
+        SELECT entry.user_id, entry.spent_date, entry.rounded_seconds,
+          receipt.fingerprint, receipt.transferred_at,
+          EXISTS(SELECT 1 FROM deel_transfer_intents intent WHERE intent.entry_id=entry.id) AS unresolved
+        FROM time_entries entry
+        LEFT JOIN deel_transfer_log receipt ON receipt.entry_id=entry.id
+        WHERE entry.spent_date BETWEEN ${month + '-01'} AND ${paymentMonthEnd(month)}
+          AND entry.timer_started_at IS NULL
+          AND (entry.started_time IS NULL OR entry.ended_time IS NOT NULL)`),
     ])
+    const stagingByUser = new Map<number, StaffPaymentDeelStaging>()
+    for (const entry of stagingEntries) {
+      let staging = stagingByUser.get(entry.user_id)
+      if (!staging) {
+        staging = {
+          status: 'no_hours',
+          staged_entries: 0,
+          unstaged_entries: 0,
+          unresolved_entries: 0,
+          changed_entries: 0,
+          zero_duration_entries: 0,
+          unsyncable_entries: 0,
+          staged_seconds: 0,
+          unstaged_seconds: 0,
+          last_staged_at: null,
+        }
+        stagingByUser.set(entry.user_id, staging)
+      }
+      if (entry.unresolved === 1) staging.unresolved_entries++
+      if (entry.fingerprint !== null) {
+        // The contract is stored only in the receipt. Compare the local date and
+        // duration without claiming to have rechecked the remote contract.
+        const sent = /:(\d{4}-\d{2}-\d{2}):([1-9]\d*)$/.exec(entry.fingerprint)
+        staging.staged_entries++
+        if (sent) staging.staged_seconds += Number(sent[2])
+        if (!sent || sent[1] !== entry.spent_date || Number(sent[2]) !== entry.rounded_seconds)
+          staging.changed_entries++
+        if (
+          entry.transferred_at !== null &&
+          (staging.last_staged_at === null || entry.transferred_at > staging.last_staged_at)
+        )
+          staging.last_staged_at = entry.transferred_at
+      } else if (entry.unresolved === 1) {
+        // A claimed entry may already exist in Deel even without a receipt.
+      } else if (entry.rounded_seconds === 0) {
+        staging.zero_duration_entries++
+      } else if (entry.rounded_seconds < 0) {
+        staging.unsyncable_entries++
+      } else {
+        staging.unstaged_entries++
+        staging.unstaged_seconds += entry.rounded_seconds
+      }
+    }
+    for (const staging of stagingByUser.values()) {
+      staging.status =
+        staging.changed_entries + staging.unresolved_entries + staging.unsyncable_entries > 0
+          ? 'attention'
+          : staging.staged_entries > 0
+            ? staging.unstaged_entries > 0
+              ? 'partially_staged'
+              : 'staged'
+            : staging.unstaged_entries > 0
+              ? 'not_staged'
+              : 'no_hours'
+    }
     const events = history.map(eventOf)
     const result = {
       month,
@@ -104,6 +180,24 @@ export const createStaffPaymentStore = (database: Database): StaffPaymentStore =
         )
         return {
           ...summary,
+          ...(summary.payout_provider === 'deel' ||
+          stagingByUser.get(person.user_id)?.staged_entries ||
+          stagingByUser.get(person.user_id)?.unresolved_entries
+            ? {
+                deel_staging: stagingByUser.get(person.user_id) ?? {
+                  status: 'no_hours' as const,
+                  staged_entries: 0,
+                  unstaged_entries: 0,
+                  unresolved_entries: 0,
+                  changed_entries: 0,
+                  zero_duration_entries: 0,
+                  unsyncable_entries: 0,
+                  staged_seconds: 0,
+                  unstaged_seconds: 0,
+                  last_staged_at: null,
+                },
+              }
+            : {}),
           is_contractor: person.is_contractor === 1,
           has_hours: person.has_hours === 1,
           reserved_cents: person.reserved_cents,

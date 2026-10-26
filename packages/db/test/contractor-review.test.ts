@@ -653,13 +653,54 @@ for (const runtime of ['sqlite', 'd1'] as const)
   it(`upgrades existing reviewed earnings and receipts without changing their history (${runtime})`, async () => {
     const f = await fixture(runtime, true)
     await f.hours()
-    await f.confirm()
-    await partial(f)
+    // Seed the historical schema directly: the current report also reads Deel
+    // staging tables, which were introduced after this upgrade's starting point.
+    const entries = (await f.ledger.actuals!(month, now)).people.find(
+      (person) => person.user_id === 2,
+    )!.entries
+    const review = {
+      id: 'review-1',
+      user_id: 2,
+      month,
+      expected_version: 0,
+      currency: 'USD',
+      entries,
+      note: 'Reviewed work with captured rates',
+    }
+    await f.db
+      .run(sql`INSERT INTO staff_payment_actuals(id,user_id,month,command_json,entries_json,amount_cents,currency,expected_version,actor_id,recorded_at,request_id,note)
+      VALUES(${review.id},2,${month},${JSON.stringify(review)},${JSON.stringify(entries)},10000,'USD',0,1,${now},'request-review',${review.note})`)
+    const payment = {
+      id: 'partial',
+      user_id: 2,
+      month,
+      expected_version: 1,
+      kind: 'payment',
+      amount_cents: 2000,
+      currency: 'USD',
+      paid_on: '2026-09-15',
+      due_on: null,
+      reference: 'BANK-partial',
+      note: 'Confirmed receipt',
+      payment_id: null,
+      source: 'wise',
+    }
+    await f.db
+      .run(sql`INSERT INTO staff_payment_events(id,user_id,month,version,kind,command_json,actor_id,recorded_at,request_id)
+      VALUES(${payment.id},2,${month},2,'payment',${JSON.stringify(payment)},1,${now},'partial-request')`)
+    const history = async () => ({
+      reviews: await f.db.all(sql`SELECT * FROM staff_payment_actuals ORDER BY id`),
+      events: await f.db.all(sql`SELECT * FROM staff_payment_events ORDER BY id`),
+      balances: await f.db.all(sql`SELECT * FROM staff_payment_balances ORDER BY user_id,month`),
+    })
     const before = await f.counts(),
-      ledgerBefore = await f.ledger.report(month, now.slice(0, 10))
+      historyBefore = await history()
     await f.upgrade()
     expect(await f.counts()).toEqual(before)
-    expect(await f.ledger.report(month, now.slice(0, 10))).toEqual(ledgerBefore)
+    expect(await history()).toEqual(historyBefore)
+    expect(
+      (await f.ledger.report(month, now.slice(0, 10))).rows.find((person) => person.user_id === 2),
+    ).toMatchObject({ amount_cents: 10000, paid_cents: 2000, version: 2 })
     const command = await commandFor(f, 'after-upgrade')
     expect(command.source_revision).toBe('[0,0,0]')
     await expect(f.review.accept!(command, 1, 'upgrade-request', now)).resolves.toMatchObject({

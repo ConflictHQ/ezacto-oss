@@ -51,6 +51,7 @@ export const renderStaffPayments = (view?: string): string =>
       <section data-payment-person hidden class="staff-payment-person" aria-labelledby="staff-payment-person-title">
         <header><h2 id="staff-payment-person-title" data-payment-person-title></h2><a data-payment-destination href="/team">Manage Wise destination</a></header>
         <p data-payment-person-summary></p>
+        <div data-payment-person-deel></div>
         <form data-payment-provider-form="person" hidden>
           <label>Preferred payment provider<select name="provider"><option value="">Use organization default</option><option value="wise">Wise</option><option value="deel">Deel</option></select></label>
           <label>Reason for change<textarea name="note" required maxlength="2000"></textarea></label>

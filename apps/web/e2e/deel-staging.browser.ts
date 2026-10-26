@@ -76,6 +76,9 @@ test("stages administrator-reviewed unsubmitted and approved hours once without 
   await expect(section.locator("[data-deel-stage-message]")).toContainText(
     "these entries are not marked paid here",
   );
+  await expect(page.locator('[data-payment-list] [data-deel-staging-status="50001"]')).toContainText('Staged in Deel');
+  await expect(page.locator('[data-payment-list] [data-deel-staging-label="50001"]')).toHaveText('Staged in Deel');
+  await expect(page.locator('[data-payment-list] [data-deel-staging-status="50002"]')).toContainText('Not staged');
   await expect(
     section.getByRole("link", { name: "Complete invoice and payment in Deel" }),
   ).toHaveAttribute("href", "https://app.deel.com/");
@@ -144,4 +147,11 @@ test("stages administrator-reviewed unsubmitted and approved hours once without 
     path: testInfo.outputPath("deel-staging-phone.png"),
     fullPage: true,
   });
+  await page.reload();
+  await page.locator("[data-payment-month]").fill("2026-08");
+  await page.getByRole("button", { name: "Refresh", exact: true }).click();
+  for (const userId of [50001, 50002]) {
+    await expect(page.locator(`[data-payment-list] [data-deel-staging-status="${userId}"]`)).toContainText('Staged in Deel');
+    await expect(page.locator(`[data-payment-list] [data-deel-staging-status="${userId}"]`)).toContainText('1.00 h staged');
+  }
 });
