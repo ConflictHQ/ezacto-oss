@@ -39,7 +39,7 @@ try:
  result=cli('deploy','--config',str(config));revision=re.search(r'Current Version ID:\s*([a-f0-9-]+)',result)
  manifest.update(url=url,deployed_revision=revision.group(1) if revision else 'see private deploy log');save()
  def req(path,body=None,method=None,token=None,raw=False,expected=200):
-  h={'x-owned-proof':secret,'origin':url}
+  h={'x-owned-proof':secret,'origin':url,'user-agent':'Mozilla/5.0 (owned CSV acceptance)'}
   if token:h['cookie']='__Host-ezacto_session='+token
   if body is not None:
    if not raw:
@@ -74,6 +74,9 @@ try:
  (out/'evidence.json').write_text(json.dumps(evidence,indent=2)+'\n');print('Owned deployed proof passed; evidence '+str(out/'evidence.json'),flush=True)
 finally:
  errors=[]
+ if 'worker' in manifest['created']:
+  try:cli('queues','consumer','remove',name,name)
+  except Exception as e:errors.append(str(e))
  for kind in reversed(manifest['created']):
   try:
    if kind=='worker':cli('delete','--name',name,'--force','--config',str(config))
