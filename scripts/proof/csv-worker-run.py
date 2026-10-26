@@ -39,6 +39,7 @@ try:
  result=cli('deploy','--config',str(config));revision=re.search(r'Current Version ID:\s*([a-f0-9-]+)',result)
  manifest.update(url=url,deployed_revision=revision.group(1) if revision else 'see private deploy log');save()
  def req(path,body=None,method=None,token=None,raw=False,expected=200):
+  if path in ['/__proof/repair','/__proof/hold','/__proof/duplicate']:expected=204
   h={'x-owned-proof':secret,'origin':url,'user-agent':'Mozilla/5.0 (owned CSV acceptance)'}
   if token:h['cookie']='__Host-ezacto_session='+token
   if body is not None:
@@ -54,6 +55,7 @@ try:
   return json.loads(payload) if payload else None
  step=0
  while not req('/__proof/schema',{'step':step})['done']:step+=1
+ print('Owned schema prepared',flush=True)
  tokens=req('/__proof/seed',{},token=None)
  admin=tokens['admin'];req('/api/v1/csv-import-capabilities',token=admin)
  data=b'Email,Client,Project,Task,Description,Billable,Start Date,Start Time,End Date,End Time,Duration (h)\nowned@example.test,C,P,T,Owned proof one,Yes,2026-09-01,09:00:00,2026-09-01,10:00:00,01:00:00\nowned@example.test,C,P,T,Owned proof two,Yes,2026-09-02,09:00:00,2026-09-02,10:00:00,01:00:00\n'
@@ -63,12 +65,13 @@ try:
  preview=req(base+'/preview',{},token=admin)['data'];assert req('/__proof/inspect')['time']['count']==0
  command={'command_id':str(uuid.uuid4()),'preview_id':preview['preview_id'],'version':preview['run']['version'],'expected_selected_rows':2,'expected_source_seconds':7200,'expected_destination_seconds':7200,'acknowledge_exclusions':False,'acknowledge_destination_difference':True,'acknowledge_new_people':True}
  req(base+'/apply',command,token=admin);before=req('/__proof/inspect');assert before['stages'][0]['publish_pending']==1
- req('/__proof/repair',{});deadline=time.time()+180
+ req('/__proof/repair',{});print('Native API admission and preview passed; awaiting real Queue apply',flush=True);deadline=time.time()+180
  while True:
   result=req('/__proof/inspect')
   if result['stages'][0]['status']=='completed':break
   if time.time()>deadline:raise RuntimeError('Queue completion deadline; safe status '+json.dumps(result))
   time.sleep(2)
+ print('Real Queue import completed',flush=True)
  altered=dict(command,version=command['version']+1)
  req(base+'/apply',altered,token=admin,expected=409)
  req(base+'/apply',command,token=admin);req('/__proof/duplicate',{'stage_id':stage['id']});time.sleep(5)
@@ -92,6 +95,9 @@ try:
  (out/'evidence.json').write_text(json.dumps(evidence,indent=2)+'\n');print('Owned deployed proof passed; evidence '+str(out/'evidence.json'),flush=True)
 finally:
  errors=[]
+ if url and 'worker' in manifest['created']:
+  try:req('/__proof/cleanup')
+  except Exception as e:errors.append(str(e))
  if 'worker' in manifest['created']:
   try:cli('queues','consumer','remove',name,name)
   except Exception as e:errors.append(str(e))

@@ -9,6 +9,11 @@ export default {
     if(!env.PROOF_SECRET||request.headers.get('x-owned-proof')!==env.PROOF_SECRET)return new Response(null,{status:404})
     if(!/^ezacto-csv1184-proof-[a-f0-9]+$/.test(env.PROOF_ID??''))return new Response(null,{status:404})
     const url=new URL(request.url)
+    if(url.pathname==='/__proof/cleanup'){
+      let count=0
+      for(;;){const page=await env.ATTACHMENTS.list({limit:100});if(!page.objects.length)break;await env.ATTACHMENTS.delete(page.objects.map(object=>object.key));count+=page.objects.length}
+      return json({deleted:count})
+    }
     if(url.pathname==='/__proof/schema'){
       const input=await request.json()
       if(!Number.isInteger(input.step)||input.step<0||input.step>Math.ceil(migrationIds.length/10))return new Response(null,{status:400})
