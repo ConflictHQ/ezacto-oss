@@ -296,6 +296,7 @@ it('keeps the selected review tab when provider discovery finishes after navigat
     getStaffPaymentReport: vi.fn(async () => ledger()),
     recordStaffPaymentEvent: vi.fn(),
     getContractorReview: vi.fn(async () => review()),
+    previewPaymentRun: vi.fn(),
     getDeelStaging: vi.fn(async () => {
       await discovery
       return { data: { configured: false, reason: null, start_date: null, last_complete_date: null } }
@@ -306,6 +307,7 @@ it('keeps the selected review tab when provider discovery finishes after navigat
   })
   const activation = controller.activate({ profile: 'administrator' }, active.signal)
   await vi.waitFor(() => expect(document.querySelector<HTMLElement>('[data-staff-payment-content]')!.hidden).toBe(false))
+  expect(document.querySelector<HTMLElement>('[data-payment-runs]')!.hidden).toBe(true)
   const tab = document.querySelector<HTMLButtonElement>('[data-payment-tab="reconcile"]')!
   tab.click()
   expect(tab.getAttribute('aria-selected')).toBe('true')
@@ -314,5 +316,6 @@ it('keeps the selected review tab when provider discovery finishes after navigat
   expect(tab.getAttribute('aria-selected')).toBe('true')
   expect(document.querySelector<HTMLElement>('[data-payment-panel="reconcile"]')!.hidden).toBe(false)
   expect(document.querySelector<HTMLButtonElement>('[data-contractor-review-load]')!.disabled).toBe(false)
+  expect(document.querySelector<HTMLElement>('[data-payment-runs]')!.hidden).toBe(true)
   active.abort()
 })

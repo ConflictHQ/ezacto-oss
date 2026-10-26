@@ -900,10 +900,10 @@ export const createStaffPaymentsController = (api: StaffPaymentsApi) => {
       advances.activate(active)
       staffInvoices.activate(active)
       reconciliation.activate(active)
-      // Establish the default before async discovery so a later response cannot
+      await runs.activate(active)
+      // Establish the default before provider discovery so a later response cannot
       // replace a tab the administrator has already selected.
       tabs.activate(reportMode, api.previewPaymentRun !== undefined)
-      await runs.activate(active)
       await deelSync.activate(active)
       if (!reportMode) await deelStage.activate(active)
       if (!reportMode) await load()
