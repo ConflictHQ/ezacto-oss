@@ -52,6 +52,7 @@ export default defineConfig({
     cwd: repositoryRoot,
     url: `${origin}/healthz`,
     reuseExistingServer: false,
+    gracefulShutdown: { signal: 'SIGTERM', timeout: 15_000 },
     timeout: 120_000,
     stdout: 'pipe',
     stderr: 'pipe'
