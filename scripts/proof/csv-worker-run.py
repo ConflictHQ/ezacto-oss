@@ -18,6 +18,10 @@ def cli(*args,stdin=None):
 save();secret=secrets.token_hex(32);cursor=secrets.token_urlsafe(32)
 config=out/'wrangler.json';url=None;tokens=None
 try:
+ bundle=out/'worker.mjs'
+ build_script='import {build} from \"esbuild\";await build({entryPoints:[\"scripts/proof/csv-worker-entry.mjs\"],bundle:true,conditions:[\"development\"],platform:\"browser\",format:\"esm\",external:[\"node:async_hooks\"],outfile:'+json.dumps(str(bundle))+'});'
+ subprocess.run(['node','--input-type=module','-e',build_script],cwd=ROOT,check=True)
+ manifest['bundle_sha256']=hashlib.sha256(bundle.read_bytes()).hexdigest();save()
  print('Creating owned proof resources '+name,flush=True)
  result=cli('d1','create',name);match=re.search(r'"database_id"\s*:\s*"([a-f0-9-]+)"',result)
  if not match:match=re.search(r'([a-f0-9]{8}-[a-f0-9-]{27,})',result)
@@ -26,7 +30,7 @@ try:
  cli('r2','bucket','create',name);manifest['created'].append('r2');save()
  cli('queues','create',name);manifest['created'].append('queue');save()
  cli('queues','create',name+'-dlq');manifest['created'].append('dlq');save()
- value={'name':name,'account_id':ACCOUNT,'main':str(ROOT/'scripts/proof/csv-worker-entry.mjs'),'compatibility_date':'2026-08-26','compatibility_flags':['nodejs_als'],'workers_dev':True,'observability':{'enabled':False},'vars':{'ENVIRONMENT':'test','RELEASE':manifest['source_revision'],'PROOF_ID':name,'APP_BASE_URL':'https://invalid.invalid','CSV_IMPORT_QUEUE_NAME':name},'d1_databases':[{'binding':'DB','database_name':name,'database_id':manifest['database_id']}],'r2_buckets':[{'binding':'ATTACHMENTS','bucket_name':name}],'queues':{'producers':[{'binding':'CSV_IMPORT_QUEUE','queue':name}],'consumers':[{'queue':name,'max_batch_size':1,'max_batch_timeout':1,'max_retries':3,'retry_delay':5,'dead_letter_queue':name+'-dlq','max_concurrency':1}]}}
+ value={'name':name,'account_id':ACCOUNT,'main':str(bundle),'no_bundle':True,'compatibility_date':'2026-08-26','compatibility_flags':['nodejs_als'],'workers_dev':True,'observability':{'enabled':False},'vars':{'ENVIRONMENT':'test','RELEASE':manifest['source_revision'],'PROOF_ID':name,'APP_BASE_URL':'https://invalid.invalid','CSV_IMPORT_QUEUE_NAME':name},'d1_databases':[{'binding':'DB','database_name':name,'database_id':manifest['database_id']}],'r2_buckets':[{'binding':'ATTACHMENTS','bucket_name':name}],'queues':{'producers':[{'binding':'CSV_IMPORT_QUEUE','queue':name}],'consumers':[{'queue':name,'max_batch_size':1,'max_batch_timeout':1,'max_retries':3,'retry_delay':5,'dead_letter_queue':name+'-dlq','max_concurrency':1}]}}
  config.write_text(json.dumps(value));result=cli('deploy','--config',str(config));manifest['created'].append('worker');save()
  found=re.search(r'https://'+re.escape(name)+r'\.[a-zA-Z0-9.-]+\.workers\.dev',result)
  if not found:raise RuntimeError('Owned Worker URL missing')
