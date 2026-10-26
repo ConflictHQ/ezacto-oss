@@ -1,6 +1,6 @@
 import { DEMO_MAIL_NOTE, demoUnavailable } from '../demo.js'
 import { invoiceOverflowTransitions } from './model.js'
-import { renderInvoiceProviderAlerts } from './provider-alerts.js'
+import { renderInvoiceProviderAlerts } from './provider-alerts-model.js'
 
 export const renderInvoicePaymentSection = (): string => `
       <section class="invoice-history invoice-payment-history" aria-labelledby="invoice-payment-heading">

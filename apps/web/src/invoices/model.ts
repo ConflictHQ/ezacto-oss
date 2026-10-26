@@ -32,7 +32,7 @@ import type {
 } from '@conflict-hq/ezacto-client'
 import { inspectEmailTemplateVariables, invoicePeriodLabel, sendWeekday } from '@ezacto/core'
 import { parseDurationSeconds } from '../shell/model.js'
-import type { InvoiceProviderAlertApi } from './provider-alerts.js'
+import type { InvoiceProviderAlertApi } from './provider-alerts-model.js'
 
 /**
  * The sentence to show for a failed invoice request: the first field the API

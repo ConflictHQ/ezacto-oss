@@ -1,11 +1,11 @@
 /** @vitest-environment happy-dom */
 import { afterEach, expect, it, vi } from 'vitest'
 import {
-  createInvoiceProviderAlerts,
   renderInvoiceProviderAlerts,
   type InvoiceProviderAlert,
   type InvoiceProviderAlertApi,
-} from '../src/invoices/provider-alerts.js'
+} from '../src/invoices/provider-alerts-model.js'
+import { createInvoiceProviderAlerts } from '../src/invoices/provider-alerts.js'
 
 const alert: InvoiceProviderAlert = {
   id: 'evt_test', event_type: 'charge.refunded', kind: 'refund', amount_cents: 4500,
