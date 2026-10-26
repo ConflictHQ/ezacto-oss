@@ -48,8 +48,8 @@ interface SettingsRow {
 }
 
 const readOptionalRow = async (database: InvoiceStateDatabase): Promise<SettingsRow | null> => {
-  const [row] = await database.all<SettingsRow & { organizationId: number | null; initialized: number }>(
-    sql`SELECT organization.id AS organizationId,
+  const [row] = await database.all<SettingsRow & { settingsPresent: number; initialized: number }>(
+    sql`SELECT organization.id IS NOT NULL AS settingsPresent,
                CASE WHEN organization.id IS NULL THEN
                  EXISTS(SELECT 1 FROM organizations) OR EXISTS(SELECT 1 FROM users)
                  OR EXISTS(SELECT 1 FROM auth_first_run)
@@ -68,8 +68,8 @@ const readOptionalRow = async (database: InvoiceStateDatabase): Promise<Settings
   // Absence is normal only before any organization or identity has been
   // initialized. Read the marker and settings in one snapshot so concurrent
   // first-run setup cannot be mistaken for a damaged configured instance.
-  if (row?.organizationId === null && row.initialized === 0) return null
-  if (row === undefined || row.organizationId === null) throw new Error('Organization settings do not exist.')
+  if (row?.settingsPresent === 0 && row.initialized === 0) return null
+  if (row === undefined || row.settingsPresent !== 1) throw new Error('Organization settings do not exist.')
   return row
 }
 
