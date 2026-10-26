@@ -17,19 +17,26 @@ import {
 import { sha256Hex } from './portable-hash.js'
 
 /** Canonical setup and tracked time writes; never chooses the database owner for HTTP. */
+export interface CsvWriterSetupCache {
+  /** Trusted native lineage rehydrated under the same revision and execution fence. */
+  createdIds: ReadonlyMap<string, number>
+  userPairs: readonly string[]
+  taskPairs: readonly string[]
+}
 export const createCsvBrowserWriter = (
   ledger: CsvBrowserDatasetLedger,
   snapshot: CsvBrowserDestinationSnapshot,
   plan: CsvBrowserPlan,
+  cache?: CsvWriterSetupCache,
 ) => {
   const selected = plan.plan.items.filter((row) => row.state !== 'rejected')
   const boundPlanId = csvPlanId(csvBrowserSealInput(plan))
-  const createdIds = new Map<string, number>()
+  const createdIds = new Map<string, number>(cache?.createdIds)
   const userPairs = new Set(
-    snapshot.userAssignments.map((row) => `${row.user_id}:${row.project_id}`),
+    [...snapshot.userAssignments.map((row) => `${row.user_id}:${row.project_id}`), ...(cache?.userPairs ?? [])],
   )
   const taskPairs = new Set(
-    snapshot.taskAssignments.map((row) => `${row.project_id}:${row.task_id}`),
+    [...snapshot.taskAssignments.map((row) => `${row.project_id}:${row.task_id}`), ...(cache?.taskPairs ?? [])],
   )
   const futureUsers = new Set(snapshot.futureProjectUserIds),
     defaultTasks = new Set(snapshot.defaultTaskIds)

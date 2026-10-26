@@ -5,7 +5,7 @@ import { createWorkerCsvQueue, type CsvWorkerMessage } from '../src/csv-queue.js
 
 const stage = (n: number) => `csv_${n.toString(16).padStart(32, '0')}`
 const future = '2099-01-01T00:00:00.000Z'
-const schema = `CREATE TABLE csv_worker_stages(id TEXT PRIMARY KEY,version INTEGER NOT NULL DEFAULT 1,status TEXT NOT NULL,expires_at TEXT NOT NULL,publish_pending INTEGER NOT NULL DEFAULT 1,next_attempt_at TEXT,lease_expires_at TEXT,steps INTEGER NOT NULL DEFAULT 0) STRICT;
+const schema = `CREATE TABLE csv_worker_stages(id TEXT PRIMARY KEY,version INTEGER NOT NULL DEFAULT 1,status TEXT NOT NULL,expires_at TEXT NOT NULL,publish_pending INTEGER NOT NULL DEFAULT 1,next_attempt_at TEXT,lease_expires_at TEXT,last_published_at TEXT,attempts INTEGER NOT NULL DEFAULT 0,steps INTEGER NOT NULL DEFAULT 0) STRICT;
 CREATE TABLE fixture_effects(stage_id TEXT NOT NULL,step INTEGER NOT NULL,PRIMARY KEY(stage_id,step)) STRICT;
 CREATE TABLE fixture_deliveries(body TEXT NOT NULL,attempt INTEGER NOT NULL) STRICT;`
 let mf: Miniflare | undefined
@@ -51,6 +51,14 @@ describe('CSV continuation publication', () => {
     expect(delay.mock.calls[0]![1]).toMatchObject({ delaySeconds: expect.any(Number) })
     expect(delay.mock.calls[0]![1]!.delaySeconds).toBeGreaterThanOrEqual(59)
     expect(delay.mock.calls[0]![1]!.delaySeconds).toBeLessThanOrEqual(60)
+  })
+
+  it('repairs a published pointer stranded before execution without republishing recent work', async () => {
+    const db=await database(),send=vi.fn<Send>(async()=>{})
+    for(const [n,stamp] of [[1,'2000-01-01T00:00:00.000Z'],[2,new Date().toISOString()]] as const)await db.prepare('INSERT INTO csv_worker_stages(id,status,expires_at,publish_pending,last_published_at) VALUES(?,?,?,0,?)').bind(stage(n),'queued',future,stamp).run()
+    await createWorkerCsvQueue({database:db as unknown as D1Database,queue:producer(send),execute:async()=>{}}).repair()
+    expect(send).toHaveBeenCalledTimes(1)
+    expect(send.mock.calls[0]?.[0]).toEqual({kind:'csv-import',stage_id:stage(1)})
   })
 
   it('acks malformed pointers and cancelled work without execution; retries transient failures with bounded delay', async () => {

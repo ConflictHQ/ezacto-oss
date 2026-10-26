@@ -3,6 +3,8 @@ import { EzactoApiError } from '@conflict-hq/ezacto-client'
 export class CsvUiError extends Error {}
 
 const messages: Readonly<Record<string, string>> = {
+  worker_policy_changed: 'Destination settings changed. Restore the reviewed settings before resuming, or cancel this import.',
+  worker_budget_exceeded: 'This selection exceeds the Worker processing budget. Use the Container or operator CSV import tool.',
   capability_unsupported: 'Browser CSV import is unavailable on this runtime. Use the operator SQLite import tool.',
   administrator_required: 'A current administrator session is required. Sign in again before continuing.',
   session_required: 'Sign in again before continuing this import.',

@@ -1,14 +1,10 @@
 # CSV import on Worker/D1: runtime contract
 
-Contract only, for [#1184](https://github.com/ConflictHQ/ezacto-pvt/issues/1184)
-(parent #1012, plan in [import-tools-plan.md](import-tools-plan.md)). It settles
-the interface and invariants a D1 implementation must meet. It does not add a
-route, migration, queue consumer or capability, and the Worker browser import
-stays off. The types are in
-[`csv-d1-contract.ts`](../packages/migrate/src/csv-d1-contract.ts); the suite any
-real store must pass is
-[`csv-d1-contract.test.ts`](../packages/migrate/test/csv-d1-contract.test.ts),
-with an in-memory reference in `test/csv-d1-fake.ts`.
+The portable contract for [#1184](https://github.com/ConflictHQ/ezacto-pvt/issues/1184)
+(parent #1012) is implemented by the optional Worker CSV adapter. See
+[csv-worker-import.md](csv-worker-import.md) for configuration and verification.
+The types remain in [`csv-d1-contract.ts`](../packages/migrate/src/csv-d1-contract.ts);
+the portable suite includes an in-memory reference in `test/csv-d1-fake.ts`.
 
 It sits under the planner and ports of #1180 (what a chunk contains) and the apply
 orchestration of #1183 (when chunks run). Where those land different names, adapt
@@ -23,12 +19,14 @@ the names here; the invariants stand.
 | One process owns the file | At-least-once, unordered queue delivery and concurrent invocations. |
 | No statement budget | 100 bound parameters and 100 KB per statement, and a per-invocation query cap; a chunk is sized to fit. |
 
-Budget assumptions, taken from the D1 limits page and not checked against a live
-account (re-verify on adoption): 100 bound parameters, 100,000 bytes per statement,
-and 50 queries per invocation on Workers Free (1,000 on the paid plan). The contract
-budgets against 50, so a chunk of 24 rows is 1 guard + 48 inserts = 49 statements
-and is valid on either plan. `chunkBudget(rows)` derives statements, parameters and
-bytes from the rows; `assertChunkWithinBudget` refuses what does not fit.
+D1 limits are 100 bound parameters and 100,000 bytes per statement, with 50
+invocation queries on Workers Free. A `D1Database.batch` is **one invocation
+query**, regardless of its statement count; each statement still obeys its own
+limits. The portable contract conservatively caps a batch at 49 statements
+(24 rows plus guard). The browser adapter instead commits one canonical time
+row per queue delivery and budgets all reads, writes, finalization, and queue
+publication against the 50-call ceiling. These are separate limits; a 49-statement
+batch does not consume 49 invocation queries. See the [official D1 limits](https://developers.cloudflare.com/d1/platform/limits/).
 
 ## Invariants
 

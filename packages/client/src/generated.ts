@@ -6113,7 +6113,7 @@ export type CsvImportApplyRun = {
   "stage_id": string;
   "preview_id": string | null;
   "state": "not_confirmed" | "queued" | "running" | "paused" | "partial" | "completed" | "cancelled" | "failed" | "superseded";
-  "code": "authority_expired" | "authority_revoked" | "input_expired" | "input_unavailable" | "policy_changed" | "parse_rejected" | "storage_unavailable" | "cancelled_by_administrator" | null;
+  "code": "processing_budget_exceeded" | "authority_expired" | "authority_revoked" | "input_expired" | "input_unavailable" | "policy_changed" | "parse_rejected" | "storage_unavailable" | "cancelled_by_administrator" | null;
   "command_id": string | null;
   "command_known": boolean;
   "pending_command": CsvImportApplyCommand | null;

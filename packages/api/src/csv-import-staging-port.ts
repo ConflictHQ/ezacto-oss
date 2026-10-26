@@ -120,7 +120,7 @@ export interface CsvStagingMappingInput {
 }
 /** No apply/confirm operation exists here. Node storage is an entry-owned port. */
 export interface CsvImportStagingPort {
-  readonly runtime: "container";
+  readonly runtime: "container" | "worker";
   authorize(authority: CsvStagingAuthority): Promise<void>;
   authorizeRun(authority: CsvStagingAuthority, runId: string): Promise<void>;
   upload(

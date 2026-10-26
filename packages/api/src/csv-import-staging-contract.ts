@@ -75,6 +75,8 @@ export const rawRetentionDeadline = (
     : null;
 
 export type CsvStagingErrorCode =
+  | "worker_policy_changed"
+  | "worker_budget_exceeded"
   | "session_required"
   | "token_denied"
   | "administrator_required"
@@ -102,6 +104,8 @@ export type CsvStagingErrorCode =
 export const csvStagingErrorStatus: Readonly<
   Record<CsvStagingErrorCode, number>
 > = {
+  worker_budget_exceeded: 413,
+  worker_policy_changed: 409,
   session_required: 401,
   token_denied: 403,
   administrator_required: 403,

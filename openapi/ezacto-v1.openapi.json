@@ -65845,6 +65845,7 @@
               {
                 "type": "string",
                 "enum": [
+                  "processing_budget_exceeded",
                   "authority_expired",
                   "authority_revoked",
                   "input_expired",

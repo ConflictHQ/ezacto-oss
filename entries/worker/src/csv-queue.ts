@@ -42,23 +42,23 @@ export const createWorkerCsvQueue = (options: {
     await options.queue.send({ kind: 'csv-import', stage_id: id }, { delaySeconds })
     // A send failure (including an unknown acknowledgement) retains the outbox.
     // A new version may already need its own continuation; never clear that flag.
-    await options.database.prepare(`UPDATE csv_worker_stages SET publish_pending=0
+    await options.database.prepare(`UPDATE csv_worker_stages SET publish_pending=0,last_published_at=?
       WHERE id=? AND version=? AND publish_pending=1 AND status IN ('queued','partial','running') AND expires_at>?`)
-      .bind(id, row.version, new Date().toISOString()).run()
+      .bind(new Date().toISOString(), id, row.version, new Date().toISOString()).run()
   }
   const repair = async (): Promise<void> => {
-    const now = new Date().toISOString()
+    const now = new Date().toISOString(), stale = new Date(Date.now() - 300_000).toISOString()
     const rows = await options.database.prepare(`SELECT id,version,status,publish_pending
       FROM csv_worker_stages WHERE status IN ('queued','partial','running') AND expires_at>?
       AND (next_attempt_at IS NULL OR next_attempt_at<=?)
-      AND (publish_pending=1 OR (status='running' AND lease_expires_at IS NOT NULL AND lease_expires_at<=?))
-      ORDER BY coalesce(next_attempt_at,''),id LIMIT 10`).bind(now, now, now)
+      AND attempts<3 AND (publish_pending=1 OR (status='running' AND lease_expires_at IS NOT NULL AND lease_expires_at<=?) OR (status='queued' AND last_published_at<=?))
+      ORDER BY coalesce(next_attempt_at,''),id LIMIT 10`).bind(now, now, now, stale)
       .all<{ id: string; version: number; status: string; publish_pending: number }>()
     for (const row of rows.results) {
       if (row.publish_pending !== 1) {
         const recovered = await options.database.prepare(`UPDATE csv_worker_stages SET publish_pending=1,version=version+1
-          WHERE id=? AND version=? AND status='running' AND lease_expires_at<=? AND expires_at>? RETURNING id`)
-          .bind(row.id, row.version, now, now).first<{ id: string }>()
+          WHERE id=? AND version=? AND ((status='running' AND lease_expires_at<=?) OR (status='queued' AND last_published_at<=?)) AND expires_at>? RETURNING id`)
+          .bind(row.id, row.version, now, stale, now).first<{ id: string }>()
         if (!recovered) continue
       }
       await publish(row.id)

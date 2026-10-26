@@ -48,7 +48,8 @@ const schemaEntries: readonly [string, Record<string, unknown>][] = [
       code: nullable({
         type: "string",
         enum: [
-          "authority_expired",
+          "processing_budget_exceeded",
+        "authority_expired",
           "authority_revoked",
           "input_expired",
           "input_unavailable",
