@@ -1233,6 +1233,7 @@ export const createApp = (
               repository: services.generalResources,
               timeEntries: services.trackedResources,
               expenses: services.trackedResources,
+              mutationClock: systemClock,
               isExpensesModuleEnabled: services.isExpensesModuleEnabled,
               isTeamModuleEnabled: services.isTeamModuleEnabled,
               clock: () => systemClock.now().instant,

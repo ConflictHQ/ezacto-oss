@@ -2,6 +2,7 @@ import { installHarvestInvoiceRoutes, type HarvestInvoiceSource } from './invoic
 import {
   canReviewSubmissions,
   canViewMoneyField,
+  calculateInvoiceLineAmountCents,
   GeneralResourceError,
   type GeneralResourceKind,
   type GeneralResourceRecord,
@@ -10,10 +11,11 @@ import {
 import type { Context, Hono } from 'hono'
 import { canPrincipalUseApiScope, requireApiScope } from '../auth.js'
 import type { ApiContext, UserPrincipal } from '../context.js'
-import { ApiError } from '../errors.js'
+import { ApiError, validationError } from '../errors.js'
+import { readExpenseUpdateInput } from '../resources/expenses.js'
 import { requireResourceRead, teamViewer, visibleGeneralRecord } from '../general-resources.js'
 import { authorizeInvoiceFilters, invoiceStateForViewer } from '../resources/invoice-visibility.js'
-import { notFound, resourceId, translateResourceError } from '../resources/support.js'
+import { notFound, readObjectBody, resourceId, translateResourceError, unknownFieldErrors } from '../resources/support.js'
 import { assertMayNameUser } from '../resources/time-entries.js'
 import type {
   ExpenseFilters,
@@ -22,6 +24,8 @@ import type {
   TimeEntryActor,
   TimeEntryFilters,
   TimeEntryRecord,
+  TrackedResourceClock,
+  TrackedResourceRepository,
 } from '../resources/tracked-repository.js'
 import { harvestPage, harvestPageWindow } from './pagination.js'
 import {
@@ -57,6 +61,7 @@ export interface HarvestTimeEntrySource {
 
 /** What the expenses routes read besides the general resources: offset-paged, every person the viewer reaches. */
 export interface HarvestExpenseSource {
+  updateExpense?: TrackedResourceRepository['updateExpense']
   canReadExpenseUser(viewer: Viewer, userId: number): Promise<boolean>
   getExpense(viewer: Viewer, id: number): Promise<ExpenseRecord>
   /** A null `userId` means everyone the viewer's review scope reaches. */
@@ -84,6 +89,7 @@ export interface HarvestV2RouteOptions {
   /** Users and roles belong to the Team module; absent means it is on. */
   isTeamModuleEnabled?(): Promise<boolean>
   clock?: () => string
+  mutationClock?: TrackedResourceClock
 }
 
 /** Rows the viewer may read, rendered as Harvest objects. */
@@ -551,6 +557,46 @@ export const installHarvestV2Routes = <Bindings extends object>(
     try {
       const record = await options.expenses.getExpense(viewer, id)
       return context.json((await renderExpenses([record], viewer))[0])
+    } catch (error) {
+      return translateResourceError(error, 'expense', viewer)
+    }
+  })
+
+  const updateExpense = options.expenses.updateExpense?.bind(options.expenses)
+  const mutationClock = options.mutationClock
+  if (updateExpense && mutationClock) harvest.patch('/expenses/:id', async (context) => {
+    requireApiScope(context, 'expenses:write')
+    const viewer = context.get('principal')
+    await requireExpensesModule()
+    const id = resourceId(context.req.param('id'), 'expense')
+    try {
+      const current = await options.expenses.getExpense(viewer, id)
+      // Match the native write boundary even when all requested changes are dropped.
+      if (current.userId !== viewer.userId) throw notFound('expense')
+      const body = await readObjectBody(context)
+      const errors = unknownFieldErrors(body, new Set([
+        'project_id', 'expense_category_id', 'spent_date', 'units', 'total_cost', 'notes', 'billable',
+      ]))
+      if (errors.length) throw validationError(errors)
+      const input = { ...body }
+      // Harvest's documented exception is confined to this shim. Other locked
+      // fields still pass through the native lock guard; no ledger bypass exists.
+      if (invoiceStateForViewer(current.state, viewer).is_locked) {
+        delete input.project_id
+        delete input.expense_category_id
+        if (Object.keys(input).length === 0 && Object.keys(body).length > 0)
+          return context.json((await renderExpenses([current], viewer))[0], 200, { 'cache-control': 'no-store' })
+      }
+      if (Object.hasOwn(input, 'total_cost')) {
+        const amount = input.total_cost
+        if (typeof amount !== 'number' || !Number.isFinite(amount) || amount < 0)
+          throw validationError([{ field: 'total_cost', code: 'invalid', message: 'Use a nonnegative decimal amount.' }])
+        try { input.total_cost_cents = calculateInvoiceLineAmountCents(amount, 100) }
+        catch { throw validationError([{ field: 'total_cost', code: 'out_of_range', message: 'The expense amount is out of range.' }]) }
+        delete input.total_cost
+      }
+      const updated = await updateExpense(viewer.userId, id, readExpenseUpdateInput(input), mutationClock.now())
+      return context.json((await renderExpenses([updated], viewer))[0], 200, { 'cache-control': 'no-store' })
     } catch (error) {
       return translateResourceError(error, 'expense', viewer)
     }
