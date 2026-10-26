@@ -30,6 +30,7 @@ import { renderRecurringEditorPage, renderRecurringPage } from '../recurring/ren
 import { renderEstimatesPage } from '../estimates/render.js'
 import { renderCapacityPage } from '../capacity/render.js'
 import { renderMyPaymentsPage } from '../my-payments/render.js'
+import { renderBankDepositPage } from '../bank-deposits/render.js'
 import { renderRetainerDialogs, renderRetainerPage } from '../retainers/render.js'
 import {
   renderActivityLogPage,
@@ -121,6 +122,7 @@ export interface AppShellOptions {
     | 'invoice-recurring-editor'
     | 'invoice-estimates'
     | 'invoice-retainers'
+    | 'invoice-bank-deposits'
     | 'client-list'
     | 'client-detail'
     | 'project-list'
@@ -266,6 +268,7 @@ const invoiceDestinations = [
   // an invoice comes from, not a setting.
   ['Estimates', '/invoices/estimates', 'invoice-estimates'],
   ['Retainers', '/invoices/retainers', 'invoice-retainers'],
+  ['Bank deposits', '/invoices/bank-deposits', 'invoice-bank-deposits'],
   // Configure left this strip for Settings. Two of the five templates it edits
   // -- the email-verification and password-reset messages -- are account mail
   // with nothing to do with invoicing, and it sits beside sender identity and
@@ -1132,6 +1135,7 @@ ${instancePalette ? `  <link rel="stylesheet" href="${INSTANCE_THEME_STYLESHEET_
   ${renderRecurringEditorPage(view)}
   ${renderEstimatesPage(view)}
   ${renderRetainerPage(view)}
+  ${renderBankDepositPage(view)}
   ${renderEmailConfigPage(view)}
   ${renderClientDirectoryPages(view)}
   ${renderTeamPages(view)}

@@ -126,6 +126,7 @@ import {
   createRecurringWorkspaceController,
 } from '../recurring/browser.js'
 import { createEstimateWorkspaceController } from '../estimates/browser.js'
+import { createBankDepositController } from '../bank-deposits/browser.js'
 import { createRetainerWorkspaceController } from '../retainers/browser.js'
 import { createModuleSettingsController } from '../module-settings/browser.js'
 import { demoUnavailable, isDemoDeployment } from '../demo.js'
@@ -1725,6 +1726,7 @@ export const mountShell = async (
   const recurringEditor = createRecurringEditorController(api)
   const estimateWorkspace = createEstimateWorkspaceController(api)
   const retainerWorkspace = createRetainerWorkspaceController(api)
+  const bankDeposits = createBankDepositController(api)
   const moduleSettings = createModuleSettingsController(api)
   const invoicePayments = createInvoicePaymentController(api)
   const invoiceEditor = createInvoiceEditorController(api)
@@ -4992,6 +4994,8 @@ export const mountShell = async (
         ),
         loadWeek(authenticated),
       ])
+    } else if (document.documentElement.dataset.appView === 'invoice-bank-deposits') {
+      await Promise.all([bankDeposits.activate(identity, authenticated.signal, (error) => handleSessionFailure(error, authenticated)), loadWeek(authenticated)])
     } else if (invoiceRetainersPage) {
       await Promise.all([
         retainerWorkspace.activate(
