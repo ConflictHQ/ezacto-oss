@@ -9,7 +9,7 @@ afterEach(async()=>{await fixture?.dispose();fixture=undefined})
 it('runs the actual Worker API, private R2 and Queue chain with lost publication, replay and bounded calls',async()=>{
   const output=await build({stdin:{resolveDir:new URL('../',import.meta.url).pathname,contents:`
     import {worker} from './src/index.ts'
-    const observe=(db)=>{let calls=0;const originals=new WeakMap();const wrap=p=>{const s={bind:(...v)=>wrap(p.bind(...v)),first:(...v)=>{calls++;return p.first(...v)},all:(...v)=>{calls++;return p.all(...v)},run:(...v)=>{calls++;return p.run(...v)},raw:(...v)=>{calls++;return p.raw(...v)}};originals.set(s,p);return s};return{database:{prepare:sql=>wrap(db.prepare(sql)),batch:items=>{calls++;return db.batch(items.map(s=>originals.get(s)||s))},exec:sql=>{calls++;return db.exec(sql)}},calls:()=>calls}}
+    const observe=(db)=>{let calls=0,budgetProgress=-1;const originals=new WeakMap();const wrap=(p,sql)=>{const s={bind:(...v)=>{if(sql.includes('SET budget_yields='))budgetProgress=Number(v[1]);return wrap(p.bind(...v),sql)},first:(...v)=>{calls++;return p.first(...v)},all:(...v)=>{calls++;return p.all(...v)},run:(...v)=>{calls++;return p.run(...v)},raw:(...v)=>{calls++;return p.raw(...v)}};originals.set(s,p);return s};return{database:{prepare:sql=>wrap(db.prepare(sql),sql),batch:items=>{calls++;return db.batch(items.map(s=>originals.get(s)||s))},exec:sql=>{calls++;return db.exec(sql)}},calls:()=>calls,budgetProgress:()=>budgetProgress}}
 
     let losePublication=true
     export default{
@@ -19,12 +19,12 @@ it('runs the actual Worker API, private R2 and Queue chain with lost publication
         const queue=new Proxy(env.CSV_IMPORT_QUEUE,{get(target,key){if(key==='send')return async(body,options)=>{if(losePublication&&body.kind==='csv-import'){losePublication=false;throw new Error('owned publication unavailable')}return target.send(body,options)};const value=Reflect.get(target,key,target);return typeof value==='function'?value.bind(target):value}})
         return worker.fetch(request,{...env,CSV_IMPORT_QUEUE:queue},ctx)
       },
-      async queue(batch,env,ctx){const measured=observe(env.DB);try{await worker.queue(batch,{...env,DB:measured.database},ctx)}catch(error){await env.DB.prepare('INSERT INTO csv_fixture_errors(message) VALUES(?)').bind(String(error)).run();throw error}finally{await env.DB.prepare('INSERT INTO csv_fixture_calls(calls) VALUES(?)').bind(measured.calls()).run()}}
+      async queue(batch,env,ctx){const measured=observe(env.DB);try{await worker.queue(batch,{...env,DB:measured.database},ctx)}catch(error){await env.DB.prepare('INSERT INTO csv_fixture_errors(message) VALUES(?)').bind(String(error)).run();throw error}finally{await env.DB.prepare('INSERT INTO csv_fixture_calls(calls,budget_progress) VALUES(?,?)').bind(measured.calls(),measured.budgetProgress()).run()}}
     }`},bundle:true,conditions:['development'],platform:'browser',format:'esm',external:['node:async_hooks'],write:false,logLevel:'silent'})
   fixture=new Miniflare({modules:true,script:output.outputFiles[0]!.text,compatibilityDate:'2026-08-06',compatibilityFlags:['nodejs_als'],d1Databases:['DB'],r2Buckets:['ATTACHMENTS'],queueProducers:{CSV_IMPORT_QUEUE:'owned-csv-native'},queueConsumers:{'owned-csv-native':{maxBatchSize:1,maxBatchTimeout:0,retryDelay:0}},bindings:{ENVIRONMENT:'test',RELEASE:'owned-csv-native',APP_BASE_URL:'https://owned-csv.example',API_CURSOR_SIGNING_KEY:'AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA',CSV_IMPORT_QUEUE_NAME:'owned-csv-native'}})
   const db=await fixture.getD1Database('DB'),bucket=await fixture.getR2Bucket('ATTACHMENTS'),now=new Date().toISOString()
   await migrateD1(db)
-  await db.prepare('CREATE TABLE csv_fixture_calls(calls INTEGER NOT NULL)').run()
+  await db.prepare('CREATE TABLE csv_fixture_calls(calls INTEGER NOT NULL,budget_progress INTEGER NOT NULL)').run()
   await db.prepare('CREATE TABLE csv_fixture_errors(message TEXT NOT NULL)').run()
   await db.batch([
     db.prepare("INSERT INTO organizations(id,name,modules,created_at,updated_at) VALUES(1,'Owned Worker','{}',?,?)").bind(now,now),
@@ -61,6 +61,9 @@ it('runs the actual Worker API, private R2 and Queue chain with lost publication
   expect(await db.prepare('SELECT count(*) AS n,sum(rounded_seconds) AS seconds FROM time_entries').first()).toEqual({n:2,seconds:7200})
   const calls=(await db.prepare('SELECT calls FROM csv_fixture_calls').all<{calls:number}>()).results.map(r=>r.calls)
   expect(Math.max(...calls),JSON.stringify(calls)).toBeLessThanOrEqual(50)
+  // Existing-entity rows create no setup: positive durable progress here proves
+  // the real budget catch ran after committing time, then resumed without duplicates.
+  expect((await db.prepare('SELECT max(budget_progress) AS progress FROM csv_fixture_calls').first<{progress:number}>())?.progress).toBeGreaterThanOrEqual(1)
   expect((await bucket.list()).objects.every(object=>object.key.startsWith('csv-private/'))).toBe(true)
   const deleted=await request(`/api/v1/csv-imports/${stage.id}/input`,{method:'DELETE'});expect(deleted.status).toBe(204)
   expect((await bucket.list()).objects).toEqual([])
