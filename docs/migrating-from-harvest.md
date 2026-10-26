@@ -26,7 +26,7 @@ Four things do not, because Harvest has no API for them:
 - **Recurring invoice definitions.** Same shape.
 - **Estimates**, if `estimate_feature` is off on the account.
 - **Sub-cent unit prices.** Harvest stores rates finer than a cent; ezacto stores
-  integer cents. Invoice *totals* are exact; the per-unit rate loses precision
+  integer cents. Invoice _totals_ are exact; the per-unit rate loses precision
   and is recorded as an anomaly rather than silently rounded.
 
 The first two are filled in by hand from worksheets. Plan for that — **it needs
@@ -34,8 +34,16 @@ the Harvest UI open**, which means it has to happen before you close the account
 
 ## Running it
 
-`ezacto-migrate` is published as `@conflict-hq/ezacto-migrate`. It needs Node 22
-or newer and nothing else installed; there is nothing to clone or build.
+The standalone package name is `@conflict-hq/ezacto-migrate`. Before using the
+registry commands below, check that a release is available:
+
+```sh
+npm view @conflict-hq/ezacto-migrate version
+```
+
+If the registry reports “not found,” use the operator-checkout build at the top
+of this guide. The package requires Node 22 or newer. Once published, it can be
+installed without cloning or building this repository.
 
 ```sh
 npx @conflict-hq/ezacto-migrate            # prints the command list
@@ -106,7 +114,7 @@ one is not. Gaps are differences matched against the known-limitations list in
 A parallel run keeps Harvest as the book while you try ezacto on a copy of its
 data. It works, with two limits that decide how to do it.
 
-**What parallel means here.** `extract` and `sync` keep the *snapshot* current:
+**What parallel means here.** `extract` and `sync` keep the _snapshot_ current:
 run them as often as you like while people keep working in Harvest. Loading is
 the expensive, one-way step. Treat every load before the real one as a rehearsal
 into a throwaway database file, and delete it afterwards:
@@ -163,7 +171,7 @@ ezacto-migrate carry-invoices --source ./fresh-load.db --database ./live.db --on
 ```
 
 It resolves every reference by `harvest_id` against the target rather than
-trusting row ids to line up, and it carries *missing* invoices — not updates to
+trusting row ids to line up, and it carries _missing_ invoices — not updates to
 invoices the target already has.
 
 Do not hand-write these rows. `invoices` carries forty-five triggers, and an
