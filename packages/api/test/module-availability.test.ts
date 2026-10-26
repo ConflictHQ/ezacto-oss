@@ -51,6 +51,8 @@ describe('moduleForPath', () => {
     expect(moduleForPath('/api/v1/invoices/4/quickbooks/sync')).toBe('accounting')
     expect(moduleForPath('/webhooks/quickbooks')).toBe('accounting')
     expect(moduleForPath('/api/v1/invoices')).toBe('invoices')
+    expect(moduleForPath('/harvest/v2/invoices')).toBe('invoices')
+    expect(moduleForPath('/harvest/v2/invoices/1')).toBe('invoices')
     expect(moduleForPath('/api/v1/invoices/4/deliveries/preview/send')).toBe('invoices')
     expect(moduleForPath('/api/v1/recurring-invoices/2')).toBe('invoices')
     expect(moduleForPath('/api/v1/settings/invoice-defaults')).toBe('invoices')
@@ -63,6 +65,7 @@ describe('moduleForPath', () => {
       '/auth/sign-in',
       '/api/v1/clients',
       '/api/v1/invoices-archive',
+      '/harvest/v2/invoices-archive',
       '/api/v1/estimates',
       '/api/v1/admin/sign-in-methods',
       '/api/v1/admin/modules/expenses',

@@ -584,3 +584,5 @@ export { installDeelStagingRoutes, type DeelStagingApiRuntime } from './deel-sta
 export * from './csv-import-staging-contract.js'
 export * from './csv-import-staging-port.js'
 export { isCsvStagingPath, csvStagingAuthority, csvStagingSafeFailure } from './csv-import-staging.js'
+
+export { installHarvestInvoiceRoutes, serializeHarvestInvoice, parseHarvestInvoiceQuery, type HarvestInvoiceSource, type HarvestInvoiceRecord, type HarvestInvoiceFilters } from './harvest-v2/invoices.js'

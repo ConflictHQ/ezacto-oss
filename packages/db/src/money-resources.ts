@@ -162,6 +162,21 @@ export interface InvoiceResource {
   line_items: InvoiceLineResource[]
 }
 
+export interface HarvestInvoiceFilters {
+  clientId?: number
+  projectId?: number
+  updatedSince?: string
+  from?: string
+  to?: string
+  state?: 'draft' | 'open' | 'paid' | 'closed'
+}
+export interface HarvestInvoiceRead {
+  invoice: InvoiceResource
+  client: { id: number; name: string }
+  creator: { id: number; name: string } | null
+  projects: Array<{ id: number; name: string; code: string | null }>
+}
+
 export interface InvoiceDeliveryLine {
   kind: string
   description: string | null
@@ -1151,6 +1166,117 @@ const readConsistentInvoicePage = async (
   })()
 }
 
+const readHarvestInvoicePage = async (
+  database: MoneyResourceDatabase,
+  filters: Readonly<HarvestInvoiceFilters>,
+  window: Readonly<{ offset: number; take: number }>,
+  invoiceId?: number,
+): Promise<{ total: number; records: HarvestInvoiceRead[] }> => {
+  if (
+    !Number.isSafeInteger(window.offset) ||
+    window.offset < 0 ||
+    !Number.isSafeInteger(window.take) ||
+    window.take < 1 ||
+    window.take > 2000
+  )
+    throw new RangeError('Invalid Harvest invoice window')
+  const predicates: string[] = [],
+    params: unknown[] = []
+  for (const key of ['clientId', 'projectId'] as const)
+    if (filters[key] !== undefined) assertPositiveId(filters[key]!, key)
+  if (invoiceId !== undefined) {
+    assertPositiveId(invoiceId, 'invoiceId')
+    predicates.push('id = ?')
+    params.push(invoiceId)
+  }
+  if (filters.clientId !== undefined) {
+    predicates.push('client_id = ?')
+    params.push(filters.clientId)
+  }
+  if (filters.projectId !== undefined) {
+    predicates.push(
+      '(project_id = ? OR EXISTS (SELECT 1 FROM invoice_line_items line WHERE line.invoice_id=invoices.id AND line.project_id=?))',
+    )
+    params.push(filters.projectId, filters.projectId)
+  }
+  if (filters.state !== undefined) {
+    if (!isInvoiceState(filters.state)) throw new RangeError('Invalid invoice state')
+    predicates.push('state = ?')
+    params.push(filters.state)
+  }
+  if (filters.updatedSince !== undefined) {
+    assertTimestamp(filters.updatedSince, 'updatedSince')
+    predicates.push("strftime('%Y-%m-%dT%H:%M:%fZ',updated_at) >= ?")
+    params.push(new Date(filters.updatedSince).toISOString())
+  }
+  for (const [key, operator] of [
+    ['from', '>='],
+    ['to', '<='],
+  ] as const)
+    if (filters[key] !== undefined) {
+      assertCanonicalDay(filters[key]!, key)
+      predicates.push(`issue_date ${operator} ?`)
+      params.push(filters[key])
+    }
+  const where = predicates.length ? ' WHERE ' + predicates.join(' AND ') : ''
+  const page = `WITH page AS (SELECT id FROM invoices${where} ORDER BY issue_date DESC,id DESC LIMIT ? OFFSET ?)`
+  const pageParams = [...params, window.take, window.offset]
+  const header = `${page} ${invoiceSelect.replace(
+    'SELECT id,',
+    `SELECT (SELECT name FROM clients WHERE clients.id=invoices.client_id) AS client_name,
+    (SELECT trim(first_name||' '||last_name) FROM users WHERE users.id=invoices.created_by_user_id) AS creator_name, id,`,
+  )} WHERE id IN (SELECT id FROM page) ORDER BY issue_date DESC,id DESC`
+  const lines = `${page} ${invoiceLineSelect} WHERE invoice_id IN (SELECT id FROM page) ORDER BY invoice_id,position,id`
+  const projects = `${page} SELECT id,name,code FROM projects WHERE id IN (SELECT project_id FROM invoice_line_items WHERE invoice_id IN (SELECT id FROM page))`
+  type Header = RawInvoice & { client_name: string | null; creator_name: string | null }
+  const client = database.$client
+  let total: number,
+    headers: Header[],
+    lineRows: RawInvoiceLine[],
+    projectRows: Array<{ id: number; name: string; code: string | null }>
+  if (isD1Client(client)) {
+    const result = await client.batch([
+      client.prepare(`SELECT count(*) n FROM invoices${where}`).bind(...params),
+      client.prepare(header).bind(...pageParams),
+      client.prepare(lines).bind(...pageParams),
+      client.prepare(projects).bind(...pageParams),
+    ])
+    if (result.length !== 4 || result.some((value) => !value.success))
+      throw new Error('Incomplete Harvest invoice snapshot')
+    total = (result[0]!.results[0] as { n: number }).n
+    headers = result[1]!.results as unknown as Header[]
+    lineRows = result[2]!.results as unknown as RawInvoiceLine[]
+    projectRows = result[3]!.results as unknown as typeof projectRows
+  } else {
+    const read = client.transaction(() => ({
+      total: (
+        client.prepare(`SELECT count(*) n FROM invoices${where}`).get(...params) as { n: number }
+      ).n,
+      headers: client.prepare(header).all(...pageParams) as Header[],
+      lineRows: client.prepare(lines).all(...pageParams) as RawInvoiceLine[],
+      projectRows: client.prepare(projects).all(...pageParams) as typeof projectRows,
+    }))
+    ;({ total, headers, lineRows, projectRows } = read())
+  }
+  const byId = new Map(hydrateInvoicePage(headers, lineRows).map((row) => [row.id, row]))
+  const projectsById = new Map(projectRows.map(project => [project.id, project]))
+  return {
+    total,
+    records: headers.map((row) => {
+      if (row.client_name === null) throw new Error('Harvest invoice client is missing')
+      return {
+        invoice: byId.get(row.id)!,
+        client: { id: row.client_id, name: row.client_name },
+        creator:
+          row.created_by_user_id === null || row.creator_name === null
+            ? null
+            : { id: row.created_by_user_id, name: row.creator_name },
+        projects: [...new Set(byId.get(row.id)!.line_items.flatMap(line => line.project_id===null?[]:[line.project_id]))].map(id => { const project=projectsById.get(id); if(!project)throw new Error('Harvest invoice line project is missing'); return project }),
+      }
+    }),
+  }
+}
+
 const readConsistentEstimate = async (
   database: MoneyResourceDatabase,
   estimateId: number,
@@ -1446,6 +1572,20 @@ export class MoneyResourceRepository {
    * the reason the high-water ids are: it bounds a traversal against later
    * inserts and is not a count of what matches.
    */
+  async harvestInvoices(
+    filters: Readonly<HarvestInvoiceFilters>,
+    window: Readonly<{ offset: number; take: number }>,
+  ): Promise<{ total: number; records: HarvestInvoiceRead[] }> {
+    return readHarvestInvoicePage(this.database, filters, window)
+  }
+
+  async harvestInvoice(id: number): Promise<HarvestInvoiceRead | null> {
+    return (
+      (await readHarvestInvoicePage(this.database, {}, { offset: 0, take: 1 }, id)).records[0] ??
+      null
+    )
+  }
+
   async invoiceListSnapshot(): Promise<string | null> {
     const row = await first<{ createdThrough: string | null }>(this.database, {
       text: `SELECT max(${createdInstant}) AS "createdThrough" FROM invoices`,

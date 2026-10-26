@@ -1010,6 +1010,7 @@ export const createContainerRuntime = async (
         return row?.enabled === 1
       },
       moneyResources,
+      harvestInvoices: moneyResources,
       ...(quickBooks === null ? {} : { quickBooks: quickBooks.service }),
       ...(wise === null ? {} : { wise: wise.service }),
       ...(wise?.webhook === undefined ? {} : { wiseWebhook: wise.webhook }),

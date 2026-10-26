@@ -1,5 +1,12 @@
 import { describe, expect, it } from "vitest";
-import { mkdtemp, readFile, rm, mkdir, writeFile, symlink } from "node:fs/promises";
+import {
+  mkdtemp,
+  readFile,
+  rm,
+  mkdir,
+  writeFile,
+  symlink,
+} from "node:fs/promises";
 import { join } from "node:path";
 import { URL } from "node:url";
 import { readFileSync } from "node:fs";
@@ -106,6 +113,38 @@ describe("recorded Harvest corpus generator", () => {
     expect(() =>
       createCorpus({ clients: [{ ...sourceClient(), is_active: sentinel }] }),
     ).toThrow("Unsupported boolean");
+  });
+
+  it("rejects invoice enum sentinels and replaces free-form line labels", () => {
+    const invoice = JSON.parse(
+      readFileSync(
+        new URL(
+          "./fixtures/harvest-v2/invoices/snapshot-001.golden.json",
+          import.meta.url,
+        ),
+        "utf8",
+      ),
+    );
+    invoice.creator = null;
+    for (const field of ["state", "payment_term"]) {
+      expect(() =>
+        createCorpus({
+          invoices: [{ ...invoice, [field]: "Sample SYNTHETIC_SENTINEL" }],
+        }),
+      ).toThrow(`Unsupported enum ${field}`);
+    }
+    expect(() =>
+      createCorpus({
+        invoices: [
+          { ...invoice, payment_options: ["Sample SYNTHETIC_SENTINEL"] },
+        ],
+      }),
+    ).toThrow("Unsupported enum payment_options");
+    invoice.line_items[0].kind = "Sample PRIVATE_LINE_LABEL";
+    const [pair] = createCorpus({ invoices: [invoice] });
+    expect(JSON.stringify(pair)).not.toContain("PRIVATE_LINE_LABEL");
+    assertSynthetic(pair.input);
+    assertSynthetic(pair.golden);
   });
 
   it("never overwrites a directory or writes raw data into provenance", async () => {

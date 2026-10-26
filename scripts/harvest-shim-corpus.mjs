@@ -10,8 +10,45 @@ export const recordedResources = [
   "users",
   "time_entries",
   "expenses",
+  "invoices",
 ];
 const fields = {
+  invoices: [
+    "id",
+    "number",
+    "purchase_order",
+    "amount",
+    "due_amount",
+    "tax",
+    "tax_amount",
+    "tax2",
+    "tax2_amount",
+    "discount",
+    "discount_amount",
+    "subject",
+    "notes",
+    "state",
+    "period_start",
+    "period_end",
+    "issue_date",
+    "due_date",
+    "payment_term",
+    "sent_at",
+    "paid_at",
+    "paid_date",
+    "closed_at",
+    "recurring_invoice_id",
+    "created_at",
+    "updated_at",
+    "currency",
+    "payment_options",
+    "client",
+    "estimate",
+    "retainer",
+    "creator",
+    "line_items",
+  ],
+
   clients: [
     "id",
     "name",
@@ -129,12 +166,21 @@ const fields = {
   ],
 };
 const types = [
-  ...recordedResources,
+  "clients",
+  "projects",
+  "tasks",
+  "users",
+  "time_entries",
+  "expenses",
   "user_assignments",
   "task_assignments",
   "expense_categories",
   "invoices",
   "external",
+  "invoice_lines",
+  "estimates",
+  "retainers",
+  "recurring",
 ];
 const date = (value) => {
   if (value == null) return null;
@@ -268,6 +314,16 @@ const state = (r) => ({
 });
 
 const enumValues = {
+  state: new Set(["draft", "open", "paid", "closed"]),
+  payment_term: new Set([
+    "upon receipt",
+    "net 15",
+    "net 30",
+    "net 45",
+    "net 60",
+    "custom",
+  ]),
+  payment_options: new Set(["ach", "credit_card", "paypal"]),
   currency: new Set(Intl.supportedValuesOf("currency")),
   bill_by: new Set(["Project", "Tasks", "People", "none"]),
   budget_by: new Set([
@@ -320,7 +376,7 @@ const sourceBoolean = (value) => {
 
 const safeString = (value) =>
   [
-    /^Sample (clients|projects|tasks|users|time_entries|expenses) (name|first_name|last_name|address|notes|locked_reason) \d+$/,
+    /^Sample (clients|projects|tasks|users|time_entries|expenses|invoices) (name|first_name|last_name|address|notes|locked_reason|subject|purchase_order) \d+$/,
     /^Sample users first_name \d+ Sample users last_name \d+$/,
     /^Sample (Role \d+|category \d+|unit|group|account)$/,
     /^[a-z]+@example\.test$/,
@@ -334,7 +390,7 @@ const safeString = (value) =>
     /^\d{2}:\d{2}$/,
     /^\d{1,2}:\d{2}(am|pm)$/,
     /^-?\d+(\.\d+)?$/,
-    /^(12h|24h|unsubmitted|submitted|approved|invoiced|Invoiced)$/,
+    /^(12h|24h|unsubmitted|submitted|approved|invoiced|Invoiced|draft|open|paid|closed|ach|credit_card|paypal|stripe_checkout|paypal_checkout|unsupported_ach|upon_receipt|net_15|net_30|net_45|net_60|upon receipt|net 15|net 30|net 45|net 60|custom)$/,
     /^(net_30|time_materials|fixed_fee|non_billable|project|tasks|people|person|none|project_cost|managers|member|administrator|project_manager|manager|project_creator|estimates_manager|Project|Tasks|People)$/,
   ].some((pattern) => pattern.test(value));
 export const assertSynthetic = (value) => {
@@ -411,6 +467,14 @@ export function createCorpus(source, timeLimit = 20) {
           "spent_date",
           "starts_on",
           "ends_on",
+          "period_start",
+          "period_end",
+          "issue_date",
+          "due_date",
+          "sent_at",
+          "paid_at",
+          "paid_date",
+          "closed_at",
         ].includes(key)
       )
         s[key] = date(value);
@@ -422,6 +486,8 @@ export function createCorpus(source, timeLimit = 20) {
           "address",
           "notes",
           "locked_reason",
+          "subject",
+          "purchase_order",
         ].includes(key)
       )
         s[key] = text(value, `Sample ${kind} ${key} ${id(kind, r.id)}`);
@@ -439,6 +505,41 @@ export function createCorpus(source, timeLimit = 20) {
         s[key] = value.map((_, i) => `Sample Role ${i + 1}`);
       else if (key === "access_roles")
         s[key] = value.map((role) => sourceEnum("access_roles", role));
+      else if (key === "number") s[key] = `SMP-${id(kind, r.id)}`;
+      else if (key === "recurring_invoice_id")
+        s[key] = value == null ? null : id("recurring", value);
+      else if (["estimate", "retainer"].includes(key))
+        s[key] = value == null ? null : { id: id(key + "s", value.id) };
+      else if (key === "creator")
+        s[key] =
+          value == null
+            ? null
+            : {
+                id: id("users", value.id),
+                name: `Sample users first_name ${id("users", value.id)} Sample users last_name ${id("users", value.id)}`,
+              };
+      else if (key === "payment_options")
+        s[key] = value.map((option) => sourceEnum("payment_options", option));
+      else if (key === "client" && kind === "invoices")
+        s[key] = {
+          id: id("clients", value.id),
+          name: `Sample clients name ${id("clients", value.id)}`,
+        };
+      else if (key === "line_items")
+        s[key] = value.map((line, index) => ({
+          id: id("invoice_lines", line.id),
+          kind: `Sample category ${index + 1}`,
+          description: text(
+            line.description,
+            `Sample invoices notes ${id(kind, r.id)}`,
+          ),
+          quantity: syntheticNumber(line.quantity),
+          unit_price: syntheticNumber(line.unit_price),
+          amount: syntheticNumber(line.amount),
+          taxed: sourceBoolean(line.taxed),
+          taxed2: sourceBoolean(line.taxed2),
+          project: ref("projects", line.project),
+        }));
       else if (["client", "project", "task"].includes(key))
         s[key] = ref(key + "s", value);
       else if (key === "user")
@@ -546,12 +647,46 @@ export function createCorpus(source, timeLimit = 20) {
     }
     return selected;
   };
+  const chooseInvoices = (rows) => {
+    const eligible = rows.filter(
+      (row) =>
+        row.creator == null ||
+        (row.creator.name !== null &&
+          (source.users ?? []).some((user) => user.id === row.creator.id)),
+    );
+    const selected = [],
+      seen = new Set();
+    for (const row of eligible) {
+      const shape = JSON.stringify([
+        row.state,
+        row.currency,
+        row.payment_term,
+        row.discount === null,
+        row.discount === 0,
+        row.estimate !== null,
+        row.retainer !== null,
+        row.payment_options,
+      ]);
+      if (!seen.has(shape)) {
+        seen.add(shape);
+        selected.push(row);
+      }
+      if (selected.length === 20) break;
+    }
+    for (const row of eligible) {
+      if (selected.length === 20) break;
+      if (!selected.includes(row)) selected.push(row);
+    }
+    return selected;
+  };
   const pairs = [];
   for (const kind of recordedResources) {
     const rows =
       kind === "time_entries"
         ? chooseTime(source[kind] ?? [])
-        : (source[kind] ?? []);
+        : kind === "invoices"
+          ? chooseInvoices(source[kind] ?? [])
+          : (source[kind] ?? []);
     for (const [index, r] of rows.entries()) {
       const g = safe(kind, r);
       let input;
@@ -566,7 +701,69 @@ export function createCorpus(source, timeLimit = 20) {
             costRateCents: cents(g.cost_rate),
           },
         };
-      else if (kind === "projects")
+      else if (kind === "invoices") {
+        input = {
+          invoice: {
+            id: g.id,
+            number: g.number,
+            purchase_order: g.purchase_order,
+            subject: g.subject,
+            notes: g.notes,
+            amount_cents: cents(g.amount),
+            due_amount_cents: cents(g.due_amount),
+            tax_rate_ppm: g.tax == null ? null : Math.round(g.tax * 10000),
+            tax_amount_cents: cents(g.tax_amount),
+            tax2_rate_ppm: g.tax2 == null ? null : Math.round(g.tax2 * 10000),
+            tax2_amount_cents: cents(g.tax2_amount),
+            discount_rate_ppm:
+              g.discount == null ? null : Math.round(g.discount * 10000),
+            discount_amount_cents: cents(g.discount_amount),
+            state: g.state,
+            currency: g.currency,
+            period_start: g.period_start,
+            period_end: g.period_end,
+            issue_date: g.issue_date,
+            due_date: g.due_date,
+            payment_terms: g.payment_term.replaceAll(" ", "_"),
+            payment_options: g.payment_options.map((option) =>
+              option === "credit_card"
+                ? "stripe_checkout"
+                : option === "paypal"
+                  ? "paypal_checkout"
+                  : "unsupported_ach",
+            ),
+            sent_at: g.sent_at,
+            paid_at: g.paid_at,
+            paid_date: g.paid_date,
+            closed_at: g.closed_at,
+            recurring_invoice_id: g.recurring_invoice_id,
+            created_at: g.created_at,
+            updated_at: g.updated_at,
+            estimate_id: g.estimate?.id ?? null,
+            retainer_id: g.retainer?.id ?? null,
+            line_items: g.line_items.map((line) => ({
+              id: line.id,
+              kind: line.kind,
+              description: line.description,
+              quantity: line.quantity,
+              unit_price_cents: cents(line.unit_price),
+              amount_cents: cents(line.amount),
+              taxed: line.taxed,
+              taxed2: line.taxed2,
+              project_id: line.project?.id ?? null,
+            })),
+          },
+          client: g.client,
+          creator: g.creator,
+          projects: [
+            ...new Map(
+              g.line_items
+                .filter((line) => line.project !== null)
+                .map((line) => [line.project.id, line.project]),
+            ).values(),
+          ],
+        };
+      } else if (kind === "projects")
         input = {
           project: project(g),
           client: client(safe("clients", clients.get(g.client.id))),
@@ -698,6 +895,12 @@ export async function generate(sourceDirectory, outputDirectory) {
         pairs.filter((p) => p.resource === r).length,
       ]),
     ),
+    invoice_unrepresented_creator_records: (source.invoices ?? []).filter(
+      (row) =>
+        row.creator != null &&
+        (row.creator.name === null ||
+          !(source.users ?? []).some((user) => user.id === row.creator.id)),
+    ).length,
     project_assignments:
       "Not generated: no recorded endpoint response in source",
     unsupported_field_counts: Object.fromEntries(
