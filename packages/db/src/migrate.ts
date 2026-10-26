@@ -1,3 +1,4 @@
+import { isOrdinaryD1SchemaStatement } from './internal/d1-cold-migrations.js'
 import { csvBrowserDatasetMigration } from './migrations/0164_csv_browser_dataset.js'
 import { placeholderPlanningMigration } from './migrations/0163_placeholder_planning.js'
 import { planningRevisionsMigration } from './migrations/0162_planning_revisions.js'
@@ -1836,73 +1837,85 @@ const migrateD1Plan = async (
   database: D1Database,
   through: (typeof migrations)[number]['id'] | null,
 ): Promise<void> => {
-  // The ledger insert leads the atomic batch. If two Worker isolates observe a
-  // migration as absent, D1 serializes their batches: one commits the complete
-  // migration and the other's unique ledger insert aborts before any DDL runs.
-  // Re-reading the ledger distinguishes that safe race from a real migration
-  // failure. This retains the deploy/admin seam while making a cold runtime's
-  // fail-closed readiness check safe and idempotent.
+  // Ledger inserts lead their own unchanged DDL in each atomic batch. A cold
+  // database may share ordinary schema work; upgrades retain each migration's
+  // original transaction boundary and every data/preflight/PRAGMA unit is isolated.
   await database.exec('PRAGMA foreign_keys = ON')
   await database.prepare(ledger).run()
   if (!(await ledgerRecordsChecksums(database))) {
     try {
       await database.prepare(ledgerChecksumColumn).run()
     } catch (error) {
-      // The same race the batch below tolerates: two isolates can reach the
-      // ALTER together and the loser sees a duplicate column. The column being
-      // present is the whole requirement, so re-reading it distinguishes that
-      // from a real failure.
       if (!(await ledgerRecordsChecksums(database))) throw error
     }
   }
-  const ledgerRows = (
-    await database
-      .prepare('SELECT id, statements_sha256 FROM _ezacto_migrations')
-      .all<MigrationLedgerRow>()
+  const readLedger = async (): Promise<MigrationLedgerRow[]> => (
+    await database.prepare('SELECT id, statements_sha256 FROM _ezacto_migrations').all<MigrationLedgerRow>()
   ).results
-  assertLedgerMatchesStatements(ledgerRows)
-  // The ledger just read, rather than a `SELECT 1` per migration. That select
-  // was a round trip each for all 47 of them, and on a fresh database every one
-  // of them answers "no" -- which is most of what a migrate costs against D1,
-  // where the DDL itself is already one batch per migration.
-  //
-  // It is only ever an optimisation. What actually makes this safe against two
-  // isolates migrating at once is the unique ledger insert leading each batch,
-  // and the catch below re-reading the ledger to tell that race from a real
-  // failure. A stale set here costs one rejected batch, which is the case that
-  // was already handled.
-  const applied = new Set(ledgerRows.map((row) => row.id))
-  for (const migration of migrations) {
-    if (applied.has(migration.id)) {
-      if (migration.id === through) return
-      continue
-    }
-    if ('preflight' in migration) {
-      const rows = (await database.prepare(migration.preflight).all<MigrationPreflightRow>()).results
-      if (migration.id === '0006_invoice_state_events') assertInvoiceLifecyclePreflight(rows)
-      else assertTimesheetApprovalsPreflight(rows)
+  const initial = await readLedger()
+  assertLedgerMatchesStatements(initial)
+  let applied = new Set(initial.map((row) => row.id))
+  let cold = initial.length === 0 && await database.prepare(
+    "SELECT 1 FROM sqlite_master WHERE type='table' AND name<>'_ezacto_migrations' AND name<>'_cf_METADATA' AND name NOT GLOB 'sqlite_*' LIMIT 1",
+  ).first() === null
+  // Newly added migrations default to isolated transactions until this reviewed
+  // prefix is deliberately advanced. Their SQL must still pass the classifier.
+  const reviewedThrough = migrations.findIndex(({ id }) => id === '0164_csv_browser_dataset')
+  const boundary = through === null ? -1 : migrations.findIndex(({ id }) => id === through)
+  const planned = boundary === -1 ? migrations : migrations.slice(0, boundary + 1)
+  const checksums = new Map(migrations.map((migration) => [migration.id, statementsChecksum(migration.statements)]))
+  const insertReceipt = database.prepare(
+    'INSERT INTO _ezacto_migrations (id, applied_at, statements_sha256) VALUES (?, ?, ?)',
+  )
+  const canShare = (migration: (typeof migrations)[number]): boolean =>
+    !('preflight' in migration) && migrations.indexOf(migration) <= reviewedThrough &&
+    migration.statements.length > 0 && migration.statements.every(isOrdinaryD1SchemaStatement)
+
+  while (true) {
+    const pending = planned.filter((migration) => !applied.has(migration.id))
+    const first = pending[0]
+    if (!first) return
+    const group: (typeof migrations)[number][] = [first]
+    let statements = first.statements.length + 1
+    if (cold && canShare(first)) {
+      for (const migration of pending.slice(1)) {
+        const count = migration.statements.length + 1
+        if (!canShare(migration) || statements + count > 100) break
+        group.push(migration)
+        statements += count
+      }
     }
     try {
-      await database.batch([
-        database
-          .prepare(
-            'INSERT INTO _ezacto_migrations (id, applied_at, statements_sha256) VALUES (?, ?, ?)',
-          )
-          .bind(
-            migration.id,
-            new Date().toISOString(),
-            statementsChecksum(migration.statements),
-          ),
+      if ('preflight' in first) {
+        const rows = (await database.prepare(first.preflight).all<MigrationPreflightRow>()).results
+        if (first.id === '0006_invoice_state_events') assertInvoiceLifecyclePreflight(rows)
+        else assertTimesheetApprovalsPreflight(rows)
+      }
+      await database.batch(group.flatMap((migration) => [
+        insertReceipt.bind(migration.id, new Date().toISOString(), checksums.get(migration.id)!),
         ...migration.statements.map((sql) => database.prepare(sql)),
-      ])
+      ]))
+      for (const migration of group) applied.add(migration.id)
     } catch (error) {
-      const completed = await database
-        .prepare('SELECT 1 FROM _ezacto_migrations WHERE id = ?')
-        .bind(migration.id)
-        .first()
-      if (completed === null) throw error
+      const observed = await readLedger()
+      assertLedgerMatchesStatements(observed)
+      // Only an exact, checksummed canonical prefix proves another isolate
+      // committed work. Unrelated/newer/missing/legacy-null rows are not a retry
+      // signal, and a real DDL failure with no progress propagates unchanged.
+      const rows = new Map(observed.map((row) => [row.id, row.statements_sha256]))
+      const exactPrefix = observed.length === rows.size && observed.length <= migrations.length &&
+        migrations.slice(0, observed.length).every((migration) => rows.get(migration.id) === checksums.get(migration.id))
+      let progress = 0
+      for (const migration of group) {
+        if (rows.get(migration.id) !== checksums.get(migration.id)) break
+        progress++
+      }
+      if (!exactPrefix || progress === 0 || [...applied].some((id) => !rows.has(id))) throw error
+      applied = new Set(rows.keys())
+      // An overlapping isolate may have seeded/copied data. From this point
+      // onward use the same individual transactions as every ordinary upgrade.
+      cold = false
     }
-    if (migration.id === through) return
   }
 }
 
