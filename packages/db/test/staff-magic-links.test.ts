@@ -56,6 +56,7 @@ const link = async (overrides = {}) => ({
   userId: 42,
   tokenHash: await digest('link-token-secret'),
   codeHash: await digest('123456'),
+  requesterHash: await digest('requester'),
   flow: 'app' as const,
   createdAt: '2026-08-28T00:00:00.000Z',
   expiresAt: '2026-08-28T00:15:00.000Z',
@@ -99,7 +100,7 @@ for (const [runtime, factory] of [
         42,
         await digest('123456'),
         '2026-08-28T00:05:00.000Z',
-        5
+        5, await digest('requester')
       )
       expect(byCode).toEqual({ userId: 42, flow: 'app' })
       // Single-use across paths: the token no longer works.
@@ -116,7 +117,7 @@ for (const [runtime, factory] of [
       const wrong = await digest('000000')
       for (let i = 0; i < 5; i += 1) {
         expect(
-          await harness.store.consumeByCode(42, wrong, '2026-08-28T00:05:00.000Z', 5)
+          await harness.store.consumeByCode(42, wrong, '2026-08-28T00:05:00.000Z', 5, await digest('requester'))
         ).toBeNull()
       }
       // Ceiling reached — the correct code is now refused.
@@ -125,7 +126,7 @@ for (const [runtime, factory] of [
           42,
           await digest('123456'),
           '2026-08-28T00:06:00.000Z',
-          5
+          5, await digest('requester')
         )
       ).toBeNull()
       const [row] = await harness.rows<{ attempts: number }>(
@@ -141,8 +142,23 @@ for (const [runtime, factory] of [
         await harness.store.consumeByToken(await digest('link-token-secret'), past)
       ).toBeNull()
       expect(
-        await harness.store.consumeByCode(42, await digest('123456'), past, 5)
+        await harness.store.consumeByCode(42, await digest('123456'), past, 5, await digest('requester'))
       ).toBeNull()
+    })
+
+    it('rebinds only the latest code and permits resend after either redemption path', async () => {
+      const requester = await digest('requester')
+      await harness.store.create(await link())
+      await harness.store.create(await link({ tokenHash: await digest('second-token'), codeHash: await digest('654321'), createdAt: '2026-08-28T00:02:00.000Z' }))
+      expect(await harness.store.consumeByCode(42, await digest('123456'), '2026-08-28T00:03:00.000Z', 5, requester)).toBeNull()
+      expect(await harness.store.consumeByToken(await digest('link-token-secret'), '2026-08-28T00:03:00.000Z')).not.toBeNull()
+      expect(await harness.store.consumeByCode(42, await digest('654321'), '2026-08-28T00:03:00.000Z', 5, requester)).not.toBeNull()
+      expect(await harness.store.create(await link({ tokenHash: await digest('after-consumed'), codeHash: await digest('987654'), createdAt: '2026-08-28T00:04:00.000Z' }))).toBe('created')
+      await Promise.all(['left','right'].map(async token => harness.store.create(await link({ tokenHash: await digest(token), codeHash: await digest(token), createdAt: '2026-08-28T00:05:00.000Z' }))))
+      const active = await harness.rows<{ code_hash: string }>('SELECT code_hash FROM staff_magic_links WHERE user_id=42 AND requester_hash=? AND consumed_at IS NULL', requester)
+      expect(active).toHaveLength(1)
+      const results = await Promise.all([1,2].map(() => harness.store.consumeByCode(42, active[0]!.code_hash, '2026-08-28T00:06:00.000Z', 5, requester)))
+      expect(results.filter(Boolean)).toHaveLength(1)
     })
 
     it('reports a collision on a duplicate token hash', async () => {
