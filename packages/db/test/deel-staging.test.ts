@@ -563,6 +563,28 @@ for (const target of ['SQLite', 'D1'] as const)
       ).toMatchObject({ status: 'stale', code: 'source_changed' })
       expect(f.posted).toHaveLength(0)
     })
+    it('withholds preview data when the session is revoked during provider discovery', async () => {
+      const f = await fixture()
+      let snapshots = 0
+      const store: DeelStageStore = {
+        ...f.native,
+        snapshot: async (...args) => {
+          const snapshot = await f.native.snapshot(...args)
+          if (++snapshots === 1)
+            await run(
+              "UPDATE sessions SET revoked_at=?,revocation_reason='user_revoked',updated_at=? WHERE id=?",
+              now,
+              now,
+              f.a,
+            )
+          return snapshot
+        },
+      }
+      await expect(f.runtime(store).preview(f.authority, f.selection)).rejects.toMatchObject({
+        code: 'forbidden',
+      })
+      expect(f.posted).toHaveLength(0)
+    })
     it('rechecks the native administrator session before provider work and preserves exact command identity', async () => {
       const f = await fixture(),
         r = f.runtime(),

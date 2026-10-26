@@ -134,9 +134,7 @@ export const createDeelStagingRuntime = (options: {
   const client =
     options.client ??
     (configured ? new DeelClient({ token: options.token!, fetch: options.fetch }) : null)
-  const prepare = async (authority: DeelStageAuthority, input: DeelStageSelection) => {
-    if (!configured || !client) throw new DeelStageError('unconfigured')
-    const selection = canonicalSelection(input, options.startDate!, options.now())
+  const readSnapshot = async (authority: DeelStageAuthority, selection: DeelStageSelection) => {
     const snapshot = await options.store.snapshot(authority, selection, options.now().toISOString())
     if (
       snapshot.entries.length > 1000 ||
@@ -146,6 +144,12 @@ export const createDeelStagingRuntime = (options: {
       )
     )
       throw new DeelStageError('invalid')
+    return snapshot
+  }
+  const prepare = async (authority: DeelStageAuthority, input: DeelStageSelection) => {
+    if (!configured || !client) throw new DeelStageError('unconfigured')
+    const selection = canonicalSelection(input, options.startDate!, options.now())
+    let snapshot = await readSnapshot(authority, selection)
     let remote: readonly DeelPerson[]
     try {
       remote = await client.listPeople()
@@ -153,6 +157,9 @@ export const createDeelStagingRuntime = (options: {
       report(error)
       throw new DeelStageError('provider_unavailable')
     }
+    // A provider read may outlive the acting session or its local authority.
+    // Re-read native scope before disclosing any preview or accepting a command.
+    snapshot = await readSnapshot(authority, selection)
     const matched = matchPayrollContracts({ people: snapshot.directory, deelPeople: remote })
     const plan = planTimeTransfer({
       entries: snapshot.entries,
