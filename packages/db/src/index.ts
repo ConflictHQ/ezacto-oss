@@ -1,3 +1,4 @@
+export { createCalendarFeedService } from './calendar-feeds.js'
 export { createDeelPaymentStatusStore } from './deel-payment-status.js'
 export { createManagedBillConnectionStore } from './managed-bill.js'
 export { createManagedQuickBooksGrantStore } from './managed-quickbooks.js'

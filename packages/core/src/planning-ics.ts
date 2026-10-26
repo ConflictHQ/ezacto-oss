@@ -4,8 +4,8 @@ import { addDays, isAllocationDate } from "./allocation.js";
 
 /**
  * Contract for read-only planning ICS feeds (issue 1194). Pure: no storage, no
- * routes, no network. The real feed route, credential table and projection
- * adapter wait on the shared calendar projection (issue 1192) and must satisfy
+ * routes, no network. Native subscriptions are implemented in calendar-feeds.ts
+ * and resource-calendar-feed.ts; these compatible pure helpers still satisfy
  * docs/planning-ics-feed.md and test/planning-ics.test.ts.
  */
 

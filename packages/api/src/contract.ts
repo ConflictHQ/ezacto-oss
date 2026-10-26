@@ -1,3 +1,4 @@
+import { calendarFeedOperations, calendarFeedSchemas } from './calendar-feed-contract.js'
 import { deelStagingOperations, deelStagingSchemas } from './deel-staging-contract.js'
 import { moduleForPath } from './module-availability.js'
 import { organizationHolidayOperations, organizationHolidaySchemas } from './organization-holiday-contract.js'
@@ -3797,6 +3798,7 @@ export const apiContractOperations: readonly ApiContractOperation[] = [
   ...organizationHolidayOperations,
   ...placeholderPlanningOperations,
   ...resourceCalendarOperations,
+  ...calendarFeedOperations,
   ...workItemOperations,
   ...timesheetApprovalOperations,
   ...timesheetLockPolicyOperations,
@@ -4084,6 +4086,7 @@ export const apiContractSchemas: Readonly<Record<string, JsonSchema>> = {
   ...organizationHolidaySchemas,
   ...placeholderPlanningSchemas,
   ...resourceCalendarSchemas,
+  ...calendarFeedSchemas,
   ...attachmentContractSchemas,
   ...staffPaymentSchemas,
   ...deelSyncSchemas,

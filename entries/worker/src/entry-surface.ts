@@ -31,6 +31,8 @@
  * a magic-link key; without one the routes are not mounted at all.
  */
 export const UNDOCUMENTED_ROUTES: readonly string[] = [
+  // A calendar-client Basic credential surface, outside the native API.
+  'get /calendar/planning.ics',
   'get /auth/github',
   'get /auth/github/callback',
   'post /portal/magic-link',
@@ -191,7 +193,7 @@ export const mountedApiRoutes = (
             route.path.startsWith('/auth') ||
             route.path.startsWith('/account-deletion') ||
             route.path.startsWith('/portal') ||
-            route.path.startsWith('/backup-download')),
+            route.path.startsWith('/backup-download') || route.path.startsWith('/calendar/')),
       )
       .map((route) => `${route.method.toLowerCase()} ${route.path}`),
   )
