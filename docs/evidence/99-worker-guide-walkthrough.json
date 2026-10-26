@@ -1,0 +1,122 @@
+{
+  "issue": 99,
+  "performed_at": "2026-10-26T23:09:38.373306+00:00",
+  "operator": "independent agent, non-author of the Worker self-host guide",
+  "source_revision": "df5ff432b6f8dbe8292fe95d3981d693a4f8d53e",
+  "runtime": "Cloudflare deployed native workflow-main.ts",
+  "node": "22.21.1",
+  "wrangler": "4.131.1",
+  "resources": {
+    "worker": "ezacto-guide99-proof-eacb12cd",
+    "database_id": "a2364f58-38f9-44d6-a83a-4b4e2e929342",
+    "bucket": "ezacto-guide99-proof-eacb12cd-objects",
+    "queues": [
+      {
+        "name": "ezacto-guide99-proof-eacb12cd-email",
+        "id": "fa74f702276c4813bfd4694d0ed701e8"
+      },
+      {
+        "name": "ezacto-guide99-proof-eacb12cd-email-dlq",
+        "id": "c21042a48cef425fa926be9d9dca0c0b"
+      },
+      {
+        "name": "ezacto-guide99-proof-eacb12cd-migration",
+        "id": "8e837791eb614fb396d0415c177149c7"
+      },
+      {
+        "name": "ezacto-guide99-proof-eacb12cd-migration-dlq",
+        "id": "3a16a1844fb547d7860864a16a8fddab"
+      }
+    ],
+    "workflow": "ezacto-guide99-proof-eacb12cd-runs",
+    "custom_domain": [
+      {
+        "id": "7d4da15427cc773ad35b5bb4d7c66667ddc5df23",
+        "hostname": "ezacto-guide99-proof-eacb12cd.ezacto.dev",
+        "service": "ezacto-guide99-proof-eacb12cd"
+      }
+    ]
+  },
+  "checks": {
+    "dns_preflight": "No A response; custom domain absent. DNS API unavailable under existing OAuth (403).",
+    "bootstrap_secret_before_domain": true,
+    "health": {
+      "status": "ok",
+      "service": "ezacto",
+      "environment": "dev",
+      "release": "df5ff432b6f8dbe8292fe95d3981d693a4f8d53e"
+    },
+    "readiness": {
+      "status": "ready",
+      "release": "df5ff432b6f8dbe8292fe95d3981d693a4f8d53e"
+    },
+    "native_bootstrap_retry": true,
+    "compiled_cli_native_admin": true,
+    "native_password_session_revoke": true,
+    "bootstrap_secret_removed": true,
+    "backup_status": {
+      "data": {
+        "last_completed": null,
+        "last_failed": null,
+        "recent_runs": [],
+        "has_failure": false,
+        "offsite": {
+          "configured": false,
+          "state": "disabled",
+          "destination": null,
+          "last_completed": null,
+          "latest": null,
+          "error": null
+        }
+      },
+      "links": {
+        "self": "/api/v1/backup/status"
+      }
+    },
+    "queue_consumers_detached_for_restore": true,
+    "offline_before_restore": true,
+    "d1_time_travel_native_rows": true,
+    "r2_unchanged_after_d1_restore": true,
+    "current_closure_reconciliation": "Synthetic owner only; no closures, email removals, retention changes, integrations, queued mail, or attachments with personal data. Retained client exists; later client correctly absent. Current SQL evidence preserved before rollback.",
+    "restored_native_login": true
+  },
+  "current_evidence_sql_sha256": "334e055d737681fd665c30c6987c929855f0c37b44dcd345337251b43b1f0f71",
+  "cleanup": {
+    "domain": true,
+    "email_consumer": true,
+    "migration_consumer": true,
+    "worker": true,
+    "workflow": true,
+    "r2probe": true,
+    "ezacto-guide99-proof-eacb12cd-migration": true,
+    "ezacto-guide99-proof-eacb12cd-migration-dlq": true,
+    "ezacto-guide99-proof-eacb12cd-email": true,
+    "ezacto-guide99-proof-eacb12cd-email-dlq": true,
+    "r2": true,
+    "d1": true,
+    "dns_absent": true,
+    "domain_absent": true,
+    "errors": [],
+    "verified_by_exact_resource_id": {
+      "worker": true,
+      "database": true,
+      "bucket": true,
+      "workflow": true,
+      "ezacto-guide99-proof-eacb12cd-email": true,
+      "ezacto-guide99-proof-eacb12cd-email-dlq": true,
+      "ezacto-guide99-proof-eacb12cd-migration": true,
+      "ezacto-guide99-proof-eacb12cd-migration-dlq": true,
+      "custom_domain_id": true,
+      "authoritative_dns_absent": true,
+      "local_secret_file_removed": true
+    }
+  },
+  "limits": [
+    "No human operator acceptance claimed.",
+    "Existing Wrangler OAuth used; GitHub repository-secret deployment/bootstrap workflows not exercised.",
+    "No provider credentials, mail delivery, or external business records.",
+    "No nightly CSV backup generation, portable Worker bundle restore, or off-platform copy tested.",
+    "R2 proof used invented object bytes, not a native attachment metadata restore.",
+    "Exact test-host DNS resolved via authoritative Cloudflare nameserver after local negative-cache delays."
+  ]
+}
