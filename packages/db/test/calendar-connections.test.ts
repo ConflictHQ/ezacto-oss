@@ -93,6 +93,7 @@ const fixture = async (kind: 'sqlite' | 'd1') => {
   )
   const a = { userId: 2, sessionId: (await sessions.issue(2)).session.id },
     store = createCalendarConnectionStore(orm)
+  let clock = new Date(initial)
   let events = [event()],
     cursor: string | null = CURSOR,
     beforeRead: (() => Promise<void>) | undefined,
@@ -102,7 +103,7 @@ const fixture = async (kind: 'sqlite' | 'd1') => {
   const service = await createCalendarSyncService({
     store,
     deploymentKey: new Uint8Array(32).fill(7),
-    now: () => new Date(initial),
+    now: () => clock,
     sources: {
       google: async (context) => {
         await beforeFactory?.(context)
@@ -128,6 +129,9 @@ const fixture = async (kind: 'sqlite' | 'd1') => {
     rows,
     sessions,
     seen,
+    setNow: (v: Date) => {
+      clock = v
+    },
     setEvents: (v: CalendarSourceEvent[]) => {
       events = v
     },
@@ -161,6 +165,25 @@ for (const kind of ['sqlite', 'd1'] as const)
       expect(await f.rows('SELECT status FROM calendar_proposals')).toEqual([
         { status: 'discarded' },
       ])
+    })
+    it('logout denies a new refresh but an admitted OAuth sync can finish', async () => {
+      const f = await fixture(kind)
+      f.onRead(async () => { await f.sessions.revoke(2, f.a.sessionId) })
+      expect(await f.service.refresh(f.a, 'google')).toMatchObject({ state: 'connected', applied: 1 })
+      expect(await f.rows('SELECT count(*) AS n FROM calendar_proposals')).toEqual([{ n: 1 }])
+      expect((await f.store.read(2, 'google'))?.sealedCursor).not.toBeNull()
+      await expect(f.service.refresh(f.a, 'google')).rejects.toMatchObject({ code: 'forbidden' })
+      expect(f.seen).toEqual([null])
+    })
+    it('custom and rolling windows cannot reuse a cursor from different query bounds', async () => {
+      const f = await fixture(kind)
+      await f.service.refresh(f.a, 'google', undefined, { past: 7, future: 0 })
+      await f.service.refresh(f.a, 'google')
+      await f.service.refresh(f.a, 'google')
+      f.setNow(new Date(Date.parse(initial) + 60_000))
+      await f.service.refresh(f.a, 'google')
+      expect(f.seen).toEqual([null, null, CURSOR, null])
+      expect(await f.rows('SELECT count(*) AS n FROM calendar_proposals')).toEqual([{ n: 1 }])
     })
     it('calendar identity includes calendarId; accepted updates and cancellation only mark provider changes', async () => {
       const f = await fixture(kind)

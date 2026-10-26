@@ -27,17 +27,20 @@
     "api_connection_and_contract_cases": 8,
     "legacy_proposal_api_cases": 6,
     "post_merge_cli_backup_restore_cases": 14,
-    "worker_route_contract_cases": 4
+    "worker_route_contract_cases": 4,
+    "review_authority_window_regressions": 8
   },
   "boundaries_proved": [
     "Grant/cursor ciphertext binds instance, principal, provider, connection generation, credential revision and purpose",
     "Native-session ownership; administrator-only cross-incarnation cleanup counts; API-token and cross-origin denial",
     "Atomic proposal actions plus encrypted cursor; lost response resumes from committed cursor without duplication",
-    "Concurrent token rotations have one valid credential revision; disconnect/nonce/session/closure fences refuse stale work",
+    "Concurrent token rotations have one valid credential revision; disconnect/nonce/closure fences refuse stale work; native session revocation prevents admission of another manual refresh",
     "Accepted time remains unchanged; source edits/cancellation surface on proposals",
     "Closure review acknowledgement is invalidated by credential changes; local erasure retains encrypted unresolved external-cleanup custody",
     "Physical restore and demo reset rotate the instance and retain manual-required custody; logical backups flag live connections non-restorable",
-    "Aborted/timed-out provider work cannot rotate credentials late; bounded event/page input and configurable date windows"
+    "Aborted/timed-out provider work cannot rotate credentials late; bounded event/page input and configurable date windows",
+    "An admitted proposal-only sync may finish under its persistent OAuth grant after browser logout; a subsequent manual refresh is denied (SQLite and D1)",
+    "Custom-to-default and changed rolling query bounds discard the old cursor; identical bounds preserve incremental cursor reuse (SQLite and D1)"
   ],
   "verification": {
     "typecheck": [
@@ -72,5 +75,15 @@
     "This is local native-runtime acceptance, not Google or Microsoft provider acceptance.",
     "Source code stays on its branch for review; no PR push or deployment was performed.",
     "CSV migration0172 is intentionally not incorporated until its release lands; this branch preserves main migrations0168/0169 and reserves0173."
-  ]
+  ],
+  "review_followup": {
+    "base_commit": "36aa68683ba599c3c2490c0303818d515c5b784f",
+    "command": "npm exec -w @ezacto/db -- vitest run test/calendar-connections.test.ts --testNamePattern \"logout|custom and rolling|disconnect during|native session revocation\" --testTimeout=60000 --hookTimeout=60000",
+    "result": "8 passed; 25 unrelated cases skipped",
+    "typecheck": [
+      "db",
+      "integrations"
+    ],
+    "targeted_lint": "passed"
+  }
 }

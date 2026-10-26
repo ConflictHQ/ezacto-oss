@@ -12,6 +12,12 @@ read-only, and the same service and database store are composed by Worker and
 Container. Sessions can list only their own connection status and disconnect
 only their own generation. API tokens cannot manage these personal grants.
 
+A native session authorizes admission of a manual refresh. Once admitted, the
+persistent OAuth connection authorizes the proposal-only sync to finish, even
+if that browser session logs out. A revoked session cannot start another
+refresh. Disconnect, account closure, a disabled user, and connection or lease
+fences still prevent an in-flight commit; no tracked time is written by sync.
+
 OAuth tokens and cursors use AES-GCM under an HKDF purpose key derived from the
 existing deployment cursor secret. Associated data binds the instance nonce,
 user, provider, connection generation, credential revision, and payload purpose.
@@ -22,7 +28,10 @@ cleanup rather than a false successful revocation.
 
 Sync reads at most ten pages and ninety applicable events, with a thirty-second
 provider deadline and a sixty-second fenced lease. Refresh accepts bounded `past_days` and `future_days` (0–90 each); explicitly changing that selection starts a full read, so a busy calendar can narrow its window. A failed or incomplete read
-cannot advance the cursor. The successful proposal changes and encrypted cursor
+cannot advance the cursor. A saved cursor is reused only for identical query
+bounds. Switching from a custom window to the default, or advancing the rolling
+window, starts a full bounded read; provider cursors cannot silently omit events
+from a different window. The successful proposal changes and encrypted cursor
 commit in one SQLite transaction or native D1 batch. Disconnect, account closure,
 replacement generation, expired lease, and reset/restore incarnation changes
 refuse an old commit. Grant rotation within a live adapter refresh advances the

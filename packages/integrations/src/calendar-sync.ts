@@ -174,7 +174,10 @@ export const createCalendarSyncService = async (options: {
       const outcome = await runCalendarSync({
         source: boundedSource,
         now: at,
-        cursor: days ? null : cursor,
+        // Provider cursors can be scoped to exact query bounds. Never reuse a
+        // custom or rolling-window cursor for a different requested window.
+        cursor:
+          lease.window?.from === window.from && lease.window.to === window.to ? cursor : null,
         ...(days ? { days } : {}),
         existing,
         ...(signal ? { signal } : {}),
@@ -291,6 +294,9 @@ export const createCalendarSyncService = async (options: {
         throw new CalendarConnectionError('invalid')
       signal?.throwIfAborted()
       await store.authorize(authority, now())
+      // The session admits this operation; the persistent OAuth connection
+      // authorizes its execution. Logout denies subsequent refresh requests,
+      // while disconnect, closure, and connection/lease fences cancel this one.
       return refresh(authority.userId, provider, signal, days)
     },
   }
