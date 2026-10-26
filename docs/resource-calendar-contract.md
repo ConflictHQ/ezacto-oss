@@ -126,7 +126,8 @@ Pointer motion only changes a temporary bar. Escape, cancellation, scrolling,
 pointer cancellation and session loss discard that preview without a command.
 Explicit save sends one revisioned planning PATCH and one random idempotency
 key; an uncertain response retains the exact key/payload for retry. Conflicts
-restore the authoritative bar and retain unsaved form dates. A successful
+discard the temporary bar and retain unsaved form dates; refresh current dates
+before retrying. A successful
 refresh restores focus and announces the saved dates; a failed refresh keeps
 its actionable error. No actual-work or financial mutation operation is used.
 
