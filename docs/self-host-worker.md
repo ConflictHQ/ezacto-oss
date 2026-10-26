@@ -255,9 +255,11 @@ the exact isolated checks performed and their limits.
   request that opens a session adds one. This is accepted rather than fixed, so
   there is no migration. An operator who wants the table trimmed can delete rows
   whose `absolute_expires_at` is long past.
-- **Magic links are confirmed, not consumed, by a GET.** Opening the emailed
-  link shows a confirm page; the link is spent only when the page is submitted,
-  so a mail scanner or link preview cannot use it up.
+- **Staff magic links require confirmation.** Opening a staff sign-in link
+  shows a confirm page; the link is spent only when the page is submitted,
+  so a mail scanner or link preview cannot use it up. This protection does not
+  apply to the legacy client portal's `/portal/verify` GET, which consumes its
+  token when opened.
 - **Admin email templates are privileged.** Whoever can edit email templates
   controls the text of messages sent from your domain, including sign-in and
   password-reset mail. Grant that to administrators you trust with that power.
