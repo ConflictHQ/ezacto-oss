@@ -114,3 +114,4 @@ export * from './deel-staging.js'
 
 export * from './calendar-feed-credential.js'
 export * from './calendar-feeds.js'
+export type { CsvStagingAuthority } from './csv-staging.js'

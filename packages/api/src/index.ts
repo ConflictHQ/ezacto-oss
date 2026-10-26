@@ -581,3 +581,6 @@ export { installOutboundWebhookRoutes } from './outbound-webhooks.js'
 export { installPlaceholderPlanningRoutes, type PlaceholderPlanningRepository } from './resources/placeholder-allocations.js'
 
 export { installDeelStagingRoutes, type DeelStagingApiRuntime } from './deel-staging.js'
+export * from './csv-import-staging-contract.js'
+export * from './csv-import-staging-port.js'
+export { isCsvStagingPath, csvStagingAuthority, csvStagingSafeFailure } from './csv-import-staging.js'

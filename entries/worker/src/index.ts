@@ -6,7 +6,7 @@ import { ensureRuntimeDatabaseReady } from './runtime.js'
 import * as Sentry from '@sentry/cloudflare'
 import { scheduleConfirmedRunWorkflows } from './scheduled-run-workflow-scheduler.js'
 import type { QueuedEmailJob } from '@ezacto/mailer'
-import { createApiIdempotencyAuthorization, moduleAvailability, withIdempotency } from '@ezacto/api'
+import { createApiIdempotencyAuthorization, isCsvStagingPath, moduleAvailability, withIdempotency } from '@ezacto/api'
 import { createApp, demoDeployment, demoMailDomains, type WorkerEnv } from './app.js'
 import { isDataRequest } from './data-request.js'
 import { workerBrandAssetSurface } from './brand-assets.js'
@@ -165,6 +165,10 @@ export const createWorker = (options: WorkerOptions = {}): ExportedHandler<Worke
     // below this line should ever compose a response for a cleartext request.
     const refusal = cleartextRefusal(request)
     if (refusal !== null) return refusal
+    if (
+      (request.method === 'GET' && new URL(request.url).pathname === '/api/v1/csv-import-capabilities') ||
+      isCsvStagingPath(new URL(request.url).pathname)
+    ) return withStrictTransport(request, await publicApp.fetch(request, env, executionContext))
     if (new URL(request.url).pathname === '/readyz') return readiness(env, report)
     if (!isDataRequest(request)) {
       return withStrictTransport(

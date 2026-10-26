@@ -183,3 +183,4 @@ export { createCsvBrowserDatasetLedger } from './csv-browser-import.js'
 export * from './csv-import-destination.js'
 
 export { createDeelStageStore } from './deel-staging.js'
+export { csvStagingSessionFence } from './csv-staging-authority.js'

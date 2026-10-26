@@ -1,3 +1,4 @@
+import { installCalendarFeedRoutes } from '../src/calendar-feeds.js'
 import { installDeelStagingRoutes } from '../src/deel-staging.js'
 import { installCalendarFeedRoutes } from '../src/calendar-feeds.js'
 import { installDeelPaymentStatusRoutes } from '../src/deel-payment-status.js'
@@ -231,6 +232,7 @@ const documentedApp = () =>
         sessions: { issue: unavailable },
       });
     },
+    csvImportStaging: new Proxy({}, {get:()=>unavailable}) as never,
     installApi: (api) => {
       installPlaceholderPlanningRoutes(api, new Proxy({}, { get: () => unavailable }) as never, { cursorSigningKey: new Uint8Array(32), clock: () => '2026-10-25T00:00:00.000Z' });
       installOrganizationHolidayRoutes(api,new Proxy({}, {get:()=>unavailable}) as never,{cursorSigningKey:new Uint8Array(32),clock:()=> '2026-10-22T00:00:00.000Z'});
@@ -451,6 +453,7 @@ const documentedApp = () =>
         releaseInvoicedTime: async () => ({ kind: "released", released: 0 }),
       });
       installMyPaymentRoutes(api, { read: async () => null });
+      installCalendarFeedRoutes(api, new Proxy({}, { get: () => unavailable }) as never);
       installDeelStagingRoutes(api, { configured: false, bounds: () => null, preview: unavailable, stage: unavailable, lookup: unavailable });
       installCalendarFeedRoutes(api, new Proxy({}, { get: () => unavailable }) as never);
       installDeelPaymentStatusRoutes(api, { refresh: async () => ({ configured: false, checked: 0, failed: 0, remaining: 0, retry_after_ms: 0 }) });

@@ -137,7 +137,17 @@ export const WORKER_ONLY_ROUTES: readonly string[] = [
 ]
 
 /** Mounted by the container and not by the Worker. */
-export const CONTAINER_ONLY_ROUTES: readonly string[] = []
+export const CONTAINER_ONLY_ROUTES: readonly string[] = [
+  'post /api/v1/csv-imports',
+  'get /api/v1/csv-imports/:runId',
+  'get /api/v1/csv-imports/:runId/mapping',
+  'patch /api/v1/csv-imports/:runId/mapping',
+  'post /api/v1/csv-imports/:runId/preview',
+  'get /api/v1/csv-imports/:runId/errors',
+  'get /api/v1/csv-imports/:runId/catalog',
+  'get /api/v1/csv-imports/:runId/diagnostics',
+  'delete /api/v1/csv-imports/:runId/input',
+]
 
 /**
  * Contact sign-in for the in-app portal, mounted only where

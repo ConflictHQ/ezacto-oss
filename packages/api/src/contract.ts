@@ -1,5 +1,6 @@
 import { calendarFeedOperations, calendarFeedSchemas } from './calendar-feed-contract.js'
 import { deelStagingOperations, deelStagingSchemas } from './deel-staging-contract.js'
+import { csvImportStagingOperations, csvImportStagingSchemas } from './csv-import-staging-contract.js'
 import { moduleForPath } from './module-availability.js'
 import { organizationHolidayOperations, organizationHolidaySchemas } from './organization-holiday-contract.js'
 import { placeholderPlanningOperations, placeholderPlanningSchemas } from './placeholder-planning-contract.js'
@@ -41,10 +42,12 @@ export interface ApiContractOperation {
   tag: string;
   responseStatus: number;
   additionalResponseStatuses?: readonly number[];
+  /** Additional failures use the canonical error envelope, never the success DTO. */
+  additionalErrorResponseStatuses?: readonly number[];
   responseSchema?: string;
   requestSchema?: string;
   requestRequired?: boolean;
-  requestContentType?: "application/json" | "multipart/form-data";
+  requestContentType?: "application/json" | "multipart/form-data" | "application/octet-stream";
   binaryResponse?: boolean;
   sessionOnly?: boolean;
   tokenOnly?: boolean;
@@ -3844,6 +3847,7 @@ export const apiContractOperations: readonly ApiContractOperation[] = [
   ...migrationLoadOperations,
   ...invoiceElevationOperations,
   ...outboundWebhookOperations,
+  ...csvImportStagingOperations,
 ];
 
 const reconciliationStatusSchema: JsonSchema = {
@@ -11573,6 +11577,7 @@ export const apiContractSchemas: Readonly<Record<string, JsonSchema>> = {
     additionalProperties: false,
   },
   EffectiveClientRateCardEnvelope: envelope("EffectiveClientRateCard"),
+  ...csvImportStagingSchemas,
 };
 
 const openApiPath = (runtimePath: string): string =>
@@ -11644,6 +11649,7 @@ export const generateOpenApiDocument = (): Record<string, unknown> => {
     for (const status of operation.additionalResponseStatuses ?? []) {
       responses[status] = successResponse(operation);
     }
+    for(const status of operation.additionalErrorResponseStatuses??[]) responses[status]={description:"Error response",content:{"application/json":{schema:{$ref:"#/components/schemas/ErrorEnvelope"}}}};
     const entry: Record<string, unknown> = {
       operationId: operation.operationId,
       summary: operation.summary,

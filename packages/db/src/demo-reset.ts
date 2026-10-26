@@ -157,6 +157,7 @@ export const PRESERVED_TABLES: ReadonlySet<string> = new Set([
   '_ezacto_migrations',
   'planning_calendar_source',
   'planning_calendar_instance',
+  'csv_staging_instance',
   'invoice_number_sequence',
   'email_template_versions',
   'email_template_heads',
@@ -250,6 +251,7 @@ const wipeStatements = (objects: DemoSchemaObjects): readonly DemoSeedStatement[
   // silently, once an operator had saved an invoice template on it. The
   // template outlives its author; the authorship does not.
   { text: 'UPDATE email_template_versions SET created_by_user_id = NULL', bindings: [] },
+  { text: "UPDATE csv_staging_instance SET nonce=lower(hex(randomblob(32))) WHERE singleton=1", bindings: [] },
   ...objects.triggers.map((trigger) => ({ text: trigger.sql, bindings: [] })),
 ]
 

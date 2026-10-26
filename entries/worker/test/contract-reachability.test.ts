@@ -5,6 +5,7 @@ import { createApp, type WorkerEnv } from '../src/app.js'
 import { workerBrandAssetSurface } from '../src/brand-assets.js'
 import { workerInstanceThemeSurface } from '../src/instance-theme.js'
 import {
+  CONTAINER_ONLY_ROUTES,
   PORTAL_ROUTES,
   UNDOCUMENTED_ROUTES,
   expectedApiRoutes,
@@ -71,7 +72,7 @@ describe('Worker contract reachability', () => {
     )
     const unreachable = apiContractOperations
       .map((operation) => `${operation.method} ${operation.path}`)
-      .filter((operation) => !mounted.has(operation))
+      .filter((operation) => !CONTAINER_ONLY_ROUTES.includes(operation) && !mounted.has(operation))
       .sort()
 
     expect(unreachable).toEqual([])
