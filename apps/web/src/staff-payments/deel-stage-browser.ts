@@ -159,7 +159,8 @@ export const createDeelStageController = (
         diagnostic.textContent = `${name}: ${unmatched.reason.replaceAll("_", " ")}. Check the verified payroll email and active Deel contract.`;
         output.appendChild(diagnostic);
       }
-      handoff.hidden = preview.unresolved_entry_ids.length === 0;
+      handoff.hidden =
+        preview.unresolved_entry_ids.length === 0 && preview.already_staged === 0;
       message.textContent =
         "Review before staging. Rates and invoice totals are determined in Deel.";
     } catch (error) {

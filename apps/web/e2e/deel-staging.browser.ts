@@ -89,6 +89,18 @@ test("stages selected approved hours once through the real Worker and leaves pay
   await expect(section.locator("[data-deel-stage-message]")).toContainText(
     "Nothing is marked paid",
   );
+  await section
+    .getByRole("button", { name: "Review hours for Deel", exact: true })
+    .click();
+  await expect(section.locator("[data-deel-stage-preview]")).toContainText(
+    "2 already staged",
+  );
+  await expect(
+    section.getByRole("button", { name: "Stage hours in Deel", exact: true }),
+  ).toBeDisabled();
+  await expect(
+    section.getByRole("link", { name: "Complete invoice and payment in Deel" }),
+  ).toBeVisible();
   const receipt = await (
     await request.post("/__ezacto_browser_fixture__/start-end", {
       headers: control,

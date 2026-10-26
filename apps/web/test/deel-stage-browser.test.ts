@@ -233,6 +233,25 @@ describe("selected Deel hour staging", () => {
       "needs attention",
     );
   });
+  it("offers payment completion for already-staged hours without another submission", async () => {
+    const { api, controller, abort } = mount();
+    api.previewDeelStaging.mockResolvedValue({
+      data: {
+        ...preview,
+        entry_ids: [],
+        seconds: 0,
+        timesheets: 0,
+        already_staged: 1,
+        people: [{ user_id: 2, contract_id: "contract2", seconds: 0, entries: 0 }],
+      },
+    });
+    await controller.activate(abort.signal);
+    controller.update(report);
+    await review();
+    expect(el<HTMLButtonElement>("[data-deel-stage-send]").disabled).toBe(true);
+    expect(el<HTMLAnchorElement>("[data-deel-stage-handoff]").hidden).toBe(false);
+    expect(api.stageDeelHours).not.toHaveBeenCalled();
+  });
   it("uses the server sync floor when the payment register opens on an older month", async () => {
     const { controller, abort } = mount();
     await controller.activate(abort.signal);
