@@ -1,4 +1,5 @@
 import { installCalendarConnectionRoutes, type CalendarConnectionPort } from '@ezacto/api'
+import { installInvoiceProviderAlertRoutes, type InvoiceProviderAlertService } from '@ezacto/api'
 import { installCalendarFeedRoutes, installCalendarSubscriptionRoute } from '@ezacto/api'
 import type { CalendarFeedService } from '@ezacto/core'
 import { installDeelPaymentStatusRoutes } from '@ezacto/api'
@@ -573,6 +574,9 @@ export interface RuntimeServices {
    * an endpoint answering. Unverifiable deliveries are still refused.
    */
   wiseWebhook?: NonNullable<WiseRuntime["webhook"]>
+  invoiceProviderAlerts?: InvoiceProviderAlertService
+  stripeAlertReconciliation?: { processDue(now: string): Promise<{ checked: number }> }
+  stripeAlertNotices?: { processDue(now: string): Promise<{ queued: number }> }
   stripe?: StripeService
   /** Mailgun's bounce, complaint and delivery events; see the route. */
   emailSuppressions?: EmailSuppressionStore
@@ -1083,6 +1087,7 @@ export const createApp = (
             // route that says so rather than a route that is missing.
             if (services.stripe !== undefined) {
               installStripeRoutes(api, services.stripe)
+              if (services.invoiceProviderAlerts) installInvoiceProviderAlertRoutes(api, services.invoiceProviderAlerts)
             }
             if (services.invoiceTimeClaims !== undefined) {
               installInvoiceTimeClaimRoutes(api, services.invoiceTimeClaims)

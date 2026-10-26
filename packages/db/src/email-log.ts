@@ -151,7 +151,9 @@ const filterConditions = (
   }
   if (filter.kind !== undefined) {
     if (kindTemplates === undefined) {
-      throw new Error('the email log store was built without kindTemplates, so it cannot filter by kind')
+      throw new Error(
+        'the email log store was built without kindTemplates, so it cannot filter by kind',
+      )
     }
     const names = kindTemplates[filter.kind]
     conditions.push(
@@ -179,6 +181,19 @@ const filterConditions = (
   return { conditions, bindings }
 }
 
+// A queued invoice alert is private administrator mail. Re-evaluate the exact
+// current recipient at the atomic provider-attempt boundary, including retries.
+const stripeAlertRecipientAuthorized = `(template <> 'stripe-payment-alert' OR EXISTS (
+  SELECT 1 FROM notification_deliveries n JOIN users u ON u.id=n.user_id
+  JOIN user_emails e ON e.user_id=u.id
+  WHERE n.delivery_id=email_log.id AND n.kind='stripe_payment_alert'
+    AND u.is_active=1 AND u.profile='administrator'
+    AND NOT EXISTS(SELECT 1 FROM account_closures c WHERE c.user_id=u.id)
+    AND e.is_primary=1 AND e.verified_at IS NOT NULL AND e.invalidated_at IS NULL
+    AND e.address=n.to_email AND json_array_length(email_log.to_json)=1
+    AND json_extract(email_log.to_json,'$[0].email')=e.address
+    AND (email_log.cc_json IS NULL OR json_array_length(email_log.cc_json)=0)))`
+
 const createStore = (
   database: PortableDatabase,
   options: EmailLogStoreOptions,
@@ -203,9 +218,7 @@ const createStore = (
             JSON.stringify(message.from),
             message.replyTo === undefined ? null : JSON.stringify(message.replyTo),
             JSON.stringify(message.to),
-            message.cc === undefined || message.cc.length === 0
-              ? null
-              : JSON.stringify(message.cc),
+            message.cc === undefined || message.cc.length === 0 ? null : JSON.stringify(message.cc),
             message.template,
             message.subject,
             message.related?.type ?? null,
@@ -230,29 +243,23 @@ const createStore = (
         throw new RangeError('email delivery attempt lease must be between 1 and 3600 seconds')
       }
       const at = timestamp()
-      const leaseExpiresAt = new Date(
-        Date.parse(at) + leaseSeconds * 1_000,
-      ).toISOString()
-      const claimed = await database.first<{ attemptCount: number }>(
+      const leaseExpiresAt = new Date(Date.parse(at) + leaseSeconds * 1_000).toISOString()
+      const claimed = await database.first<{ attemptCount: number; status: string }>(
         `UPDATE email_log
-           SET provider = ?, attempt_count = attempt_count + 1,
-             active_attempt_id = ?, attempt_lease_expires_at = ?, updated_at = ?
+           SET status=CASE WHEN ${stripeAlertRecipientAuthorized} THEN status ELSE 'failed' END,
+             failure_code=CASE WHEN ${stripeAlertRecipientAuthorized} THEN failure_code ELSE 'provider_rejected' END,
+             failure_reason=CASE WHEN ${stripeAlertRecipientAuthorized} THEN failure_reason ELSE 'recipient_scope_changed' END,
+             provider = ?, attempt_count = attempt_count + CASE WHEN ${stripeAlertRecipientAuthorized} THEN 1 ELSE 0 END,
+             active_attempt_id = CASE WHEN ${stripeAlertRecipientAuthorized} THEN ? ELSE NULL END,
+             attempt_lease_expires_at = CASE WHEN ${stripeAlertRecipientAuthorized} THEN ? ELSE NULL END, updated_at = ?
            WHERE id = ? AND status = 'queued'
              AND (provider IS NULL OR provider = ?)
              AND (active_attempt_id IS NULL
                OR julianday(attempt_lease_expires_at) <= julianday(?))
-           RETURNING attempt_count AS attemptCount`,
-        [
-          provider,
-          attemptId,
-          leaseExpiresAt,
-          at,
-          deliveryId,
-          provider,
-          at,
-        ],
+           RETURNING attempt_count AS attemptCount, status`,
+        [provider, attemptId, leaseExpiresAt, at, deliveryId, provider, at],
       )
-      if (claimed === null) return null
+      if (claimed === null || claimed.status !== 'queued') return null
       if (!Number.isSafeInteger(claimed.attemptCount) || claimed.attemptCount < 1) {
         throw new Error('email delivery claim returned an invalid provider attempt count')
       }
@@ -300,13 +307,7 @@ const createStore = (
       )
     },
 
-    async markProviderFailed(
-      deliveryId,
-      provider,
-      failureCode,
-      attemptId,
-      failureReason,
-    ) {
+    async markProviderFailed(deliveryId, provider, failureCode, attemptId, failureReason) {
       const at = timestamp()
       return rowRecord(
         await database.first<EmailLogRow>(
@@ -317,15 +318,7 @@ const createStore = (
            WHERE id = ? AND status = 'queued' AND provider = ?
              AND active_attempt_id = ?
            RETURNING ${columns}`,
-          [
-            provider,
-            failureCode,
-            failureReason ?? null,
-            at,
-            deliveryId,
-            provider,
-            attemptId,
-          ],
+          [provider, failureCode, failureReason ?? null, at, deliveryId, provider, attemptId],
         ),
       )
     },
@@ -348,7 +341,9 @@ const createStore = (
       // The column's own rule, checked here so a bad reason is this caller's
       // error rather than a constraint failure from the database.
       if (!/^[A-Za-z0-9_:]{1,128}$/u.test(reason)) {
-        throw new RangeError('email refusal reason must be 1-128 letters, digits, underscores or colons')
+        throw new RangeError(
+          'email refusal reason must be 1-128 letters, digits, underscores or colons',
+        )
       }
       const at = timestamp()
       // `provider_rejected` is the one failure the schema carries a reason on.

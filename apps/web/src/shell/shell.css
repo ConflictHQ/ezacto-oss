@@ -1825,7 +1825,8 @@ html[data-backups-unavailable] [data-settings-data-backups] {
   font-size: 13px;
 }
 .invoice-payment-heading button,
-.invoice-payment-actions button {
+.invoice-payment-actions button,
+[data-invoice-provider-alerts] button {
   min-height: 44px;
   padding: 0 14px;
   border: 1px solid var(--ez-border);

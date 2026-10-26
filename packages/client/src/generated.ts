@@ -848,6 +848,28 @@ export type MyPaymentsEnvelope = {
   "data": MyPayments;
 };
 
+export type InvoiceProviderAlert = {
+  "id": string;
+  "event_type": string;
+  "kind": "refund" | "dispute";
+  "amount_cents": number;
+  "currency": string;
+  "provider_status": string;
+  "occurred_at": string;
+  "reviewed_at": string | null;
+  "reviewed_by": number | null;
+};
+
+export type InvoiceProviderAlertEnvelope = {
+  "data": InvoiceProviderAlert;
+};
+
+export type InvoiceProviderAlertListEnvelope = {
+  "data": Array<InvoiceProviderAlert>;
+};
+
+export type ReviewInvoiceProviderAlertInput = Record<string, unknown>;
+
 export type DeelSyncSettingsCommand = {
   "mode": "manual" | "automatic";
   "run_time": string;
@@ -8721,6 +8743,25 @@ export class EzactoClient {
 
     return this.request<MyPaymentsEnvelope>("GET", "/api/v1/me/payments", {
       query: args.query,
+      signal: args.signal,
+      headers,
+    });
+  }
+
+  async listInvoiceProviderAlerts(args: { "id": number; signal?: AbortSignal; headers?: HeadersInit }): Promise<InvoiceProviderAlertListEnvelope> {
+    const headers = new Headers(args.headers);
+
+    return this.request<InvoiceProviderAlertListEnvelope>("GET", "/api/v1/invoices/:id/provider-alerts".replace(":id", encodeURIComponent(String(args["id"]))), {
+      signal: args.signal,
+      headers,
+    });
+  }
+
+  async reviewInvoiceProviderAlert(args: { "id": number; "alertId": string; body: ReviewInvoiceProviderAlertInput; signal?: AbortSignal; headers?: HeadersInit }): Promise<InvoiceProviderAlertEnvelope> {
+    const headers = new Headers(args.headers);
+
+    return this.request<InvoiceProviderAlertEnvelope>("POST", "/api/v1/invoices/:id/provider-alerts/:alertId/review".replace(":id", encodeURIComponent(String(args["id"]))).replace(":alertId", encodeURIComponent(String(args["alertId"]))), {
+      body: args.body,
       signal: args.signal,
       headers,
     });

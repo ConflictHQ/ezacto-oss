@@ -7,7 +7,7 @@ export const workerScheduledOperations = [
   'scheduled tick', 'webhook sweep', 'webhook purge', 'payment run sweep',
   'budget alert evaluation', 'time reminders', 'automatic approval sweep',
   'off-site backup checkpoint', 'scheduled job proposal sweep',
-  'scheduled manifest notice', 'scheduled run dispatch', 'scheduled run expiry',
+  'Stripe alert notice', 'scheduled manifest notice', 'scheduled run dispatch', 'scheduled run expiry',
   'nightly export', 'recurring invoice generation', 'payment reminders',
   'BILL reconciliation', 'QuickBooks catch-up', 'Deel time sync', 'Deel payment status',
   'demo maintenance', 'demo sender seed', 'outbox drain',

@@ -1,3 +1,4 @@
+import { readStripePaymentAlert, type StripePaymentAlert } from './exceptions.js'
 import { StripeClient } from './client.js'
 import { readCheckoutCompletion, verifyStripeSignature } from './webhook.js'
 
@@ -32,6 +33,9 @@ export interface StripeLink {
 
 /** What the runtime needs from the database, supplied by the entry. */
 export interface StripeSource {
+  recordAlert?(
+    input: StripePaymentAlert,
+  ): Promise<{ kind: 'flagged'; invoiceId: number } | { kind: 'ignored'; reason: string }>
   readInvoice(invoiceId: number): Promise<StripeInvoice | null>
   readLink(invoiceId: number): Promise<StripeLink | null>
   saveLink(invoiceId: number, link: StripeLink): Promise<StripeLink>
@@ -56,6 +60,7 @@ export type StripeLinkOutcome =
   | { readonly kind: 'refused'; readonly reason: string }
 
 export type StripeWebhookOutcome =
+  | { readonly kind: 'flagged'; readonly invoiceId: number }
   | { readonly kind: 'recorded'; readonly invoiceId: number }
   | { readonly kind: 'ignored'; readonly reason: string }
   | { readonly kind: 'unverified' }
@@ -149,6 +154,18 @@ export const createStripeRuntime = (options: Readonly<StripeRuntimeOptions>): St
       })
       if (!verified) return { kind: 'unverified' }
 
+      const alert = readStripePaymentAlert(input.payload)
+      if (alert !== null) {
+        const outcome = source.recordAlert
+          ? await source.recordAlert(alert)
+          : { kind: 'ignored' as const, reason: 'provider alert storage unavailable' }
+        if (outcome.kind === 'ignored')
+          console.warn('[stripe] verified provider report not applied', {
+            eventId: alert.id,
+            reason: outcome.reason,
+          })
+        return outcome
+      }
       const completion = readCheckoutCompletion(input.payload)
       if (completion === null) {
         return { kind: 'ignored', reason: 'not a paid checkout session' }

@@ -1,6 +1,7 @@
 import { createCsvWorkerRuntime, csvWorkerConfigured } from './csv-runtime.js'
 import { createCalendarConnectionStore } from '@ezacto/db/d1'
 import { createCalendarSyncService } from '@ezacto/integrations'
+import { createStripePaymentAlertStore, prepareStripePaymentAlertNotifications } from '@ezacto/db/d1'
 import { createCalendarFeedService } from '@ezacto/db/d1'
 import { createDeelPaymentStatusStore } from '@ezacto/db/d1'
 import { createDeelPaymentStatusRuntime } from '@ezacto/integrations'
@@ -1011,13 +1012,15 @@ export const createRuntimeServices = async (
 
   // Stripe. Composed always -- the runtime answers `configured: false` without
   // a key, which is what the route reports, rather than the route disappearing.
-  const stripeLinks = createStripeLinkStore(drizzle)
+  const stripeAlerts = createStripePaymentAlertStore(drizzle)
+    const stripeLinks = createStripeLinkStore(drizzle)
   const stripe = createStripeRuntime({
     config: {
       apiKey: credentials.STRIPE_API_KEY,
       webhookSecret: credentials.STRIPE_WEBHOOK_SECRET,
     },
     source: {
+      recordAlert: (input) => stripeAlerts.record(input, new Date().toISOString()),
       readInvoice: async (invoiceId: number) => {
         const rows = await database
           .prepare(
@@ -1069,6 +1072,7 @@ export const createRuntimeServices = async (
           paidOn: new Date().toISOString().slice(0, 10),
           now: new Date().toISOString(),
         })
+        await stripeAlerts.reconcileForPayment(input.paymentIntentId, new Date().toISOString())
       },
     },
     fetch: (request: Request) => fetch(request),
@@ -1542,6 +1546,9 @@ export const createRuntimeServices = async (
           }),
         }),
     paymentRuns,
+    invoiceProviderAlerts: stripeAlerts,
+    stripeAlertReconciliation: stripeAlerts,
+    stripeAlertNotices: notificationMailer === undefined || env.APP_BASE_URL === undefined ? undefined : createTimeReminderService({ prepare: (now: string) => prepareStripePaymentAlertNotifications(drizzle, { now, from: notificationMailer.from, appUrl: env.APP_BASE_URL! }) }, notificationMailer),
     scheduledRunNotices: notificationMailer === undefined || env.APP_BASE_URL === undefined
       ? undefined
       : createTimeReminderService({
