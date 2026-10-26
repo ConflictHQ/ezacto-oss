@@ -117,6 +117,29 @@ describe("selected Deel hour staging", () => {
       "https://app.deel.com/",
     );
   });
+  it("requires an administrator's explicit review of unsubmitted hours without claiming timesheet approval", async () => {
+    const { api, controller, abort } = mount();
+    await controller.activate(abort.signal);
+    controller.update(report);
+    controller.open();
+    expect(document.querySelector('[data-deel-stage] h2')!.textContent).toBe("Stage hours in Deel");
+    expect(document.body.textContent).toContain("including unsubmitted time");
+    expect(document.body.textContent).toContain("staging does not approve timesheets or mark anyone paid");
+    await review();
+    const reviewed = el<HTMLInputElement>("[data-deel-stage-reviewed]");
+    expect(reviewed.checked).toBe(false);
+    expect(reviewed.disabled).toBe(false);
+    const send = el<HTMLButtonElement>("[data-deel-stage-send]");
+    expect(send.disabled).toBe(true);
+    send.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    await flush();
+    expect(api.stageDeelHours).not.toHaveBeenCalled();
+    confirm();
+    await flush();
+    expect(api.stageDeelHours).toHaveBeenCalledTimes(1);
+    expect(api.stageDeelHours.mock.calls[0]![0].body.preview_fingerprint).toBe(preview.preview_fingerprint);
+    expect(document.body.textContent).toContain("staging does not approve timesheets or mark anyone paid");
+  });
   it("retains exactly the same command across an ambiguous reply and status check", async () => {
     const { api, controller, abort } = mount();
     api.stageDeelHours.mockRejectedValueOnce(new Error("lost reply"));

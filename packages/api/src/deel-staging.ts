@@ -122,7 +122,7 @@ const translate = (error: unknown): never => {
           "Choose active Deel people and a completed date range within the sync start date.",
         forbidden: "A current native administrator session is required.",
         stale:
-          "The approved hours, contract match or prior sync changed. Review a fresh preview; unresolved transfers must be checked in Deel.",
+          "The reviewed hours, timesheet state, contract match or prior sync changed. Review a fresh preview; unresolved transfers must be checked in Deel.",
         provider_unavailable:
           "Deel could not be reached for review. Nothing was staged.",
         command_reused:
@@ -149,7 +149,7 @@ export const installDeelStagingRoutes = <Bindings extends object>(
         status: 403,
         code: "profile_forbidden",
         message:
-          "Only a native administrator session may stage approved hours.",
+          "Only a native administrator session may stage reviewed hours.",
       });
     return { userId: p.userId, sessionId };
   };
@@ -169,7 +169,7 @@ export const installDeelStagingRoutes = <Bindings extends object>(
           last_complete_date: bounds?.to ?? null,
           reason: runtime.configured
             ? null
-            : "Configure a Deel token and sync start date before staging approved hours.",
+            : "Configure a Deel token and sync start date before staging reviewed hours.",
         },
       },
       200,

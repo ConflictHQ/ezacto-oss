@@ -327,7 +327,7 @@ export const createStaffPaymentsController = (api: StaffPaymentsApi) => {
                 const button = document.createElement('button')
                 button.type = 'button'
                 button.textContent = 'Stage in Deel'
-                button.setAttribute('aria-label', `Stage approved hours in Deel: ${row.name}`)
+                button.setAttribute('aria-label', `Stage hours in Deel: ${row.name}`)
                 button.addEventListener('click', () => deelStage.open(row.user_id))
                 return button
               }
