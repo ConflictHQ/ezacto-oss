@@ -109,11 +109,15 @@ const text = (value: unknown, field: string): string => {
 
 const person = (value: unknown): DeelPerson => {
   const raw = record(value, 'person')
-  const emails = list(raw.emails ?? [], 'person emails').map((entry) =>
-    // Deel echoes whatever casing the address was invited with; matching is
-    // case-insensitive, so normalize once here instead of at every call site.
-    text(record(entry, 'person email').value, 'person email address').toLowerCase(),
-  )
+  const emails = list(raw.emails ?? [], 'person emails').flatMap((entry) => {
+    const value = record(entry, 'person email').value
+    // Deel 2026-01-01 documents email values as optional and nullable. An absent
+    // address cannot match payroll, but must not discard the person or contracts.
+    if (value === null || value === undefined || (typeof value === 'string' && !value.trim()))
+      return []
+    // Keep rejecting malformed values; normalize actual addresses for matching.
+    return [text(value, 'person email address').toLowerCase()]
+  })
   const contracts = list(raw.employments ?? [], 'person employments').map((entry) => {
     const employment = record(entry, 'employment')
     return {

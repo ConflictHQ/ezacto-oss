@@ -146,3 +146,28 @@ describe('Deel API client', () => {
     ).rejects.toThrow(/quantity/i)
   })
 })
+
+describe('Deel optional person email values', () => {
+  const read = (emails: unknown[]) => new DeelClient({
+    token: 'deel-token-for-tests',
+    fetch: async () => json({ data: [{
+      id: 'per_ana', full_name: 'Ana Vasquez', emails,
+      employments: [{ id: 'con_ana_hourly', contract_status: 'in_progress' }],
+    }] }),
+  }).listPeople()
+
+  it.each([null, undefined, '', '  \t '])('treats optional email value %j as absent without dropping the person or valid addresses', async (value) => {
+    await expect(read([{ value }, { value: ' Ana.Personal@Example.Test ' }])).resolves.toEqual([{
+      id: 'per_ana', fullName: 'Ana Vasquez', emails: ['ana.personal@example.test'],
+      contracts: [{ id: 'con_ana_hourly', status: 'in_progress' }],
+    }])
+  })
+
+  it.each([0, false, {}, []])('still rejects malformed email value %j', async (value) => {
+    await expect(read([{ value }])).rejects.toThrow('person email address')
+  })
+
+  it.each([null, 'ana@example.test', []])('still rejects malformed email entry %j', async (entry) => {
+    await expect(read([entry])).rejects.toThrow('person email must be an object')
+  })
+})
