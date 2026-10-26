@@ -40,7 +40,9 @@
     "touched_lint": "passed",
     "review_race_cases": 8,
     "non_stripe_claim_lease_cases": 6,
-    "early_report_native_runtime_cases": 2
+    "early_report_native_runtime_cases": 2,
+    "review_full_sqlite_d1_cases": 16,
+    "concurrent_duplicate_cases": 2
   },
   "remaining": "Root-owned invoice UI integration and independent final review; no live Stripe acceptance claimed",
   "migration_at_source": "0174_stripe_payment_alerts",
@@ -51,6 +53,8 @@
     "session_expiry": "current database time at review write",
     "duplicate_delivery": "concurrent inbox transfer rechecks finalized evidence",
     "notification_url": "by-id path, fixture invoice number differs from id",
-    "independent_review": "No remaining blockers in source review; root-owned full UI proof follows integration."
+    "independent_review": "No remaining blockers in source review; root-owned full UI proof follows integration.",
+    "source_commit": "33c14b4b",
+    "validation": "Full16-case SQLite/D1 file passed; latest concurrent inbox-transfer patch also passed2 targeted cases; migration rename is DDL-identical and will receive final contiguous-chain verification in root integration."
   }
 }
