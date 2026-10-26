@@ -1,0 +1,35 @@
+{
+  "project": {
+    "id": 2059,
+    "createdAt": "2024-02-03T10:20:30Z",
+    "updatedAt": "2024-02-03T10:20:30Z",
+    "name": "Sample projects name 2059",
+    "code": "SMP-2059",
+    "isActive": false,
+    "clientId": 1024,
+    "billingMethod": "time_materials",
+    "billBy": "people",
+    "hourlyRateCents": null,
+    "budgetSeconds": null,
+    "budgetBy": "none",
+    "budgetIsMonthly": false,
+    "notifyWhenOverBudget": false,
+    "overBudgetPct": 2,
+    "showBudgetToAll": false,
+    "startsOn": "2024-02-03",
+    "endsOn": null,
+    "notes": null,
+    "costBudgetCents": null,
+    "costBudgetIncludeExpenses": false,
+    "feeCents": null
+  },
+  "client": {
+    "id": 1024,
+    "createdAt": "2024-02-03T10:20:30Z",
+    "updatedAt": "2024-02-03T10:20:30Z",
+    "name": "Sample clients name 1024",
+    "isActive": false,
+    "address": "Sample clients address 1024",
+    "currency": "USD"
+  }
+}

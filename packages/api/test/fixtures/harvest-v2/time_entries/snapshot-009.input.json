@@ -1,0 +1,101 @@
+{
+  "entry": {
+    "id": 5107,
+    "createdAt": "2024-02-03T10:20:30Z",
+    "updatedAt": "2024-02-03T10:20:30Z",
+    "spentDate": "2024-02-03",
+    "notes": "Sample time_entries notes 5107",
+    "billable": true,
+    "state": {
+      "approvalStatus": "unsubmitted",
+      "invoiceId": 10002,
+      "isBilled": true,
+      "isLocked": true,
+      "lockedReason": "Sample time_entries locked_reason 5107",
+      "lockedReasonCode": null
+    },
+    "seconds": 7992,
+    "secondsWithoutTimer": 7992,
+    "roundedSeconds": 7992,
+    "timerStartedAt": null,
+    "startedTime": null,
+    "endedTime": null,
+    "budgeted": true,
+    "externalRef": null
+  },
+  "context": {
+    "user": {
+      "id": 4014,
+      "firstName": "Sample users first_name 4014",
+      "lastName": "Sample users last_name 4014",
+      "createdAt": "2024-02-03T10:20:30Z",
+      "updatedAt": "2024-02-03T10:20:30Z"
+    },
+    "project": {
+      "id": 2020,
+      "createdAt": "2024-02-03T10:20:30Z",
+      "updatedAt": "2024-02-03T10:20:30Z",
+      "name": "Sample projects name 2020",
+      "code": "SMP-2020",
+      "isActive": true,
+      "clientId": 1007,
+      "billingMethod": "time_materials",
+      "billBy": "people",
+      "hourlyRateCents": null,
+      "budgetSeconds": 93600,
+      "budgetBy": "person",
+      "budgetIsMonthly": true,
+      "notifyWhenOverBudget": true,
+      "overBudgetPct": 2,
+      "showBudgetToAll": true,
+      "startsOn": "2024-02-03",
+      "endsOn": null,
+      "notes": "",
+      "costBudgetCents": null,
+      "costBudgetIncludeExpenses": false,
+      "feeCents": null
+    },
+    "client": {
+      "id": 1007,
+      "createdAt": "2024-02-03T10:20:30Z",
+      "updatedAt": "2024-02-03T10:20:30Z",
+      "name": "Sample clients name 1007",
+      "isActive": true,
+      "address": "Sample clients address 1007",
+      "currency": "USD"
+    },
+    "userAssignment": {
+      "id": 7071,
+      "createdAt": "2024-02-03T10:20:30Z",
+      "updatedAt": "2024-02-03T10:20:30Z",
+      "isProjectManager": false,
+      "isActive": true,
+      "hourlyRateCents": 200,
+      "budgetSeconds": 0
+    },
+    "isBilled": true,
+    "lockedReason": "Sample time_entries locked_reason 5107",
+    "invoice": {
+      "id": 10002,
+      "number": "10002"
+    },
+    "clock": "24h",
+    "task": {
+      "id": 3017,
+      "name": "Sample tasks name 3017",
+      "createdAt": "2024-02-03T10:20:30Z",
+      "updatedAt": "2024-02-03T10:20:30Z"
+    },
+    "taskAssignment": {
+      "id": 8076,
+      "createdAt": "2024-02-03T10:20:30Z",
+      "updatedAt": "2024-02-03T10:20:30Z",
+      "isActive": true,
+      "billable": true,
+      "hourlyRateCents": null,
+      "budgetSeconds": null
+    },
+    "billableRateCents": 200,
+    "costRateCents": 200
+  }
+}
