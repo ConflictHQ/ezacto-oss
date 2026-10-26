@@ -143,7 +143,8 @@ export const createCsvBrowserDatasetLedger = (
   const checkActor = async (actor: AdministratorActor): Promise<number> => {
     const id = actorId(actor)
     const authorized = boundAuthority(actor)
-    const [row] = await rows<{ allowed: number }>(`SELECT (${authorized.sql}) AS allowed`,
+    const [row] = await rows<{ allowed: number }>(
+      `SELECT (${authorized.sql}) AS allowed`,
       authorized.params,
     )
     if (row?.allowed !== 1) refuse('actor_required')
@@ -165,6 +166,35 @@ export const createCsvBrowserDatasetLedger = (
       [row.id],
     )
     return mapRun(row, counts?.written, counts?.duplicates)
+  }
+  /** Independent authority, run and optional progress reads share one native
+   * snapshot/batch. Mutations still repeat authority and lease checks in SQL. */
+  const readAuthorizedRun = async (
+    actor: AdministratorActor,
+    runId: string,
+    includeCounts = false,
+  ) => {
+    const id = actorId(actor)
+    const authorized = boundAuthority(actor)
+    const valid = /^[1-9][0-9]*$/.test(runId)
+    const statements = [
+      { text: `SELECT (${authorized.sql}) AS allowed`, params: authorized.params },
+      {
+        text: 'SELECT * FROM csv_import_runs WHERE id=? AND browser_plan_json IS NOT NULL',
+        params: [valid ? runId : null],
+      },
+      ...(includeCounts
+        ? [
+            {
+              text: 'SELECT coalesce(sum(inserted_rows),0) AS written,coalesce(sum(already_imported_rows),0) AS duplicates FROM csv_import_chunks WHERE run_id=?',
+              params: [valid ? runId : null],
+            },
+          ]
+        : []),
+    ]
+    const [proof, records, counts] = await atomic(statements)
+    if (proof?.[0]?.allowed !== 1) refuse('actor_required')
+    return { id, valid, row: records?.[0] as RunRow | undefined, counts: counts?.[0] }
   }
   const fence = (
     actor: AdministratorActor,
@@ -475,7 +505,12 @@ export const createCsvBrowserDatasetLedger = (
           {
             text: `INSERT INTO csv_import_datasets(source_id,workspace_identity,created_at)
         SELECT ?,?,? WHERE (${authorized.sql}) ON CONFLICT(workspace_identity) DO NOTHING RETURNING source_id`,
-            params: [sourceId, input.workspaceIdentity, options.now().toISOString(), ...authorized.params],
+            params: [
+              sourceId,
+              input.workspaceIdentity,
+              options.now().toISOString(),
+              ...authorized.params,
+            ],
           },
         ])
       } catch (error) {
@@ -564,12 +599,12 @@ export const createCsvBrowserDatasetLedger = (
       return { outcome: existing ? 'reopened' : 'created', run: await result(saved) }
     },
     async getRun(actor, runId) {
-      await checkActor(actor)
-      const row = await read(runId)
-      return row ? result(row) : null
+      const { valid, row, counts } = await readAuthorizedRun(actor, runId, true)
+      if (!valid) refuse('unknown_run')
+      return row ? mapRun(row, Number(counts?.written ?? 0), Number(counts?.duplicates ?? 0)) : null
     },
     async claimLease(actor, input) {
-      const id = await checkActor(actor)
+      const { id, valid, row } = await readAuthorizedRun(actor, input.runId)
       const authorized = boundAuthority(actor)
       if (
         !input.holder ||
@@ -579,8 +614,7 @@ export const createCsvBrowserDatasetLedger = (
         input.ttlMs > 300000
       )
         throw new RangeError('Invalid CSV lease')
-      const row = await read(input.runId)
-      if (!row) refuse('unknown_run')
+      if (!valid || !row) refuse('unknown_run')
       if (row.browser_state === 'draft') refuse('not_confirmed')
       if (row.browser_state !== 'partial') refuse('cancelled')
       const now = options.now().getTime()
@@ -602,8 +636,7 @@ export const createCsvBrowserDatasetLedger = (
             expiresAt: Number(claimed.lease_expires_at),
           },
         }
-      await checkActor(actor)
-      const current = await read(input.runId)
+      const { row: current } = await readAuthorizedRun(actor, input.runId)
       if (!current || current.browser_state !== 'partial') refuse('cancelled')
       return { outcome: 'held', retryAfterMs: Math.max(0, (current.lease_expires_at ?? now) - now) }
     },

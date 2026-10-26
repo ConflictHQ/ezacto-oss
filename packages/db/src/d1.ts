@@ -472,7 +472,7 @@ export {
   type DemoResetSummary,
   type DemoWipeSummary,
 } from './demo-reset.js'
-export { migrateD1, migrationIds } from './migrate.js'
+export { migrateD1, migrationIds, assertCutoverMigrationLedger } from './migrate.js'
 export { DrizzleCalendarProposalRepository } from './calendar-proposals.js'
 export { DrizzleAllocationRepository } from './allocations.js'
 export { DrizzleTimeOffRepository } from './time-off.js'
@@ -574,3 +574,8 @@ export * from './placeholder-allocations.js'
 export { createResourceCalendarRepository } from './resource-calendar.js'
 
 export { createDeelStageStore } from './deel-staging.js'
+
+export { createCsvBrowserDatasetLedger } from './csv-browser-import.js'
+export { csvStagingSessionFence } from './csv-staging-authority.js'
+export { csvWorkerDatabase, type CsvWorkerExecution } from './csv-worker-database.js'
+export { previewTimesheetLockedDates, type TimesheetLockPreviewWindow } from './timesheet-lock-policy.js'

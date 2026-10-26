@@ -20,7 +20,7 @@ export const csvStagingCapabilities = (
   port?: CsvImportStagingPort,
   applySupported = false,
 ) => ({
-  runtime: port ? "container" : "worker",
+  runtime: port?.runtime ?? "worker",
   staging_supported: port !== undefined,
   browser_ready: port !== undefined,
   apply_supported: port !== undefined && applySupported,

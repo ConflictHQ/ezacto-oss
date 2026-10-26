@@ -12,6 +12,7 @@ export type CsvApplyPublicState =
   | "failed"
   | "superseded";
 export type CsvApplyPublicCode =
+  | "processing_budget_exceeded"
   | "authority_expired"
   | "authority_revoked"
   | "input_expired"

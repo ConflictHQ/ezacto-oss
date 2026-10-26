@@ -81,8 +81,10 @@ export const createCsvImportController = (root: HTMLElement, api: ImportApi) => 
     for (const [selector, visible] of [['[data-csv-ack-exclusions]', !!preview?.choices.excluded_lines.length], ['[data-csv-ack-difference]', (preview?.tallies.destination_delta_seconds ?? 0) !== 0], ['[data-csv-ack-people]', (preview?.tallies.people.new ?? 0) > 0]] as const) find<HTMLElement>(selector).hidden = !visible
     progress.hidden = outcome === null && !unknown
     exactRetry.hidden = !unknown || pending === null
-    resume.hidden = !outcome?.allowed_actions.includes('resume') || preview === null || unknown
-    resume.disabled = busy || !review || blockers(review).length > 0 || stale
+    const policyReview = outcome?.state === 'paused' && outcome.code === 'policy_changed' && (stale || run?.preview_stale)
+    resume.hidden = !outcome?.allowed_actions.includes('resume') || (preview === null && !policyReview) || unknown
+    resume.disabled = busy || (!policyReview && (!review || blockers(review).length > 0 || stale))
+    resume.textContent = policyReview ? 'Refresh and review paused input' : 'Review and resume the remaining rows'
     cancel.hidden = !outcome?.allowed_actions.includes('cancel'); cancel.disabled = busy
     purge.hidden = !(run?.purge_allowed || outcome?.allowed_actions.includes('purge')); purge.disabled = busy || unknown || outcome?.state === 'queued' || outcome?.state === 'running'
     const retention = outcome?.retention_deadline ?? run?.retention_deadline ?? run?.staging_expires_at
@@ -188,14 +190,15 @@ export const createCsvImportController = (root: HTMLElement, api: ImportApi) => 
     if (live(activation, epoch)) status.textContent = 'Saved import status loaded. Review before any new command.'
   }
   const refreshPreview = async (activation: Activation, epoch: number) => {
-    if (!run || inputUnavailable || unknown || outcome && outcome.state !== 'not_confirmed') return
+    if (!run || inputUnavailable || unknown || outcome && outcome.state !== 'not_confirmed' && !(outcome.state === 'paused' && outcome.code === 'policy_changed')) return
+    const resuming = outcome?.state === 'paused'
     const id = run.id, input = mappingInput()
     const mapped = (await api.mapCsvImport({ runId: id, body: input, signal: activation.signal })).data
     if (!live(activation, epoch)) return
     showRun(mapped)
     const value = (await api.previewCsvImport({ runId: id, signal: activation.signal })).data
     if (!live(activation, epoch)) return
-    outcome = null; await showPreview(value, activation, epoch); status.textContent = 'Preview ready. No people, setup or time have been imported.'
+    outcome = null; await showPreview(value, activation, epoch); if (resuming) await readStatus(activation, epoch); status.textContent = resuming ? 'Refreshed preview ready. Committed work remains; review before resuming.' : 'Preview ready. No people, setup or time have been imported.'
   }
   upload.addEventListener('submit', event => {
     event.preventDefault()
@@ -255,6 +258,7 @@ export const createCsvImportController = (root: HTMLElement, api: ImportApi) => 
   }) })
   exactRetry.addEventListener('click', () => void operation(async (activation, epoch) => { if (pending && unknown) await send(pending.body, pending.operation, activation, epoch) }))
   resume.addEventListener('click', () => void operation(async (activation, epoch) => {
+    if (outcome?.state === 'paused' && outcome.code === 'policy_changed' && (stale || run?.preview_stale)) { await refreshPreview(activation, epoch); return }
     if (!review || !run || unknown || stale || !outcome?.allowed_actions.includes('resume')) return
     const current = (await api.getCsvImport({ runId: run.id, signal: activation.signal })).data
     if (!live(activation, epoch)) return
@@ -304,7 +308,7 @@ export const createCsvImportController = (root: HTMLElement, api: ImportApi) => 
       status.textContent = 'Checking browser import availability…'
       const capability = (await api.getCsvImportCapabilities({ signal: current.signal })).data
       if (!live(current, currentEpoch)) return
-      ready = capability.runtime === 'container' && capability.staging_supported && capability.browser_ready && capability.apply_supported
+      ready = (capability.runtime === 'container' || capability.runtime === 'worker') && capability.staging_supported && capability.browser_ready && capability.apply_supported
       if (!ready) { status.textContent = 'Browser import is unavailable on this runtime. Use the operator CSV migration tool; no file has been read or uploaded.'; return }
       status.textContent = 'Choose a Clockify Detailed CSV to review before importing.'
       const id = new URL(location.href).searchParams.get(stageParameter)

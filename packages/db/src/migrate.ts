@@ -1,4 +1,5 @@
 import { deelStatusThrottleMigration } from './migrations/0167_deel_status_throttle.js'
+import { csvWorkerStagingMigration } from './migrations/0172_csv_worker_staging.js'
 import { planningCalendarFeedsMigration } from './migrations/0168_planning_calendar_feeds.js'
 import { deelPaymentStatusMigration } from './migrations/0166_deel_payment_status.js'
 import { isOrdinaryD1SchemaStatement } from './internal/d1-cold-migrations.js'
@@ -1699,6 +1700,7 @@ const migrations = [
   { id: '0168_planning_calendar_feeds', statements: planningCalendarFeedsMigration },
   { id: '0169_csv_staging_instance', statements: csvStagingInstanceMigration },
   { id: '0170_csv_apply_runtime', statements: csvApplyRuntimeMigration },
+  { id: '0172_csv_worker_staging', statements: csvWorkerStagingMigration },
 ] as const
 
 // Fixtures assert against this rather than re-listing ids: a hand-copied ledger merges

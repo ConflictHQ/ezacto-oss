@@ -1,5 +1,6 @@
 /** Closed expected boundary refusals; API adapters must classify by type/code, never arbitrary error text. */
 export type CsvBrowserPlannerErrorCode =
+  | 'snapshot_budget_exceeded'
   | 'adapter_unsupported'
   | 'administrator_required'
   | 'exporter_zone_invalid'

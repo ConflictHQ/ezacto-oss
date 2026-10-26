@@ -1,3 +1,4 @@
+import { createCsvWorkerRuntime, csvWorkerConfigured } from './csv-runtime.js'
 import { createCalendarFeedService } from '@ezacto/db/d1'
 import { createDeelPaymentStatusStore } from '@ezacto/db/d1'
 import { createDeelPaymentStatusRuntime } from '@ezacto/integrations'
@@ -726,6 +727,7 @@ export const createRuntimeServices = async (
   const demo = demoDeployment(env);
   const credentials = providerCredentials(env);
   const cursorSigningKey = parseCursorSigningKey(env.API_CURSOR_SIGNING_KEY);
+  const csv = !demo && csvWorkerConfigured(env) ? createCsvWorkerRuntime(binding,env.ATTACHMENTS!,env.CSV_IMPORT_QUEUE!,cursorSigningKey,error=>reportWorkerError(options.reportError,error,{phase:'queue',traceId:runtimeTraceId()})) : undefined;
   // Portal magic-link auth is opt-in on the presence of its key. An install
   // that has not set one does not serve the routes at all, rather than serving
   // them with a weak or absent secret -- the routes hand out sessions, so
@@ -1256,6 +1258,7 @@ export const createRuntimeServices = async (
       now: () => new Date().toISOString(),
     })
   return {
+    ...(csv ? {csvImportStaging:csv.staging,csvImportApply:csv.apply} : {}),
     bootstrap: (input) => bootstrapInstanceD1(database, input),
     enrollOwnerPassword: (input) =>
       enrollInstanceOwnerPasswordD1(database, input),

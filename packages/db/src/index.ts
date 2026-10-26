@@ -186,3 +186,5 @@ export { createDeelStageStore } from './deel-staging.js'
 export { csvStagingSessionFence } from './csv-staging-authority.js'
 
 export { createCsvApplyRunStore } from './csv-apply-runtime.js'
+
+export { csvWorkerDatabase, type CsvWorkerExecution } from './csv-worker-database.js'

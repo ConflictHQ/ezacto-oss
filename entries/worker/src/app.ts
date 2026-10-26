@@ -331,6 +331,9 @@ export type WorkerEnv = AppEnv & OffsiteBackupEnvironment & {
   EMAIL_QUEUE?: Queue<QueuedEmailJob>
   MIGRATION_QUEUE?: Queue<{kind:'migration-load-v1';runId:string;sequence:number}>
   MIGRATION_QUEUE_NAME?: string
+  /** Optional dedicated CSV queue; absent keeps Worker browser imports off. */
+  CSV_IMPORT_QUEUE?: Queue<import('./csv-queue.js').CsvWorkerMessage | import('./csv-runtime.js').CsvMaintenanceMessage>
+  CSV_IMPORT_QUEUE_NAME?: string
   /** Optional Cloudflare Access provider; both values are required together. */
   ACCESS_TEAM_DOMAIN?: string
   ACCESS_POLICY_AUD?: string
