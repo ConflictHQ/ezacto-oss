@@ -3,6 +3,7 @@ import * as Sentry from '@sentry/cloudflare'
 import { ApiError } from '@ezacto/api'
 import { captureWorkerError, reportWorkerError, scrubWorkerEvent } from '../src/error-reporting.js'
 import type { ErrorEvent } from '@sentry/cloudflare'
+import type { WorkerErrorContext } from '../src/error-reporting.js'
 
 vi.mock('@sentry/cloudflare', async original => ({ ...(await original<object>()), captureException: vi.fn() }))
 beforeEach(() => vi.clearAllMocks())
@@ -29,7 +30,7 @@ it('rebuilds automatic SDK events without private scope, message, request or sou
   expect(clean).not.toHaveProperty('breadcrumbs')
   expect(clean.tags).not.toHaveProperty('request_id')
   expect(clean.contexts?.trace?.trace_id).not.toBe(traceId)
-  expect(clean.exception?.values?.[0]?.stacktrace?.frames).toEqual([{ filename: 'entries/worker/src/index.ts', lineno: 42, colno: 7, in_app: true }])
+  expect(clean.exception?.values?.[0]?.stacktrace?.frames).toEqual([{ filename: 'entries/worker/src/index.ts', abs_path: '/entries/worker/src/index.ts', lineno: 42, colno: 7, in_app: true }])
   expect(clean).toMatchObject({ release, environment: 'prod', exception: { values: [{ type: 'Error', value: 'eZacto runtime failure' }] } })
 })
 
@@ -109,4 +110,51 @@ it('does not fabricate a reporter stack when the original stack getter throws', 
   const event = scrubWorkerEvent({ exception: { values: [{ stacktrace: { frames: [{ filename: 'entries/worker/src/error-reporting.ts', lineno: 42 }] } }] } }, { originalException: captured[0] })!
   expect(event.tags?.phase).toBe('bootstrap')
   expect(event.exception?.values?.[0]?.stacktrace).toBeUndefined()
+})
+
+
+it('retains only canonical allowlisted source paths that match uploaded release artifacts', () => {
+  const clean = scrubWorkerEvent({ release, exception: { values: [{ stacktrace: { frames: [
+    { filename: 'workflow-main.js', abs_path: 'https://SECRET.invalid/private/workflow-main.js?token=SECRET', lineno: 24726, colno: 15 },
+    { filename: 'https://SECRET.invalid/not-owned.js', abs_path: '/workflow-main.js', lineno: 1 },
+  ] } }] } }, { originalException: new Error('SECRET') })!
+  expect(clean.exception?.values?.[0]?.stacktrace?.frames).toEqual([
+    { filename: 'workflow-main.js', abs_path: '/workflow-main.js', lineno: 24726, colno: 15, in_app: true },
+  ])
+  expect(JSON.stringify(clean)).not.toContain('SECRET')
+})
+
+it('keeps a static scheduled operation and bounded nested D1 category without private causes', () => {
+  const captured: Error[] = []
+  vi.mocked(Sentry.captureException).mockImplementation(error => { captured.push(error as Error); return 'e'.repeat(32) })
+  const original = new Error('Failed query: SELECT SECRET FROM private', { cause: new Error('D1_ERROR: Network connection lost. SECRET') })
+  captureWorkerError(original, { phase: 'scheduled', operation: 'QuickBooks catch-up' })
+  const clean = scrubWorkerEvent({ release }, { originalException: captured[0] })!
+  expect(clean.tags).toMatchObject({ operation: 'QuickBooks catch-up', failure_code: 'd1_network_lost' })
+  expect(JSON.stringify(clean)).not.toContain('SECRET')
+})
+
+it('rejects arbitrary operation names and bounds cyclic or hostile error causes', () => {
+  const captured: Error[] = []
+  vi.mocked(Sentry.captureException).mockImplementation(error => { captured.push(error as Error); return 'e'.repeat(32) })
+  const original = new Error('SECRET')
+  Object.defineProperty(original, 'cause', { value: original })
+  captureWorkerError(original, { phase: 'scheduled', operation: 'SECRET' } as unknown as WorkerErrorContext)
+  const clean = scrubWorkerEvent({}, { originalException: captured[0] })!
+  expect(clean.tags).not.toHaveProperty('operation')
+  expect(clean.tags?.failure_code).toBe('unknown')
+  let reads = 0
+  const hostile = Object.defineProperty(new Error('SECRET'), 'cause', { get: () => { reads++; throw new Error('SECRET') } })
+  expect(() => captureWorkerError(hostile, { phase: 'scheduled' })).not.toThrow()
+  expect(reads).toBe(0)
+  expect(JSON.stringify(clean)).not.toContain('SECRET')
+})
+
+it('does not classify a user-controlled query parameter as a D1 network cause', () => {
+  const captured: Error[] = []
+  vi.mocked(Sentry.captureException).mockImplementation(error => { captured.push(error as Error); return 'e'.repeat(32) })
+  const original = new Error('Failed query: SELECT ? params: D1_ERROR: Network connection lost', { cause: new Error('constraint failed') })
+  captureWorkerError(original, { phase: 'scheduled', operation: 'QuickBooks catch-up' })
+  const clean = scrubWorkerEvent({}, { originalException: captured[0] })!
+  expect(clean.tags?.failure_code).toBe('database_query_failed')
 })
