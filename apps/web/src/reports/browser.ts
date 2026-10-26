@@ -3273,7 +3273,7 @@ export const createReportsController = (
 
   const openShare = async (report: SavedReport): Promise<void> => {
     const active = currentSession()
-    if (active === null) return
+    if (active === null || savedMutations.has(report.id)) return
     restoreShareControls()
     sharePending = false
     const own = ++shareGeneration
@@ -3409,6 +3409,7 @@ export const createReportsController = (
       if (currentSession() !== active || own !== libraryRequest) return
       savedList.replaceChildren(...reports.map((report: SavedReport) => {
         const card = element('article', 'report-saved-card')
+        card.dataset.savedReportId = report.id
         const open = textElement('button', report.name)
         open.type = 'button'
         open.addEventListener('click', () => {
@@ -3471,6 +3472,7 @@ export const createReportsController = (
         card.append(open, metadata, audience, pin, duplicate, edit, share, remove)
         return card
       }))
+      syncSavedMutationControls()
       savedStatus.textContent = reports.length === 0 ? 'No saved reports match.' : `${reports.length} saved reports.`
     } catch (error) {
       if (currentSession() === active && own === libraryRequest) savedStatus.textContent = messageFor(error)
@@ -3485,11 +3487,25 @@ export const createReportsController = (
     savedScreenStatus.textContent = message
   }
 
+  const syncSavedMutationControls = (): void => {
+    const rows = [
+      ...savedList.querySelectorAll<HTMLElement>('[data-saved-report-id]'),
+      ...savedScreenTable.querySelectorAll<HTMLElement>('[data-row-key]'),
+    ]
+    for (const row of rows) {
+      const id = row.dataset.savedReportId ?? row.dataset.rowKey
+      for (const button of row.querySelectorAll<HTMLButtonElement>('button')) {
+        button.disabled = id !== undefined && savedMutations.has(id)
+      }
+    }
+  }
+
   const savedAction = async (id: string, phase: string, work: (active: ActiveSession, current: () => boolean) => Promise<string>, refreshLinks = false) => {
     const active = currentSession()
     if (active === null || savedMutations.has(id)) return
     const current = () => currentSession() === active
     savedMutations.add(id)
+    syncSavedMutationControls()
     announceSaved(phase)
     setRequestBusy(savedStatus, true)
     setRequestBusy(savedScreenStatus, true)
@@ -3503,6 +3519,7 @@ export const createReportsController = (
     } finally {
       if (current()) {
         savedMutations.delete(id)
+        syncSavedMutationControls()
         setRequestBusy(savedStatus, savedMutations.size > 0)
         setRequestBusy(savedScreenStatus, savedMutations.size > 0)
       }
@@ -3529,7 +3546,7 @@ export const createReportsController = (
   }
 
   const requestDelete = (report: SavedReport): void => {
-    if (api.deleteSavedReport === undefined) return
+    if (api.deleteSavedReport === undefined || savedMutations.has(report.id)) return
     deleting = report
     deleteTitle.textContent = `Delete ${report.name}?`
     deleteDialog.showModal()
@@ -3573,6 +3590,7 @@ export const createReportsController = (
       // Builder definitions open in the Saved reports library, not here.
       const views = listed.filter((report) => report.view !== null)
       savedScreenTable.replaceChildren(renderSavedViewsTable(views, screenActions))
+      syncSavedMutationControls()
       savedScreenStatus.textContent = views.length === 0
         ? 'No saved reports match.'
         : `${views.length} saved ${views.length === 1 ? 'report' : 'reports'}.`
@@ -4536,6 +4554,7 @@ export const createReportsController = (
     const active = currentSession()
     const target = deleting
     if (active === null || target === null || api.deleteSavedReport === undefined) return
+    if (savedMutations.has(target.id)) return
     deleting = null
     deleteDialog.close()
     announceSaved(`Deleting ${target.name}…`)
