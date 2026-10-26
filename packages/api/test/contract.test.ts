@@ -72,6 +72,7 @@ import {
   installTwoFactorRoutes,
   installAllocationRoutes,
   installCalendarProposalRoutes,
+  installCalendarConnectionRoutes,
   installWorkItemRoutes,
   installTrackedResourceRoutes,
   installTeamRoutes,
@@ -339,6 +340,7 @@ const documentedApp = () =>
         cursorSigningKey: new Uint8Array(32),
         now: () => new Date('2026-10-05T00:30:00.000Z'),
       });
+      installCalendarConnectionRoutes(api,{cleanupStatus:async()=>({pending:0,manual_required:0,revoked:0}),connections:async()=>[],disconnect:async()=>{},refresh:async()=>({state:'connected',applied:0})});
       installCalendarProposalRoutes(api, {
         repository: calendarProposals,
         cursorSigningKey: new Uint8Array(32),

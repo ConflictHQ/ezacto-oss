@@ -1,3 +1,5 @@
+import { createCalendarConnectionStore } from '@ezacto/db'
+import { createCalendarSyncService } from '@ezacto/integrations'
 import { createCalendarFeedService } from '@ezacto/db'
 import { createDeelPaymentStatusStore } from '@ezacto/db'
 import { createDeelPaymentStatusRuntime } from '@ezacto/integrations'
@@ -337,6 +339,7 @@ export interface ContainerRuntime {
 
 export interface ContainerRuntimeOptions {
   reportError?: WorkerErrorReporter
+  calendarSources?: Parameters<typeof createCalendarSyncService>[0]['sources']
   emailProvider?: HttpEmailProvider
   verifyEmailProvider?: () => Promise<void>
 }
@@ -955,6 +958,7 @@ export const createContainerRuntime = async (
     estimateTemplates: createEstimateTemplateRepository(drizzle),
     clientRateCards: createClientRateCardRepository(drizzle),
       trackedResources,
+      calendarConnections: await createCalendarSyncService({store:createCalendarConnectionStore(drizzle),deploymentKey:config.cursorSigningKey,...(options.calendarSources?{sources:options.calendarSources}:{})}),
       calendarProposals: new DrizzleCalendarProposalRepository(drizzle, trackedResources),
       placeholderPlanning: createPlaceholderAllocationRepository(drizzle),
       allocations: new DrizzleAllocationRepository(drizzle),

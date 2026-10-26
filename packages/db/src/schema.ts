@@ -3736,6 +3736,9 @@ export const calendarProposals = sqliteTable(
       .notNull()
       .default('proposed'),
     sourceVersion: text('source_version'),
+    observedSourceVersion: text('observed_source_version'),
+    sourceChangedAt: text('source_changed_at'),
+    sourceCancelledAt: text('source_cancelled_at'),
     timeEntryId: integer('time_entry_id').references(() => timeEntries.id, {
       onDelete: 'set null',
     }),
@@ -3746,6 +3749,7 @@ export const calendarProposals = sqliteTable(
     uniqueIndex('calendar_proposals_event_identity').on(
       table.userId,
       table.provider,
+      table.calendarId,
       table.eventId,
       table.occurrence,
     ),

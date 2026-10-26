@@ -35,6 +35,8 @@ const EPHEMERAL_TABLES: readonly string[] = [
   'two_factor_challenges',
   'oidc_app_codes',
   'oidc_transactions',
+  // OAuth grant and cursor envelopes are captured encrypted, but never restored.
+  'calendar_connections',
   'quickbooks_oauth_states',
   // A spent link restored as unspent, or a lapsed one as live, is a credential
   // for a copy of the database (issue 39).

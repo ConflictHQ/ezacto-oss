@@ -1,3 +1,4 @@
+import { createCalendarGrantVault } from '@ezacto/core'
 import BetterSqlite3 from 'better-sqlite3'
 import { Miniflare } from 'miniflare'
 import { afterEach, describe, expect, it } from 'vitest'
@@ -177,6 +178,29 @@ describe('demo reset', () => {
       ),
     ).resolves.toEqual({ outcome: 'accepted', connectionGeneration: 4, connected: true })
   })
+
+  for(const kind of ['sqlite','d1'] as const)it(`[security] ${kind} reset retains encrypted calendar revocation custody as manual-required`,async()=>{
+    let cleanup:()=>Promise<void>,driver:DemoResetDriver
+    let run:(sql:string,...params:unknown[])=>Promise<void>,rows:<T>(sql:string)=>Promise<T[]>
+    if(kind==='sqlite'){
+      const raw=new BetterSqlite3(':memory:');migrateContainer(raw)
+      driver=createContainerDemoResetDriver(raw,createContainerDatabase(raw) as unknown as InvoiceGenerationDatabase,migrateContainer)
+      run=async(sql,...params)=>{raw.prepare(sql).run(...params)};rows=async<T>(sql:string)=>raw.prepare(sql).all() as T[];cleanup=async()=>{raw.close()}
+    }else{
+      const mf=new Miniflare({modules:true,script:'export default {fetch(){return new Response("ok")}}',d1Databases:['DB']});const raw=await mf.getD1Database('DB');await migrateD1(raw);driver=createD1DemoResetDriver(raw)
+      run=async(sql,...params)=>{await raw.prepare(sql).bind(...params).run()};rows=async<T>(sql:string)=>(await raw.prepare(sql).all<T>()).results;cleanup=()=>mf.dispose()
+    }
+    try{
+      const before=(await rows<{nonce:string}>('SELECT nonce FROM calendar_sync_instance'))[0]!.nonce
+      await run("INSERT INTO users(id,first_name,last_name,profile,manager_grants,created_at,updated_at) VALUES(1,'Owned','Admin','administrator','[]',?,?)",now,now)
+      const vault=await createCalendarGrantVault(new Uint8Array(32).fill(7)),sealed=await vault.sealGrant({refreshToken:'PRIVATE_RESET_REFRESH',scopes:['calendar.readonly']},{instance:before,userId:1,provider:'google',generation:1,credentialRevision:1})
+      await run("INSERT INTO calendar_connections(user_id,provider,instance_nonce,generation,credential_revision,status,key_id,sealed_grant,updated_at) VALUES(1,'google',?,1,1,'connected',?,?,?)",before,vault.keyId,sealed,now)
+      await expect(wipeAndSeedDemo({...driver,bootstrap:async()=>{throw new Error('owned interrupted rebuild')}},{now,years,confirm:'wipe-and-reload'})).rejects.toThrow('owned interrupted rebuild')
+      expect((await rows<{nonce:string}>('SELECT nonce FROM calendar_sync_instance'))[0]!.nonce).not.toBe(before)
+      expect(await rows('SELECT count(*) AS n FROM calendar_connections')).toEqual([{n:0}])
+      expect(await rows('SELECT status,sealed_grant FROM calendar_cleanup_obligations')).toEqual([{status:'manual_required',sealed_grant:sealed}])
+    }finally{await cleanup()}
+  },60000)
 
   it('[security] invalidates pre-wipe authority even if rebuilding never starts', async () => {
     const { client, driver } = harness()

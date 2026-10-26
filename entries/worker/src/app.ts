@@ -1,3 +1,4 @@
+import { installCalendarConnectionRoutes, type CalendarConnectionPort } from '@ezacto/api'
 import { installCalendarFeedRoutes, installCalendarSubscriptionRoute } from '@ezacto/api'
 import type { CalendarFeedService } from '@ezacto/core'
 import { installDeelPaymentStatusRoutes } from '@ezacto/api'
@@ -441,6 +442,7 @@ export interface RuntimeServices {
   team: TeamRouteOptions['repository']
   trackedResources: TrackedResourceRepository & HarvestTimeEntrySource & HarvestExpenseSource
   /** Calendar events offered as time, accepted through `trackedResources` (issue 428). */
+  calendarConnections?: CalendarConnectionPort
   calendarProposals: CalendarProposalRepository
   /** Planned hours per week and the capacity view (issue 1007). */
   organizationHolidays?: OrganizationHolidayRepository
@@ -973,6 +975,7 @@ export const createApp = (
               cursorSigningKey: services.cursorSigningKey,
               now: () => new Date(systemClock.now().instant),
             })
+            if(services.calendarConnections) installCalendarConnectionRoutes(api,services.calendarConnections)
             installCalendarProposalRoutes(api, {
               repository: services.calendarProposals,
               clock: systemClock,

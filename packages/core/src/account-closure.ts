@@ -1,3 +1,4 @@
+import type { CalendarCleanupStatus } from './calendar-connection.js'
 import type { AppleCleanupStatus } from './apple-lifecycle.js'
 import type {
   AccountRetentionCategory,
@@ -19,6 +20,7 @@ export interface AccountClosureRecord {
   inventory: AccountClosureInventoryItem[];
   retained_identity: boolean;
   apple_cleanup: AppleCleanupStatus;
+  calendar_cleanup?: CalendarCleanupStatus;
 }
 export interface AccountClosurePreview {
   apple_cleanup_retry_available?: boolean;
