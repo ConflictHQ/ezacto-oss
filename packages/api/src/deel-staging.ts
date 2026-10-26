@@ -193,6 +193,7 @@ export const installDeelStagingRoutes = <Bindings extends object>(
           seconds: p.seconds,
           timesheets: p.timesheets,
           already_staged: p.alreadyStaged,
+  already_staged_entry_ids: p.alreadyStagedEntryIds,
           people: p.people.map((x) => ({
             user_id: x.userId,
             contract_id: x.contractId,
@@ -201,6 +202,7 @@ export const installDeelStagingRoutes = <Bindings extends object>(
           })),
           conflict_entry_ids: p.conflicts,
           unsyncable_entry_ids: p.unsyncable,
+          zero_duration_entry_ids: p.zeroDurationEntryIds,
           unmatched: p.unmatched.map((x) => ({
             user_id: x.userId,
             reason: x.reason,

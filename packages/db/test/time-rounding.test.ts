@@ -309,15 +309,23 @@ for (const [runtime, factory] of factories) {
           const boundary = increment * 3
           for (const seconds of [0, boundary - 1, boundary, boundary + 1]) {
             id += 1
+            const expected = expectedRounded(mode, minutes, seconds)
+            if (expected === 0) {
+              await expect(
+                createStoppedTimeEntry(db.orm, {
+                  ...entryInput(1, seconds),
+                  harvestId: `h${id}`,
+                }),
+              ).rejects.toThrow(/positive rounded duration/)
+              continue
+            }
             const entry = await createStoppedTimeEntry(db.orm, {
               ...entryInput(1, seconds),
               harvestId: `h${id}`,
             })
-            expect(entry.roundedSeconds, `${mode}/${minutes} of ${seconds}`).toBe(
-              expectedRounded(mode, minutes, seconds),
-            )
+            expect(entry.roundedSeconds, `${mode}/${minutes} of ${seconds}`).toBe(expected)
             // Written, and read back from the table rather than from the return.
-            expect(await rounded(db, entry.id)).toBe(expectedRounded(mode, minutes, seconds))
+            expect(await rounded(db, entry.id)).toBe(expected)
           }
           // Half an increment: the one value where nearest and up agree, down does not.
           const half = boundary + increment / 2

@@ -8628,7 +8628,7 @@
       "post": {
         "operationId": "createTimeEntry",
         "summary": "Create or start a time entry",
-        "description": "`started_time` with `ended_time` logs a stopped start/end entry in either organization mode, its `seconds` derived from the two times (an end before the start is past midnight); `seconds` beside them is 422 `mode_mismatch`. Without times the organization's `time_entry_mode` decides: in `duration`, `seconds` logs a stopped entry and leaving it out starts a timer; in `start_end`, leaving out `ended_time` starts a timer at the current local time and `seconds` is 422 `mode_mismatch`. A timer in a `duration` organization never carries times, so `started_time` without `ended_time` there is 422 `mode_mismatch`. Entries may overlap; each counts its own full duration.",
+        "description": "`started_time` with `ended_time` logs a stopped start/end entry in either organization mode, its `seconds` derived from the two times (an end before the start is past midnight); `seconds` beside them is 422 `mode_mismatch`. Without times the organization's `time_entry_mode` decides: in `duration`, `seconds` logs a stopped entry and leaving it out starts a timer; in `start_end`, leaving out `ended_time` starts a timer at the current local time and `seconds` is 422 `mode_mismatch`. A timer in a `duration` organization never carries times, so `started_time` without `ended_time` there is 422 `mode_mismatch`. Stopped entries must have a positive rounded duration; zero-hour entries are refused. Entries may overlap; each counts its own full duration.",
         "tags": [
           "time-entries"
         ],
@@ -38298,9 +38298,11 @@
           "seconds",
           "timesheets",
           "already_staged",
+          "already_staged_entry_ids",
           "people",
           "conflict_entry_ids",
           "unsyncable_entry_ids",
+          "zero_duration_entry_ids",
           "unmatched",
           "unresolved_entry_ids"
         ],
@@ -38343,6 +38345,12 @@
           "already_staged": {
             "type": "integer"
           },
+          "already_staged_entry_ids": {
+            "type": "array",
+            "items": {
+              "type": "integer"
+            }
+          },
           "people": {
             "type": "array",
             "items": {
@@ -38356,6 +38364,12 @@
             }
           },
           "unsyncable_entry_ids": {
+            "type": "array",
+            "items": {
+              "type": "integer"
+            }
+          },
+          "zero_duration_entry_ids": {
             "type": "array",
             "items": {
               "type": "integer"
@@ -46492,7 +46506,7 @@
           },
           "seconds": {
             "type": "integer",
-            "minimum": 0,
+            "minimum": 1,
             "description": "A duration entry's length. Not accepted with started_time or ended_time."
           },
           "started_time": {
@@ -46559,7 +46573,7 @@
           },
           "seconds": {
             "type": "integer",
-            "minimum": 0
+            "minimum": 1
           },
           "started_time": {
             "type": "string"

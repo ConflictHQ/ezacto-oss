@@ -29,6 +29,7 @@ export interface DeelStagePreview {
   seconds: number;
   timesheets: number;
   alreadyStaged: number;
+  alreadyStagedEntryIds: readonly number[];
   people: readonly {
     userId: number;
     contractId: string | null;
@@ -37,6 +38,7 @@ export interface DeelStagePreview {
   }[];
   conflicts: readonly number[];
   unsyncable: readonly number[];
+  zeroDurationEntryIds: readonly number[];
   unmatched: readonly { userId: number; reason: string }[];
   unresolved: readonly number[];
 }

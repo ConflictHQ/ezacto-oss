@@ -865,9 +865,11 @@ export type DeelStagePreview = {
   "seconds": number;
   "timesheets": number;
   "already_staged": number;
+  "already_staged_entry_ids": Array<number>;
   "people": Array<DeelStagePerson>;
   "conflict_entry_ids": Array<number>;
   "unsyncable_entry_ids": Array<number>;
+  "zero_duration_entry_ids": Array<number>;
   "unmatched": Array<DeelStageUnmatched>;
   "unresolved_entry_ids": Array<number>;
 };

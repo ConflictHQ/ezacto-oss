@@ -18,6 +18,12 @@ if (!Number.isInteger(listenPort) || listenPort < 1 || listenPort > 65535) {
 const cursorSigningKey = 'AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA'
 const fixtureControlPath = '/__ezacto_browser_fixture__/start-end'
 const fixtureControlHeader = 'start-end-round-trip'
+const clearFixtureTimers = async () => {
+  // Browser tests share one D1 fixture. A preceding timer test can leave a
+  // running row behind, and the database correctly refuses to change the
+  // organization's time-entry mode while any timer is active.
+  await database.prepare('DELETE FROM time_entries WHERE timer_started_at IS NOT NULL').run()
+}
 // Local-only signing material for the real webhook/browser acceptance.
 const feedbackWebhookKey = 'fixture-mailgun-webhook-key-for-tests'
 const fixtureEmail = process.env.EZACTO_BROWSER_FIXTURE_EMAIL
@@ -645,6 +651,13 @@ const fixtureControl = async (request, response) => {
     await firstRunRuntime?.dispose()
     firstRunRuntime = null
     response.setHeader('set-cookie', 'ezacto_browser_first_run=; Path=/; Max-Age=0; HttpOnly; SameSite=Strict')
+  } else if (action === 'age-running-timer') {
+    await run(`UPDATE time_entries
+      SET timer_started_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now', '-5 minutes')
+      WHERE user_id = 1 AND timer_started_at IS NOT NULL`)
+    if ((await rows('SELECT id FROM time_entries WHERE user_id=1 AND timer_started_at IS NOT NULL')).length !== 1) {
+      throw new Error('Expected exactly one owner timer to age')
+    }
   } else if (action === 'rate-card-seed') {
     if (rateCardFixture !== null) throw new Error('rate card fixture already active')
     const client = await database.prepare(
@@ -772,6 +785,7 @@ const fixtureControl = async (request, response) => {
   } else if (action === 'portal-estimate-cleanup') {
     await database.prepare('UPDATE clients SET is_active=0 WHERE id=120001').run()
   } else if (action === 'seed') {
+    await clearFixtureTimers()
     await database.batch([
       database.prepare(
         `UPDATE organizations
@@ -794,6 +808,7 @@ const fixtureControl = async (request, response) => {
         .bind(timestamp, timestamp),
     ])
   } else if (action === 'reset') {
+    await clearFixtureTimers()
     await database.batch([
       database.prepare('DELETE FROM time_entries WHERE id = 900'),
       database.prepare(
@@ -803,6 +818,7 @@ const fixtureControl = async (request, response) => {
       ),
     ])
   } else if (action === 'approval-seed') {
+    await clearFixtureTimers()
     await database.batch([
       database.prepare('DELETE FROM time_entries WHERE id = 901'),
       database.prepare('DELETE FROM expenses WHERE id = 901'),
@@ -838,6 +854,7 @@ const fixtureControl = async (request, response) => {
         .bind(timestamp, timestamp),
     ])
   } else if (action === 'approval-expense-only-seed') {
+    await clearFixtureTimers()
     await database.batch([
       database.prepare(
         `DELETE FROM time_entries
@@ -1485,6 +1502,7 @@ const fixtureControl = async (request, response) => {
       throw new Error("Disposable closure was not durably applied");
   } else if (action === 'calendar-proposals-seed' || action === 'calendar-proposals-cleanup') {
     if (calendarProposalFixture !== null) {
+      await clearFixtureTimers()
       await run(`UPDATE timesheet_lock_windows SET version=version+1,unlocked_by_user_id=1,unlocked_at=?,unlock_reason='Owned fixture cleanup'
         WHERE lock_reason='browser-1201-lock' AND unlocked_at IS NULL`, new Date().toISOString())
       const created = await rows(`SELECT time_entry_id AS id FROM calendar_proposals WHERE calendar_id='browser-owned-1201' AND time_entry_id IS NOT NULL`)
@@ -1507,6 +1525,7 @@ const fixtureControl = async (request, response) => {
         organization: (await rows('SELECT time_entry_mode,time_format,clock,timezone,week_start_day,modules FROM organizations WHERE id=1'))[0],
         owner: (await rows('SELECT timezone FROM users WHERE id=1'))[0],
       }
+      await clearFixtureTimers()
       await run(`UPDATE organizations SET time_entry_mode='duration',time_format='decimal',clock='24h',timezone='America/Costa_Rica',week_start_day='monday',modules=json_set(modules,'$.approval',json('true')) WHERE id=1`)
       await run("UPDATE users SET timezone='UTC' WHERE id=1")
       await run(`INSERT INTO users(id,first_name,last_name,profile,manager_grants,timezone,created_at,updated_at)
@@ -1526,6 +1545,7 @@ const fixtureControl = async (request, response) => {
     }
   } else if (action === 'calendar-proposals-start-end') {
     if (calendarProposalFixture === null) throw new Error('Calendar proposal fixture is not active')
+    await clearFixtureTimers()
     await run("UPDATE organizations SET time_entry_mode='start_end' WHERE id=1")
   } else if (action === 'calendar-proposals-dst') {
     if (calendarProposalFixture === null) throw new Error('Calendar proposal fixture is not active')
@@ -1554,6 +1574,7 @@ const fixtureControl = async (request, response) => {
     // Clearing the sign-in limit is all either does. The second name is for a
     // spec that signs in late in a run, after the rest of the suite has spent
     // the limit, and has nothing to do with payment runs.
+    if (action === 'sign-in-rate-reset') await clearFixtureTimers()
     await database.prepare(`DELETE FROM auth_rate_limits WHERE action = 'sign_in'`).run()
   } else if (action === 'client-360-seed') {
     await client360Seed()

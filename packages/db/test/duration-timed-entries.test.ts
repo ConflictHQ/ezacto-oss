@@ -230,6 +230,20 @@ for (const [runtime, factory] of factories) {
       return { db: database, tracked }
     }
 
+    it('[issue 1284] refuses completed zero-hour rows but allows a running placeholder', async () => {
+      const { db } = await setup('duration')
+      await expect(insertRow(db, { id: 40, seconds: 0 })).rejects.toThrow(
+        /time_entry_zero_duration/,
+      )
+      await expect(
+        insertRow(db, {
+          id: 41,
+          seconds: 0,
+          timerStartedAt: '2026-09-14T15:00:00.000Z',
+        }),
+      ).resolves.toBeUndefined()
+    }, 60_000)
+
     it('[unit] 0100 upgrades a duration organization without touching a row', async () => {
       const { db } = await setup('duration', false)
       // What a duration organization already holds: an hour, a correction
