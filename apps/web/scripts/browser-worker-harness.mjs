@@ -651,6 +651,13 @@ const fixtureControl = async (request, response) => {
     await firstRunRuntime?.dispose()
     firstRunRuntime = null
     response.setHeader('set-cookie', 'ezacto_browser_first_run=; Path=/; Max-Age=0; HttpOnly; SameSite=Strict')
+  } else if (action === 'age-running-timer') {
+    await run(`UPDATE time_entries
+      SET timer_started_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now', '-5 minutes')
+      WHERE user_id = 1 AND timer_started_at IS NOT NULL`)
+    if ((await rows('SELECT id FROM time_entries WHERE user_id=1 AND timer_started_at IS NOT NULL')).length !== 1) {
+      throw new Error('Expected exactly one owner timer to age')
+    }
   } else if (action === 'rate-card-seed') {
     if (rateCardFixture !== null) throw new Error('rate card fixture already active')
     const client = await database.prepare(
@@ -1567,6 +1574,7 @@ const fixtureControl = async (request, response) => {
     // Clearing the sign-in limit is all either does. The second name is for a
     // spec that signs in late in a run, after the rest of the suite has spent
     // the limit, and has nothing to do with payment runs.
+    if (action === 'sign-in-rate-reset') await clearFixtureTimers()
     await database.prepare(`DELETE FROM auth_rate_limits WHERE action = 'sign_in'`).run()
   } else if (action === 'client-360-seed') {
     await client360Seed()

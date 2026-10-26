@@ -94,6 +94,11 @@ test('an assigned task starts and stops a real timer from the header', async ({ 
   await expect(page.locator('[data-timer-chip]')).toHaveAttribute('data-state', 'running')
   await page.locator('[data-timer-chip]').click()
   await expect(editor.locator('[data-stop-timer]')).toBeVisible()
+  const aged = await page.request.post('/__ezacto_browser_fixture__/start-end', {
+    data: { action: 'age-running-timer' },
+    headers: { 'x-ezacto-browser-fixture-control': 'start-end-round-trip' },
+  })
+  expect(aged.status()).toBe(204)
   await editor.locator('[data-stop-timer]').click()
   await expect(page.locator('[data-timer-chip]')).toHaveAttribute('data-state', 'stopped')
 })
