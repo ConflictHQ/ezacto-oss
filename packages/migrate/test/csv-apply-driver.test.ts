@@ -134,7 +134,7 @@ const setup = async () => {
   }
 }
 describe('native durable CSV chunk driver', () => {
-  it('preserves the original failure while isolating a rejected diagnostic callback', async () => {
+  it('sanitizes private failures while isolating a rejected diagnostic callback', async () => {
     const h = await setup()
     try {
       const original = new Error('Owned private diagnostic fixture')
@@ -151,7 +151,10 @@ describe('native durable CSV chunk driver', () => {
         })
         .tick()
       expect(result).toMatchObject({ state: 'partial' })
-      expect(captured).toEqual([original])
+      expect(captured).toHaveLength(1)
+      expect(captured[0]).not.toBe(original)
+      expect(JSON.stringify(captured)).not.toContain(original.message)
+      expect((captured[0] as Error).stack).not.toContain(original.message)
       expect(h.store.read(h.input.runId)).toMatchObject({
         state: 'partial',
         code: 'storage_unavailable',

@@ -6,8 +6,7 @@ canonical planner and native writer (#1180). It uses the existing
 no second loader, external queue, imported invoice or payment execution.
 
 The backend reports `apply_supported` only when both real staging and apply
-ports are installed. `browser_ready` stays false in this backend component;
-#1182 owns activating it with the complete browser flow and owned acceptance.
+ports are installed. The Container browser flow now supports explicit review, confirmation, progress and cancellation; its readiness is advertised separately from apply capability.
 Worker/D1 browser imports remain unsupported (#1184); the CLI's owner behavior,
 source keys, mapping hashes and standalone package are unchanged.
 
@@ -107,3 +106,5 @@ scope, actual actor, exporter zone, organization currency, counts, exact seconds
 and unchanged-money/dedup assertions. It contains no raw cells, private disk paths, session
 references, credentials or customer identifiers. Exact-head CI and #1182's real
 browser acceptance remain release gates.
+
+Unexpected parser/storage exceptions are sanitized before reporting. Operator diagnostics use safe run codes and correlation IDs, never raw CSV cells or exception causes. Deletion custody remains retryable until private bytes are unlinked. Migration `0170_csv_apply_runtime` extends the existing native run metadata.

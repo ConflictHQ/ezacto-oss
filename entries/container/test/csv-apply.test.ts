@@ -334,6 +334,11 @@ describe("owned Container CSV apply acceptance", () => {
     const f = await fixture();
     try {
       const input = await f.prepare();
+      const invalidKey = await f.request(`/csv-imports/${input.stage.id}/apply`, {
+        method: "POST", headers: { "content-type": "application/json", "idempotency-key": randomUUID() }, body: JSON.stringify(input.command),
+      });
+      expect(invalidKey.status).toBe(400);
+      expect(await invalidKey.json()).toMatchObject({ error: { code: "invalid_command" } });
       // Owned client transport drops the accepted response before reading its
       // body. No server fault hook or extra native write is introduced.
       await expect(
@@ -373,6 +378,12 @@ describe("owned Container CSV apply acceptance", () => {
         input.command.command_id,
       );
       expect(replay.state).toBe("completed");
+      const conflicting = await f.request(`/csv-imports/${input.stage.id}/apply`, {
+        method: "POST", headers: { "content-type": "application/json", "idempotency-key": input.command.command_id },
+        body: JSON.stringify({ ...input.command, expected_source_seconds: input.command.expected_source_seconds + 1 }),
+      });
+      expect(conflicting.status).toBe(409);
+      expect(await conflicting.json()).toMatchObject({ error: { code: "command_conflict" } });
       expect(
         f.db.prepare("SELECT count(*) AS n FROM time_entries").get(),
       ).toEqual({ n: 2 });
@@ -424,6 +435,18 @@ describe("owned Container CSV apply acceptance", () => {
         ) + "\n",
         { mode: 0o600 },
       );
+      // A new owned upload of identical bytes is a second review, not a new import.
+      f.setClock(new Date());
+      const repeatedInput = await f.prepare();
+      expect(repeatedInput.preview.tallies).toMatchObject({ new_rows: 0, already_imported_rows: 2 });
+      await f.json<CsvApplyRunData>(`/csv-imports/${repeatedInput.stage.id}/apply`, repeatedInput.command, repeatedInput.command.command_id);
+      await f.apply.tick();
+      expect((await status(f, repeatedInput.stage.id)).state).toBe("completed");
+      expect(f.db.prepare("SELECT count(*) AS n FROM time_entries").get()).toEqual({ n: 2 });
+      expect(f.money()).toBe(f.moneyBefore);
+      const receiptPath = "/tmp/ezacto-1183-owned-acceptance-artifact.json";
+      const receipt = JSON.parse(await readFile(receiptPath, "utf8"));
+      await writeFile(receiptPath, JSON.stringify({ ...receipt, fresh_same_file_reupload_new_rows: repeatedInput.preview.tallies.new_rows, fresh_same_file_reupload_already_imported_rows: repeatedInput.preview.tallies.already_imported_rows, command_conflict_status: conflicting.status }, null, 2) + "\n", {mode: 0o600});
     } finally {
       await f.close();
     }

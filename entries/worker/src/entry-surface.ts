@@ -138,6 +138,10 @@ export const WORKER_ONLY_ROUTES: readonly string[] = [
 
 /** Mounted by the container and not by the Worker. */
 export const CONTAINER_ONLY_ROUTES: readonly string[] = [
+  'post /api/v1/csv-imports/:runId/apply',
+  'post /api/v1/csv-imports/:runId/resume',
+  'post /api/v1/csv-imports/:runId/cancel',
+  'get /api/v1/csv-imports/:runId/apply',
   'post /api/v1/csv-imports',
   'get /api/v1/csv-imports/:runId',
   'get /api/v1/csv-imports/:runId/mapping',

@@ -5907,7 +5907,7 @@ export type CsvImportCapabilities = {
   "runtime": "container" | "worker";
   "staging_supported": boolean;
   "browser_ready": boolean;
-  "apply_supported": false;
+  "apply_supported": boolean;
   "max_csv_bytes": number;
   "max_mapping_bytes": number;
   "raw_retention_hours": 24;
@@ -6091,6 +6091,51 @@ export type CsvImportErrorPageEnvelope = {
 
 export type CsvImportCatalogPageEnvelope = {
   "data": CsvImportCatalogPage;
+};
+
+export type CsvImportApplyCommand = {
+  "preview_id": string;
+  "command_id": string;
+  "version": number;
+  "expected_selected_rows": number;
+  "expected_source_seconds": number;
+  "expected_destination_seconds": number;
+  "acknowledge_exclusions": boolean;
+  "acknowledge_destination_difference": boolean;
+  "acknowledge_new_people": boolean;
+};
+
+export type CsvImportCancelCommand = {
+  "command_id": string;
+};
+
+export type CsvImportApplyRun = {
+  "stage_id": string;
+  "preview_id": string | null;
+  "state": "not_confirmed" | "queued" | "running" | "paused" | "partial" | "completed" | "cancelled" | "failed" | "superseded";
+  "code": "authority_expired" | "authority_revoked" | "input_expired" | "input_unavailable" | "policy_changed" | "parse_rejected" | "storage_unavailable" | "cancelled_by_administrator" | null;
+  "command_id": string | null;
+  "command_known": boolean;
+  "pending_command": CsvImportApplyCommand | null;
+  "file_rows": number;
+  "selected_rows": number;
+  "excluded_rows": number;
+  "committed_rows": number;
+  "inserted_rows": number;
+  "already_imported_rows": number;
+  "created_setup": number;
+  "source_seconds_total": number | null;
+  "source_seconds_committed": number;
+  "destination_seconds": number;
+  "destination_delta_seconds": number;
+  "deleted_imported_rows": number;
+  "retention_deadline": string | null;
+  "retryable": boolean;
+  "allowed_actions": Array<"apply" | "resume" | "cancel" | "inspect" | "purge" | "reconcile">;
+};
+
+export type CsvImportApplyEnvelope = {
+  "data": CsvImportApplyRun;
 };
 
 export interface EzactoClientOptions {
@@ -10633,6 +10678,46 @@ export class EzactoClient {
     const headers = new Headers(args.headers);
 
     return this.request<void>("DELETE", "/api/v1/csv-imports/:runId/input".replace(":runId", encodeURIComponent(String(args["runId"]))), {
+      signal: args.signal,
+      headers,
+    });
+  }
+
+  async applyCsvImport(args: { "runId": string; "Idempotency-Key": string; body: CsvImportApplyCommand; signal?: AbortSignal; headers?: HeadersInit }): Promise<CsvImportApplyEnvelope> {
+    const headers = new Headers(args.headers);
+    if (args["Idempotency-Key"] !== undefined) headers.set("Idempotency-Key", String(args["Idempotency-Key"]));
+    return this.request<CsvImportApplyEnvelope>("POST", "/api/v1/csv-imports/:runId/apply".replace(":runId", encodeURIComponent(String(args["runId"]))), {
+      body: args.body,
+      signal: args.signal,
+      headers,
+    });
+  }
+
+  async resumeCsvImport(args: { "runId": string; "Idempotency-Key": string; body: CsvImportApplyCommand; signal?: AbortSignal; headers?: HeadersInit }): Promise<CsvImportApplyEnvelope> {
+    const headers = new Headers(args.headers);
+    if (args["Idempotency-Key"] !== undefined) headers.set("Idempotency-Key", String(args["Idempotency-Key"]));
+    return this.request<CsvImportApplyEnvelope>("POST", "/api/v1/csv-imports/:runId/resume".replace(":runId", encodeURIComponent(String(args["runId"]))), {
+      body: args.body,
+      signal: args.signal,
+      headers,
+    });
+  }
+
+  async cancelCsvImport(args: { "runId": string; "Idempotency-Key": string; body: CsvImportCancelCommand; signal?: AbortSignal; headers?: HeadersInit }): Promise<CsvImportApplyEnvelope> {
+    const headers = new Headers(args.headers);
+    if (args["Idempotency-Key"] !== undefined) headers.set("Idempotency-Key", String(args["Idempotency-Key"]));
+    return this.request<CsvImportApplyEnvelope>("POST", "/api/v1/csv-imports/:runId/cancel".replace(":runId", encodeURIComponent(String(args["runId"]))), {
+      body: args.body,
+      signal: args.signal,
+      headers,
+    });
+  }
+
+  async getCsvImportApply(args: { "runId": string; query?: { "command_id"?: string }; signal?: AbortSignal; headers?: HeadersInit }): Promise<CsvImportApplyEnvelope> {
+    const headers = new Headers(args.headers);
+
+    return this.request<CsvImportApplyEnvelope>("GET", "/api/v1/csv-imports/:runId/apply".replace(":runId", encodeURIComponent(String(args["runId"]))), {
+      query: args.query,
       signal: args.signal,
       headers,
     });

@@ -32,9 +32,9 @@ export const createSqliteCsvApplyDriver = (
 ) => {
   const runs = createCsvApplyRunStore(sqlite)
   const now = options.now ?? Date.now
-  const report = (cause: unknown) => {
+  const report = (_cause: unknown) => {
     try {
-      const delivery: unknown = options.reportError?.(cause)
+      const delivery: unknown = options.reportError?.(new Error("Private CSV apply failed; inspect the safe run status and correlation ID."))
       void Promise.resolve(delivery).catch(() => undefined)
     } catch {
       /* Reporting cannot change custody. */

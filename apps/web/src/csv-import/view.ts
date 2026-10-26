@@ -1,4 +1,4 @@
-import type { ImportPreview, ImportRun } from './contract.js'
+import type { ApplyStatus, ImportPreview, ImportRun } from './contract.js'
 
 export const node = <K extends keyof HTMLElementTagNameMap>(tag: K, text?: string): HTMLElementTagNameMap[K] => {
   const element = document.createElement(tag)
@@ -51,3 +51,12 @@ export const previewFacts = (preview: ImportPreview): HTMLElement => {
   ]), node('p', 'Existing task assignments decide billability. Source billability only seeds new assignments. Review warning diagnostics for overrides.'))
   return host
 }
+
+export const progressFacts = (status: ApplyStatus): HTMLElement => facts([
+  ['Apply state', status.state], ['Selected rows', status.selected_rows], ['Committed rows', status.committed_rows],
+  ['Inserted time rows', status.inserted_rows], ['Already imported rows', status.already_imported_rows],
+  ['Created setup records remaining', status.created_setup], ['Excluded rows', status.excluded_rows],
+  ['Selected source duration', status.source_seconds_total === null ? 'Not available' : seconds(status.source_seconds_total)],
+  ['Committed source duration', seconds(status.source_seconds_committed)], ['Committed destination duration', seconds(status.destination_seconds)],
+  ['Destination minus committed source', seconds(status.destination_delta_seconds)], ['Deleted imported history', status.deleted_imported_rows],
+])

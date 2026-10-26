@@ -37,6 +37,16 @@ const safeFailure = (error: unknown): never => {
     payload_too_large: 413,
     invalid_json: 400,
     session_required: 403,
+    run_not_found: 404,
+    authority_required: 401,
+    input_expired: 409,
+    binding_mismatch: 409,
+    apply_busy: 409,
+    cancelled: 409,
+    stale_lease: 409,
+    command_conflict: 409,
+    invalid_command: 400,
+    command_limit_reached: 409,
   };
   const httpCode = error instanceof ApiError && httpStatuses[error.code] === error.status
     ? error.code : undefined;

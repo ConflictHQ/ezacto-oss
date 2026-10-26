@@ -454,9 +454,9 @@ export const createContainerRuntime = async (
   let csvSweep: ReturnType<typeof setInterval> | undefined
   let csvApply: ReturnType<typeof createCsvImportApply> | undefined
   let csvApplyTimer: ReturnType<typeof setInterval> | undefined
-  const reportCsvFailure=(cause:unknown)=>{
+  const reportCsvFailure=(_cause:unknown)=>{
     console.error('ezacto: CSV apply work deferred')
-    reportWorkerError(options.reportError,cause,{phase:'queue',traceId:runtimeTraceId()})
+    reportWorkerError(options.reportError,new Error('Private CSV apply failed; inspect safe run status.'),{phase:'queue',traceId:runtimeTraceId()})
   }
   let queue: ContainerEmailQueue | undefined
   let outboxScheduler: ContainerOutboxScheduler | undefined
