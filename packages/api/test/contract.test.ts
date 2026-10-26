@@ -1,3 +1,4 @@
+import { installCalendarFeedRoutes } from '../src/calendar-feeds.js'
 import { installDeelStagingRoutes } from '../src/deel-staging.js'
 import { installDeelPaymentStatusRoutes } from '../src/deel-payment-status.js'
 import { installOrganizationHolidayRoutes } from '../src/organization-holidays.js'
@@ -451,6 +452,7 @@ const documentedApp = () =>
         releaseInvoicedTime: async () => ({ kind: "released", released: 0 }),
       });
       installMyPaymentRoutes(api, { read: async () => null });
+      installCalendarFeedRoutes(api, new Proxy({}, { get: () => unavailable }) as never);
       installDeelStagingRoutes(api, { configured: false, bounds: () => null, preview: unavailable, stage: unavailable, lookup: unavailable });
       installDeelPaymentStatusRoutes(api, { refresh: async () => ({ configured: false, checked: 0, failed: 0, remaining: 0 }) });
       installDeelSyncRoutes(api, { runtime: { status: () => ({ configured: false, reason: 'contract fixture' }), preview: unavailable, run: unavailable }, settings: { get: unavailable, save: unavailable }, recentRuns: async () => [], clock: () => '2026-10-09T00:00:00.000Z' });
