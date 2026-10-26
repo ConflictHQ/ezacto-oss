@@ -1,3 +1,4 @@
+import { setRequestBusy } from '../request-feedback.js'
 import { accountingProviderAvailable } from '../accounting-providers.js'
 import { renderDataTable, type CellContent, type DataTableSort } from '../components/data-table.js'
 import { rememberedSort, resolveSort } from '../components/table-sort.js'
@@ -696,6 +697,11 @@ export const createInvoicePaymentController = (
   let editingPayment: InvoicePayment | null = null
   let deletingPayment: InvoicePayment | null = null
   let mutationPending = false
+  let mutationFeedback: HTMLElement | null = null
+  const showMutationFeedback = (region: HTMLElement): void => {
+    mutationFeedback = region
+    setRequestBusy(region, true)
+  }
   let refreshRequired = false
   let paymentCommandId: string | null = null
   let settleCommandId: string | null = null
@@ -1141,6 +1147,7 @@ export const createInvoicePaymentController = (
       return
     }
     previewPending = true
+    setRequestBusy(composerPreviewResult, true)
     composerPreviewResult.textContent = sendToMe ? 'Sending a preview to you…' : 'Composing the preview…'
     syncComposer()
     const request = loadHoursWarning(session, selected).then(() => {
@@ -1177,6 +1184,7 @@ export const createInvoicePaymentController = (
       .finally(() => {
         if (current() === session) {
           previewPending = false
+          setRequestBusy(composerPreviewResult, false)
           syncComposer()
         }
       })
@@ -1210,6 +1218,10 @@ export const createInvoicePaymentController = (
   }
 
   const syncControls = (): void => {
+    if (!mutationPending && mutationFeedback) {
+      setRequestBusy(mutationFeedback, false)
+      mutationFeedback = null
+    }
     const session = current()
     const canWrite =
       session !== null && invoice !== null && invoiceIdentityCanWrite(session.identity)
@@ -1476,6 +1488,8 @@ export const createInvoicePaymentController = (
 
   const clearPrivatePresentation = (): void => {
     invoice = null
+    mutationFeedback = null
+    for (const region of [status, paymentResult, deleteResult, composerResult, transitionResult, attachmentStatus, composerPreviewResult, remindersLine]) setRequestBusy(region, false)
     payments = []
     attachments = []
     quickBooks = null
@@ -1696,6 +1710,7 @@ export const createInvoicePaymentController = (
     }
     const requested = ++requestGeneration
     status.textContent = options.hideDocument ? 'Loading invoice…' : 'Refreshing invoice…'
+    setRequestBusy(status, true)
     retry.hidden = true
     if (options.hideDocument) article.hidden = true
     else article.setAttribute('aria-busy', 'true')
@@ -1790,6 +1805,7 @@ export const createInvoicePaymentController = (
     } finally {
       if (current() === session && requested === requestGeneration) {
         article.removeAttribute('aria-busy')
+        setRequestBusy(status, false)
         syncControls()
       }
     }
@@ -2064,6 +2080,7 @@ export const createInvoicePaymentController = (
     const activeCommand = transitionCommandId
     mutationPending = true
     transitionResult.textContent = 'Applying the invoice command…'
+    showMutationFeedback(transitionResult)
     syncControls()
     void transitionInvoice(selectedInvoice.id, activeCommand, input, session.signal)
       .then(async (updatedInvoice) => {
@@ -2291,6 +2308,7 @@ export const createInvoicePaymentController = (
           }
     sendAttempt = attempt
     mutationPending = true
+    showMutationFeedback(composerResult)
     composerResult.textContent =
       work === 'delivery'
         ? 'Queueing the email…'
@@ -2519,6 +2537,7 @@ export const createInvoicePaymentController = (
     const activeCommand = paymentCommandId
     mutationPending = true
     paymentResult.textContent = selectedPayment === null ? 'Recording payment…' : 'Saving payment…'
+    showMutationFeedback(paymentResult)
     syncControls()
     const request =
       selectedPayment === null
@@ -2602,6 +2621,7 @@ export const createInvoicePaymentController = (
     const activeCommand = deleteCommandId
     mutationPending = true
     deleteResult.textContent = 'Deleting payment…'
+    showMutationFeedback(deleteResult)
     syncControls()
     void deletePayment(
       selectedInvoice.id,
@@ -2681,6 +2701,7 @@ export const createInvoicePaymentController = (
     const activeCommand = settleCommandId
     mutationPending = true
     status.textContent = 'Recording payment…'
+    showMutationFeedback(status)
     syncControls()
     void recordPayment(
       selectedInvoice.id,
@@ -2734,6 +2755,8 @@ export const createInvoicePaymentController = (
     // organization, so a default set later still governs it.
     const wanted: boolean | null = remindersToggle.checked ? null : false
     remindersSaving = true
+    remindersLine.textContent = 'Saving reminder preference…'
+    setRequestBusy(remindersLine, true)
     remindersToggle.disabled = true
     void set(selectedInvoice.id, wanted, session.signal)
       .then((preference) => {
@@ -2748,6 +2771,7 @@ export const createInvoicePaymentController = (
       .finally(() => {
         if (current() !== session) return
         remindersSaving = false
+        setRequestBusy(remindersLine, false)
         renderReminders()
       })
   })
@@ -2768,6 +2792,7 @@ export const createInvoicePaymentController = (
       return
     }
     quickBooksSyncing = true
+    setRequestBusy(status, true)
     status.textContent = 'Syncing to QuickBooks…'
     syncControls()
     void sync(selectedInvoice.id, session.signal)
@@ -2802,6 +2827,7 @@ export const createInvoicePaymentController = (
       .finally(() => {
         if (current() !== session) return
         quickBooksSyncing = false
+        setRequestBusy(status, false)
         syncControls()
       })
   })
@@ -2830,6 +2856,7 @@ export const createInvoicePaymentController = (
     mutationPending = true
     attachmentSubmit.disabled = true
     attachmentStatus.textContent = 'Uploading file…'
+    showMutationFeedback(attachmentStatus)
     // Painted locked now and unlocked when it settles, like every other
     // mutation here. The reads loaded beside the invoice repaint the controls
     // whenever they answer; one answering mid-upload locks Send, and without

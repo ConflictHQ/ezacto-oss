@@ -131,10 +131,12 @@ describe('saved report sharing screen (#933)', () => {
     roleBoxes[1]!.checked = true
     roleBoxes[1]!.dispatchEvent(new Event('change'))
     await vi.waitFor(() => expect(shareSavedReportWithRole).toHaveBeenCalledWith('client-hours', 'executive_manager', expect.anything()))
+    await vi.waitFor(() => expect(document.querySelector('[data-saved-share-result]')?.getAttribute('aria-busy')).toBe('false'))
     roleBoxes[0]!.checked = false
     roleBoxes[0]!.dispatchEvent(new Event('change'))
     await vi.waitFor(() => expect(unshareSavedReportWithRole).toHaveBeenCalledWith('client-hours', 'accounting', expect.anything()))
 
+    await vi.waitFor(() => expect(document.querySelector('[data-saved-share-result]')?.getAttribute('aria-busy')).toBe('false'))
     document.querySelector<HTMLButtonElement>('[data-saved-share-add]')!.click()
     await vi.waitFor(() => expect(shareSavedReport).toHaveBeenCalledWith('client-hours', 2, expect.anything()))
     await vi.waitFor(() => expect(document.querySelector('[data-saved-share-people]')?.textContent).toContain('Grace Hopper'))
@@ -193,4 +195,36 @@ describe('saved report sharing screen (#933)', () => {
     await vi.waitFor(() => expect(deleteSavedReport).toHaveBeenCalledWith('client-hours', expect.anything()))
     expect(confirm).not.toHaveBeenCalled()
   })
+})
+
+it('keeps a reopened sharing dialog independent of a delayed earlier change', async () => {
+  const completions: Array<() => void> = []
+  const shareSavedReportWithRole = vi.fn(() => new Promise<void>(resolve => completions.push(resolve)))
+  await mount('accounting', [saved()], { shareSavedReportWithRole })
+  button('Share').click()
+  const result = document.querySelector<HTMLElement>('[data-saved-share-result]')!
+  const chooseRole = () => {
+    const box = document.querySelectorAll<HTMLInputElement>('[data-saved-share-roles] input')[1]!
+    box.checked = true
+    box.dispatchEvent(new Event('change'))
+    return box
+  }
+  const first = chooseRole()
+  expect(first.disabled).toBe(true)
+  expect(result.getAttribute('aria-busy')).toBe('true')
+  first.dispatchEvent(new Event('change'))
+  expect(shareSavedReportWithRole).toHaveBeenCalledTimes(1)
+  document.querySelector<HTMLButtonElement>('[data-saved-share-close]')!.click()
+  button('Share').click()
+  const second = chooseRole()
+  expect(shareSavedReportWithRole).toHaveBeenCalledTimes(2)
+  completions[0]!()
+  await new Promise(resolve => setTimeout(resolve, 0))
+  expect(second.disabled).toBe(true)
+  expect(result.getAttribute('aria-busy')).toBe('true')
+  expect(result.textContent).toContain('Updating sharing')
+  completions[1]!()
+  await vi.waitFor(() => expect(result.getAttribute('aria-busy')).toBe('false'))
+  expect(second.disabled).toBe(false)
+  expect(result.textContent).toContain('Shared with')
 })

@@ -483,6 +483,14 @@ export const restoreBackup = async (
         database.prepare("UPDATE calendar_connections SET generation=generation+1,credential_revision=1,status='needs_reauth',key_id=NULL,sealed_grant=NULL,sealed_cursor=NULL,window_from=NULL,window_to=NULL,lease_generation=lease_generation+1,lease_holder=NULL,lease_expires_at=NULL,last_error='authorization'").run()
       }).immediate()
     }
+    // Raw CSV objects must not be inherited by reused identities after restore.
+    if (database.prepare("SELECT 1 FROM sqlite_schema WHERE type='table' AND name='csv_staging_instance'").get()) {
+      database.prepare("UPDATE csv_staging_instance SET nonce=lower(hex(randomblob(32))) WHERE singleton=1").run()
+    }
+    // A restored database is a new credential incarnation; keep opaque UIDs stable.
+    if (database.prepare("SELECT 1 FROM sqlite_schema WHERE type='table' AND name='planning_calendar_instance'").get()) {
+      database.prepare("UPDATE planning_calendar_instance SET nonce=lower(hex(randomblob(32))) WHERE singleton=1").run()
+    }
   } finally {
     database.close()
   }

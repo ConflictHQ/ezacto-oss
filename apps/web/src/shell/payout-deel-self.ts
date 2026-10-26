@@ -1,4 +1,5 @@
 import { EzactoApiError } from '@conflict-hq/ezacto-client'
+import { setRequestBusy } from '../request-feedback.js'
 
 /**
  * "Where you are paid", Deel part (issue 1152). A person enters the email they use
@@ -30,14 +31,30 @@ const failure = (error: unknown): string => {
   return 'That could not be saved. Try again.'
 }
 
-export const wireDeelSelfPayout = (root: HTMLElement, api: DeelSelfPayoutApi, userId: number): void => {
+const owners = new WeakMap<HTMLElement, object>()
+
+export const wireDeelSelfPayout = (root: HTMLElement, api: DeelSelfPayoutApi, userId: number, signal = new AbortController().signal): void => {
   const summary = root.querySelector<HTMLElement>('[data-settings-payout-deel-summary]')
   const remove = root.querySelector<HTMLButtonElement>('[data-settings-payout-deel-remove]')
   const form = root.querySelector<HTMLFormElement>('[data-settings-payout-deel-form]')
   const result = root.querySelector<HTMLElement>('[data-settings-payout-deel-result]')
   if (!summary || !remove || !form || !result) return
 
+  if (signal.aborted) return
+  const owner = {}
+  owners.set(root, owner)
+  const current = () => owners.get(root) === owner && !signal.aborted
   let accountId: number | null = null
+  let pending = false
+  const setPending = (value: boolean): void => {
+    pending = value
+    for (const control of root.querySelectorAll<HTMLInputElement>('input,button')) control.disabled = value
+    setRequestBusy(result, value)
+  }
+  setPending(false)
+  signal.addEventListener('abort', () => {
+    if (owners.get(root) === owner) setPending(false)
+  }, { once: true })
 
   const load = async (): Promise<void> => {
     if (api.listPayoutProviders === undefined || api.listPayoutAccounts === undefined) {
@@ -46,9 +63,10 @@ export const wireDeelSelfPayout = (root: HTMLElement, api: DeelSelfPayoutApi, us
     }
     try {
       const [providers, accounts] = await Promise.all([
-        api.listPayoutProviders(),
-        api.listPayoutAccounts({ id: userId }),
+        api.listPayoutProviders({ signal }),
+        api.listPayoutAccounts({ id: userId, signal }),
       ])
+      if (!current()) return
       const deelOn = providers.data.find((row) => row.provider === 'deel')?.enabled === true
       root.hidden = !deelOn
       if (!deelOn) return
@@ -64,6 +82,7 @@ export const wireDeelSelfPayout = (root: HTMLElement, api: DeelSelfPayoutApi, us
         form.hidden = true
       }
     } catch (error) {
+      if (!current()) return
       root.hidden = true
       result.textContent = failure(error)
     }
@@ -71,33 +90,39 @@ export const wireDeelSelfPayout = (root: HTMLElement, api: DeelSelfPayoutApi, us
 
   form.addEventListener('submit', async (event) => {
     event.preventDefault()
-    if (api.linkPayoutAccount === undefined) return
+    if (api.linkPayoutAccount === undefined || pending || !current()) return
     const email = (form.elements.namedItem('email') as HTMLInputElement).value.trim()
     if (email === '') return
     result.textContent = 'Saving…'
+    setPending(true)
     try {
-      await api.linkPayoutAccount({ id: userId, body: { provider: 'deel', external_id: email } })
+      await api.linkPayoutAccount({ id: userId, body: { provider: 'deel', external_id: email }, signal })
+      if (!current()) return
       form.reset()
       result.textContent = 'Deel destination saved.'
       await load()
     } catch (error) {
-      result.textContent = failure(error)
+      if (current()) result.textContent = failure(error)
+    } finally {
+      if (current()) setPending(false)
     }
-  })
+  }, { signal })
 
   remove.addEventListener('click', async () => {
-    if (accountId === null || api.detachPayoutAccount === undefined) return
-    remove.disabled = true
+    if (accountId === null || api.detachPayoutAccount === undefined || pending || !current()) return
+    setPending(true)
+    result.textContent = 'Removing Deel destination…'
     try {
-      await api.detachPayoutAccount({ id: accountId })
+      await api.detachPayoutAccount({ id: accountId, signal })
+      if (!current()) return
       result.textContent = 'Deel destination removed.'
       await load()
     } catch (error) {
-      result.textContent = failure(error)
+      if (current()) result.textContent = failure(error)
     } finally {
-      remove.disabled = false
+      if (current()) setPending(false)
     }
-  })
+  }, { signal })
 
   void load()
 }

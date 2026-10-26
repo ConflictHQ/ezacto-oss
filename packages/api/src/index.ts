@@ -1,4 +1,5 @@
 export { installCalendarConnectionRoutes, type CalendarConnectionPort } from './calendar-connections.js'
+export { installCalendarFeedRoutes, installCalendarSubscriptionRoute } from './calendar-feeds.js'
 export { installDeelPaymentStatusRoutes } from './deel-payment-status.js'
 export { createManagedDeelConnectionCommands, type ManagedDeelConnectionOptions } from './managed-deel.js'
 export { createManagedBillConnectionCommands, type ManagedBillConnectionOptions, type ManagedBillConnectCommand, type ManagedBillDisconnectInput } from './managed-bill.js'
@@ -581,3 +582,6 @@ export { installOutboundWebhookRoutes } from './outbound-webhooks.js'
 export { installPlaceholderPlanningRoutes, type PlaceholderPlanningRepository } from './resources/placeholder-allocations.js'
 
 export { installDeelStagingRoutes, type DeelStagingApiRuntime } from './deel-staging.js'
+export * from './csv-import-staging-contract.js'
+export * from './csv-import-staging-port.js'
+export { isCsvStagingPath, csvStagingAuthority, csvStagingSafeFailure } from './csv-import-staging.js'

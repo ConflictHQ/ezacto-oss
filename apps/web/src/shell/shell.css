@@ -9613,6 +9613,8 @@ th[aria-sort="descending"] .table-sort [data-part="ascending"] { opacity: 0.15; 
 .staff-payments input:not([type='checkbox']), .staff-payments select, .staff-payments textarea, .staff-payments button { min-height: 44px; padding: 8px 12px; border: 1px solid var(--ez-border); border-radius: var(--ez-radius); background: var(--ez-ground); color: var(--ez-ink); font: inherit; }
 .staff-payment-summary { padding: 12px 16px; background: var(--ez-status-bg); margin-bottom: 20px; }
 .staff-payment-person, .staff-payment-opening { margin-top: 28px; border-top: 1px solid var(--ez-border); padding-top: 20px; }
+[data-request-busy]::before { content: ''; display: inline-block; vertical-align: middle; margin-inline-end: 9px; width: 14px; height: 14px; border: 2px solid var(--ez-border); border-top-color: var(--ez-action); border-radius: 50%; animation: auth-spin 900ms linear infinite; }
+@media (prefers-reduced-motion: reduce) { [data-request-busy]::before { animation: none; } }
 .staff-payment-person form, .staff-payment-opening form { display: grid; gap: 12px; max-width: 640px; margin: 20px 0; }
 .staff-payment-opening [data-deel-stage-message][data-busy='true'] { display: flex; align-items: center; gap: 9px; }
 .staff-payment-opening [data-deel-stage-message][data-busy='true']::before { content: ''; width: 14px; aspect-ratio: 1; flex: 0 0 auto; border: 2px solid var(--ez-border); border-top-color: var(--ez-action); border-radius: 50%; animation: auth-spin 900ms linear infinite; }
@@ -10201,3 +10203,8 @@ input::file-selector-button:hover { background: var(--ez-surface-2); }
 [data-deel-stage-preview] { overflow-wrap: anywhere; }
 [data-deel-stage] fieldset { min-width: 0; }
 [data-deel-stage-people] label { overflow-wrap: anywhere; }
+
+.calendar-feed-status[aria-busy='true']::before { content: ''; display: inline-block; width: 14px; height: 14px; margin-right: 8px; border: 2px solid var(--ez-border); border-top-color: var(--ez-action); border-radius: 50%; animation: auth-spin 900ms linear infinite; }
+[data-calendar-feeds] { margin-top: 24px; }
+[data-calendar-feed-secret] label { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin-block: 8px; }
+@media (prefers-reduced-motion: reduce) { .calendar-feed-status[aria-busy='true']::before { animation: none; } }

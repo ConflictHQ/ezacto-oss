@@ -63,6 +63,21 @@ describe('a person chooses their own default (issue 1152)', () => {
     select.value = 'deel'
     form.dispatchEvent(new Event('submit', { cancelable: true }))
     await flush()
-    expect(api.setPayoutPreference).toHaveBeenCalledWith({ id: 2, provider: 'deel', expectedVersion: 0 })
+    expect(api.setPayoutPreference).toHaveBeenCalledWith({ id: 2, provider: 'deel', expectedVersion: 0, signal: expect.any(AbortSignal) })
   })
+})
+
+it('keeps a failed preference refresh visible after the write succeeds', async () => {
+  document.body.innerHTML = '<section><form data-settings-payout-default-form><select data-settings-payout-default></select><p data-settings-payout-default-result></p></form></section>'
+  const root = document.querySelector<HTMLElement>('section')!
+  const getPayoutPreference = vi.fn().mockResolvedValueOnce({
+    data: { user_id: 2, provider: null, organization_default: 'wise', version: 0, linked_providers: ['deel'] },
+  }).mockRejectedValueOnce(new Error('Refresh unavailable'))
+  wirePayoutDefaultSelf(root, { getPayoutPreference, setPayoutPreference: vi.fn(async () => {}) } as never, 2)
+  await flush()
+  root.querySelector<HTMLSelectElement>('select')!.value = 'deel'
+  root.querySelector('form')!.dispatchEvent(new Event('submit', { cancelable: true }))
+  await flush()
+  expect(root.querySelector('[data-settings-payout-default-result]')?.textContent).toContain('could not be refreshed')
+  expect(root.querySelector('[data-settings-payout-default-result]')?.textContent).not.toContain('where you will be paid')
 })

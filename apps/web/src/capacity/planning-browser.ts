@@ -12,6 +12,7 @@ import {
   type TimeOffRow,
 } from "./model.js";
 import { renderPlanningSection } from "./render.js";
+import { setRequestBusy } from '../request-feedback.js'
 
 /**
  * The administrator's allocation and time off entry on the capacity screen
@@ -57,6 +58,7 @@ export const createPlanningEntry = (
   let allocations: readonly AllocationRow[] = [];
   let timeOff: readonly TimeOffRow[] = [];
   let pendingDelete: string | null = null;
+  let operationPending = false;
 
   const query = <ElementType extends Element>(
     selector: string,
@@ -112,6 +114,7 @@ export const createPlanningEntry = (
       `${confirming ? "Confirm delete of" : "Delete"} ${label}`,
     );
     removeButton.addEventListener("click", () => {
+      if (operationPending) return
       if (pendingDelete !== key) {
         pendingDelete = key;
         drawTables();
@@ -224,9 +227,14 @@ export const createPlanningEntry = (
   ): Promise<boolean> => {
     const currentEpoch = epoch;
     const isCurrent = () => mounted && currentEpoch === epoch;
-    if (!isCurrent()) return false;
+    if (!isCurrent() || operationPending) return false;
     const status = query<HTMLElement>(statusSelector);
+    operationPending = true;
+    const controls = [...host.querySelectorAll<HTMLInputElement>('input,select,textarea,button')]
+    const disabled = controls.map(control => control.disabled)
+    controls.forEach(control => { control.disabled = true })
     status.textContent = busy;
+    setRequestBusy(status, true)
     try {
       await work(isCurrent);
       if (!isCurrent()) return false;
@@ -237,6 +245,18 @@ export const createPlanningEntry = (
       if (!isCurrent()) return false;
       showFailure(error, status, 'That could not be saved.', currentEpoch);
       return false;
+    } finally {
+      if (isCurrent()) {
+        operationPending = false
+        controls.forEach((control, index) => { control.disabled = disabled[index] ?? false })
+        for (const currentForm of [allocationForm(), timeOffForm()]) {
+          if (field(currentForm, 'id').value === '') {
+            field(currentForm, 'user_id').removeAttribute('disabled')
+            if (currentForm === allocationForm()) field(currentForm, 'project_id').removeAttribute('disabled')
+          }
+        }
+        setRequestBusy(status, false)
+      }
     }
   };
 
@@ -349,6 +369,7 @@ export const createPlanningEntry = (
   const wire = (): void => {
     allocationForm().addEventListener("submit", (event) => {
       event.preventDefault();
+      if (operationPending) return
       const form = allocationForm();
       const status = query<HTMLElement>("[data-planning-allocation-status]");
       const planned = hoursToSeconds(field(form, "hours").value);
@@ -392,6 +413,7 @@ export const createPlanningEntry = (
     });
     timeOffForm().addEventListener("submit", (event) => {
       event.preventDefault();
+      if (operationPending) return
       const form = timeOffForm();
       const status = query<HTMLElement>("[data-planning-timeoff-status]");
       const typed = field(form, "hours").value.trim();
@@ -457,6 +479,7 @@ export const createPlanningEntry = (
     },
     unmount() {
       epoch++;
+      operationPending = false;
       mounted = false;
       people = []; projects = []; allocations = []; timeOff = [];
       allocationVersion = 0; timeOffVersion = 0; pendingDelete = null;

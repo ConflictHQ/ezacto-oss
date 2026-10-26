@@ -117,4 +117,42 @@ describe('Deel sync panel', () => {
       expect.objectContaining({ body: { mode: 'automatic', run_time: '21:15' } }),
     )
   })
+
+  it('announces a delayed save immediately and refuses a duplicate submit', async () => {
+    mount()
+    const client = api()
+    let finish!: () => void
+    client.updateDeelSyncSettings = vi.fn(() => new Promise<void>(resolve => { finish = resolve }))
+    await createDeelSyncController(document.body, client).activate(new AbortController().signal)
+    const form = document.querySelector<HTMLFormElement>('[data-deel-sync-settings]')!
+    form.dispatchEvent(new Event('submit', { cancelable: true }))
+    form.dispatchEvent(new Event('submit', { cancelable: true }))
+    expect(client.updateDeelSyncSettings).toHaveBeenCalledTimes(1)
+    expect(document.querySelector('[data-deel-sync-message]')?.getAttribute('aria-busy')).toBe('true')
+    expect(document.querySelector('[data-deel-sync-message]')?.textContent).toContain('Saving')
+    expect((form.elements.namedItem('mode') as HTMLSelectElement).disabled).toBe(true)
+    finish()
+    await vi.waitFor(() => expect(document.querySelector('[data-deel-sync-message]')?.textContent).toContain('settings saved'))
+    expect(document.querySelector('[data-deel-sync-message]')?.getAttribute('aria-busy')).toBe('false')
+    expect((form.elements.namedItem('mode') as HTMLSelectElement).disabled).toBe(false)
+  })
+
+  it('discards a delayed preview after the session ends', async () => {
+    const section = mount()
+    const client = api()
+    let finish!: (value: typeof preview) => void
+    client.previewDeelSync = vi.fn(() => new Promise<typeof preview>(resolve => { finish = resolve }))
+    const controller = createDeelSyncController(document.body, client)
+    const active = new AbortController()
+    await controller.activate(active.signal)
+    document.querySelector<HTMLFormElement>('[data-deel-sync-preview]')!.dispatchEvent(new Event('submit', { cancelable: true }))
+    expect(document.querySelector('[data-deel-sync-message]')?.textContent).toContain('Reviewing')
+    active.abort()
+    finish(preview)
+    await flush()
+    expect(section.hidden).toBe(true)
+    expect(document.querySelector('[data-deel-sync-preview-result]')?.textContent).toBe('')
+    expect(document.querySelector('[data-deel-sync-message]')?.getAttribute('aria-busy')).toBe('false')
+    expect(document.querySelector<HTMLButtonElement>('[data-deel-sync-send]')!.disabled).toBe(true)
+  })
 })

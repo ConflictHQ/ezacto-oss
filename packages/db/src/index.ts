@@ -1,4 +1,5 @@
 export { createCalendarConnectionStore } from './calendar-connections.js'
+export { createCalendarFeedService } from './calendar-feeds.js'
 export { createDeelPaymentStatusStore } from './deel-payment-status.js'
 export { createManagedBillConnectionStore } from './managed-bill.js'
 export { createManagedQuickBooksGrantStore } from './managed-quickbooks.js'
@@ -183,3 +184,4 @@ export { createCsvBrowserDatasetLedger } from './csv-browser-import.js'
 export * from './csv-import-destination.js'
 
 export { createDeelStageStore } from './deel-staging.js'
+export { csvStagingSessionFence } from './csv-staging-authority.js'

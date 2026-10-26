@@ -99,6 +99,38 @@ beforeEach(() => {
   document.body.innerHTML = renderStaffPayments("staff-payments");
 });
 describe("payment run review", () => {
+  it('keeps a new session busy when an old preview finishes', async () => {
+    let finishOld!: (value: PaymentRun) => void
+    let finishNew!: (value: PaymentRun) => void
+    const previewPaymentRun = vi.fn()
+      .mockImplementationOnce(() => new Promise<PaymentRun>(resolve => { finishOld = resolve }))
+      .mockImplementationOnce(() => new Promise<PaymentRun>(resolve => { finishNew = resolve }))
+    const controller = createPaymentRunsController({ previewPaymentRun }, async () => {})
+    const start = () => {
+      const form = document.querySelector<HTMLFormElement>('[data-run-form]')!
+      ;(form.elements.namedItem('select-2') as HTMLInputElement).checked = true
+      form.dispatchEvent(new SubmitEvent('submit', { cancelable: true }))
+    }
+    const old = new AbortController()
+    await controller.activate(old.signal)
+    controller.ledger(ledger)
+    start()
+    old.abort()
+    const active = new AbortController()
+    await controller.activate(active.signal)
+    controller.ledger(ledger)
+    start()
+    expect(previewPaymentRun).toHaveBeenCalledTimes(2)
+    finishOld(run)
+    await Promise.resolve()
+    await Promise.resolve()
+    expect(document.querySelector('[data-run-status]')?.getAttribute('aria-busy')).toBe('true')
+    expect(document.querySelector<HTMLElement>('[data-run-review]')!.hidden).toBe(true)
+    finishNew(run)
+    await vi.waitFor(() => expect(document.querySelector<HTMLElement>('[data-run-review]')!.hidden).toBe(false))
+    expect(document.querySelector('[data-run-status]')?.getAttribute('aria-busy')).toBe('false')
+    active.abort()
+  })
   it("discards an old month's in-flight preview after the selection is reset", async () => {
     let finish!: (value: PaymentRun) => void;
     const api = {

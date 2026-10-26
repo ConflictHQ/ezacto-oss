@@ -14,6 +14,7 @@ import { moneyText } from "../money-display.js";
 import { renderDataTable, type DataSortValue } from "../components/data-table.js";
 import { isDemoDeployment } from "../demo.js";
 import { staffPaymentAmount, staffPaymentMoney } from "./model.js";
+import { setRequestBusy } from '../request-feedback.js'
 import {
   canPayNow,
   filteredPaymentReport,
@@ -133,30 +134,40 @@ export const createPaymentRunsController = (
     busy = false,
     generation = 0;
   let pendingCommand: PaymentRunCommand | null = null;
-  const action = async (work: () => Promise<string | void>, target = status) => {
+  let sessionGeneration = 0
+  let pendingControls: { control: HTMLInputElement; disabled: boolean }[] = []
+  const restoreControls = () => {
+    pendingControls.forEach(({ control, disabled }) => { control.disabled = disabled })
+    pendingControls = []
+  }
+  const action = async (work: (active: AbortSignal, current: () => boolean) => Promise<string | void>, target = status, phase = 'Working…') => {
     if (busy || !signal || signal.aborted) return;
+    const active = signal, revision = sessionGeneration
+    const current = () => signal === active && !active.aborted && sessionGeneration === revision
     busy = true;
-    target.textContent = "Working…";
+    target.textContent = phase;
+    setRequestBusy(target, true)
     const controls = [
       ...(reportMode
         ? reportSection
         : section
       ).querySelectorAll<HTMLInputElement>("input,select,button"),
     ];
-    const prior = controls.map((control) => control.disabled);
+    pendingControls = controls.map(control => ({ control, disabled: control.disabled }))
     controls.forEach((control) => {
       control.disabled = true;
     });
     try {
-      const note = await work();
-      if (!signal.aborted) target.textContent = note ?? "";
+      const note = await work(active, current);
+      if (current()) target.textContent = note ?? "";
     } catch (error) {
-      if (!signal.aborted) target.textContent = errorText(error);
+      if (current()) target.textContent = errorText(error);
     } finally {
-      busy = false;
-      controls.forEach((control, index) => {
-        control.disabled = prior[index] ?? false;
-      });
+      if (current()) {
+        busy = false;
+        restoreControls()
+        setRequestBusy(target, false)
+      }
     }
   };
   const paintHistory = () => {
@@ -223,12 +234,13 @@ export const createPaymentRunsController = (
                 b.addEventListener(
                   "click",
                   () =>
-                    void action(async () => {
+                    void action(async (active, current) => {
                       const checked = await api.reconcilePaymentRunItem!(
                         run.id,
                         i.id,
-                        signal,
+                        active,
                       );
+                      if (!current()) return
                       await refresh();
                       // The check only asks the sender to look again; Wise is
                       // queried by the next minute's run, so say what happened
@@ -239,7 +251,7 @@ export const createPaymentRunsController = (
                           ? ", with no Wise transfer created yet"
                           : ""
                       }. Wise is checked within the next minute; press Check status again then to see the result.`;
-                    }),
+                    }, status, 'Checking payment status…'),
                 );
                 return b;
               },
@@ -259,11 +271,13 @@ export const createPaymentRunsController = (
         b.addEventListener(
           "click",
           () =>
-            void action(async () => {
-              await api.cancelPaymentRun!(run.id, signal);
+            void action(async (active, current) => {
+              await api.cancelPaymentRun!(run.id, active);
+              if (!current()) return
               await reload();
+              if (!current()) return
               await refresh();
-            }),
+            }, status, 'Cancelling unsent payments…'),
         );
         block.appendChild(b);
       }
@@ -525,30 +539,32 @@ export const createPaymentRunsController = (
   };
   const refresh = async () => {
     if (!api.getPaymentRunReport || !signal || signal.aborted) return;
+    const active = signal, sessionRevision = sessionGeneration
     const own = ++generation;
+    const current = () => signal === active && !active.aborted && own === generation && sessionRevision === sessionGeneration
     const from = reportMode ? input(reportForm, "from").value : snapshot?.month;
     const to = reportMode ? input(reportForm, "to").value : from;
     if (!from || !to) return;
-    const result = await api.getPaymentRunReport(from, to, signal);
-    if (signal.aborted || own !== generation) return;
+    const result = await api.getPaymentRunReport(from, to, active);
+    if (!current()) return;
     const allocations: PaymentAllocationReport[] = [];
     if (reportMode && api.getPaymentAllocationReport) {
       // One read per month (not per person); sequential reads bound API pressure.
       for (const ledger of result.ledgers) {
-        allocations.push(await api.getPaymentAllocationReport(ledger.month, signal));
-        if (signal.aborted || own !== generation) return;
+        allocations.push(await api.getPaymentAllocationReport(ledger.month, active));
+        if (!current()) return;
       }
     }
     const financials: PaymentFinancialSources = {invoices: [], advances: null};
     if (reportMode && api.getStaffInvoiceReport) {
       for (const ledger of result.ledgers) {
-        financials.invoices.push(await api.getStaffInvoiceReport(ledger.month, signal));
-        if (signal.aborted || own !== generation) return;
+        financials.invoices.push(await api.getStaffInvoiceReport(ledger.month, active));
+        if (!current()) return;
       }
     }
     if (reportMode && api.getAdvanceCreditReport) {
-      financials.advances = await api.getAdvanceCreditReport(`${from}-01`, paymentMonthEnd(to), signal);
-      if (signal.aborted || own !== generation) return;
+      financials.advances = await api.getAdvanceCreditReport(`${from}-01`, paymentMonthEnd(to), active);
+      if (!current()) return;
     }
     data = result;
     financialSources = financials;
@@ -656,7 +672,7 @@ export const createPaymentRunsController = (
     event.preventDefault();
     // An Enter key still submits a form whose button is hidden.
     if (demo) return;
-    void action(async () => {
+    void action(async (active, current) => {
       if (!snapshot || !api.previewPaymentRun) return;
       const selectedLedger = snapshot;
       const selected = snapshot.rows.filter(
@@ -696,13 +712,13 @@ export const createPaymentRunsController = (
       };
       if (!pendingCommand.items.length)
         throw new Error("Select at least one person to pay.");
-      const run = await api.previewPaymentRun(pendingCommand, signal);
-      if (!signal?.aborted && snapshot === selectedLedger) paintReview(run);
-    });
+      const run = await api.previewPaymentRun(pendingCommand, active);
+      if (current() && snapshot === selectedLedger) paintReview(run);
+    }, status, 'Reviewing payments…');
   });
   approvalForm.addEventListener("submit", (event) => {
     event.preventDefault();
-    void action(async () => {
+    void action(async (active, current) => {
       if (!draft || !api.approvePaymentRun) return;
       await api.approvePaymentRun(
         draft.id,
@@ -714,17 +730,18 @@ export const createPaymentRunsController = (
             ),
           })),
         },
-        signal,
+        active,
       );
-      if (signal?.aborted) return;
+      if (!current()) return;
       draft = null;
       pendingCommand = null;
       review.hidden = true;
       form.hidden = false;
       await reload();
+      if (!current()) return
       await refresh();
-      if (!signal?.aborted) onApproved();
-    });
+      if (current()) onApproved();
+    }, status, 'Confirming payment run…');
   });
   el(section, "[data-run-back]").addEventListener("click", () => {
     draft = null;
@@ -735,7 +752,7 @@ export const createPaymentRunsController = (
   input(reportForm, "show_empty").addEventListener("change", paintReport);
   reportForm.addEventListener("submit", (event) => {
     event.preventDefault();
-    void action(refresh, reportStatus);
+    void action(refresh, reportStatus, 'Loading payment report…');
   });
   for (const name of ["person", "currency", "status"])
     input(reportForm, name).addEventListener("input", paintReport);
@@ -798,13 +815,27 @@ export const createPaymentRunsController = (
       }
     },
     activate: async (active: AbortSignal) => {
+      sessionGeneration++
+      generation++
+      restoreControls()
+      busy = false
+      setRequestBusy(status, false)
+      setRequestBusy(reportStatus, false)
       signal = active;
       section.hidden = reportMode || !api.previewPaymentRun;
       reportSection.hidden = !reportMode;
       active.addEventListener(
         "abort",
         () => {
+          if (signal !== active) return
+          sessionGeneration++
           generation++;
+          restoreControls()
+          busy = false
+          status.textContent = ''
+          reportStatus.textContent = ''
+          setRequestBusy(status, false)
+          setRequestBusy(reportStatus, false)
           snapshot = null;
           draft = null;
           data = null;
@@ -840,7 +871,7 @@ export const createPaymentRunsController = (
         );
         input(reportForm, "from").value = month;
         input(reportForm, "to").value = month;
-        await action(refresh, reportStatus);
+        await action(refresh, reportStatus, 'Loading payment report…');
       }
     },
     ledger: (report: StaffPaymentReport) => {

@@ -4351,3 +4351,9 @@ export const csvImportSetup = sqliteTable('csv_import_setup', {
   createdAt: text('created_at').notNull(),
   policyFactsSha256: text('policy_facts_sha256'),
 }, (table) => [primaryKey({ columns: [table.runId, table.setupKey] })])
+
+/** Changes when a destination is reset/replaced; private staging is scoped to it. */
+export const csvStagingInstance = sqliteTable('csv_staging_instance', {
+  singleton: integer('singleton').primaryKey(),
+  nonce: text('nonce').notNull(),
+})

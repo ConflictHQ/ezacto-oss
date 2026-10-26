@@ -119,6 +119,25 @@ describe('Detailed time row corrections (issue 917)', () => {
     expect(deleteDialog().open).toBe(false)
   })
 
+  it('keeps a newly opened deletion review independent of an older request', async () => {
+    let fail!: (error: Error) => void
+    const deleteTimeEntry = vi.fn(() => new Promise<void>((_resolve, reject) => { fail = reject }))
+    await open('administrator', { deleteTimeEntry })
+    button('button[data-report-entry-delete="901"]').click()
+    confirmDeletion()
+    confirmDeletion()
+    expect(deleteTimeEntry).toHaveBeenCalledTimes(1)
+    expect(document.querySelector('[data-report-entry-delete-result]')!.getAttribute('aria-busy')).toBe('true')
+    button('footer [data-report-entry-delete-cancel]').click()
+    button('button[data-report-entry-delete="902"]').click()
+    fail(new Error('Previous delete failed'))
+    await new Promise(resolve => setTimeout(resolve, 0))
+    expect(deleteDialog().open).toBe(true)
+    expect(document.querySelector('[data-report-entry-delete-body]')!.textContent).toContain('2026-08-12')
+    expect(document.querySelector('[data-report-entry-delete-result]')!.textContent).toBe('')
+    expect(button('[data-report-entry-delete-submit]').disabled).toBe(false)
+  })
+
   it('[browser] says in the dialog why an entry could not be deleted', async () => {
     const deleteTimeEntry = vi.fn(async () => {
       throw new EzactoApiError(

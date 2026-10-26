@@ -1,7 +1,9 @@
 import { calendarConnectionsMigration } from './migrations/0173_calendar_connections.js'
 import { deelStatusThrottleMigration } from './migrations/0167_deel_status_throttle.js'
+import { planningCalendarFeedsMigration } from './migrations/0168_planning_calendar_feeds.js'
 import { deelPaymentStatusMigration } from './migrations/0166_deel_payment_status.js'
 import { isOrdinaryD1SchemaStatement } from './internal/d1-cold-migrations.js'
+import { csvStagingInstanceMigration } from './migrations/0169_csv_staging_instance.js'
 import { csvBrowserDatasetMigration } from './migrations/0164_csv_browser_dataset.js'
 import { nonzeroStoppedTimeMigration } from './migrations/0165_nonzero_stopped_time.js'
 import { placeholderPlanningMigration } from './migrations/0163_placeholder_planning.js'
@@ -1694,6 +1696,8 @@ const migrations = [
   { id: '0165_nonzero_stopped_time', statements: nonzeroStoppedTimeMigration },
   { id: '0166_deel_payment_status', statements: deelPaymentStatusMigration },
   { id: '0167_deel_status_throttle', statements: deelStatusThrottleMigration },
+  { id: '0168_planning_calendar_feeds', statements: planningCalendarFeedsMigration },
+  { id: '0169_csv_staging_instance', statements: csvStagingInstanceMigration },
   { id: '0173_calendar_connections', statements: calendarConnectionsMigration },
 ] as const
 
