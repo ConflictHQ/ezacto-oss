@@ -1,0 +1,29 @@
+{
+  "id": 2010,
+  "name": "Sample projects name 2010",
+  "code": "SMP-2010",
+  "is_active": true,
+  "is_billable": true,
+  "is_fixed_fee": false,
+  "bill_by": "People",
+  "hourly_rate": null,
+  "budget": null,
+  "budget_by": "none",
+  "budget_is_monthly": false,
+  "notify_when_over_budget": false,
+  "over_budget_notification_percentage": 2,
+  "show_budget_to_all": false,
+  "created_at": "2024-02-03T10:20:30Z",
+  "updated_at": "2024-02-03T10:20:30Z",
+  "starts_on": null,
+  "ends_on": null,
+  "notes": "",
+  "cost_budget": null,
+  "cost_budget_include_expenses": false,
+  "fee": null,
+  "client": {
+    "id": 1007,
+    "name": "Sample clients name 1007",
+    "currency": "USD"
+  }
+}

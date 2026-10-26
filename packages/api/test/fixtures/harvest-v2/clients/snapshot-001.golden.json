@@ -1,0 +1,9 @@
+{
+  "id": 1001,
+  "name": "Sample clients name 1001",
+  "is_active": true,
+  "address": "Sample clients address 1001",
+  "currency": "USD",
+  "created_at": "2024-02-03T10:20:30Z",
+  "updated_at": "2024-02-03T10:20:30Z"
+}

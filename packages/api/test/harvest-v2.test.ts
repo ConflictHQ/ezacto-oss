@@ -64,6 +64,17 @@ const read = (resource: string, name: string, kind: 'input' | 'golden'): string 
   readFileSync(join(corpusRoot, resource, `${name}.${kind}.json`), 'utf8')
 
 describe('harvest v2 golden corpus', () => {
+  it('retains at least 200 snapshot-derived objects with explicit recorded-subset provenance', () => {
+    const provenance = JSON.parse(readFileSync(join(import.meta.dirname, '../../../docs/evidence/16-harvest-corpus-provenance.json'), 'utf8')) as { kind: string; counts: Record<string, number> }
+    const recorded = cases.filter(({ name }) => name.startsWith('snapshot-'))
+    expect(provenance.kind).toBe('redacted-recorded-subset')
+    expect(recorded.length).toBeGreaterThanOrEqual(200)
+    for (const [resource, count] of Object.entries(provenance.counts)) {
+      expect(recorded.filter((entry) => entry.resource === resource)).toHaveLength(count)
+    }
+    expect(recorded.some(({ resource }) => resource === 'project_assignments')).toBe(false)
+  })
+
   it('covers every resource in this slice', () => {
     for (const resource of resources)
       expect(cases.filter((entry) => entry.resource === resource).length).toBeGreaterThanOrEqual(3)
@@ -86,7 +97,7 @@ const structural = [
   /^\d{1,2}:\d{2}(am|pm)$/,
   /^(12h|24h|unsubmitted|submitted|approved|invoiced|Invoiced|This record is locked\.)$/,
   /^\d+$/,
-  /^(net_30|time_materials|fixed_fee|non_billable|project|tasks|people|none|project_cost|managers|member|administrator|project_manager|manager|project_creator|estimates_manager|Project|Tasks|People)$/,
+  /^(net_30|time_materials|fixed_fee|non_billable|project|tasks|people|person|none|project_cost|managers|member|administrator|project_manager|manager|project_creator|estimates_manager|Project|Tasks|People)$/,
 ]
 // Values the corpus may hold that are invented text. Anything else fails.
 const invented = [
@@ -97,6 +108,7 @@ const invented = [
   /^https:\/\/example\.test\/avatars\/\d+\.png$/,
   /^\+1 555 01\d\d$/,
   /^SMP-\d+$/,
+  /^https:\/\/example\.test\/reference$/,
   /^$/,
 ]
 
