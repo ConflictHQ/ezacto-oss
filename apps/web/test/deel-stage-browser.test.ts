@@ -1,0 +1,382 @@
+/** @vitest-environment happy-dom */
+import { EzactoApiError } from "@conflict-hq/ezacto-client";
+import type { DeelStagePreview } from "@conflict-hq/ezacto-client";
+import { renderDeelStage } from "../src/staff-payments/deel-stage-render.js";
+import { beforeEach, describe, expect, it, vi } from "vitest";
+import {
+  createDeelStageController,
+  type DeelStageApi,
+} from "../src/staff-payments/deel-stage-browser.js";
+import type { StaffPaymentReport } from "@ezacto/core";
+const flush = () => new Promise((resolve) => setTimeout(resolve, 0));
+const preview: DeelStagePreview = {
+  status: "ready" as const,
+  from: "2026-10-01",
+  to: "2026-10-20",
+  user_ids: [2],
+  preview_fingerprint: "a".repeat(64),
+  entry_ids: [4],
+  seconds: 3600,
+  timesheets: 1,
+  already_staged: 0,
+  already_staged_entry_ids: [],
+  people: [{ user_id: 2, contract_id: "contract2", seconds: 3600, entries: 1 }],
+  conflict_entry_ids: [],
+  unsyncable_entry_ids: [],
+  zero_duration_entry_ids: [],
+  unmatched: [],
+  unresolved_entry_ids: [],
+};
+const result = {
+  status: "staged" as const,
+  command_id: "test",
+  run_id: 1,
+  timesheets_staged: 1,
+  entries_staged: 1,
+  already_staged: 0,
+  unresolved_entry_ids: [],
+  code: null,
+};
+const report = {
+  month: "2026-10",
+  rows: [
+    {
+      user_id: 2,
+      name: "<img src=x onerror=alert(1)>",
+      active: true,
+      payout_provider: "deel",
+    },
+    { user_id: 3, name: "Wise person", active: true, payout_provider: "wise" },
+  ],
+} as StaffPaymentReport;
+const mount = () => {
+  document.body.innerHTML = renderDeelStage();
+  const api = {
+    getDeelStaging: vi.fn<NonNullable<DeelStageApi["getDeelStaging"]>>(
+      async () => ({
+        data: {
+          configured: true,
+          reason: null,
+          start_date: "2026-10-01",
+          last_complete_date: "2026-10-25",
+        },
+      }),
+    ),
+    previewDeelStaging: vi.fn<NonNullable<DeelStageApi["previewDeelStaging"]>>(
+      async () => ({ data: preview }),
+    ),
+    stageDeelHours: vi.fn<NonNullable<DeelStageApi["stageDeelHours"]>>(
+      async () => ({ data: result }),
+    ),
+    getDeelStageStatus: vi.fn<NonNullable<DeelStageApi["getDeelStageStatus"]>>(
+      async () => ({ data: result }),
+    ),
+  } satisfies DeelStageApi;
+  const progressChanged = vi.fn(async () => {});
+  const controller = createDeelStageController(document.body, api, () => {}, progressChanged);
+  const abort = new AbortController();
+  return { api, controller, abort, progressChanged };
+};
+const el = <T extends HTMLElement>(s: string) => document.querySelector<T>(s)!;
+const review = async () => {
+  el<HTMLInputElement>("[data-deel-stage-people] input").checked = true;
+  el<HTMLFormElement>("form").dispatchEvent(
+    new Event("submit", { cancelable: true }),
+  );
+  await flush();
+};
+const confirm = () => {
+  el<HTMLInputElement>("[data-deel-stage-reviewed]").checked = true;
+  el("[data-deel-stage-reviewed]").dispatchEvent(new Event("change"));
+  el<HTMLButtonElement>("[data-deel-stage-send]").click();
+};
+describe("selected Deel hour staging", () => {
+  beforeEach(() => {
+    document.body.innerHTML = "";
+    HTMLElement.prototype.scrollIntoView = vi.fn();
+  });
+  it("refreshes saved progress after staging and preserves the completion message", async () => {
+    const { controller, abort, progressChanged } = mount();
+    await controller.activate(abort.signal);
+    controller.update(report);
+    controller.open();
+    await review();
+    expect(progressChanged).not.toHaveBeenCalled();
+    confirm();
+    await vi.waitFor(() => expect(progressChanged).toHaveBeenCalledOnce());
+    expect(el("[data-deel-stage-message]").textContent).toContain("1 entries staged in Deel");
+    expect(el("[data-deel-stage-message]").textContent).toContain("not marked paid here");
+    abort.abort();
+  });
+  it("refreshes durable progress for an uncertain outcome without releasing the pending command", async () => {
+    const { api, controller, abort, progressChanged } = mount();
+    api.stageDeelHours.mockRejectedValueOnce(new Error("Connection lost"));
+    await controller.activate(abort.signal);
+    controller.update(report);
+    controller.open();
+    await review();
+    confirm();
+    await vi.waitFor(() => expect(progressChanged).toHaveBeenCalledOnce());
+    expect(el("[data-deel-stage-message]").textContent).toContain("outcome is unknown");
+    expect(el<HTMLButtonElement>("[data-deel-stage-check]").hidden).toBe(false);
+    expect(el<HTMLButtonElement>("[data-deel-stage-send]").disabled).toBe(true);
+    abort.abort();
+  });
+  it("requires explicit people and reviewed preview; sends hours not a local amount and never claims paid", async () => {
+    const { api, controller, abort } = mount();
+    await controller.activate(abort.signal);
+    controller.update(report);
+    controller.open();
+    expect(el<HTMLInputElement>("[data-deel-stage-people] input").checked).toBe(
+      false,
+    );
+    expect(document.body.textContent).not.toContain("Wise person");
+    expect(document.querySelector("img")).toBeNull();
+    await review();
+    expect(api.stageDeelHours).not.toHaveBeenCalled();
+    confirm();
+    await flush();
+    const call = api.stageDeelHours.mock.calls[0]![0];
+    expect(call.body.user_ids).toEqual([2]);
+    expect(call["Idempotency-Key"]).toBe(call.body.command_id);
+    expect(call.body).not.toHaveProperty("amount");
+    expect(el("[data-deel-stage-message]").textContent).toContain(
+      "not marked paid here",
+    );
+    expect(el<HTMLAnchorElement>("[data-deel-stage-handoff]").href).toBe(
+      "https://app.deel.com/",
+    );
+  });
+  it("shows an active indicator and asks before leaving while staging is processing", async () => {
+    let finish!: (value: { data: typeof result }) => void;
+    const { api, controller, abort } = mount();
+    api.stageDeelHours.mockImplementationOnce(
+      () => new Promise((resolve) => { finish = resolve; }),
+    );
+    await controller.activate(abort.signal);
+    controller.update(report);
+    controller.open();
+    await review();
+    el<HTMLInputElement>("[data-deel-stage-reviewed]").checked = true;
+    el("[data-deel-stage-reviewed]").dispatchEvent(new Event("change"));
+    el<HTMLButtonElement>("[data-deel-stage-send]").click();
+
+    const message = el<HTMLElement>("[data-deel-stage-message]");
+    expect(message.getAttribute("aria-busy")).toBe("true");
+    expect(message.dataset.busy).toBe("true");
+    const unload = new Event("beforeunload", { cancelable: true });
+    window.dispatchEvent(unload);
+    expect(unload.defaultPrevented).toBe(true);
+
+    const confirmSpy = vi.fn().mockReturnValue(false);
+    vi.stubGlobal("confirm", confirmSpy);
+    const linkClick = new MouseEvent("click", { bubbles: true, cancelable: true });
+    const navigation = document.createElement("a");
+    navigation.href = "/payments";
+    el("[data-deel-stage]").appendChild(navigation);
+    navigation.dispatchEvent(linkClick);
+    expect(linkClick.defaultPrevented).toBe(true);
+    expect(confirmSpy).toHaveBeenCalledWith(
+      "Deel is still processing this request. Leave this screen?",
+    );
+    vi.unstubAllGlobals();
+
+    finish({ data: result });
+    await flush();
+    expect(message.getAttribute("aria-busy")).toBe("false");
+    const completedUnload = new Event("beforeunload", { cancelable: true });
+    window.dispatchEvent(completedUnload);
+    expect(completedUnload.defaultPrevented).toBe(false);
+  });
+  it("requires an administrator's explicit review of unsubmitted hours without claiming timesheet approval", async () => {
+    const { api, controller, abort } = mount();
+    await controller.activate(abort.signal);
+    controller.update(report);
+    controller.open();
+    expect(document.querySelector('[data-deel-stage] h2')!.textContent).toBe("Stage hours in Deel");
+    expect(document.body.textContent).toContain("including unsubmitted time");
+    expect(document.body.textContent).toContain("staging does not approve timesheets or mark anyone paid");
+    await review();
+    const reviewed = el<HTMLInputElement>("[data-deel-stage-reviewed]");
+    expect(reviewed.checked).toBe(false);
+    expect(reviewed.disabled).toBe(false);
+    const send = el<HTMLButtonElement>("[data-deel-stage-send]");
+    expect(send.disabled).toBe(true);
+    send.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    await flush();
+    expect(api.stageDeelHours).not.toHaveBeenCalled();
+    confirm();
+    await flush();
+    expect(api.stageDeelHours).toHaveBeenCalledTimes(1);
+    expect(api.stageDeelHours.mock.calls[0]![0].body.preview_fingerprint).toBe(preview.preview_fingerprint);
+    expect(document.body.textContent).toContain("staging does not approve timesheets or mark anyone paid");
+  });
+  it("retains exactly the same command across an ambiguous reply and status check", async () => {
+    const { api, controller, abort } = mount();
+    api.stageDeelHours.mockRejectedValueOnce(new Error("lost reply"));
+    await controller.activate(abort.signal);
+    controller.update(report);
+    await review();
+    confirm();
+    await flush();
+    const sent = api.stageDeelHours.mock.calls[0]![0];
+    el<HTMLButtonElement>("[data-deel-stage-retry]").click();
+    await flush();
+    expect(api.stageDeelHours.mock.calls[1]![0]).toEqual(sent);
+    expect(api.stageDeelHours).toHaveBeenCalledTimes(2);
+  });
+  it("does not permit sending conflicts, unmatched contracts or unresolved earlier transfers", async () => {
+    const { api, controller, abort } = mount();
+    api.previewDeelStaging.mockResolvedValue({
+      data: { ...preview, unresolved_entry_ids: [4] },
+    });
+    await controller.activate(abort.signal);
+    controller.update(report);
+    await review();
+    confirm();
+    await flush();
+    expect(api.stageDeelHours).not.toHaveBeenCalled();
+    expect(el("[data-deel-stage-preview]").textContent).toContain(
+      "Entries awaiting Deel reconciliation: 4",
+    );
+    expect(el<HTMLAnchorElement>("[data-deel-stage-handoff]").hidden).toBe(
+      false,
+    );
+  });
+  it("clears private options, preview, pending command and late responses on signout", async () => {
+    const { api, controller, abort } = mount();
+    let done!: (value: { data: typeof preview }) => void;
+    api.previewDeelStaging.mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          done = resolve;
+        }),
+    );
+    await controller.activate(abort.signal);
+    controller.update(report);
+    el<HTMLInputElement>("[data-deel-stage-people] input").checked = true;
+    el<HTMLFormElement>("form").dispatchEvent(
+      new Event("submit", { cancelable: true }),
+    );
+    await flush();
+    abort.abort();
+    done({ data: preview });
+    await flush();
+    expect(el("[data-deel-stage-people]").textContent).toBe("");
+    expect(el("[data-deel-stage-preview]").textContent).toBe("");
+    expect(el("[data-deel-stage-message]").textContent).toBe("");
+    expect(el<HTMLElement>("[data-deel-stage]").hidden).toBe(true);
+  });
+  it("does not advertise staging when configuration discovery is false", async () => {
+    const { api, controller, abort } = mount();
+    api.getDeelStaging.mockResolvedValue({
+      data: {
+        configured: false,
+        reason: "unconfigured",
+        start_date: null,
+        last_complete_date: null,
+      },
+    });
+    await controller.activate(abort.signal);
+    controller.update(report);
+    controller.open();
+    expect(controller.available()).toBe(false);
+    expect(el<HTMLElement>("[data-deel-stage]").hidden).toBe(true);
+  });
+  it("discards private state on a current authority refusal", async () => {
+    const { api, controller, abort } = mount();
+    await controller.activate(abort.signal);
+    controller.update(report);
+    api.previewDeelStaging.mockRejectedValueOnce(
+      new EzactoApiError(403, { error: { code: "profile_forbidden" } }, null),
+    );
+    await review();
+    expect(el("[data-deel-stage-people]").textContent).toBe("");
+    expect(controller.available()).toBe(false);
+  });
+  it("does not let an older abort clear the new session and deduplicates selection rows", async () => {
+    const { controller, abort } = mount();
+    await controller.activate(abort.signal);
+    const next = new AbortController();
+    await controller.activate(next.signal);
+    controller.update({ ...report, rows: [...report.rows, report.rows[0]!] });
+    abort.abort();
+    expect(controller.available()).toBe(true);
+    expect(
+      document.querySelectorAll("[data-deel-stage-people] input"),
+    ).toHaveLength(1);
+  });
+  it("retains the Deel inspection link for partial or unknown provider acceptance", async () => {
+    const { api, controller, abort } = mount();
+    api.stageDeelHours.mockResolvedValueOnce({
+      data: {
+        ...result,
+        status: "attention",
+        code: "provider_outcome_unknown",
+      },
+    });
+    await controller.activate(abort.signal);
+    controller.update(report);
+    await review();
+    confirm();
+    await flush();
+    expect(el<HTMLAnchorElement>("[data-deel-stage-handoff]").hidden).toBe(
+      false,
+    );
+    expect(el("[data-deel-stage-message]").textContent).toContain(
+      "needs attention",
+    );
+  });
+  it("offers payment completion for already-staged hours without another submission", async () => {
+    const { api, controller, abort } = mount();
+    api.previewDeelStaging.mockResolvedValue({
+      data: {
+        ...preview,
+        entry_ids: [],
+        seconds: 0,
+        timesheets: 0,
+        already_staged: 1,
+        people: [{ user_id: 2, contract_id: "contract2", seconds: 0, entries: 0 }],
+      },
+    });
+    await controller.activate(abort.signal);
+    controller.update(report);
+    await review();
+    expect(el<HTMLButtonElement>("[data-deel-stage-send]").disabled).toBe(true);
+    expect(el<HTMLAnchorElement>("[data-deel-stage-handoff]").hidden).toBe(false);
+    expect(api.stageDeelHours).not.toHaveBeenCalled();
+  });
+  it("uses the server sync floor when the payment register opens on an older month", async () => {
+    const { controller, abort } = mount();
+    await controller.activate(abort.signal);
+    controller.update({ ...report, month: "2026-09" });
+    expect(el<HTMLInputElement>("input[name=from]").value).toBe("2026-10-01");
+    expect(el<HTMLInputElement>("input[name=to]").value).toBe("2026-10-25");
+    expect(el<HTMLInputElement>("input[name=from]").min).toBe("2026-10-01");
+  });
+});
+
+it("keeps September payroll within the configured historical sync range", async () => {
+  const { api, controller, abort } = mount();
+  api.getDeelStaging.mockResolvedValue({ data: { configured: true, reason: null, start_date: "2026-09-01", last_complete_date: "2026-10-25" } });
+  await controller.activate(abort.signal);
+  controller.update({ ...report, month: "2026-09" });
+  controller.open();
+  expect(el<HTMLInputElement>('input[name="from"]').value).toBe("2026-09-01");
+  expect(el<HTMLInputElement>('input[name="to"]').value).toBe("2026-09-30");
+  await review();
+  expect(api.previewDeelStaging).toHaveBeenCalledWith({ body: { from: "2026-09-01", to: "2026-09-30", user_ids: [2] }, signal: abort.signal });
+  expect(api.stageDeelHours).not.toHaveBeenCalled();
+});
+it.each([503, 500])("shows a safe request reference when preview returns %s", async (status) => {
+  const { api, controller, abort } = mount();
+  await controller.activate(abort.signal);
+  controller.update(report);
+  controller.open();
+  api.previewDeelStaging.mockRejectedValueOnce(new EzactoApiError(status, { error: { message: "private provider payload" } }, "preview-request-123"));
+  await review();
+  expect(el('[data-deel-stage-message]').textContent).toContain('Reference: preview-request-123');
+  expect(document.body.textContent).not.toContain('private provider payload');
+  expect(api.stageDeelHours).not.toHaveBeenCalled();
+  expect(el<HTMLButtonElement>('[data-deel-stage-send]').disabled).toBe(true);
+});

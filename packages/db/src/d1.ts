@@ -1,3 +1,4 @@
+export { createDeelPaymentStatusStore } from './deel-payment-status.js'
 export { createManagedBillConnectionStore } from './managed-bill.js'
 export { createManagedQuickBooksGrantStore } from './managed-quickbooks.js'
 export { createManagedQuickBooksLifecycleStore } from './managed-quickbooks-lifecycle.js'
@@ -570,3 +571,5 @@ export { retryTransientD1IdempotentOperation } from './d1-idempotent-retry.js'
 
 export * from './placeholder-allocations.js'
 export { createResourceCalendarRepository } from './resource-calendar.js'
+
+export { createDeelStageStore } from './deel-staging.js'

@@ -33,6 +33,7 @@ type BrowserFixtureAction =
   | 'end-client-invoice-seed'
   | 'invoice-generation-cleanup'
   | 'invoice-generation-seed'
+  | 'age-running-timer'
   | 'project-directory-cleanup'
 
 const controlBrowserFixture = (
@@ -1061,6 +1062,7 @@ test('[e2e:browser-auth] issues and revokes a real D1-backed browser session', a
   await page.locator('[data-timer-chip]').click()
   const stopRunning = page.locator('[data-stop-timer]')
   await expect(stopRunning).toBeVisible()
+  expect((await controlBrowserFixture(page.request, 'age-running-timer')).status()).toBe(204)
   await stopRunning.click()
   await expect(page.locator('[data-entry-dialog]')).toBeHidden()
 

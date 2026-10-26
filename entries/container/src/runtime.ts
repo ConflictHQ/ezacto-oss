@@ -1,3 +1,7 @@
+import { createDeelPaymentStatusStore } from '@ezacto/db'
+import { createDeelPaymentStatusRuntime } from '@ezacto/integrations'
+import { createDeelStageStore } from '@ezacto/db'
+import { createDeelStagingRuntime } from '@ezacto/integrations'
 import { moduleAvailability } from '@ezacto/api'
 import { createOrganizationHolidayRepository } from '@ezacto/db'
 import { demoDeployment } from '../../worker/src/app.js'
@@ -446,6 +450,7 @@ export const createContainerRuntime = async (
     await chmod(config.databasePath, 0o600)
 
     const drizzle = createContainerDatabase(database)
+    const deelPaymentStatus = createDeelPaymentStatusRuntime({ token: demoDeployment(config.appEnv) ? undefined : config.deel?.token, store: createDeelPaymentStatusStore(drizzle), fetch: (request: Request) => fetch(request), now: () => new Date() })
     const webhooks = createWebhookService(drizzle, {
       vault: !demoDeployment(config.appEnv) && config.webhookEncryptionKey ? await createWebhookSecretVault(config.webhookEncryptionKey) : null,
       transport: createNodeWebhookTransport(),
@@ -861,6 +866,7 @@ export const createContainerRuntime = async (
         console.error('[container] automatic approval sweep failed', error)
       }
       if (!invoicesOn) return
+      try { await deelPaymentStatus.refresh(null) } catch { console.error('[container] Deel payment status refresh failed') }
       try {
         const result = await proposeDueScheduledJobs(drizzle, now, objects)
         for (const failure of result.failed)
@@ -1003,6 +1009,8 @@ export const createContainerRuntime = async (
       scheduledJobProposals: { processDue: (now: string) => proposeDueScheduledJobs(drizzle, now, objects) },
       scheduledRuns: createScheduledRunsService(drizzle, {reviewLinkSigningKey:config.cursorSigningKey}),
       staffPayments: createStaffPaymentStore(drizzle),
+      deelPaymentStatus,
+      deelStaging: createDeelStagingRuntime({token:demoDeployment(config.appEnv)?undefined:config.deel?.token,startDate:config.deel?.startDate,store:createDeelStageStore(drizzle),fetch:(request:Request)=>fetch(request),now:()=>new Date()}),
       contractorReview: createContractorReviewStore(drizzle),
       myPayments: createMyPaymentsStore(drizzle),
       payoutAccounts: (() => {

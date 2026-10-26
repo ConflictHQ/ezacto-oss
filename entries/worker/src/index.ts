@@ -416,6 +416,10 @@ export const createWorker = (options: WorkerOptions = {}): ExportedHandler<Worke
         report(error, { phase: 'scheduled', operation: 'QuickBooks catch-up' })
       }
     }
+    if (controller.cron === '* * * * *' && invoices && services.deelPaymentStatus !== undefined) {
+      try { await services.deelPaymentStatus.refresh(null) }
+      catch (error) { report(error, { phase: 'scheduled' }) }
+    }
     if (controller.cron === '0 * * * *' && services.deelSync !== undefined) {
       // Deel time sync (issue 103, #1102). Runs only when the organization has
       // set the sync to automatic, once a day at its configured time; manual is

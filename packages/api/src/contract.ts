@@ -1,3 +1,4 @@
+import { deelStagingOperations, deelStagingSchemas } from './deel-staging-contract.js'
 import { moduleForPath } from './module-availability.js'
 import { organizationHolidayOperations, organizationHolidaySchemas } from './organization-holiday-contract.js'
 import { placeholderPlanningOperations, placeholderPlanningSchemas } from './placeholder-planning-contract.js'
@@ -470,7 +471,7 @@ const timeEntryOperations: ApiContractOperation[] = [
     operationId: "createTimeEntry",
     summary: "Create or start a time entry",
     description:
-      "`started_time` with `ended_time` logs a stopped start/end entry in either organization mode, its `seconds` derived from the two times (an end before the start is past midnight); `seconds` beside them is 422 `mode_mismatch`. Without times the organization's `time_entry_mode` decides: in `duration`, `seconds` logs a stopped entry and leaving it out starts a timer; in `start_end`, leaving out `ended_time` starts a timer at the current local time and `seconds` is 422 `mode_mismatch`. A timer in a `duration` organization never carries times, so `started_time` without `ended_time` there is 422 `mode_mismatch`. Entries may overlap; each counts its own full duration.",
+      "`started_time` with `ended_time` logs a stopped start/end entry in either organization mode, its `seconds` derived from the two times (an end before the start is past midnight); `seconds` beside them is 422 `mode_mismatch`. Without times the organization's `time_entry_mode` decides: in `duration`, `seconds` logs a stopped entry and leaving it out starts a timer; in `start_end`, leaving out `ended_time` starts a timer at the current local time and `seconds` is 422 `mode_mismatch`. A timer in a `duration` organization never carries times, so `started_time` without `ended_time` there is 422 `mode_mismatch`. Stopped entries must have a positive rounded duration; zero-hour entries are refused. Entries may overlap; each counts its own full duration.",
     tag: "time-entries",
     responseStatus: 201,
     responseSchema: "TimeEntryEnvelope",
@@ -3804,6 +3805,7 @@ export const apiContractOperations: readonly ApiContractOperation[] = [
   ...attachmentContractOperations,
   ...staffPaymentOperations,
   ...deelSyncOperations,
+  ...deelStagingOperations,
   ...paymentRunOperations,
   ...advanceCreditOperations,
   ...staffInvoiceOperations,
@@ -4085,6 +4087,7 @@ export const apiContractSchemas: Readonly<Record<string, JsonSchema>> = {
   ...attachmentContractSchemas,
   ...staffPaymentSchemas,
   ...deelSyncSchemas,
+  ...deelStagingSchemas,
   ...paymentRunSchemas,
   ...advanceCreditSchemas,
   ...staffInvoiceSchemas,
@@ -6020,13 +6023,12 @@ export const apiContractSchemas: Readonly<Record<string, JsonSchema>> = {
       project_id: integerSchema,
       task_id: integerSchema,
       spent_date: dateSchema,
-      // Non-negative on the way in. A correction entry exists because Harvest
-      // will not let a locked timesheet be edited; here the entry that was
-      // wrong is the thing to edit, so there is nothing for a typed negative
-      // to offset.
+      // Positive on the way in. A zero-duration entry has no work to review or
+      // invoice; a correction entry exists because the wrong entry itself is
+      // edited, so there is nothing for a typed zero to erase.
       seconds: {
         type: "integer",
-        minimum: 0,
+        minimum: 1,
         description: "A duration entry's length. Not accepted with started_time or ended_time.",
       },
       started_time: {
@@ -6055,7 +6057,7 @@ export const apiContractSchemas: Readonly<Record<string, JsonSchema>> = {
       project_id: integerSchema,
       task_id: integerSchema,
       spent_date: dateSchema,
-      seconds: { type: "integer", minimum: 0 },
+      seconds: { type: "integer", minimum: 1 },
       started_time: { type: "string" },
       ended_time: { type: "string" },
       notes: nullable(stringSchema),

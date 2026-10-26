@@ -1,3 +1,4 @@
+export { createDeelPaymentStatusRuntime, type DeelPaymentStatusRuntime, type DeelPaymentStatusStore, type DeelPaymentStatusClaim, type DeelPaymentStatusResult } from './deel/payment-status.js'
 export {
   createStripeRuntime,
   type StripeConfig,
@@ -39,6 +40,7 @@ export {
 export {
   createBillMirrorSubscriber,
   createBillRuntime,
+  billConfigured,
   type BillConfig,
   type BillConnectionStatus,
   type BillMirrorSource,
@@ -116,6 +118,8 @@ export {
   type DeelPerson,
   type DeelTimesheetInput,
   type DeelTimesheetReceipt,
+  type DeelTimesheetStatus,
+  type DeelTimesheetStatusReceipt,
   type DeelTimesheetSink,
 } from './deel/client.js'
 export {
@@ -142,6 +146,7 @@ export {
 export {
   createDeelSyncRuntime,
   type DeelSyncClient,
+  deelConfigurationProblem,
   type DeelSyncConfig,
   type DeelSyncPreview,
   type DeelSyncPreviewResult,
@@ -259,6 +264,7 @@ export {
 export {
   createQuickBooksMirrorSubscriber,
   createQuickBooksRuntime,
+  quickBooksConfigured,
   type QuickBooksCatchUp,
   type QuickBooksConfig,
   type QuickBooksConnectionStatus,
@@ -307,3 +313,6 @@ export type {
 export * from './work-items/github-read.js'
 
 export { createWorkerWebhookTransport } from './outbound-webhooks.js'
+
+export * from './deel/staging.js'
+export { wiseConfigured, parseWiseMode } from './wise/runtime.js'

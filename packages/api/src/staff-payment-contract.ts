@@ -6,9 +6,9 @@ const bool = { type: 'boolean' } as const
 const provider = { type: 'string', enum: ['wise', 'deel'] }
 const nullable = (schema: object) => ({ anyOf: [schema, { type: 'null' }] })
 const ref = (name: string) => ({ $ref: `#/components/schemas/${name}` })
-const object = (properties: Record<string, unknown>) => ({
+const object = (properties: Record<string, unknown>, optional: readonly string[] = []) => ({
   type: 'object',
-  required: Object.keys(properties),
+  required: Object.keys(properties).filter((key) => !optional.includes(key)),
   additionalProperties: false,
   properties,
 })
@@ -120,6 +120,25 @@ export const staffPaymentSchemas = {
     request_id: string,
   }),
   StaffPaymentRow: object({
+    deel_staging: object({
+      status: { type: 'string', enum: ['not_staged', 'partially_staged', 'staged', 'attention', 'no_hours', 'partially_paid', 'paid'] },
+      paid_entries: integer,
+      paid_seconds: integer,
+      approved_entries: integer,
+      rejected_entries: integer,
+      unchecked_entries: integer,
+      status_checked_at: nullable(string),
+      status_check_failed: bool,
+      staged_entries: integer,
+      unstaged_entries: integer,
+      unresolved_entries: integer,
+      changed_entries: integer,
+      zero_duration_entries: integer,
+      unsyncable_entries: integer,
+      staged_seconds: integer,
+      unstaged_seconds: integer,
+      last_staged_at: nullable(string),
+    }),
     is_contractor: bool,
     user_id: integer,
     name: string,
@@ -147,7 +166,7 @@ export const staffPaymentSchemas = {
     },
     overdue: bool,
     events: { type: 'array', items: ref('StaffPaymentEvent') },
-  }),
+  }, ['deel_staging']),
   StaffPaymentReport: object({
     month: string,
     as_of: string,

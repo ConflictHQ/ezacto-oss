@@ -1,3 +1,4 @@
+import { accountingProviderAvailable } from '../accounting-providers.js'
 import { moduleAvailable } from '../module-availability.js'
 import { createClientRateCardController } from './rate-card-browser.js'
 import { focusSortHeader, rememberedSort, resolveSort, sortRows, type TableSort } from '../components/table-sort.js'
@@ -675,7 +676,7 @@ export const createClientDirectoryController = (
    */
   const renderDelivery = async (): Promise<void> => {
     const client = currentClient
-    if (!moduleAvailable('invoices') || !moduleAvailable('accounting') || client === null || api.getBillClientDelivery === undefined) {
+    if (!moduleAvailable('invoices') || !accountingProviderAvailable('bill') || client === null || api.getBillClientDelivery === undefined) {
       deliverySection.hidden = true
       return
     }
@@ -1532,7 +1533,7 @@ export const createClientDirectoryController = (
   deliveryToggle.addEventListener('change', () => {
     const active = session
     const client = currentClient
-    if (!moduleAvailable('invoices') || !moduleAvailable('accounting') || active === null || client === null || deliveryBusy) return
+    if (!moduleAvailable('invoices') || !accountingProviderAvailable('bill') || active === null || client === null || deliveryBusy) return
     if (api.setBillClientDelivery === undefined) return
     const id = clientNumber(client, 'id')
     if (id === null) return

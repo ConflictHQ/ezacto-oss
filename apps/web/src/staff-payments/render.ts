@@ -1,3 +1,4 @@
+import { renderDeelStage } from './deel-stage-render.js'
 import { demoUnavailable } from '../demo.js'
 import { renderPaymentRuns } from './runs-render.js'
 export const renderStaffPayments = (view?: string): string =>
@@ -12,7 +13,7 @@ export const renderStaffPayments = (view?: string): string =>
         <div class="staff-payment-toolbar">
           <label>Work month<input type="month" data-payment-month required></label>
           <button type="button" data-payment-refresh>Refresh</button>
-          <button type="button" class="primary-action" data-payment-pay-now>Pay now</button>
+          <button type="button" class="primary-action" data-payment-pay-now>Pay now</button><button type="button" data-payment-stage-deel hidden>Stage hours in Deel</button>
           <a href="/payments/report">Payments report</a>
         </div>
         <div class="payment-tabs" role="tablist" aria-label="Payments sections" data-payment-tabs>
@@ -46,10 +47,13 @@ export const renderStaffPayments = (view?: string): string =>
       <section data-payment-summary aria-label="Monthly totals" class="staff-payment-summary"></section>
       <div data-payment-ledger>
       <h2>Payment ledger</h2>
-      <div data-payment-list></div>
+      <p data-deel-payment-refresh role="status" aria-live="polite" hidden></p>
+      <p class="hint">Deel status reflects payment for submitted hours. Recorded payment totals reflect the payment receipts entered here.</p>
+      <div data-payment-list></div>${renderDeelStage()}
       <section data-payment-person hidden class="staff-payment-person" aria-labelledby="staff-payment-person-title">
         <header><h2 id="staff-payment-person-title" data-payment-person-title></h2><a data-payment-destination href="/team">Manage Wise destination</a></header>
         <p data-payment-person-summary></p>
+        <div data-payment-person-deel></div>
         <form data-payment-provider-form="person" hidden>
           <label>Preferred payment provider<select name="provider"><option value="">Use organization default</option><option value="wise">Wise</option><option value="deel">Deel</option></select></label>
           <label>Reason for change<textarea name="note" required maxlength="2000"></textarea></label>

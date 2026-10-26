@@ -361,18 +361,20 @@ for (const [runtime, factory] of factories) {
         boundary('09:10', '2026-08-27T09:10:00.900Z'),
         false,
       )
-      await startTimeEntry(
-        db.drizzle,
-        { ...baseInput, taskId: 2, taskAssignmentId: 2 },
-        boundary('09:10', '2026-08-27T09:10:01.100Z'),
-        false,
-      )
+      await expect(
+        startTimeEntry(
+          db.drizzle,
+          { ...baseInput, taskId: 2, taskAssignmentId: 2 },
+          boundary('09:10', '2026-08-27T09:10:01.100Z'),
+          false,
+        ),
+      ).rejects.toThrow(/time_entry_zero_duration/)
       expect(
-        await db.rows<{ seconds: number }>(
-          `SELECT seconds FROM time_entries WHERE id = ?`,
+        await db.rows<{ seconds: number; timer_started_at: string | null }>(
+          `SELECT seconds, timer_started_at FROM time_entries WHERE id = ?`,
           fractionalFirst.id,
         ),
-      ).toEqual([{ seconds: 0 }])
+      ).toEqual([{ seconds: 0, timer_started_at: '2026-08-27T09:10:00.900Z' }])
       expect(
         elapsedDurationSeconds(0, '2026-08-27T09:10:00.900Z', '2026-08-27T09:10:01.100Z'),
       ).toBe(0)
@@ -385,12 +387,12 @@ for (const [runtime, factory] of factories) {
       const stoppedAfterModeChange = await stopTimeEntry(
         db.drizzle,
         activeDuration.id,
-        boundary('09:11', '2026-08-27T09:11:00.000Z'),
+        boundary('09:16', '2026-08-27T09:16:00.000Z'),
         false,
       )
       expect(stoppedAfterModeChange.timerStartedAt).toBeNull()
 
-      const stopped = await createStoppedTimeEntry(db.drizzle, stoppedInput({ seconds: 120 }))
+      const stopped = await createStoppedTimeEntry(db.drizzle, stoppedInput({ seconds: 240 }))
       const restarted = await restartTimeEntry(
         db.drizzle,
         stopped.id,
@@ -398,7 +400,7 @@ for (const [runtime, factory] of factories) {
         false,
         false,
       )
-      expect(restarted.secondsWithoutTimer).toBe(120)
+      expect(restarted.secondsWithoutTimer).toBe(240)
       const finalized = await stopTimeEntry(
         db.drizzle,
         stopped.id,
@@ -406,8 +408,8 @@ for (const [runtime, factory] of factories) {
         false,
       )
       expect(finalized).toMatchObject({
-        seconds: 240,
-        secondsWithoutTimer: 240,
+        seconds: 360,
+        secondsWithoutTimer: 360,
         roundedSeconds: 360,
         timerStartedAt: null,
       })
@@ -835,13 +837,13 @@ for (const [runtime, factory] of factories) {
       const stoppedAfterModeChange = await stopTimeEntry(
         db.drizzle,
         activeStartEnd.id,
-        boundary('12:05', '2026-08-27T12:05:00.000Z'),
+        boundary('12:15', '2026-08-27T12:15:00.000Z'),
         false,
       )
       expect(stoppedAfterModeChange).toMatchObject({
-        seconds: 300,
+        seconds: 900,
         timerStartedAt: null,
-        endedTime: '12:05',
+        endedTime: '12:15',
       })
 
       expect(elapsedWallClockSeconds(120, '2026-08-27', '23:59', '2026-08-28', '00:01')).toBe(240)
@@ -894,8 +896,14 @@ for (const [runtime, factory] of factories) {
       for (const [policy, seconds, expected] of cases) {
         expect(roundSeconds(seconds, policy), `${policy}(${seconds})`).toBe(expected)
         await setRounding(db, policy)
-        const entry = await createStoppedTimeEntry(db.drizzle, stoppedInput({ seconds }))
-        expect(entry.roundedSeconds, `stored ${policy}(${seconds})`).toBe(expected)
+        if (expected === 0) {
+          await expect(
+            createStoppedTimeEntry(db.drizzle, stoppedInput({ seconds })),
+          ).rejects.toThrow(/positive rounded duration/)
+        } else {
+          const entry = await createStoppedTimeEntry(db.drizzle, stoppedInput({ seconds }))
+          expect(entry.roundedSeconds, `stored ${policy}(${seconds})`).toBe(expected)
+        }
       }
       expect(() => roundSeconds(-1, 'none')).toThrow(/non-negative/)
       expect(() => roundSeconds(1.5, 'up_6')).toThrow(/safe integer/)

@@ -34,9 +34,9 @@ export interface DeelReconciliationReport {
 }
 
 /**
- * Checks the transfer log against the books. Deel's client has no read side for
- * timesheets, so this is a reconciliation of what we recorded sending against
- * what we now hold, not against Deel. Its job is to make a divergence visible:
+ * Checks the transfer log against the books. This local source reconciliation
+ * is separate from payment-status.ts, which reads provider timesheet status.
+ * Its job is to make a divergence visible:
  * the planner already refuses to send an edited entry a second time, which
  * leaves a person to decide whether Deel's figure needs correcting there.
  */

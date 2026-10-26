@@ -1,3 +1,4 @@
+export { createDeelPaymentStatusStore } from './deel-payment-status.js'
 export { createManagedBillConnectionStore } from './managed-bill.js'
 export { createManagedQuickBooksGrantStore } from './managed-quickbooks.js'
 export { createManagedQuickBooksLifecycleStore } from './managed-quickbooks-lifecycle.js'
@@ -179,3 +180,5 @@ export * from './resource-calendar.js'
 export { createCsvBrowserDatasetLedger } from './csv-browser-import.js'
 
 export * from './csv-import-destination.js'
+
+export { createDeelStageStore } from './deel-staging.js'

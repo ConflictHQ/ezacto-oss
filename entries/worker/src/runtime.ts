@@ -1,3 +1,8 @@
+import { createDeelPaymentStatusStore } from '@ezacto/db/d1'
+import { createDeelPaymentStatusRuntime } from '@ezacto/integrations'
+import { createDeelStageStore } from '@ezacto/db/d1'
+import { createDeelStagingRuntime } from '@ezacto/integrations'
+import { parseWiseMode } from '@ezacto/integrations'
 import { moduleAvailability } from '@ezacto/api'
 import { retryTransientD1IdempotentOperation } from '@ezacto/db/d1'
 import { createOrganizationHolidayRepository } from '@ezacto/db/d1'
@@ -643,12 +648,6 @@ export const createD1AttachmentOwnerAuthorizer =
         );
     }
   };
-
-const parseWiseMode = (value: string | undefined): 'full' | 'read_only' => {
-  if (value === undefined || value === '') return 'full'
-  if (value === 'read_only') return 'read_only'
-  throw new TypeError('WISE_MODE must be unset or read_only')
-}
 
 /** The secrets that let this deployment reach a payment or accounting provider. */
 type ProviderCredentials = Pick<
@@ -1710,6 +1709,8 @@ export const createRuntimeServices = async (
     // Always composed; it reports itself unconfigured, and does nothing, until
     // the deployment carries both a token and a start date. Never on the demo,
     // whose `credentials` are empty.
+    deelPaymentStatus: createDeelPaymentStatusRuntime({ token: credentials.DEEL_TOKEN, store: createDeelPaymentStatusStore(drizzle), fetch: (request: Request) => fetch(request), now: () => new Date() }),
+    deelStaging: createDeelStagingRuntime({token:credentials.DEEL_TOKEN,startDate:credentials.DEEL_SYNC_START_DATE,store:createDeelStageStore(drizzle),fetch:(request:Request)=>fetch(request),now:()=>new Date(),reportError:(error)=>reportWorkerError(options.reportError,error,{phase:'api',traceId:runtimeTraceId()})}),
     deelSyncAdmin: {
       settings: createDeelSyncSettingsStore(drizzle),
       recentRuns: createDeelSyncStore(drizzle).recentRuns,

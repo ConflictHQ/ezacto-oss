@@ -573,6 +573,25 @@ export type StaffPaymentEvent = {
 };
 
 export type StaffPaymentRow = {
+  "deel_staging"?: {
+  "status": "not_staged" | "partially_staged" | "staged" | "attention" | "no_hours" | "partially_paid" | "paid";
+  "paid_entries": number;
+  "paid_seconds": number;
+  "approved_entries": number;
+  "rejected_entries": number;
+  "unchecked_entries": number;
+  "status_checked_at": string | null;
+  "status_check_failed": boolean;
+  "staged_entries": number;
+  "unstaged_entries": number;
+  "unresolved_entries": number;
+  "changed_entries": number;
+  "zero_duration_entries": number;
+  "unsyncable_entries": number;
+  "staged_seconds": number;
+  "unstaged_seconds": number;
+  "last_staged_at": string | null;
+};
   "is_contractor": boolean;
   "user_id": number;
   "name": string;
@@ -818,6 +837,96 @@ export type DeelSyncRunResult = {
   "failed": Array<unknown>;
   "reconciliation": unknown | null;
   "error": string | null;
+};
+
+export type DeelPaymentStatusMonth = {
+  "month": string;
+};
+
+export type DeelPaymentStatusRefreshEnvelope = {
+  "data": {
+  "configured": boolean;
+  "checked": number;
+  "failed": number;
+  "remaining": number;
+};
+};
+
+export type DeelStagingStatusEnvelope = {
+  "data": {
+  "configured": boolean;
+  "reason": string | null;
+  "start_date": string | null;
+  "last_complete_date": string | null;
+};
+};
+
+export type DeelStageSelection = {
+  "from": string;
+  "to": string;
+  "user_ids": Array<number>;
+};
+
+export type DeelStageCommand = {
+  "from": string;
+  "to": string;
+  "user_ids": Array<number>;
+  "command_id": string;
+  "preview_fingerprint": string;
+};
+
+export type DeelStagePerson = {
+  "user_id": number;
+  "contract_id": string | null;
+  "seconds": number;
+  "entries": number;
+};
+
+export type DeelStageUnmatched = {
+  "user_id": number;
+  "reason": string;
+};
+
+export type DeelStagePreview = {
+  "status": "ready";
+  "from": string;
+  "to": string;
+  "user_ids": Array<number>;
+  "preview_fingerprint": string;
+  "entry_ids": Array<number>;
+  "seconds": number;
+  "timesheets": number;
+  "already_staged": number;
+  "already_staged_entry_ids": Array<number>;
+  "people": Array<DeelStagePerson>;
+  "conflict_entry_ids": Array<number>;
+  "unsyncable_entry_ids": Array<number>;
+  "zero_duration_entry_ids": Array<number>;
+  "unmatched": Array<DeelStageUnmatched>;
+  "unresolved_entry_ids": Array<number>;
+};
+
+export type DeelStagePreviewEnvelope = {
+  "data": DeelStagePreview;
+};
+
+export type DeelStageResult = {
+  "status": "staged" | "attention" | "running" | "stale" | "busy";
+  "command_id": string;
+  "run_id": number | null;
+  "timesheets_staged": number;
+  "entries_staged": number;
+  "already_staged": number;
+  "unresolved_entry_ids": Array<number>;
+  "code": string | null;
+};
+
+export type DeelStageResultEnvelope = {
+  "data": DeelStageResult;
+};
+
+export type DeelStageStatusEnvelope = {
+  "data": DeelStageResult | null;
 };
 
 export type PaymentSelection = {
@@ -8237,6 +8346,55 @@ export class EzactoClient {
     const headers = new Headers(args.headers);
 
     return this.request<DeelSyncRunResult>("POST", "/api/v1/deel-sync/runs", {
+      body: args.body,
+      signal: args.signal,
+      headers,
+    });
+  }
+
+  async refreshDeelPaymentStatus(args: { body: DeelPaymentStatusMonth; signal?: AbortSignal; headers?: HeadersInit }): Promise<DeelPaymentStatusRefreshEnvelope> {
+    const headers = new Headers(args.headers);
+
+    return this.request<DeelPaymentStatusRefreshEnvelope>("POST", "/api/v1/deel-staging/payment-status", {
+      body: args.body,
+      signal: args.signal,
+      headers,
+    });
+  }
+
+  async getDeelStaging(args: { signal?: AbortSignal; headers?: HeadersInit } = {}): Promise<DeelStagingStatusEnvelope> {
+    const headers = new Headers(args.headers);
+
+    return this.request<DeelStagingStatusEnvelope>("GET", "/api/v1/deel-staging", {
+      signal: args.signal,
+      headers,
+    });
+  }
+
+  async previewDeelStaging(args: { body: DeelStageSelection; signal?: AbortSignal; headers?: HeadersInit }): Promise<DeelStagePreviewEnvelope> {
+    const headers = new Headers(args.headers);
+
+    return this.request<DeelStagePreviewEnvelope>("POST", "/api/v1/deel-staging/preview", {
+      body: args.body,
+      signal: args.signal,
+      headers,
+    });
+  }
+
+  async stageDeelHours(args: { "Idempotency-Key": string; body: DeelStageCommand; signal?: AbortSignal; headers?: HeadersInit }): Promise<DeelStageResultEnvelope> {
+    const headers = new Headers(args.headers);
+    if (args["Idempotency-Key"] !== undefined) headers.set("Idempotency-Key", String(args["Idempotency-Key"]));
+    return this.request<DeelStageResultEnvelope>("POST", "/api/v1/deel-staging/commands", {
+      body: args.body,
+      signal: args.signal,
+      headers,
+    });
+  }
+
+  async getDeelStageStatus(args: { body: DeelStageCommand; signal?: AbortSignal; headers?: HeadersInit }): Promise<DeelStageStatusEnvelope> {
+    const headers = new Headers(args.headers);
+
+    return this.request<DeelStageStatusEnvelope>("POST", "/api/v1/deel-staging/status", {
       body: args.body,
       signal: args.signal,
       headers,

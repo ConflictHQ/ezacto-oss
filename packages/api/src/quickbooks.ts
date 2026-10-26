@@ -90,6 +90,8 @@ export interface QuickBooksReconciliation {
  * bug in the handshake.
  */
 export interface QuickBooksService {
+  /** Native local readiness; older injected services retain their existing metadata fallback. */
+  configured?(): boolean
   clientId(): string | null
   callbackUrl(): string | null
   /** Where the operator lands after connecting; a page, not an API route. */
@@ -224,7 +226,7 @@ const requireConfigured = (service: Readonly<QuickBooksService>): {
 } => {
   const clientId = service.clientId()
   const callbackUrl = service.callbackUrl()
-  if (clientId === null || callbackUrl === null) {
+  if (service.configured?.() === false || clientId === null || callbackUrl === null) {
     throw new ApiError({
       status: 503,
       code: 'service_unavailable',
@@ -253,7 +255,7 @@ export const installQuickBooksRoutes = <Bindings extends object>(
     return context.json(
       {
         data: {
-          configured: service.clientId() !== null && service.callbackUrl() !== null,
+          configured: service.configured?.() ?? (service.clientId() !== null && service.callbackUrl() !== null),
           connection: status === null ? null : serialize(status),
         },
       },

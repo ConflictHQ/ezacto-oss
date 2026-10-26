@@ -18,6 +18,12 @@ if (!Number.isInteger(listenPort) || listenPort < 1 || listenPort > 65535) {
 const cursorSigningKey = 'AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA'
 const fixtureControlPath = '/__ezacto_browser_fixture__/start-end'
 const fixtureControlHeader = 'start-end-round-trip'
+const clearFixtureTimers = async () => {
+  // Browser tests share one D1 fixture. A preceding timer test can leave a
+  // running row behind, and the database correctly refuses to change the
+  // organization's time-entry mode while any timer is active.
+  await database.prepare('DELETE FROM time_entries WHERE timer_started_at IS NOT NULL').run()
+}
 // Local-only signing material for the real webhook/browser acceptance.
 const feedbackWebhookKey = 'fixture-mailgun-webhook-key-for-tests'
 const fixtureEmail = process.env.EZACTO_BROWSER_FIXTURE_EMAIL
@@ -74,8 +80,33 @@ const bundle = await build({
   write: false,
 })
 
+const deelStagingFixture = process.env.EZACTO_BROWSER_DEEL_STAGING_FIXTURE === '1'
+const deelStagingPosts = []
+const deelTimesheetStatuses = new Map()
 const workerOptions = {
+  ...(deelStagingFixture ? {outboundService: async request => {
+    const url = new URL(request.url)
+    if (url.origin !== 'https://api.letsdeel.com') throw new Error('Unexpected fixture outbound origin')
+    if (request.method === 'GET' && url.pathname.endsWith('/people')) return globalThis.Response.json({data:[
+      // Optional/null email values occur in real Deel directories. Keep an
+      // unrelated same-name person so preview must still match actual addresses.
+      {id:'unrelated',full_name:'Deel owned 50001',emails:[{value:null},{},{value:'  '}],employments:[{id:'unrelated-contract',contract_status:'in_progress'}]},
+      ...[50001,50002].map(id=>({id:`p${id}`,full_name:`Deel owned ${id}`,emails:[{value:null},{},{value:`deel${id}@example.test`},{value:`DEEL${id}@EXAMPLE.TEST`}],employments:[{id:`contract${id}`,contract_status:'in_progress'}]})),
+    ]})
+    if (request.method === 'POST' && url.pathname.endsWith('/timesheets')) {
+      const body=await request.json(); deelStagingPosts.push(body)
+      return globalThis.Response.json({data:{id:`owned-timesheet-${deelStagingPosts.length}`}})
+    }
+    if (request.method === 'GET' && /\/timesheets\/owned-timesheet-\d+$/.test(url.pathname)) {
+      const id = url.pathname.split('/').at(-1)
+      const submitted = deelStagingPosts[Number(id.split('-').at(-1)) - 1]?.data
+      if (!submitted) return globalThis.Response.json({error:'not found'}, {status:404})
+      return globalThis.Response.json({data:{id,status:deelTimesheetStatuses.get(id) ?? 'approved',contract:{id:submitted.contract_id},quantity:submitted.quantity,total_amount:String(submitted.quantity * 25),currency_code:'USD',date_submitted:submitted.date_submitted}})
+    }
+    throw new Error('Unexpected fixture outbound operation')
+  }} : {}),
   bindings: {
+    ...(deelStagingFixture ? {DEEL_TOKEN:'local-deel-staging-fixture',DEEL_SYNC_START_DATE:'2026-08-01'} : {}),
     API_CURSOR_SIGNING_KEY: cursorSigningKey,
     WEBHOOK_ENCRYPTION_KEY: 'AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAY',
     MAILGUN_WEBHOOK_SIGNING_KEY: feedbackWebhookKey,
@@ -578,7 +609,36 @@ const fixtureControl = async (request, response) => {
     response.end()
     return
   }
-  if (action === 'first-run-create') {
+  if (action === 'deel-stage-seed' && deelStagingFixture) {
+    const week = (await database.prepare('SELECT week_start_day FROM organizations WHERE id=1').first()).week_start_day
+    const weekFrom = week === 'sunday' ? '2026-08-09' : week === 'saturday' ? '2026-08-08' : '2026-08-10'
+    const weekTo = week === 'sunday' ? '2026-08-15' : week === 'saturday' ? '2026-08-14' : '2026-08-16'
+    for (const id of [50001,50002]) {
+      await run("INSERT INTO users(id,first_name,last_name,profile,manager_grants,created_at,updated_at) VALUES(?,?,'Fixture','member','[]',?,?)",id,`Deel ${id}`,timestamp,timestamp)
+      // Existing verified login addresses can predate email kinds; the saved
+      // Deel destination is the explicit payroll choice for these people.
+      await run("INSERT INTO user_emails(user_id,address,verified_at,created_at,updated_at) VALUES(?,?,?,?,?)",id,`deel${id}@example.test`,timestamp,timestamp,timestamp)
+      await run("INSERT INTO user_payout_accounts(user_id,provider,external_id,kind,linked_by_user_id,linked_at,created_at,updated_at) VALUES(?,'deel',?,'account',1,?,?,?)",id,`deel${id}@example.test`,timestamp,timestamp,timestamp)
+      await run("INSERT INTO user_assignments(id,project_id,user_id,created_at,updated_at) VALUES(?,1,?,?,?)",id,id,timestamp,timestamp)
+      await run("INSERT INTO staff_payment_provider_events(id,user_id,scope,version,provider,command_json,actor_id,recorded_at,request_id) VALUES(?,?,?,1,'deel',?,1,?,?)",`deel-fixture-${id}`,id,`user:${id}`,JSON.stringify({id:`deel-fixture-${id}`,user_id:id,expected_version:0,provider:'deel',note:'Owned staging fixture'}),timestamp,`deel-fixture-${id}`)
+      await run("INSERT INTO time_entries(id,user_id,project_id,task_id,user_assignment_id,task_assignment_id,spent_date,seconds,seconds_without_timer,rounded_seconds,billable,created_at,updated_at) VALUES(?,?,1,1,?,1,'2026-08-10',3600,3600,3600,0,?,?)",id,id,id,timestamp,timestamp)
+      // Keep one real unsubmitted entry: administrator staging review is its
+      // authorization to sync, and must not change the timesheet approval state.
+      if (id === 50002) {
+        await run("INSERT INTO timesheet_submissions(id,user_id,period_start,period_end,status,submitted_by_user_id,submitted_at,version,created_at,updated_at) VALUES(?,?,?,?,'submitted',?,?,0,?,?)",id,id,weekFrom,weekTo,id,timestamp,timestamp,timestamp)
+        await run("UPDATE time_entries SET approval_status='submitted',timesheet_submission_id=? WHERE id=?",id,id)
+        await run("UPDATE timesheet_submissions SET status='approved',version=1,reviewed_by_user_id=1,reviewed_at=? WHERE id=?",timestamp,id)
+        await run("UPDATE time_entries SET approval_status='approved' WHERE id=?",id)
+      }
+    }
+  } else if (action === 'deel-status-paid' && deelStagingFixture) {
+    for (const index of payload.timesheets ?? []) deelTimesheetStatuses.set(`owned-timesheet-${index}`, 'paid')
+    await run("UPDATE deel_timesheet_status SET last_attempt_at='2000-01-01T00:00:00.000Z'")
+  } else if (action === 'deel-stage-receipt' && deelStagingFixture) {
+    response.writeHead(200,{'content-type':'application/json','cache-control':'no-store'})
+    response.end(JSON.stringify({posts:deelStagingPosts,entries:(await database.prepare('SELECT entry_id FROM deel_transfer_log WHERE entry_id IN(50001,50002) ORDER BY entry_id').all()).results,approvals:(await database.prepare('SELECT id,approval_status,timesheet_submission_id FROM time_entries WHERE id IN(50001,50002) ORDER BY id').all()).results,submissions:(await database.prepare('SELECT id,status,version FROM timesheet_submissions WHERE user_id IN(50001,50002) ORDER BY id').all()).results,payments:(await database.prepare("SELECT count(*) count FROM staff_payment_events WHERE kind='payment'").first()).count}))
+    return
+  } else if (action === 'first-run-create') {
     if (firstRunRuntime !== null || typeof payload.password !== 'string') {
       response.statusCode = 400
       response.end()
@@ -601,6 +661,13 @@ const fixtureControl = async (request, response) => {
     await firstRunRuntime?.dispose()
     firstRunRuntime = null
     response.setHeader('set-cookie', 'ezacto_browser_first_run=; Path=/; Max-Age=0; HttpOnly; SameSite=Strict')
+  } else if (action === 'age-running-timer') {
+    await run(`UPDATE time_entries
+      SET timer_started_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now', '-5 minutes')
+      WHERE user_id = 1 AND timer_started_at IS NOT NULL`)
+    if ((await rows('SELECT id FROM time_entries WHERE user_id=1 AND timer_started_at IS NOT NULL')).length !== 1) {
+      throw new Error('Expected exactly one owner timer to age')
+    }
   } else if (action === 'rate-card-seed') {
     if (rateCardFixture !== null) throw new Error('rate card fixture already active')
     const client = await database.prepare(
@@ -728,6 +795,7 @@ const fixtureControl = async (request, response) => {
   } else if (action === 'portal-estimate-cleanup') {
     await database.prepare('UPDATE clients SET is_active=0 WHERE id=120001').run()
   } else if (action === 'seed') {
+    await clearFixtureTimers()
     await database.batch([
       database.prepare(
         `UPDATE organizations
@@ -750,6 +818,7 @@ const fixtureControl = async (request, response) => {
         .bind(timestamp, timestamp),
     ])
   } else if (action === 'reset') {
+    await clearFixtureTimers()
     await database.batch([
       database.prepare('DELETE FROM time_entries WHERE id = 900'),
       database.prepare(
@@ -759,6 +828,7 @@ const fixtureControl = async (request, response) => {
       ),
     ])
   } else if (action === 'approval-seed') {
+    await clearFixtureTimers()
     await database.batch([
       database.prepare('DELETE FROM time_entries WHERE id = 901'),
       database.prepare('DELETE FROM expenses WHERE id = 901'),
@@ -794,6 +864,7 @@ const fixtureControl = async (request, response) => {
         .bind(timestamp, timestamp),
     ])
   } else if (action === 'approval-expense-only-seed') {
+    await clearFixtureTimers()
     await database.batch([
       database.prepare(
         `DELETE FROM time_entries
@@ -1441,6 +1512,7 @@ const fixtureControl = async (request, response) => {
       throw new Error("Disposable closure was not durably applied");
   } else if (action === 'calendar-proposals-seed' || action === 'calendar-proposals-cleanup') {
     if (calendarProposalFixture !== null) {
+      await clearFixtureTimers()
       await run(`UPDATE timesheet_lock_windows SET version=version+1,unlocked_by_user_id=1,unlocked_at=?,unlock_reason='Owned fixture cleanup'
         WHERE lock_reason='browser-1201-lock' AND unlocked_at IS NULL`, new Date().toISOString())
       const created = await rows(`SELECT time_entry_id AS id FROM calendar_proposals WHERE calendar_id='browser-owned-1201' AND time_entry_id IS NOT NULL`)
@@ -1463,6 +1535,7 @@ const fixtureControl = async (request, response) => {
         organization: (await rows('SELECT time_entry_mode,time_format,clock,timezone,week_start_day,modules FROM organizations WHERE id=1'))[0],
         owner: (await rows('SELECT timezone FROM users WHERE id=1'))[0],
       }
+      await clearFixtureTimers()
       await run(`UPDATE organizations SET time_entry_mode='duration',time_format='decimal',clock='24h',timezone='America/Costa_Rica',week_start_day='monday',modules=json_set(modules,'$.approval',json('true')) WHERE id=1`)
       await run("UPDATE users SET timezone='UTC' WHERE id=1")
       await run(`INSERT INTO users(id,first_name,last_name,profile,manager_grants,timezone,created_at,updated_at)
@@ -1482,6 +1555,7 @@ const fixtureControl = async (request, response) => {
     }
   } else if (action === 'calendar-proposals-start-end') {
     if (calendarProposalFixture === null) throw new Error('Calendar proposal fixture is not active')
+    await clearFixtureTimers()
     await run("UPDATE organizations SET time_entry_mode='start_end' WHERE id=1")
   } else if (action === 'calendar-proposals-dst') {
     if (calendarProposalFixture === null) throw new Error('Calendar proposal fixture is not active')
@@ -1510,6 +1584,7 @@ const fixtureControl = async (request, response) => {
     // Clearing the sign-in limit is all either does. The second name is for a
     // spec that signs in late in a run, after the rest of the suite has spent
     // the limit, and has nothing to do with payment runs.
+    if (action === 'sign-in-rate-reset') await clearFixtureTimers()
     await database.prepare(`DELETE FROM auth_rate_limits WHERE action = 'sign_in'`).run()
   } else if (action === 'client-360-seed') {
     await client360Seed()

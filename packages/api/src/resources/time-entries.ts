@@ -21,7 +21,6 @@ import {
   assertFields,
   optionalBoolean,
   optionalDate,
-  optionalNonnegativeInteger,
   optionalNullableObject,
   optionalNullableString,
   optionalPositiveInteger,
@@ -273,7 +272,7 @@ const createInput = (body: Record<string, unknown>): CreateTimeEntryRequest => {
   const projectId = requiredPositiveInteger(body, 'project_id', errors)
   const taskId = requiredPositiveInteger(body, 'task_id', errors)
   const spentDate = optionalDate(body, 'spent_date', errors)
-  const seconds = optionalNonnegativeInteger(body, 'seconds', errors)
+  const seconds = optionalPositiveInteger(body, 'seconds', errors)
   const startedTime = optionalTime(body, 'started_time', errors)
   const endedTime = optionalTime(body, 'ended_time', errors)
   const notes = optionalNullableString(body, 'notes', errors)
@@ -312,7 +311,7 @@ const updateInput = (body: Record<string, unknown>): UpdateTimeEntryRequest => {
   const projectId = optionalPositiveInteger(body, 'project_id', errors)
   const taskId = optionalPositiveInteger(body, 'task_id', errors)
   const spentDate = optionalDate(body, 'spent_date', errors)
-  const seconds = optionalNonnegativeInteger(body, 'seconds', errors)
+  const seconds = optionalPositiveInteger(body, 'seconds', errors)
   const startedTime = optionalTime(body, 'started_time', errors)
   const endedTime = optionalTime(body, 'ended_time', errors)
   const notes = optionalNullableString(body, 'notes', errors)
