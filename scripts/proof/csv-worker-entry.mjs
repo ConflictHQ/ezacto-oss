@@ -9,6 +9,7 @@ export default {
     if(!/^ezacto-csv1184-proof-[a-f0-9]+$/.test(env.PROOF_ID??''))return new Response(null,{status:404})
     const url=new URL(request.url)
     if(url.pathname==='/__proof/seed'){
+      try{
       await migrateD1(env.DB)
       const exists=await env.DB.prepare('SELECT 1 FROM users LIMIT 1').first();if(exists)return new Response(null,{status:409})
       const now=new Date().toISOString()
@@ -27,6 +28,7 @@ export default {
       ])
       const admin=await createD1SessionStore(env.DB).issue(2),other=await createD1SessionStore(env.DB).issue(3),staff=await createD1SessionStore(env.DB).issue(4)
       return json({admin:admin.token,other:other.token,staff:staff.token})
+      }catch(error){return new Response(JSON.stringify({fixture_error:String(error)}),{status:500,headers:{'content-type':'application/json'}})}
     }
     if(url.pathname==='/__proof/inspect')return json({
       stages:(await env.DB.prepare('SELECT id,status,safe_code,publish_pending,native_run_id FROM csv_worker_stages ORDER BY created_at').all()).results,
