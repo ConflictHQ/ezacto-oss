@@ -2301,7 +2301,7 @@ export const createApp = (
           200,
           {
             'cache-control': 'no-store',
-            'content-security-policy': shellContentSecurityPolicy,
+            'content-security-policy': companySettingsContentSecurityPolicy,
             'permissions-policy': 'camera=(), microphone=(), geolocation=()',
             'referrer-policy': 'same-origin',
             'x-content-type-options': 'nosniff',
@@ -3065,3 +3065,11 @@ const shellContentSecurityPolicy = [
 ].join('; ')
 import type { ResourceCalendarRepository } from '@ezacto/core'
 import { installResourceCalendarRoutes } from '@ezacto/api'
+
+// Only the company settings page can hand the reviewed App manifest to GitHub.
+// The UI additionally validates the complete registration pathname. Other shell
+// forms and all fetch connections retain their same-origin policy.
+const companySettingsContentSecurityPolicy = shellContentSecurityPolicy.replace(
+  "form-action 'self'",
+  "form-action 'self' https://github.com/settings/apps/new https://github.com/organizations/",
+)

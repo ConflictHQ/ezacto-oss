@@ -59,4 +59,21 @@ test('configures named GitHub repository mappings and reviews an App manifest be
     if (await button.isVisible()) expect((await button.boundingBox())!.height).toBeGreaterThanOrEqual(44)
   }
   await page.screenshot({ path: testInfo.outputPath('github-reader-phone.png'), fullPage: true })
+  // Intercept the external handoff before any network request leaves the test.
+  // A DOM action attribute alone does not prove the shell's CSP permits it.
+  const posted: string[] = []
+  await page.context().route('https://github.com/**', async route => {
+    expect(new URL(route.request().url()).pathname).toBe('/organizations/acme/settings/apps/new')
+    expect(route.request().method()).toBe('POST')
+    posted.push(route.request().postData() ?? '')
+    await route.fulfill({ contentType: 'text/html', body: '<p>Intercepted GitHub App registration</p>' })
+  })
+  const opened = page.context().waitForEvent('page')
+  await section.getByRole('button', { name: 'Continue to GitHub', exact: true }).click()
+  const destination = await opened
+  await expect(destination.getByText('Intercepted GitHub App registration')).toBeVisible()
+  expect(posted).toHaveLength(1)
+  const handedOff = JSON.parse(new URLSearchParams(posted[0]!).get('manifest')!)
+  expect(handedOff.default_permissions).toEqual({ issues: 'read', metadata: 'read' })
+  await destination.close()
 })
