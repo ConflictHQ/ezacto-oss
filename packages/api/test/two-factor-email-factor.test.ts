@@ -105,7 +105,7 @@ const harness = (twoFactor: TwoFactorGate, emailCodes?: TwoFactorEmailCodeMailer
 const post = (app: ReturnType<typeof createApiApp>, path: string, body: unknown, cookie?: string) =>
   app.request(path, {
     method: 'POST',
-    headers: { 'content-type': 'application/json', ...(cookie === undefined ? {} : { cookie }) },
+    headers: { 'content-type': 'application/json', ...(cookie === undefined ? (path === '/auth/magic-link/exchange' ? { cookie: `__Host-ezacto_staff_code=${'A'.repeat(43)}` } : {}) : { cookie }) },
     body: JSON.stringify(body),
   })
 
