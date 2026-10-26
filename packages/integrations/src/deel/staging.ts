@@ -149,7 +149,7 @@ export const createDeelStagingRuntime = (options: {
   const prepare = async (authority: DeelStageAuthority, input: DeelStageSelection) => {
     if (!configured || !client) throw new DeelStageError('unconfigured')
     const selection = canonicalSelection(input, options.startDate!, options.now())
-    let snapshot = await readSnapshot(authority, selection)
+    await readSnapshot(authority, selection)
     let remote: readonly DeelPerson[]
     try {
       remote = await client.listPeople()
@@ -159,7 +159,7 @@ export const createDeelStagingRuntime = (options: {
     }
     // A provider read may outlive the acting session or its local authority.
     // Re-read native scope before disclosing any preview or accepting a command.
-    snapshot = await readSnapshot(authority, selection)
+    const snapshot = await readSnapshot(authority, selection)
     const matched = matchPayrollContracts({ people: snapshot.directory, deelPeople: remote })
     const plan = planTimeTransfer({
       entries: snapshot.entries,
