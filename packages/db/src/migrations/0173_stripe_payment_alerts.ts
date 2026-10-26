@@ -1,5 +1,12 @@
 /** Provider reports are evidence only: no receipt or invoice balance changes. */
 export const stripePaymentAlertsMigration = [
+  `CREATE TABLE stripe_payment_alert_inbox (
+    id TEXT PRIMARY KEY, event_type TEXT NOT NULL, kind TEXT NOT NULL CHECK(kind IN ('refund','dispute')),
+    payment_intent_id TEXT NOT NULL, object_id TEXT NOT NULL, amount_cents INTEGER NOT NULL CHECK(amount_cents>0),
+    currency TEXT NOT NULL, provider_status TEXT NOT NULL, occurred_at TEXT NOT NULL,
+    received_at TEXT NOT NULL, expires_at TEXT NOT NULL
+  )`,
+  `CREATE INDEX stripe_payment_alert_inbox_due ON stripe_payment_alert_inbox(payment_intent_id,received_at)`,
   `CREATE TABLE stripe_payment_alerts (
     id TEXT PRIMARY KEY CHECK(length(id) BETWEEN 1 AND 255),
     invoice_id INTEGER NOT NULL REFERENCES invoices(id) ON DELETE CASCADE,
@@ -31,4 +38,13 @@ export const stripePaymentAlertsMigration = [
     reviewed_at TEXT NOT NULL
   )`,
   `CREATE TRIGGER stripe_payment_alert_reviews_immutable BEFORE UPDATE ON stripe_payment_alert_reviews BEGIN SELECT RAISE(ABORT,'stripe_alert_review_immutable'); END`,
+  `CREATE TRIGGER stripe_payment_alert_notice_admission BEFORE INSERT ON notification_deliveries
+    WHEN NEW.kind='stripe_payment_alert' AND NOT EXISTS(
+      SELECT 1 FROM users u JOIN user_emails e ON e.user_id=u.id
+      JOIN stripe_payment_alerts a ON a.id=NEW.period
+      WHERE u.id=NEW.user_id AND u.is_active=1 AND u.profile='administrator'
+        AND NOT EXISTS(SELECT 1 FROM account_closures c WHERE c.user_id=u.id)
+        AND e.is_primary=1 AND e.verified_at IS NOT NULL AND e.invalidated_at IS NULL
+        AND e.address=NEW.to_email AND CAST(a.invoice_id AS TEXT)=NEW.scope)
+    BEGIN SELECT RAISE(ABORT,'stripe_alert_notice_recipient_changed'); END`,
 ] as const

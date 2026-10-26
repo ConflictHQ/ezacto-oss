@@ -1067,6 +1067,7 @@ export const createRuntimeServices = async (
           paidOn: new Date().toISOString().slice(0, 10),
           now: new Date().toISOString(),
         })
+        await stripeAlerts.reconcileForPayment(input.paymentIntentId, new Date().toISOString())
       },
     },
     fetch: (request: Request) => fetch(request),
@@ -1539,6 +1540,7 @@ export const createRuntimeServices = async (
         }),
     paymentRuns,
     invoiceProviderAlerts: stripeAlerts,
+    stripeAlertReconciliation: stripeAlerts,
     stripeAlertNotices: notificationMailer === undefined || env.APP_BASE_URL === undefined ? undefined : createTimeReminderService({ prepare: (now: string) => prepareStripePaymentAlertNotifications(drizzle, { now, from: notificationMailer.from, appUrl: env.APP_BASE_URL! }) }, notificationMailer),
     scheduledRunNotices: notificationMailer === undefined || env.APP_BASE_URL === undefined
       ? undefined

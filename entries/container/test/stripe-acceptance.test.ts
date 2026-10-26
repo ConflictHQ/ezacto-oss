@@ -204,10 +204,14 @@ describe('Stripe acceptance chain (issue 102)', () => {
   })
   it('[money] signed provider reports remain visible and administrator review cannot alter receipts', async () => {
     const f = await harness()
-    await f.deliver(session('evt_paid'))
-    const before=f.state()
+
     const payload=JSON.stringify({id:'evt_refund',type:'charge.refunded',created:Math.floor(Date.now()/1000),data:{object:{id:'ch_owned',payment_intent:'pi_acceptance',amount:100000,amount_refunded:20000,currency:'usd',refunded:false}}})
     expect((await f.deliver(payload)).status).toBe(200)
+    expect(f.database.prepare('SELECT count(*) AS n FROM stripe_payment_alert_inbox').get()).toEqual({n:1})
+    expect(f.database.prepare('SELECT count(*) AS n FROM stripe_payment_alerts').get()).toEqual({n:0})
+    await f.deliver(session('evt_paid'))
+    const before=f.state()
+    expect(f.database.prepare('SELECT count(*) AS n FROM stripe_payment_alert_inbox').get()).toEqual({n:0})
     expect((await f.deliver(payload)).status).toBe(200)
     const issued=await createContainerSessionStore(f.database).issue(1)
     const headers={origin:f.configuration.appBaseUrl,cookie:`__Host-ezacto_session=${issued.token}`,'content-type':'application/json'}

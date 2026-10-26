@@ -569,6 +569,7 @@ export interface RuntimeServices {
    */
   wiseWebhook?: NonNullable<WiseRuntime["webhook"]>
   invoiceProviderAlerts?: InvoiceProviderAlertService
+  stripeAlertReconciliation?: { processDue(now: string): Promise<{ checked: number }> }
   stripeAlertNotices?: { processDue(now: string): Promise<{ queued: number }> }
   stripe?: StripeService
   /** Mailgun's bounce, complaint and delivery events; see the route. */

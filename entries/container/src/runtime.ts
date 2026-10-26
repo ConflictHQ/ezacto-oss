@@ -703,6 +703,7 @@ export const createContainerRuntime = async (
             paidOn: new Date().toISOString().slice(0, 10),
             now: new Date().toISOString(),
           })
+          await stripeAlerts.reconcileForPayment(input.paymentIntentId, new Date().toISOString())
         },
       },
       fetch: (request: Request) => fetch(request),
@@ -879,6 +880,7 @@ export const createContainerRuntime = async (
         console.error('[container] automatic approval sweep failed', error)
       }
       if (!invoicesOn) return
+      try { await stripeAlerts.processDue(now) } catch { console.error('[container] Stripe report reconciliation failed') }
       try { await deelPaymentStatus.refresh(null) } catch { console.error('[container] Deel payment status refresh failed') }
       try {
         const result = await proposeDueScheduledJobs(drizzle, now, objects)
