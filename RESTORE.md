@@ -38,6 +38,10 @@ This is deliberately called a _physical snapshot_, not a D18 bundle. It has no
 Run these commands from the same reviewed Ezacto checkout used to build the
 image. Choose a new absolute output path on storage outside the Docker volume:
 
+Before destructive recovery, preserve separate **current** closure and retention
+evidence from the same instance; the older backup alone cannot authorize a
+restore. See the [reconciliation prerequisite](#restore-into-a-new-volume) below.
+
 ```sh
 docker stop --timeout 30 ezacto
 node scripts/container-physical-snapshot.mjs backup \
@@ -74,6 +78,11 @@ Prerequisites:
   whose migrations you intend to apply;
 - a protected environment file with the original public origin and working SMTP
   settings;
+- a **separate, current, stopped/checkpointed database snapshot from the same
+  instance**, including its closure and retention-review history. Capture and
+  protect this evidence before deleting or replacing the source. An old backup
+  being restored is not current evidence. If current evidence is unavailable,
+  keep the restore offline;
 - a **new, empty** Docker named volume that no container references.
 
 Verify first, create the target volume, and restore:
@@ -96,8 +105,38 @@ back out and compares every byte to `snapshot.json`. If a restore fails after
 writing begins, discard that new target volume and retry with another empty
 volume; never merge a partial restore into existing data.
 
-Start a separate validation container without reusing the old container name or
-volume:
+### Reconcile privacy history before starting
+
+After exact copy verification, the helper deliberately quarantines the restored
+database. It cannot serve traffic yet. Quarantine and subsequent reconciliation
+change the database, so its post-release byte hash is not expected to match the
+original snapshot. Preserve the original verified bundle unchanged.
+
+Follow the complete [container restore quarantine procedure](docs/account-retention-follow-through.md#container-restore-quarantine).
+Keep the restored volume offline and mount the **separate current evidence**
+read-only. For the names above, replay local closure history with:
+
+```sh
+docker run --rm --network none --user 0:0 \
+  --mount type=volume,source=ezacto-restored-data,target=/data \
+  --mount type=bind,source=/absolute/protected/current.sqlite,target=/evidence/current.sqlite,readonly \
+  --entrypoint node ezacto:YOUR_REVIEWED_COMMIT \
+  entries/container/dist/privacy-restore.js replay \
+  --database /data/db.sqlite --current-database /evidence/current.sqlite
+```
+
+Replay alone is not permission to start. Review later free-text edits,
+attachment and email removals, external copies, provider obligations, and queued
+mail/integration work against current evidence, and reapply required changes
+while offline. Record the actual reconciliation in a protected restore ticket.
+Only after that review, run the same command with `release` instead of `replay`
+and add `--evidence 'Your protected ticket reference and verified reconciliation result'`
+(20–2000 characters). Release rechecks current evidence and local closure rules;
+changed evidence requires another replay and review. Never clear quarantine by
+editing its database flag directly.
+
+Start a separate validation container only after release, without reusing the
+old container name or volume:
 
 ```sh
 docker run --detach \

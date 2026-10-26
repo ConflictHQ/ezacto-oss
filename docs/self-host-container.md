@@ -16,7 +16,8 @@ drill before entering production books.
   in Caddy, nginx, Traefik, or the ingress you already operate.
 - An SMTP endpoint reachable from the container. Both `smtp://` with STARTTLS
   and `smtps://` are accepted. The process verifies DNS, TCP/TLS, and SMTP
-  authentication before it starts listening.
+  authentication at startup; a failed check logs a warning and mail retries
+  from the queue without preventing the instance from listening.
 - This source checkout and Node.js 22 for the tested snapshot helper.
 
 ## 1. Build a pinned image
@@ -51,13 +52,21 @@ API rather than through the sign-up form. Step 4 explains the choice, which is
 worth making before the instance is reachable rather than after.
 
 ```dotenv
-EZACTO_BOOTSTRAP_TOKEN=REPLACE_WITH_32_RANDOM_BYTES_AS_BASE64URL
+EZACTO_BOOTSTRAP_TOKEN=REPLACE_WITH_GENERATED_EZACTO_TOKEN
 ```
 
 Generate the signing key without writing raw bytes to disk:
 
 ```sh
 node -e "process.stdout.write(require('node:crypto').randomBytes(32).toString('base64url'))"
+```
+
+The bootstrap token uses the native API-token format, not a bare signing key.
+Generate its random selector and secret separately, and copy the complete
+`ezacto_…_…` output into the protected environment file:
+
+```sh
+node -e "const {randomBytes}=require('node:crypto'); process.stdout.write('ezacto_'+randomBytes(12).toString('base64url')+'_'+randomBytes(32).toString('base64url'))"
 ```
 
 The SMTP values are checked once at startup, and a failure there is a warning
@@ -157,8 +166,10 @@ docker exec ezacto node -e "if(process.getuid()===0)process.exit(1)"
 curl -fsS https://time.example.com/healthz
 ```
 
-The listener opens only after configuration, SMTP verification, SQLite
-integrity checks, and migrations succeed. If it does not become healthy, inspect
+The listener opens only after configuration, the SMTP verification attempt,
+SQLite integrity checks, and migrations. SMTP verification failure warns and
+retries; invalid configuration, integrity failures, and failed migrations stop
+startup. If it does not become healthy, inspect
 `docker logs ezacto`; the process reports the invalid contract by name without
 printing its value.
 
