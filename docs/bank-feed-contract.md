@@ -31,9 +31,15 @@ issue date. The best rank wins; a tie at it leaves the deposit `unmatched`.
 Invoices of another currency are never candidates. A suggestion creates no
 payment; confirmation is explicit and creates exactly one (domain-model 2.16).
 
-## Not settled here
+## Delivery still required
 
 Storage-side behaviour (idempotent ingest, atomic confirm, audit rows, a
-rejected/ignored state, `/api/v1/bank-deposits`) and the owner decisions in the
-issue: which feed first, one deposit per invoice in v1, cross-currency stays
-unmatched (the matcher already enforces the last).
+rejected/ignored state, `/api/v1/bank-deposits`), provider adapters and the review
+UI remain unimplemented. The [Mercury feasibility spike](mercury-bank-feed-spike.md)
+identifies its read API and the sandbox evidence still needed.
+
+The owner decisions recorded in #101 on 2026-10-24 are: pursue Wise and Mercury
+in parallel (D23); one deposit to one invoice in v1, with multi-invoice detection
+left for later (D24); leave cross-currency deposits unmatched (D25). Wise must
+exclude our own outgoing payouts. These decisions do not constitute provider
+acceptance or permission to move money.
