@@ -1,3 +1,4 @@
+import { createBankDepositReviewService } from '@ezacto/db/d1'
 import { createCsvWorkerRuntime, csvWorkerConfigured } from './csv-runtime.js'
 import { createCalendarFeedService } from '@ezacto/db/d1'
 import { createDeelPaymentStatusStore } from '@ezacto/db/d1'
@@ -1285,6 +1286,7 @@ export const createRuntimeServices = async (
     estimateTemplates: createEstimateTemplateRepository(drizzle),
     clientRateCards: createClientRateCardRepository(drizzle),
     moneyResources,
+    bankDeposits: createBankDepositReviewService(drizzle),
     invoiceGeneration: createInvoiceGenerationService(drizzle),
     recurringInvoices: createRecurringInvoiceEngine(drizzle),
     reminders: { processDue: processDueReminders },

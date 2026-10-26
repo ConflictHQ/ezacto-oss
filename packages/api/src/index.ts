@@ -586,3 +586,5 @@ export * from './csv-import-staging-port.js'
 export { isCsvStagingPath, csvStagingAuthority, csvStagingSafeFailure } from './csv-import-staging.js'
 
 export * from './csv-import-apply-port.js'
+
+export { installBankDepositRoutes, type BankDepositReviewApi } from './bank-deposits.js'

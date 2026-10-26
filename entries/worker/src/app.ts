@@ -1,3 +1,4 @@
+import { installBankDepositRoutes, type BankDepositReviewApi } from '@ezacto/api'
 import { installCalendarFeedRoutes, installCalendarSubscriptionRoute } from '@ezacto/api'
 import type { CalendarFeedService } from '@ezacto/core'
 import { installDeelPaymentStatusRoutes } from '@ezacto/api'
@@ -486,6 +487,7 @@ export interface RuntimeServices {
   isOwnMoneyVisible(): Promise<boolean>
   timesheetApprovals: TimesheetApprovalService
   timesheetLockPolicy: TimesheetLockPolicyService
+  bankDeposits?: BankDepositReviewApi
   moneyResources: MoneyResourceRouteOptions['service']
   invoiceGeneration: NonNullable<MoneyResourceRouteOptions['generation']>
   /**
@@ -1078,6 +1080,7 @@ export const createApp = (
             // Mounted whether or not BILL is reachable: there is nothing to
             // connect, so the honest answer to "is this configured?" is a
             // route that says so rather than a route that is missing.
+            if(services.bankDeposits) installBankDepositRoutes(api,services.bankDeposits)
             if (services.stripe !== undefined) {
               installStripeRoutes(api, services.stripe)
             }

@@ -75,6 +75,8 @@ const MODULE_PATHS: readonly (readonly [OperatorModule, readonly RegExp[]])[] = 
     'invoices',
     [
       /^\/api\/v1\/invoices(\/|$)/u,
+      /^\/api\/v1\/bank-deposits(\/|$)/u,
+      /^\/api\/v1\/bank-deposit-accounts(\/|$)/u,
       /^\/api\/v1\/invoice-generations(\/|$)/u,
       /^\/api\/v1\/invoice-elevations(\/|$)/u,
       /^\/api\/v1\/recurring-invoices(\/|$)/u,

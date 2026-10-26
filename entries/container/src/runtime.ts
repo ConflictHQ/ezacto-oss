@@ -1,3 +1,4 @@
+import { createBankDepositReviewService } from '@ezacto/db'
 import { createCalendarFeedService } from '@ezacto/db'
 import { createDeelPaymentStatusStore } from '@ezacto/db'
 import { createDeelPaymentStatusRuntime } from '@ezacto/integrations'
@@ -1027,6 +1028,7 @@ export const createContainerRuntime = async (
         return row?.enabled === 1
       },
       moneyResources,
+    bankDeposits: createBankDepositReviewService(drizzle),
       ...(quickBooks === null ? {} : { quickBooks: quickBooks.service }),
       ...(wise === null ? {} : { wise: wise.service }),
       ...(wise?.webhook === undefined ? {} : { wiseWebhook: wise.webhook }),

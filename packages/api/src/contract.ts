@@ -1,3 +1,4 @@
+import { bankDepositOperations, bankDepositSchemas } from './bank-deposit-contract.js'
 import { calendarFeedOperations, calendarFeedSchemas } from './calendar-feed-contract.js'
 import { deelStagingOperations, deelStagingSchemas } from './deel-staging-contract.js'
 import { csvImportApplyOperations, csvImportApplySchemas } from './csv-import-apply-contract.js'
@@ -3810,6 +3811,7 @@ export const apiContractOperations: readonly ApiContractOperation[] = [
   ...moneyOperations.map(documentInvoiceTokenElevation),
   ...attachmentContractOperations,
   ...staffPaymentOperations,
+  ...bankDepositOperations,
   ...deelSyncOperations,
   ...deelStagingOperations,
   ...paymentRunOperations,
@@ -4095,6 +4097,7 @@ export const apiContractSchemas: Readonly<Record<string, JsonSchema>> = {
   ...calendarFeedSchemas,
   ...attachmentContractSchemas,
   ...staffPaymentSchemas,
+  ...bankDepositSchemas,
   ...deelSyncSchemas,
   ...deelStagingSchemas,
   ...paymentRunSchemas,
