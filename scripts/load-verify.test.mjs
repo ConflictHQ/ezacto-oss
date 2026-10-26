@@ -40,6 +40,7 @@ test("web load uses the full npm pipeline without passing Vitest flags to the br
 
 test("a shard command is one worker plus the verify matrix selection", () => {
   assert.deepEqual(testCommand("migrate"), ["npm", "test", "-w", "@conflict-hq/ezacto-migrate", "--", "--maxWorkers=1"]);
+  assert.deepEqual(testCommand("web"), ["npm", "run", "test:load", "-w", "@ezacto/web"]);
   assert.deepEqual(testCommand("api-1").slice(-5), ["--shard=1/3", "--exclude", "test/reports.test.ts", "--exclude", "test/money-resources.test.ts"]);
   assert.throws(() => testCommand("nope"), /unknown shard/);
 });
