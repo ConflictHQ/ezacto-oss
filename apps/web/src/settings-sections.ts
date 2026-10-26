@@ -97,6 +97,7 @@ export const applySettingsSection = <Section extends SettingsSectionElement>(
  */
 export const USER_SETTINGS_SECTIONS: readonly SettingsSection[] = [
   { id: 'reminders', label: 'Reminders' },
+  { id: 'calendars', label: 'Calendars' },
   { id: 'payouts', label: 'Where you are paid' },
   { id: 'two-factor', label: 'Two-step sign-in' },
   { id: 'tokens', label: 'Access tokens' },

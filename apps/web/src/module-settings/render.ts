@@ -1,3 +1,4 @@
+import { renderCalendarConnections } from '../calendar-connections/render.js'
 import { renderAccountingProviders, type AccountingProviderAvailability } from '../accounting-providers.js'
 import { renderWebhookSettings } from './webhooks-render.js'
 import { renderCompanyDataTools } from './data-tools.js'
@@ -316,6 +317,9 @@ export const renderModuleSettingsPage = (view?: string, providers?: AccountingPr
     ${renderUserSectionStrip()}
     <p class="form-result module-settings-status" data-settings-user-status role="status" aria-live="polite">Loading your account…</p>
     <dl class="settings-facts" data-settings-user-facts hidden></dl>
+    ${userPane('calendars')}
+    ${renderCalendarConnections()}
+    </div>
     ${userPane('reminders')}
     <section class="settings-notifications" data-settings-notifications aria-labelledby="settings-notifications-heading" hidden>
       <h2 id="settings-notifications-heading">Your reminders</h2>

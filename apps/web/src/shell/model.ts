@@ -1,3 +1,4 @@
+import type { CalendarConnectionApi } from '../calendar-connections/model.js'
 import type { CalendarProposalApi } from '../calendar-proposals/browser.js'
 import type { FirstRunApi } from '../first-run/model.js'
 import type { EstimateComposerApi } from '../estimates/composer.js'
@@ -110,6 +111,7 @@ export interface ShellApi
     Partial<TeamDirectoryApi>,
     Partial<CompanySettingsApi>,
     Partial<FirstRunApi> {
+  calendarConnections?: CalendarConnectionApi
   whoami(signal?: AbortSignal): Promise<Whoami>
   /**
    * Your own reminder preferences (issue 935), under Settings. Optional like
@@ -2621,6 +2623,13 @@ export const createShellApi = (client: EzactoClient): ShellApi => ({
         ...withSignal(signal),
       })
     ).data,
+  calendarConnections: {
+    list: (signal) => client.listCalendarConnections(withSignal(signal)),
+    authorize: async (provider, generation, signal) =>
+      (await client.beginCalendarAuthorization({ provider, body: { generation }, ...withSignal(signal) })).data.authorization_url,
+    refresh: (provider, signal) => client.refreshCalendarConnection({ provider, body: {}, ...withSignal(signal) }),
+    disconnect: (provider, generation, signal) => client.disconnectCalendarConnection({ provider, body: { generation }, ...withSignal(signal) }),
+  },
   listCalendarProposals: (query, signal) => client.listCalendarProposals({ query, ...withSignal(signal) }),
   acceptCalendarProposal: async (id, body, signal) =>
     (await client.acceptCalendarProposal({ id, body, ...withSignal(signal) })).data,

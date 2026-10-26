@@ -81,6 +81,8 @@ const bundle = await build({
   write: false,
 })
 
+const calendarFixture = process.env.EZACTO_BROWSER_CALENDAR_FIXTURE === '1'
+const calendarCalls = { token: 0, events: 0, revoke: 0 }
 const deelStagingFixture = process.env.EZACTO_BROWSER_DEEL_STAGING_FIXTURE === '1'
 const deelStagingPosts = []
 const deelTimesheetStatuses = new Map()
@@ -106,7 +108,23 @@ const workerOptions = {
     }
     throw new Error('Unexpected fixture outbound operation')
   }} : {}),
+  ...(calendarFixture ? {outboundService: async request => {
+    const url = new URL(request.url)
+    if (url.origin === 'https://oauth2.googleapis.com' && url.pathname === '/token' && request.method === 'POST') {
+      const body = new URLSearchParams(await request.text())
+      if (body.get('grant_type') === 'authorization_code' && !body.get('code_verifier')) throw new Error('Calendar fixture expected PKCE')
+      calendarCalls.token++
+      return Response.json({access_token:'local-calendar-access',refresh_token:'local-calendar-refresh',token_type:'Bearer',expires_in:3600,scope:'https://www.googleapis.com/auth/calendar.readonly'})
+    }
+    if (url.origin === 'https://www.googleapis.com' && url.pathname === '/calendar/v3/calendars/primary/events' && request.method === 'GET') {
+      calendarCalls.events++
+      return Response.json({items:[{id:'owned-calendar-event-428',status:'confirmed',summary:'Owned calendar fixture',start:{dateTime:new Date(Date.now()+3600000).toISOString()},end:{dateTime:new Date(Date.now()+7200000).toISOString()}}],nextSyncToken:'owned-sync-token'})
+    }
+    if (url.origin === 'https://oauth2.googleapis.com' && url.pathname === '/revoke' && request.method === 'POST') { calendarCalls.revoke++; return new Response(null,{status:200}) }
+    throw new Error('Unexpected calendar fixture outbound operation')
+  }} : {}),
   bindings: {
+    ...(calendarFixture ? {GOOGLE_CALENDAR_CLIENT_ID:'owned-calendar-client',GOOGLE_CALENDAR_CLIENT_SECRET:'owned-calendar-secret',APP_BASE_URL:`http://localhost:${listenPort}`} : {}),
     ...(deelStagingFixture ? {DEEL_TOKEN:'local-deel-staging-fixture',DEEL_SYNC_START_DATE:'2026-08-01'} : {}),
     API_CURSOR_SIGNING_KEY: cursorSigningKey,
     WEBHOOK_ENCRYPTION_KEY: 'AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAY',
@@ -610,7 +628,11 @@ const fixtureControl = async (request, response) => {
     response.end()
     return
   }
-  if (action === 'bank-deposit-seed') {
+  if (action === 'calendar-oauth-receipt' && calendarFixture) {
+    response.writeHead(200, { 'content-type': 'application/json', 'cache-control': 'no-store' })
+    response.end(JSON.stringify({calls:calendarCalls,proposals:await rows("SELECT status FROM calendar_proposals WHERE event_id='owned-calendar-event-428'"),entries:await rows("SELECT count(*) AS count FROM time_entries WHERE calendar_event_ref LIKE '%owned-calendar-event-428%'"),connections:await rows("SELECT status FROM calendar_connections WHERE user_id=1")}))
+    return
+  } else if (action === 'bank-deposit-seed') {
     const db = createD1Database(database), ingestion = createBankDepositIngestionService(db)
     const account = await ingestion.ensureAccount({ provider: 'mercury', externalAccountId: 'owned-browser-bank', name: 'Browser bank review' })
     const now = new Date().toISOString(), invoiceIds = [], deposits = [], observations = {}
