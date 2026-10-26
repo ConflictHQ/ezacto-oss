@@ -34,8 +34,16 @@ the Harvest UI open**, which means it has to happen before you close the account
 
 ## Running it
 
-`ezacto-migrate` is published as `@conflict-hq/ezacto-migrate`. It needs Node 22
-or newer and nothing else installed; there is nothing to clone or build.
+The standalone package name is `@conflict-hq/ezacto-migrate`. Before using the
+registry commands below, check that a release is available:
+
+```sh
+npm view @conflict-hq/ezacto-migrate version
+```
+
+If the registry reports “not found,” use the operator-checkout build at the top
+of this guide. The package requires Node 22 or newer. Once published, it can be
+installed without cloning or building this repository.
 
 ```sh
 npx @conflict-hq/ezacto-migrate            # prints the command list
