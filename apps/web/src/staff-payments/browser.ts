@@ -1,3 +1,4 @@
+import { setRequestBusy } from '../request-feedback.js'
 import { createDeelStageController, type DeelStageApi } from './deel-stage-browser.js'
 import { deelStagingLabel, renderDeelStagingStatus } from './deel-status.js'
 import { createDeelPaymentStatusController, type DeelPaymentStatusApi } from './deel-payment-status-browser.js'
@@ -180,6 +181,7 @@ export const createStaffPaymentsController = (api: StaffPaymentsApi) => {
   }
   const setBusy = (value: boolean): void => {
     busy = value
+    setRequestBusy(content, value)
     for (const control of content.querySelectorAll<HTMLInputElement>(
       'input, select, textarea, button',
     ))
@@ -776,12 +778,15 @@ export const createStaffPaymentsController = (api: StaffPaymentsApi) => {
         source: 'historical',
       }))
     setBusy(true)
+    status.textContent = `Recording settlements: 0 of ${commands.length} complete…`
     void (async () => {
       let saved = 0
       try {
         for (const entry of commands) {
+          if (active.aborted) return
           await record(entry, active)
           saved += 1
+          if (!active.aborted) status.textContent = `Recording settlements: ${saved} of ${commands.length} complete…`
         }
         if (!active.aborted) {
           await load()

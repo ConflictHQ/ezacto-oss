@@ -10,6 +10,7 @@ import { join } from 'node:path'
 import BetterSqlite3 from 'better-sqlite3'
 import { afterEach, describe, expect, it } from 'vitest'
 import {
+  physicalSnapshotSourceEntriesHelper,
   createCanonicalTemporaryDirectory,
   createPhysicalSnapshotMetadata,
   verifyPhysicalSnapshot,
@@ -197,3 +198,55 @@ describe('container physical snapshot', () => {
     )
   })
 })
+
+describe("private CSV capture exclusion", () => {
+  it("inspects only supported source roots and never copies private staging into a durable archive", async () => {
+    const { root } = await fixture();
+    // This fixture usually represents an archive; the source volume does not
+    // carry the archive's manifest.
+    await rm(join(root,"snapshot.json"));
+    await mkdir(join(root, "csv-staging"));
+    await writeFile(
+      join(root, "csv-staging", "owned-private-csv"),
+      "owned private input must not be archived",
+    );
+    const inventory = () => {
+      let output = "";
+      runInNewContext(
+        physicalSnapshotSourceEntriesHelper.replace(
+          "'/data'",
+          JSON.stringify(root),
+        ),
+        {
+          require: (name: string) => {
+            if (name !== "node:fs") throw new Error("unexpected module");
+            return fs;
+          },
+          process: {
+            stdout: {
+              write: (value: string) => {
+                output += value;
+              },
+            },
+          },
+        },
+      );
+      return JSON.parse(output) as string[];
+    };
+    expect(inventory()).toEqual(["db.sqlite", "attachments"]);
+    await expect(
+      createPhysicalSnapshotMetadata(root, {
+        container: "owned",
+        image: "owned:fixture",
+        image_id: "sha256:owned",
+        volume: "owned",
+      }),
+    ).rejects.toThrow("unexpected root path csv-staging");
+    await writeFile(join(root, "db.sqlite-wal"), "uncheckpointed");
+    expect(inventory).toThrow("unsupported root entry");
+    await rm(join(root, "db.sqlite-wal"));
+    await rm(join(root, "csv-staging"), { recursive: true });
+    await symlink(join(root, "attachments"), join(root, "csv-staging"), "dir");
+    expect(inventory).toThrow("symbolic link");
+  });
+});

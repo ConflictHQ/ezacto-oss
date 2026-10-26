@@ -1,3 +1,4 @@
+import type { CalendarFeedsApi } from './calendar-feeds-browser.js'
 import type { ResourceCalendar, ResourceCalendarContext } from '@conflict-hq/ezacto-client'
 import { addCalendarDays, type AllocationRow } from './model.js'
 
@@ -15,6 +16,7 @@ export interface CalendarPage<T> {
 export interface CalendarAllocation extends AllocationRow { readonly project_name: string }
 export interface CalendarProject { readonly id: number; readonly name: string; readonly is_active: boolean }
 export interface ResourceCalendarApi {
+  feeds?: CalendarFeedsApi
   context(signal: AbortSignal): Promise<{ readonly data: ResourceCalendarContext }>
   read(query: CalendarQuery, cursor: string | undefined, signal: AbortSignal): Promise<CalendarPage<ResourceCalendar>>
   allocations(query: CalendarQuery, cursor: string | undefined, signal: AbortSignal): Promise<CalendarPage<readonly CalendarAllocation[]>>

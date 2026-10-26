@@ -1,6 +1,7 @@
 import { CsvBrowserPlannerError, assertCsvExporterZone } from './csv-browser-errors.js'
 /** Concrete Container workspace composition, consumed by staging/apply in #1181/#1183. */
 import type BetterSqlite3 from 'better-sqlite3'
+import type { CompiledQuery } from '@ezacto/db'
 import type { AdministratorActor, CsvBrowserLease } from '@ezacto/core'
 import {
   createContainerDatabase,
@@ -26,7 +27,7 @@ import { createCsvBrowserWriter } from './csv-browser-writer.js'
 
 export const createSqliteCsvBrowserService = (
   sqlite: BetterSqlite3.Database,
-  options: { now?: () => Date } = {},
+  options: { now?: () => Date; authorityFence?: (actor: AdministratorActor) => CompiledQuery } = {},
 ) => {
   const now = options.now ?? (() => new Date())
   registerCsvImportSqliteFunctions(sqlite)
@@ -40,6 +41,7 @@ export const createSqliteCsvBrowserService = (
     now,
     destinationFence: csvImportDestinationFence,
     setupFacts: csvImportSetupFacts,
+    ...(options.authorityFence === undefined ? {} : { authorityFence: options.authorityFence }),
   })
   return {
     ledger,

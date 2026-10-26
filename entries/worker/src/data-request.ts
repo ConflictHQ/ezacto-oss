@@ -34,6 +34,7 @@ const SERVICE_PATH_PREFIXES: readonly string[] = [
   // A backup downloaded by the link an administrator minted (issue 39). No
   // session: the single-use token is the authorisation.
   '/backup-download',
+  '/calendar',
 ]
 
 export const isServicePath = (path: string): boolean =>

@@ -118,6 +118,21 @@ beforeEach(() => {
   document.body.innerHTML = "";
   document.documentElement.removeAttribute("data-demo-deployment");
 });
+it("announces a delayed invoice refresh and releases its indicator after rejection", async () => {
+  const read = vi.fn(async () => report());
+  const active = await mount({ getStaffInvoiceReport: read });
+  let reject!: (error: Error) => void;
+  read.mockImplementationOnce(() => new Promise<StaffInvoiceReport>((_, fail) => { reject = fail; }));
+  click("Load contractor invoices for work month");
+  const status = document.querySelector<HTMLElement>("[data-staff-invoice-status]")!;
+  expect(status.textContent).toBe("Loading contractor invoices…");
+  expect(status.getAttribute("aria-busy")).toBe("true");
+  reject(new Error("Invoices unavailable"));
+  await vi.waitFor(() => expect(status.textContent).toBe("Invoices unavailable"));
+  expect(status.getAttribute("aria-busy")).toBe("false");
+  active.abort();
+  expect(status.getAttribute("aria-busy")).toBe("false");
+});
 it("drafts from a reviewed earning with an explicit contractor reference and does not use a payment mutation", async () => {
   const api = {
     getStaffInvoiceReport: vi.fn(async () => report()),

@@ -111,6 +111,28 @@ describe('ez backup / restore / verify', () => {
     await rm(directory, { recursive: true, force: true })
   })
 
+  it('invalidates private CSV and calendar credentials together after a real backup restore', async () => {
+    const original = 'a'.repeat(64)
+    const db = new BetterSqlite3(databasePath)
+    for (const table of ['csv_staging_instance', 'planning_calendar_instance']) {
+      db.exec(`CREATE TABLE ${table}(singleton INTEGER PRIMARY KEY, nonce TEXT NOT NULL)`)
+      db.prepare(`INSERT INTO ${table} VALUES(1,?)`).run(original)
+    }
+    db.close()
+    const backup = await createBackup({ databasePath, attachmentDirectory, outputDirectory: directory })
+    const restoredPath = join(directory, 'private-incarnation-restored.sqlite')
+    await restoreBackup({ bundleDirectory: backup.bundleDirectory, targetDatabasePath: restoredPath, targetAttachmentDirectory: join(directory, 'private-incarnation-attachments') })
+    const restored = new BetterSqlite3(restoredPath)
+    try {
+      for (const table of ['csv_staging_instance', 'planning_calendar_instance']) {
+        const value = restored.prepare(`SELECT nonce FROM ${table}`).get() as { nonce: string }
+        expect(value.nonce).toMatch(/^[0-9a-f]{64}$/u)
+        expect(value.nonce).not.toBe(original)
+      }
+      expect(restored.prepare('SELECT seconds FROM time_entries WHERE id=1').get()).toEqual({ seconds: 3600 })
+    } finally { restored.close() }
+  })
+
   it('[unit] bundle opens without our software (sqlite3 + CSV headers verified)', async () => {
     const result = await createBackup({
       databasePath,

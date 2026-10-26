@@ -38,3 +38,6 @@ export function restorePhysicalSnapshot(
   options: { bundle: string; volume: string; image: string },
   execute?: (args: string[]) => Promise<{ stdout: string; stderr: string }>,
 ): Promise<void>;
+
+/** Read-only stopped-volume inventory; private staging is never copied. */
+export const physicalSnapshotSourceEntriesHelper: string;

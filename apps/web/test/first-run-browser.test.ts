@@ -33,6 +33,22 @@ beforeEach(() => {
 })
 
 describe('first-run setup guide', () => {
+  it('shows a local checking phase and clears it when refresh is cancelled', async () => {
+    let finish!: (value: FirstRunStatus) => void
+    const read = vi.fn().mockResolvedValueOnce(empty)
+      .mockImplementationOnce(() => new Promise<FirstRunStatus>(resolve => { finish = resolve }))
+    const active = new AbortController()
+    createFirstRunController({ getFirstRunStatus: read }).activate(identity, active.signal, () => false)
+    await vi.waitFor(() => expect(panel().hidden).toBe(false))
+    click('[data-first-run-refresh]')
+    expect(document.querySelector('[data-first-run-status]')?.textContent).toBe('Checking setup…')
+    expect(document.querySelector('[data-first-run-status]')?.getAttribute('aria-busy')).toBe('true')
+    active.abort()
+    finish(empty)
+    await Promise.resolve()
+    expect(document.querySelector('[data-first-run-status]')?.getAttribute('aria-busy')).toBe('false')
+    expect(document.querySelector('[data-first-run-status]')?.textContent).toBe('')
+  })
   it('checks saved steps, dismisses per owner, reopens from Help and hides after the first entry', async () => {
     let state = empty
     const read = vi.fn(async () => state)

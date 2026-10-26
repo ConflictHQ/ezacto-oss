@@ -272,7 +272,7 @@ describe("operations and schemas", () => {
   const ops = csvImportStagingOperations;
   it("are session-only, expose no apply, and every referenced schema exists", () => {
     expect(
-      ops.every(
+      ops.filter(op=>op.operationId!=='getCsvImportCapabilities').every(
         (op) =>
           op.sessionOnly === true &&
           op.tokenOnly !== true &&
@@ -287,15 +287,16 @@ describe("operations and schemas", () => {
       for (const schema of [op.responseSchema, op.requestSchema])
         if (schema) expect(names.has(schema)).toBe(true);
   });
-  it("are not registered: no runtime advertises browser CSV import", () => {
+  it("register the actual private staging contract without claiming an apply route", () => {
     const registered = new Set(
       apiContractOperations.map((op) => op.operationId),
     );
-    for (const op of ops) expect(registered.has(op.operationId)).toBe(false);
+    for (const op of ops) expect(registered.has(op.operationId)).toBe(true);
   });
-  it("map every error code to a 4xx and limits match the plan", () => {
+  it("map bounded refusal and availability errors while preserving limits", () => {
     for (const status of Object.values(csvStagingErrorStatus))
       expect(status).toBeGreaterThanOrEqual(400);
+    expect(csvStagingErrorStatus.storage_unavailable).toBe(503);
     expect(CSV_STAGING_LIMITS).toMatchObject({
       maxBytes: 5242880,
       maxRows: 50000,

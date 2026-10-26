@@ -1,12 +1,12 @@
 import { AsyncLocalStorage } from 'node:async_hooks'
-import { apiFailureStatus, reportWorkerError, runtimeTraceId, scrubWorkerEvent, type WorkerErrorContext, type WorkerOptions } from './error-reporting.js'
+import { apiFailureStatus, reportWorkerError, runtimeTraceId, scrubWorkerEvent, type WorkerErrorContext, type WorkerScheduledOperation, type WorkerOptions } from './error-reporting.js'
 export type { WorkerErrorContext, WorkerErrorPhase, WorkerErrorReporter, WorkerOptions } from './error-reporting.js'
 import { consumeMigrationBatch } from './migration-queue.js'
 import { ensureRuntimeDatabaseReady } from './runtime.js'
 import * as Sentry from '@sentry/cloudflare'
 import { scheduleConfirmedRunWorkflows } from './scheduled-run-workflow-scheduler.js'
 import type { QueuedEmailJob } from '@ezacto/mailer'
-import { createApiIdempotencyAuthorization, moduleAvailability, withIdempotency } from '@ezacto/api'
+import { createApiIdempotencyAuthorization, isCsvStagingPath, moduleAvailability, withIdempotency } from '@ezacto/api'
 import { createApp, demoDeployment, demoMailDomains, type WorkerEnv } from './app.js'
 import { isDataRequest } from './data-request.js'
 import { workerBrandAssetSurface } from './brand-assets.js'
@@ -165,6 +165,10 @@ export const createWorker = (options: WorkerOptions = {}): ExportedHandler<Worke
     // below this line should ever compose a response for a cleartext request.
     const refusal = cleartextRefusal(request)
     if (refusal !== null) return refusal
+    if (
+      (request.method === 'GET' && new URL(request.url).pathname === '/api/v1/csv-import-capabilities') ||
+      isCsvStagingPath(new URL(request.url).pathname)
+    ) return withStrictTransport(request, await publicApp.fetch(request, env, executionContext))
     if (new URL(request.url).pathname === '/readyz') return readiness(env, report)
     if (!isDataRequest(request)) {
       return withStrictTransport(
@@ -256,11 +260,11 @@ export const createWorker = (options: WorkerOptions = {}): ExportedHandler<Worke
     // The operator's invoices switch (issue 1254): where it is off none of the
     // invoice sweeps run, and what they would have touched stays as it is.
     const invoices = moduleAvailability(env).invoices
-    const isolate = async <T>(name: string, job: () => Promise<T>): Promise<T | undefined> => {
+    const isolate = async <T>(name: WorkerScheduledOperation, job: () => Promise<T>): Promise<T | undefined> => {
       try { return await job() }
       catch (error) {
         console.error(`[worker] ${name} failed`, error)
-        report(error, { phase: 'scheduled' })
+        report(error, { phase: 'scheduled', operation: name })
         return undefined
       }
     }
@@ -278,7 +282,7 @@ export const createWorker = (options: WorkerOptions = {}): ExportedHandler<Worke
         await services.budgetAlerts.evaluate(new Date().toISOString())
       } catch (error) {
         console.error('[worker] budget alert evaluation failed', error)
-        report(error, { phase: 'scheduled' })
+        report(error, { phase: 'scheduled', operation: 'budget alert evaluation' })
       }
     }
     if (controller.cron === '* * * * *' && services.timeReminders !== undefined) {
@@ -290,7 +294,7 @@ export const createWorker = (options: WorkerOptions = {}): ExportedHandler<Worke
         await services.timeReminders.processDue(new Date().toISOString())
       } catch (error) {
         console.error('[worker] time reminders failed', error)
-        report(error, { phase: 'scheduled' })
+        report(error, { phase: 'scheduled', operation: 'time reminders' })
       }
     }
     if (controller.cron === '* * * * *' && services.timesheetAutoApprovalSweep !== undefined) {
@@ -304,14 +308,14 @@ export const createWorker = (options: WorkerOptions = {}): ExportedHandler<Worke
         }
       } catch (error) {
         console.error('[worker] automatic approval sweep failed', error)
-        report(error, { phase: 'scheduled' })
+        report(error, { phase: 'scheduled', operation: 'automatic approval sweep' })
       }
     }
     if (controller.cron === '* * * * *' && services.offsiteBackupSync !== undefined) {
       try { await services.offsiteBackupSync.processDue() }
       catch (error) {
         console.error('[worker] off-site backup checkpoint failed', error)
-        report(error, { phase: 'scheduled' })
+        report(error, { phase: 'scheduled', operation: 'off-site backup checkpoint' })
       }
     }
     if (controller.cron === '* * * * *' && invoices && services.scheduledJobProposals !== undefined) {
@@ -321,7 +325,7 @@ export const createWorker = (options: WorkerOptions = {}): ExportedHandler<Worke
           console.error('[worker] scheduled job proposal failed', failure.jobId, failure.message)
       } catch (error) {
         console.error('[worker] scheduled job proposal sweep failed', error)
-        report(error, { phase: 'scheduled' })
+        report(error, { phase: 'scheduled', operation: 'scheduled job proposal sweep' })
       }
     }
     if (controller.cron === '* * * * *' && invoices && services.scheduledRunNotices !== undefined) {
@@ -329,7 +333,7 @@ export const createWorker = (options: WorkerOptions = {}): ExportedHandler<Worke
         await services.scheduledRunNotices.processDue(new Date().toISOString())
       } catch (error) {
         console.error('[worker] scheduled manifest notice failed', error)
-        report(error, { phase: 'scheduled' })
+        report(error, { phase: 'scheduled', operation: 'scheduled manifest notice' })
       }
     }
     if (controller.cron === '* * * * *' && invoices && services.scheduledRunDispatch !== undefined) {
@@ -344,7 +348,7 @@ export const createWorker = (options: WorkerOptions = {}): ExportedHandler<Worke
         }
       } catch (error) {
         console.error('[worker] scheduled run dispatch failed', error)
-        report(error, { phase: 'scheduled' })
+        report(error, { phase: 'scheduled', operation: 'scheduled run dispatch' })
       }
     }
     if (controller.cron === '* * * * *' && invoices && services.scheduledActionExpiry !== undefined) {
@@ -352,7 +356,7 @@ export const createWorker = (options: WorkerOptions = {}): ExportedHandler<Worke
       // reports its own failure, so it never stops the drain below.
       await isolate('scheduled run expiry', () => services.scheduledActionExpiry!.expireDue(new Date().toISOString(), (error) => {
         console.error('[worker] scheduled run expiry failed', error)
-        report(error, { phase: 'scheduled' })
+        report(error, { phase: 'scheduled', operation: 'scheduled run expiry' })
       }))
     }
     // Not on the demo (#931): its database is thrown away at this hour, and an
@@ -400,7 +404,7 @@ export const createWorker = (options: WorkerOptions = {}): ExportedHandler<Worke
         reconcile: services.bill!.reconcilePayments,
         report: (error) => {
           console.error('[worker] BILL reconciliation failed', error)
-          report(error, { phase: 'scheduled' })
+          report(error, { phase: 'scheduled', operation: 'BILL reconciliation' })
         },
       })())
     }
@@ -413,12 +417,12 @@ export const createWorker = (options: WorkerOptions = {}): ExportedHandler<Worke
         await services.quickBooks.catchUp()
       } catch (error) {
         console.error('[worker] QuickBooks catch-up failed', error)
-        report(error, { phase: 'scheduled' })
+        report(error, { phase: 'scheduled', operation: 'QuickBooks catch-up' })
       }
     }
     if (controller.cron === '* * * * *' && invoices && services.deelPaymentStatus !== undefined) {
       try { await services.deelPaymentStatus.refresh(null) }
-      catch (error) { report(error, { phase: 'scheduled' }) }
+      catch (error) { report(error, { phase: 'scheduled', operation: 'Deel payment status' }) }
     }
     if (controller.cron === '0 * * * *' && services.deelSync !== undefined) {
       // Deel time sync (issue 103, #1102). Runs only when the organization has
@@ -431,11 +435,11 @@ export const createWorker = (options: WorkerOptions = {}): ExportedHandler<Worke
           ? await services.deelSync.runAutomaticIfDue() : undefined
         if (run?.status === 'failed') {
           console.error('[worker] Deel time sync failed', run.error, run.failed)
-          report(new Error(run.error ?? 'Deel time sync had failed submissions'), { phase: 'scheduled' })
+          report(new Error(run.error ?? 'Deel time sync had failed submissions'), { phase: 'scheduled', operation: 'Deel time sync' })
         }
       } catch (error) {
         console.error('[worker] Deel time sync failed', error)
-        report(error, { phase: 'scheduled' })
+        report(error, { phase: 'scheduled', operation: 'Deel time sync' })
       }
     }
     // Refuses on any deployment that is not the demo, so this line is safe to
@@ -450,9 +454,9 @@ export const createWorker = (options: WorkerOptions = {}): ExportedHandler<Worke
     // minute. Reported once per tick here, not once per row.
     if (drained?.interrupted !== undefined) {
       console.error('[worker] outbox drain interrupted', drained.interrupted)
-      report(drained.interrupted, { phase: 'scheduled' })
+      report(drained.interrupted, { phase: 'scheduled', operation: 'outbox drain' })
     }
-    } catch (error) { if (options.reportError) report(error, { phase: 'scheduled' }); throw error }
+    } catch (error) { if (options.reportError) report(error, { phase: 'scheduled', operation: 'scheduled tick' }); throw error }
   },
 })
 }

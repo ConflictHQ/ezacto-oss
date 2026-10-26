@@ -102,6 +102,22 @@ describe('what staff are told about an estimate expiry', () => {
 })
 
 describe('the estimate screen sets the expiry', () => {
+  it('does not repaint a different screen when a delayed expiry save finishes', async () => {
+    let finish!: (value: Estimate) => void
+    const setEstimateExpiry = vi.fn(() => new Promise<Estimate>(resolve => { finish = resolve }))
+    await open(estimate(), setEstimateExpiry)
+    q<HTMLInputElement>('[data-estimate-expiry-date]').value = '2026-10-20'
+    q<HTMLFormElement>('[data-estimate-expiry-form]').requestSubmit()
+    expect(q('[data-estimate-expiry-result]').getAttribute('aria-busy')).toBe('true')
+    q<HTMLFormElement>('[data-estimate-expiry-form]').dispatchEvent(new SubmitEvent('submit', { cancelable: true }))
+    expect(setEstimateExpiry).toHaveBeenCalledTimes(1)
+    q<HTMLAnchorElement>('[data-estimate-back]').click()
+    finish(estimate({ expires_on: '2026-10-20' }))
+    await settle()
+    expect(q('[data-estimate-expiry-result]').textContent).not.toBe('Expiry saved.')
+    expect(q('[data-estimate-expiry-result]').getAttribute('aria-busy')).toBe('false')
+  })
+
   it('[unit] shows the expiry and saves a new day against the version it read', async () => {
     const saved = estimate({
       version: 5,

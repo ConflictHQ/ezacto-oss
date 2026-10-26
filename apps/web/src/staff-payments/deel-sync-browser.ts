@@ -7,6 +7,7 @@ import type {
   DeelSyncWindow,
 } from '@conflict-hq/ezacto-client'
 import { isDemoDeployment } from '../demo.js'
+import { setRequestBusy } from '../request-feedback.js'
 
 /**
  * The Deel time sync panel on the staff payments page (#1102). An administrator
@@ -65,6 +66,9 @@ export const createDeelSyncController = (page: HTMLElement, api: DeelSyncApi) =>
   const demo = isDemoDeployment()
   let signal: AbortSignal | null = null
   let preview: (DeelSyncPreview & { status: 'ready' }) | null = null
+  let generation = 0
+  let busy = false
+  let pendingControls: { control: HTMLInputElement; disabled: boolean }[] = []
 
   const say = (text: string) => {
     message.textContent = text
@@ -74,7 +78,37 @@ export const createDeelSyncController = (page: HTMLElement, api: DeelSyncApi) =>
     preview = null
     previewResult.replaceChildren()
     reviewed.checked = false
+    reviewed.disabled = true
     send.disabled = true
+  }
+
+  const restoreControls = () => {
+    for (const { control, disabled } of pendingControls) control.disabled = disabled
+    pendingControls = []
+  }
+  const action = async (phase: string, work: (active: AbortSignal, current: () => boolean) => Promise<void>) => {
+    const active = signal, revision = generation
+    if (!active || active.aborted || busy) return
+    const current = () => signal === active && !active.aborted && generation === revision
+    busy = true
+    pendingControls = [...section.querySelectorAll<HTMLInputElement>('input,select,button')]
+      .map(control => ({ control, disabled: control.disabled }))
+    pendingControls.forEach(({ control }) => { control.disabled = true })
+    say(phase)
+    setRequestBusy(message, true)
+    try {
+      await work(active, current)
+    } catch (error) {
+      if (current()) say(failure(error))
+    } finally {
+      if (current()) {
+        busy = false
+        restoreControls()
+        reviewed.disabled = preview === null || preview.entry_ids.length === 0
+        send.disabled = reviewed.disabled || !reviewed.checked
+        setRequestBusy(message, false)
+      }
+    }
   }
 
   const renderStatus = (current: DeelSyncStatus) => {
@@ -98,46 +132,47 @@ export const createDeelSyncController = (page: HTMLElement, api: DeelSyncApi) =>
     runs.replaceChildren(list)
   }
 
-  const load = async () => {
-    if (demo) {
-      section.hidden = true
-      return
-    }
-    try {
-      renderStatus(await api.getDeelSync!({ ...(signal === null ? {} : { signal }) }))
-    } catch (error) {
-      say(failure(error))
-    }
+  const load = async (active: AbortSignal, current: () => boolean) => {
+    if (!api.getDeelSync) return
+    const result = await api.getDeelSync({ signal: active })
+    if (current()) renderStatus(result)
   }
 
   settings.addEventListener('submit', async (event) => {
     event.preventDefault()
+    if (!api.updateDeelSyncSettings) return
     const data = new FormData(settings)
-    try {
+    void action('Saving Deel sync settings…', async (active, current) => {
+      if (!api.updateDeelSyncSettings) return
       await api.updateDeelSyncSettings!({
         body: {
           mode: data.get('mode') as 'manual' | 'automatic',
           run_time: String(data.get('run_time')),
         },
-        ...(signal === null ? {} : { signal }),
+        signal: active,
       })
-      say('Deel sync settings saved.')
-      await load()
-    } catch (error) {
-      say(failure(error))
-    }
+      if (!current()) return
+      await load(active, current)
+      if (current()) say('Deel sync settings saved.')
+    })
   })
 
   previewForm.addEventListener('submit', async (event) => {
     event.preventDefault()
+    if (!api.previewDeelSync) return
     const data = new FormData(previewForm)
-    clearPreview()
-    try {
+    void action('Reviewing timesheets for Deel…', async (active, current) => {
+      if (!api.previewDeelSync) return
+      clearPreview()
       const result = await api.previewDeelSync!({
         body: { from: String(data.get('from')), to: String(data.get('to')) },
-        ...(signal === null ? {} : { signal }),
+        signal: active,
       })
-      if (result.status !== 'ready') return
+      if (!current()) return
+      if (result.status !== 'ready') {
+        say('Deel is not ready to review these hours. Nothing was sent. Try again after checking the connection.')
+        return
+      }
       preview = result as DeelSyncPreview & { status: 'ready' }
       previewResult.textContent =
         `${result.timesheets} timesheet${result.timesheets === 1 ? '' : 's'} (${result.entry_ids.length} entries) would be sent to Deel for ${result.window.from} to ${result.window.to}. ` +
@@ -148,47 +183,65 @@ export const createDeelSyncController = (page: HTMLElement, api: DeelSyncApi) =>
           ? 'Nothing new to send in this window.'
           : 'Review the preview, then tick the box to send.',
       )
-    } catch (error) {
-      say(failure(error))
-    }
+    })
   })
 
   reviewed.addEventListener('change', () => {
-    send.disabled = !reviewed.checked || preview === null
+    send.disabled = busy || !reviewed.checked || preview === null
   })
+  previewForm.addEventListener('input', () => { if (!busy) clearPreview() })
+  previewForm.addEventListener('change', () => { if (!busy) clearPreview() })
 
   send.addEventListener('click', async () => {
-    if (preview === null || !reviewed.checked) return
+    if (busy || preview === null || !reviewed.checked || !api.runDeelSync) return
     const sent = preview
-    send.disabled = true
-    say('Sending to Deel…')
-    try {
+    void action('Sending to Deel…', async (active, current) => {
       const result = await api.runDeelSync!({
         body: {
           from: sent.window.from,
           to: sent.window.to,
           entry_ids: [...sent.entry_ids],
         },
-        ...(signal === null ? {} : { signal }),
+        signal: active,
       })
+      if (!current()) return
       clearPreview()
       say(
         `Run ${result.run_id}: ${outcomeText(result.status)}. ${result.timesheets_submitted} timesheets and ${result.entries_transferred} entries sent to Deel.` +
           (result.error === null ? '' : ` ${result.error}`),
       )
-      await load()
-    } catch (error) {
-      say(failure(error))
-      send.disabled = false
-    }
+      await load(active, current)
+    })
   })
 
   return {
     activate: async (active: AbortSignal): Promise<void> => {
+      generation++
+      restoreControls()
+      busy = false
       signal = active
-      section.hidden = demo || api.getDeelSync === undefined
+      say('')
+      setRequestBusy(message, false)
+      section.hidden = active.aborted || demo || api.getDeelSync === undefined
       clearPreview()
-      if (!section.hidden) await load()
+      active.addEventListener('abort', () => {
+        if (signal !== active) return
+        generation++
+        restoreControls()
+        busy = false
+        clearPreview()
+        settings.reset()
+        previewForm.reset()
+        status.textContent = ''
+        runs.replaceChildren()
+        say('')
+        setRequestBusy(message, false)
+        section.hidden = true
+      }, { once: true })
+      if (!section.hidden) await action('Checking Deel sync settings…', async (active, current) => {
+        await load(active, current)
+        if (current()) say('')
+      })
     },
   }
 }

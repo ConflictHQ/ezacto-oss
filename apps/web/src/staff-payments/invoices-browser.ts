@@ -1,3 +1,4 @@
+import { setRequestBusy } from '../request-feedback.js'
 import { isDemoDeployment, demoUnavailable } from "../demo.js";
 import type {
   SaveStaffInvoice,
@@ -126,12 +127,13 @@ export const createStaffInvoicesController = (
     ledger: StaffPaymentReport | null = null,
     generation = 0,
     busy = false;
-  const action = async (work: () => Promise<void>) => {
+  const action = async (label: string, work: () => Promise<void>) => {
     const active = signal,
       own = generation;
     if (!active || active.aborted || busy) return;
     busy = true;
-    status.textContent = "Working…";
+    status.textContent = label;
+    setRequestBusy(status, true);
     const controls = [
         ...panel.querySelectorAll<HTMLInputElement>(
           "input,select,textarea,button",
@@ -146,14 +148,19 @@ export const createStaffInvoicesController = (
       if (
         !active.aborted &&
         own === generation &&
-        status.textContent === "Working…"
+        status.textContent === label
       )
-        status.textContent = "";
+        status.textContent = label === "Loading contractor invoices…"
+          ? "Contractor invoices loaded."
+          : label === "Loading reviewed earnings…"
+            ? "Reviewed earnings loaded."
+            : "Done.";
     } catch (error) {
       if (!active.aborted && own === generation)
         status.textContent = errorText(error);
     } finally {
       if (own === generation) {
+        setRequestBusy(status, false);
         busy = false;
         controls.forEach((c, i) => {
           c.disabled = disabled[i] ?? false;
@@ -464,7 +471,7 @@ export const createStaffInvoicesController = (
     button(manual, "Load reviewed earning choices", "button").addEventListener(
       "click",
       () => {
-        void action(async () => {
+        void action("Loading reviewed earnings…", async () => {
           const own = generation,
             active = signal!,
             data = await api.getPaymentAllocationReport!(
@@ -549,7 +556,7 @@ export const createStaffInvoicesController = (
     );
     form.addEventListener("submit", (event) => {
       event.preventDefault();
-      void action(async () => {
+      void action("Recording contractor invoice…", async () => {
         const lines: StaffInvoiceLine[] = fromReview.checked
           ? []
           : lineControls
@@ -625,7 +632,7 @@ export const createStaffInvoicesController = (
     button(form, "Attach invoice document");
     form.addEventListener("submit", (event) => {
       event.preventDefault();
-      void action(async () => {
+      void action("Attaching invoice document…", async () => {
         const selected = file.files?.[0];
         if (!selected) throw new Error("Choose an invoice document.");
         if (documentId === null)
@@ -665,7 +672,7 @@ export const createStaffInvoicesController = (
     host.appendChild(form);
   };
   refresh.addEventListener("click", () => {
-    void action(load);
+    void action("Loading contractor invoices…", load);
   });
   return {
     activate: (active: AbortSignal) => {
@@ -673,6 +680,8 @@ export const createStaffInvoicesController = (
       generation++;
       ledger = null;
       busy = false;
+      status.textContent = "";
+      setRequestBusy(status, false);
       host.replaceChildren();
       refresh.disabled = true;
       active.addEventListener(
@@ -682,6 +691,7 @@ export const createStaffInvoicesController = (
           ledger = null;
           host.replaceChildren();
           status.textContent = "";
+          setRequestBusy(status, false);
           refresh.disabled = true;
         },
         { once: true },
@@ -692,6 +702,7 @@ export const createStaffInvoicesController = (
         generation++;
         host.replaceChildren();
         status.textContent = "";
+        setRequestBusy(status, false);
         busy = false;
       }
       ledger = report;

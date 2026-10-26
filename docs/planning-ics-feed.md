@@ -1,62 +1,47 @@
 # Planning ICS feed contract (issue 1194)
 
-Status: contract only. The route, credential table and projection adapter are
-not built; they wait on the shared calendar projection (issue 1192). Code:
-[`planning-ics.ts`](../packages/core/src/planning-ics.ts). Tests any
-implementation must keep green:
-[`planning-ics.test.ts`](../packages/core/test/planning-ics.test.ts).
+The native implementation is `packages/db/src/calendar-feeds.ts`, using the
+shared resource-calendar projection and the reconciliation model in
+`packages/core/src/resource-calendar-feed.ts`. Operational instructions and
+owned-client evidence are in [Planning calendar subscriptions](planning-calendar-subscriptions.md).
+The older pure `planning-ics.ts` exports remain compatible; the native renderer
+reuses their TEXT escaping and UTF-8 folding primitives.
 
-## What a feed is
+## Projection and events
 
-A read-only, advisory export of the already-authorized planning projection:
-allocations, personal time off and organization holidays. It is not two-way
-sync, creates no actual time, and adds no provider OAuth scope or remote write.
+- Export only already-authorized weekly planning/availability. Self is the UI
+  default; project/team issuance requires an explicitly selected permitted
+  management scope. Never export tracked time, money, rates, private notes or
+  leave reasons. Names are opt-in.
+- Every event is advisory, private and transparent, with floating all-day dates.
+  `DTEND` is exclusive. Weekly plans use the entire touched organization week;
+  partial-day leave changes available hours rather than inventing appointments.
+- UIDs are opaque HMAC identities under a random per-feed namespace, stable
+  across refresh and credential rotation. Native state tracks nonnegative
+  signed-32-bit `SEQUENCE` values, preserving monotonic change/cancel/reappearance.
+- Removed facts remain as cancelled tombstones without private labels.
+  Incomplete projections are refused. Limits are 2,000 live/cancelled events,
+  1 MB reconciliation metadata, and at most 365 selected calendar dates.
+- Reconciliation commits only with the same source revision, credential
+  generation, owner authority and instance incarnation used for its read.
 
-## Event shape
+## Credentials and lifecycle
 
-- One all-day VEVENT per `PlanningFeedItem`: `DTSTART;VALUE=DATE`, and
-  `DTEND;VALUE=DATE` is the day after the inclusive end date (exclusive).
-  Dates stay floating; nothing is converted through a timezone, and no timed
-  busy block is invented. `TRANSP:TRANSPARENT`, with a fixed advisory
-  DESCRIPTION.
-- `UID` is `<key>@<instance host>`. `key` is opaque, one per resource and week
-  (or leave span), and never contains a name or email. Label edits do not change
-  the UID.
-- `SEQUENCE` is the item `revision`, monotonic per key.
-- Removal: the projection supplies a tombstone (key, last span, revision above
-  the last live one). It renders as `STATUS:CANCELLED` with only the kind as
-  label. A live item with a revision at or above the tombstone wins (re-creation).
-- Output is deterministic (sorted, DTSTAMP from `generatedAt`), CRLF, folded at
-  75 octets without splitting a code point; TEXT is escaped and every control or
-  line-separator character is neutralized so a label cannot inject a property.
-
-## Fields exposed (the "what does this subscription show" screen)
-
-Date span, kind label (Planned, Time off, Holiday), and the minimized SUMMARY the
-projection supplies. Never money, rates, private notes or leave reasons. The
-projection, not the serializer, chooses SUMMARY; the serializer only escapes it.
-
-## Credentials
-
-- `PlanningFeedCredential`: owner, scope (`self` by default, `project` or `team`
-  only with an explicit permitted grant), `tokenHash`, `issuedAt`, `expiresAt`,
-  `revokedAt`.
-- Token: `ezpf_` plus 32 CSPRNG bytes as base64url. Only `sha256` hex is stored.
-  Shown once at issue; rotation issues a new row and revokes the old one.
-- Every request re-reads owner status and current permission for the scope
-  (`evaluatePlanningFeedAccess`). Revoked, expired, owner inactive and scope
-  lost all deny. All denials look identical to the client (404, empty body).
-  The reason goes to the audit log only.
-- Authenticated download uses the normal session and the same projection; it
-  needs no credential row.
-- Account closure deletes the owner's credential rows (add to the account
-  closure inventory when built).
-- Headers on every feed response (`planningFeedResponseHeaders`):
-  `cache-control: private, no-store`, `referrer-policy: no-referrer`,
-  `x-robots-tag: noindex`. Rate and range limits apply per credential.
-
-## Open for the implementation (not decided here)
-
-Where the token travels in the URL (see the decision on the issue), lifetime
-default and maximum, and the owned disposable calendar-client reload
-demonstration required before any availability claim.
+- A native session issues an owned feed and a separate random 256-bit password.
+  Only a keyed hash is stored. Public subscription uses HTTP Basic: a nonsecret
+  feed ID as username, password only in Authorization. No credential appears in
+  a path, query, referrer, cache validator or UID. HTTPS is required except on
+  loopback development hosts.
+- Lifetime defaults to 30 days, maximum 90. Rotation replaces the password while
+  retaining the feed's UID namespace/history. Revocation immediately stops reads.
+  Owner inactivity, scope/authority loss, account closure and restored database
+  incarnations also invalidate old reads.
+- Authenticated download reads the same owned feed without a subscription
+  password. At most 20 current feeds can be issued per user; current feeds are
+  listed before revoked/expired history so their controls remain reachable.
+- Every feed response is `private, no-store`, `no-referrer` and `noindex`.
+  Invalid/revoked access returns no protected content; 60 accepted reads per
+  credential per minute is the current rate ceiling.
+- Revocation prevents new reads; it cannot erase a calendar client's prior cache.
+  Thunderbird's tested cancellation display is an explicit removed-information
+  tombstone. No Google Calendar/Outlook compatibility is implied.

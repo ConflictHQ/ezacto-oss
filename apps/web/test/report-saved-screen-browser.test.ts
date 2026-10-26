@@ -166,6 +166,7 @@ describe('the Saved tab (#933)', () => {
 
     rowButton('Pin').click()
     await vi.waitFor(() => expect(pinSavedReport).toHaveBeenCalledWith('q3-time', expect.anything()))
+    await vi.waitFor(() => expect(rowButton('Rename').disabled).toBe(false))
 
     // The overflow menu holds the less common actions.
     rowButton('Rename').click()
@@ -183,6 +184,27 @@ describe('the Saved tab (#933)', () => {
     expect(deleteSavedReport).not.toHaveBeenCalled()
     document.querySelector<HTMLButtonElement>('[data-saved-delete-confirm]')!.click()
     await vi.waitFor(() => expect(deleteSavedReport).toHaveBeenCalledWith('q3-time', expect.anything()))
+  })
+
+  it('keeps actions on a saved report disabled until its previous change finishes', async () => {
+    let finishPin!: () => void
+    const pinSavedReport = vi.fn(() => new Promise<void>(resolve => { finishPin = resolve }))
+    const deleteSavedReport = vi.fn(async () => undefined)
+    await mount('/reports/saved', 'saved', 'accounting', {
+      listSavedReports: vi.fn(async () => [view()]), pinSavedReport, deleteSavedReport,
+    })
+    await vi.waitFor(() => expect(document.querySelector('[data-saved-screen-table] tbody')?.textContent).toContain('Q3 time'))
+    rowButton('Pin').click()
+    expect(rowButton('Rename').disabled).toBe(true)
+    expect(rowButton('Delete').disabled).toBe(true)
+    rowButton('Delete').click()
+    expect(document.querySelector<HTMLDialogElement>('[data-saved-delete-dialog]')!.open).toBe(false)
+    expect(deleteSavedReport).not.toHaveBeenCalled()
+    finishPin()
+    await vi.waitFor(() => expect(rowButton('Delete').disabled).toBe(false))
+    rowButton('Delete').click()
+    document.querySelector<HTMLButtonElement>('[data-saved-delete-confirm]')!.click()
+    await vi.waitFor(() => expect(deleteSavedReport).toHaveBeenCalledTimes(1))
   })
 
   it('opens the same share dialog the library uses', async () => {

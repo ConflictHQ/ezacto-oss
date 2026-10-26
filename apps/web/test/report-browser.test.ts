@@ -2152,6 +2152,21 @@ describe('Reports Stage 1 browser controller', () => {
     return { getDetailedTimeReport, downloadDetailedTimeReport, session, toggle, panel, format, notes, status }
   }
 
+  it('keeps progress visible while an export outlives a report refresh', async () => {
+    let fail!: (error: Error) => void
+    const download = vi.fn<NonNullable<ReportWorkspaceApi['downloadDetailedTimeReport']>>(() => new Promise((_resolve, reject) => { fail = reject }))
+    const harness = await exportHarness({ downloadDetailedTimeReport: download })
+    harness.toggle.click()
+    harness.format('pdf').click()
+    document.querySelector<HTMLFormElement>('[data-report-form]')!.requestSubmit()
+    await vi.waitFor(() => expect(harness.getDetailedTimeReport).toHaveBeenCalledTimes(2))
+    await vi.waitFor(() => expect(document.querySelector<HTMLButtonElement>('[data-report-run]')!.disabled).toBe(false))
+    expect(document.querySelector('[data-report-status]')?.getAttribute('aria-busy')).toBe('true')
+    fail(new Error('Export unavailable'))
+    await vi.waitFor(() => expect(document.querySelector('[data-report-status]')?.getAttribute('aria-busy')).toBe('false'))
+    expect(harness.status()).toContain('Export unavailable')
+  })
+
   it('[browser] offers PDF, Excel and CSV under Export, with notes client-ready until somebody says otherwise', async () => {
     const { toggle, panel, notes } = await exportHarness()
     expect(toggle.textContent).toBe('Export')
@@ -2230,6 +2245,7 @@ describe('Reports Stage 1 browser controller', () => {
     harness.format('csv').click()
     await vi.waitFor(() => expect(harness.downloadDetailedTimeReport).toHaveBeenCalledTimes(2))
     expect(harness.downloadDetailedTimeReport.mock.calls[1]!.slice(1, 3)).toEqual(['csv', 'internal'])
+    await vi.waitFor(() => expect(document.querySelector('[data-report-status]')?.getAttribute('aria-busy')).toBe('false'))
     harness.toggle.click()
     harness.format('xlsx').click()
     await vi.waitFor(() => expect(harness.downloadDetailedTimeReport).toHaveBeenCalledTimes(3))

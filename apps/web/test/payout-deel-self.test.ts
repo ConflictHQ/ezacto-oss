@@ -40,6 +40,7 @@ describe('personal Deel destination (issue 1152)', () => {
     expect(client.linkPayoutAccount).toHaveBeenCalledWith({
       id: 7,
       body: { provider: 'deel', external_id: 'ana@example.com' },
+      signal: expect.any(AbortSignal),
     })
   })
 
@@ -51,7 +52,7 @@ describe('personal Deel destination (issue 1152)', () => {
     expect(root.querySelector('[data-settings-payout-deel-summary]')?.textContent).toContain('ana@example.com')
     root.querySelector<HTMLButtonElement>('[data-settings-payout-deel-remove]')!.click()
     await flush()
-    expect(client.detachPayoutAccount).toHaveBeenCalledWith({ id: 31 })
+    expect(client.detachPayoutAccount).toHaveBeenCalledWith({ id: 31, signal: expect.any(AbortSignal) })
   })
 
   it('[unit] stays hidden when an administrator has turned Deel off', async () => {
@@ -60,4 +61,29 @@ describe('personal Deel destination (issue 1152)', () => {
     await flush()
     expect(root.hidden).toBe(true)
   })
+})
+
+
+it('serializes saves and ignores an aborted session response', async () => {
+  const root = mount()
+  const session = new AbortController()
+  let complete!: () => void
+  const client = { ...api([]), linkPayoutAccount: vi.fn(() => new Promise<void>(resolve => { complete = resolve })) }
+  wireDeelSelfPayout(root, client, 7, session.signal)
+  await flush()
+  const form = root.querySelector<HTMLFormElement>('form')!
+  const input = form.elements.namedItem('email') as HTMLInputElement
+  const result = root.querySelector('[data-settings-payout-deel-result]')!
+  input.value = 'ana@example.com'
+  form.dispatchEvent(new Event('submit', { cancelable: true }))
+  form.dispatchEvent(new Event('submit', { cancelable: true }))
+  expect(client.linkPayoutAccount).toHaveBeenCalledTimes(1)
+  expect(input.disabled).toBe(true)
+  expect(result.getAttribute('aria-busy')).toBe('true')
+  session.abort()
+  result.textContent = 'New session'
+  complete()
+  await flush()
+  expect(result.textContent).toBe('New session')
+  expect(client.listPayoutAccounts).toHaveBeenCalledTimes(1)
 })
