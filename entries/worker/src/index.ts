@@ -264,6 +264,7 @@ export const createWorker = (options: WorkerOptions = {}): ExportedHandler<Worke
     // Exhaustion propagates to withSentry once and marks this tick failed;
     // readiness is cached only on success, so the next tick can recover.
     const services = await createRuntimeServices(env, { retryReadiness: true, reportError: report })
+    if(controller.cron==='*/5 * * * *'){if(moduleAvailability(env).invoices)await services.bankFeeds?.processDue();return}
     if(!demoDeployment(env)&&csvWorkerConfigured(env)){for(const phase of ['purge','publish'] as const){try{await env.CSV_IMPORT_QUEUE!.send({kind:'csv-maintenance',phase})}catch{report(new Error('CSV maintenance publication deferred.'),{phase:'scheduled'})}}}
     // The operator's invoices switch (issue 1254): where it is off none of the
     // invoice sweeps run, and what they would have touched stays as it is.

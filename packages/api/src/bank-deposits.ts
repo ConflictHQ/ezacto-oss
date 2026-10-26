@@ -60,6 +60,19 @@ export interface BankDepositReviewApi {
 export const installBankDepositRoutes = <Bindings extends object>(
   api: Hono<ApiContext<Bindings>>,
   service: BankDepositReviewApi,
+  feeds?: {
+    status(): Promise<
+      Array<{
+        provider: "mercury" | "wise";
+        configured: boolean;
+        account_name: string | null;
+        last_synced_at: string | null;
+        last_error: string | null;
+        next_poll_at: string | null;
+      }>
+    >;
+    processDue(): Promise<{ checked: number; failed: number }>;
+  },
 ): void => {
   const who = (
     c: Parameters<typeof requireSessionPrincipal<Bindings>>[0],
@@ -115,6 +128,35 @@ export const installBankDepositRoutes = <Bindings extends object>(
       throw error;
     }
   };
+  api.get("/bank-feed-status", async (c) => {
+    who(c);
+    return c.json(
+      {
+        data: feeds
+          ? await feeds.status()
+          : ["mercury", "wise"].map((provider) => ({
+              provider,
+              configured: false,
+              account_name: null,
+              last_synced_at: null,
+              last_error: null,
+              next_poll_at: null,
+            })),
+      },
+      200,
+      { "cache-control": "no-store" },
+    );
+  });
+  api.post("/bank-feeds/sync", async (c) => {
+    who(c);
+    const body = await readObjectBody(c);
+    assertFields(unknownFieldErrors(body, new Set()));
+    return c.json(
+      { data: feeds ? await feeds.processDue() : { checked: 0, failed: 0 } },
+      200,
+      { "cache-control": "no-store" },
+    );
+  });
   api.get("/bank-deposit-accounts", async (c) =>
     c.json({ data: await run(() => service.accounts(who(c))) }, 200, {
       "cache-control": "no-store",
@@ -153,17 +195,37 @@ export const installBankDepositRoutes = <Bindings extends object>(
       { "cache-control": "no-store" },
     ),
   );
-  for (const operation of ["assign", "reject", "reopen", "confirm", "verify-source"] as const)
+  for (const operation of [
+    "assign",
+    "reject",
+    "reopen",
+    "confirm",
+    "verify-source",
+  ] as const)
     api.post("/bank-deposits/:id/" + operation, async (c) => {
       const authority = who(c);
-      if(operation==='verify-source' && c.get('principal').profile!=='administrator')throw new ApiError({status:403,code:'profile_forbidden',message:'Only administrators can attest uncertain source funds.'});
+      if (
+        operation === "verify-source" &&
+        c.get("principal").profile !== "administrator"
+      )
+        throw new ApiError({
+          status: 403,
+          code: "profile_forbidden",
+          message: "Only administrators can attest uncertain source funds.",
+        });
       const body = await readObjectBody(c);
       assertFields(
         unknownFieldErrors(
           body,
           new Set([
             "expected_version",
-            ...(operation === "verify-source" ? ["verification_reference", "confirm_posted_funds", "confirm_external_credit"] : []),
+            ...(operation === "verify-source"
+              ? [
+                  "verification_reference",
+                  "confirm_posted_funds",
+                  "confirm_external_credit",
+                ]
+              : []),
             ...(operation === "assign" || operation === "confirm"
               ? ["invoice_id"]
               : []),

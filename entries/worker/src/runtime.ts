@@ -1,3 +1,5 @@
+import { createConfiguredBankFeedRuntime } from '@ezacto/integrations'
+import { createBankDepositIngestionService } from '@ezacto/db/d1'
 import { createBankDepositReviewService } from '@ezacto/db/d1'
 import { createCsvWorkerRuntime, csvWorkerConfigured } from './csv-runtime.js'
 import { createCalendarFeedService } from '@ezacto/db/d1'
@@ -655,6 +657,7 @@ export const createD1AttachmentOwnerAuthorizer =
 /** The secrets that let this deployment reach a payment or accounting provider. */
 type ProviderCredentials = Pick<
   WorkerEnv,
+  | "MERCURY_BANK_FEED_TOKEN" | "MERCURY_BANK_FEED_ACCOUNT_ID" | "MERCURY_BANK_FEED_CURRENCY" | "WISE_BANK_FEED_TOKEN" | "WISE_BANK_FEED_PROFILE_ID" | "WISE_BANK_FEED_BALANCE_ID" | "WISE_BANK_FEED_CURRENCY" | "BANK_FEED_ENVIRONMENT"
   | "QUICKBOOKS_CLIENT_ID"
   | "QUICKBOOKS_CLIENT_SECRET"
   | "QUICKBOOKS_WEBHOOK_VERIFIER_TOKEN"
@@ -1287,6 +1290,7 @@ export const createRuntimeServices = async (
     clientRateCards: createClientRateCardRepository(drizzle),
     moneyResources,
     bankDeposits: createBankDepositReviewService(drizzle),
+    bankFeeds: createConfiguredBankFeedRuntime({store:createBankDepositIngestionService(drizzle),environment:credentials}),
     invoiceGeneration: createInvoiceGenerationService(drizzle),
     recurringInvoices: createRecurringInvoiceEngine(drizzle),
     reminders: { processDue: processDueReminders },

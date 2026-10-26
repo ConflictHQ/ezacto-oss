@@ -1,3 +1,5 @@
+import { createConfiguredBankFeedRuntime } from '@ezacto/integrations'
+import { createBankDepositIngestionService } from '@ezacto/db'
 import { createBankDepositReviewService } from '@ezacto/db'
 import { createCalendarFeedService } from '@ezacto/db'
 import { createDeelPaymentStatusStore } from '@ezacto/db'
@@ -476,6 +478,7 @@ export const createContainerRuntime = async (
     csvSweep=setInterval(()=>{void csvStaging!.sweep().catch(()=>console.error('ezacto: private CSV expiry cleanup deferred'))},60_000)
     csvSweep.unref()
     const drizzle = createContainerDatabase(database)
+    const bankFeeds=createConfiguredBankFeedRuntime({store:createBankDepositIngestionService(drizzle),environment:demoDeployment(config.appEnv)?{}:config.bankFeeds??{}})
     const deelPaymentStatus = createDeelPaymentStatusRuntime({ token: demoDeployment(config.appEnv) ? undefined : config.deel?.token, store: createDeelPaymentStatusStore(drizzle), fetch: (request: Request) => fetch(request), now: () => new Date() })
     const webhooks = createWebhookService(drizzle, {
       vault: !demoDeployment(config.appEnv) && config.webhookEncryptionKey ? await createWebhookSecretVault(config.webhookEncryptionKey) : null,
@@ -892,6 +895,7 @@ export const createContainerRuntime = async (
         console.error('[container] automatic approval sweep failed', error)
       }
       if (!invoicesOn) return
+      try { await bankFeeds.processDue() } catch { console.error('[container] Bank feed reconciliation deferred') }
       try { await deelPaymentStatus.refresh(null) } catch { console.error('[container] Deel payment status refresh failed') }
       try {
         const result = await proposeDueScheduledJobs(drizzle, now, objects)
@@ -1029,6 +1033,7 @@ export const createContainerRuntime = async (
       },
       moneyResources,
     bankDeposits: createBankDepositReviewService(drizzle),
+    bankFeeds,
       ...(quickBooks === null ? {} : { quickBooks: quickBooks.service }),
       ...(wise === null ? {} : { wise: wise.service }),
       ...(wise?.webhook === undefined ? {} : { wiseWebhook: wise.webhook }),

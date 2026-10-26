@@ -19903,6 +19903,126 @@
         ]
       }
     },
+    "/api/v1/bank-feed-status": {
+      "get": {
+        "operationId": "getBankFeedStatus",
+        "summary": "Read configured bank feed health without exposing credentials",
+        "tags": [
+          "invoices"
+        ],
+        "security": [
+          {
+            "cookieSession": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BankFeedStatusEnvelope"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/MalformedRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/AuthenticationRequired"
+          },
+          "403": {
+            "$ref": "#/components/responses/InsufficientPermissionOrModuleDisabled"
+          },
+          "404": {
+            "$ref": "#/components/responses/ResourceNotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/StateConflict"
+          },
+          "413": {
+            "$ref": "#/components/responses/PayloadTooLarge"
+          },
+          "422": {
+            "$ref": "#/components/responses/ValidationFailed"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "503": {
+            "$ref": "#/components/responses/ServiceUnavailable"
+          }
+        },
+        "x-ezacto-runtime-path": "/api/v1/bank-feed-status",
+        "x-ezacto-generate-client": true
+      }
+    },
+    "/api/v1/bank-feeds/sync": {
+      "post": {
+        "operationId": "syncBankFeeds",
+        "summary": "Read due bank feed pages without creating invoice payments",
+        "tags": [
+          "invoices"
+        ],
+        "security": [
+          {
+            "cookieSession": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BankFeedSyncEnvelope"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/MalformedRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/AuthenticationRequired"
+          },
+          "403": {
+            "$ref": "#/components/responses/InsufficientPermissionOrModuleDisabled"
+          },
+          "404": {
+            "$ref": "#/components/responses/ResourceNotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/StateConflict"
+          },
+          "413": {
+            "$ref": "#/components/responses/PayloadTooLarge"
+          },
+          "422": {
+            "$ref": "#/components/responses/ValidationFailed"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "503": {
+            "$ref": "#/components/responses/ServiceUnavailable"
+          }
+        },
+        "x-ezacto-runtime-path": "/api/v1/bank-feeds/sync",
+        "x-ezacto-generate-client": true,
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/BankFeedSyncInput"
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/bank-deposit-accounts": {
       "get": {
         "operationId": "listBankDepositAccounts",
@@ -40227,6 +40347,113 @@
           }
         }
       },
+      "BankFeedStatusEnvelope": {
+        "type": "object",
+        "required": [
+          "data"
+        ],
+        "properties": {
+          "data": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": [
+                "provider",
+                "configured",
+                "account_name",
+                "last_synced_at",
+                "last_error",
+                "next_poll_at"
+              ],
+              "properties": {
+                "provider": {
+                  "type": "string",
+                  "enum": [
+                    "mercury",
+                    "wise"
+                  ]
+                },
+                "configured": {
+                  "type": "boolean"
+                },
+                "account_name": {
+                  "anyOf": [
+                    {
+                      "type": "string"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "last_synced_at": {
+                  "anyOf": [
+                    {
+                      "type": "string"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "last_error": {
+                  "anyOf": [
+                    {
+                      "type": "string"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "next_poll_at": {
+                  "anyOf": [
+                    {
+                      "type": "string"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                }
+              },
+              "additionalProperties": false
+            }
+          }
+        },
+        "additionalProperties": false
+      },
+      "BankFeedSyncInput": {
+        "type": "object",
+        "required": [],
+        "properties": {},
+        "additionalProperties": false
+      },
+      "BankFeedSyncEnvelope": {
+        "type": "object",
+        "required": [
+          "data"
+        ],
+        "properties": {
+          "data": {
+            "type": "object",
+            "required": [
+              "checked",
+              "failed"
+            ],
+            "properties": {
+              "checked": {
+                "type": "integer"
+              },
+              "failed": {
+                "type": "integer"
+              }
+            },
+            "additionalProperties": false
+          }
+        },
+        "additionalProperties": false
+      },
       "BankReviewInvoice": {
         "type": "object",
         "required": [
@@ -40387,6 +40614,7 @@
               "final",
               "pending",
               "reversed",
+              "ineligible",
               "unknown"
             ]
           },

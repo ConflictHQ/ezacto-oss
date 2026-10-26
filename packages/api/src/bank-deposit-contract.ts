@@ -42,7 +42,7 @@ const row = object({
   suggested_invoice: nullable(ref("BankReviewInvoice")),
   source_status: {
     type: "string",
-    enum: ["final", "pending", "reversed", "unknown"],
+    enum: ["final", "pending", "reversed", "ineligible", "unknown"],
   },
   classification: {
     type: "string",
@@ -61,6 +61,23 @@ const row = object({
   confirmed_invoice_id: nullable(integer),
 });
 export const bankDepositSchemas = {
+  BankFeedStatusEnvelope: object({
+    data: {
+      type: "array",
+      items: object({
+        provider: { type: "string", enum: ["mercury", "wise"] },
+        configured: bool,
+        account_name: nullable(str),
+        last_synced_at: nullable(str),
+        last_error: nullable(str),
+        next_poll_at: nullable(str),
+      }),
+    },
+  }),
+  BankFeedSyncInput: object({}),
+  BankFeedSyncEnvelope: object({
+    data: object({ checked: integer, failed: integer }),
+  }),
   BankReviewInvoice: invoice,
   BankFeedAccount: account,
   BankDeposit: row,
@@ -110,6 +127,28 @@ const command = {
 export const bankDepositOperations: ApiContractOperation[] = [
   {
     method: "get",
+    path: "/api/v1/bank-feed-status",
+    operationId: "getBankFeedStatus",
+    summary: "Read configured bank feed health without exposing credentials",
+    tag: "invoices",
+    sessionOnly: true,
+    responseStatus: 200,
+    responseSchema: "BankFeedStatusEnvelope",
+  },
+  {
+    method: "post",
+    path: "/api/v1/bank-feeds/sync",
+    operationId: "syncBankFeeds",
+    summary: "Read due bank feed pages without creating invoice payments",
+    tag: "invoices",
+    sessionOnly: true,
+    responseStatus: 200,
+    responseSchema: "BankFeedSyncEnvelope",
+    requestSchema: "BankFeedSyncInput",
+    requestRequired: true,
+  },
+  {
+    method: "get",
     path: "/api/v1/bank-deposit-accounts",
     operationId: "listBankDepositAccounts",
     summary: "List bank feed accounts visible to the review queue",
@@ -128,7 +167,14 @@ export const bankDepositOperations: ApiContractOperation[] = [
     responseStatus: 200,
     responseSchema: "BankDepositListEnvelope",
     parameters: [
-      { name: "state", location: "query", schema: { type: "string", enum: ["unmatched", "suggested", "confirmed", "rejected"] } },
+      {
+        name: "state",
+        location: "query",
+        schema: {
+          type: "string",
+          enum: ["unmatched", "suggested", "confirmed", "rejected"],
+        },
+      },
       { name: "page", location: "query", schema: integer },
       { name: "per_page", location: "query", schema: integer },
     ],

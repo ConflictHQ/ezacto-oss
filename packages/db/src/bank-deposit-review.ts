@@ -153,13 +153,13 @@ export const createBankDepositReviewService = (
         ...base,
         confirmation_ready:
           (base.source_status === 'final' && base.classification === 'external_credit') ||
-          (base.source_status === 'unknown' &&
+          (['unknown', 'final'].includes(base.source_status) &&
             base.classification !== 'internal_transfer' &&
             base.verified_at !== null),
         confirmation_basis:
           base.source_status === 'final' && base.classification === 'external_credit'
             ? 'provider'
-            : base.source_status === 'unknown' &&
+            : ['unknown', 'final'].includes(base.source_status) &&
                 base.classification !== 'internal_transfer' &&
                 base.verified_at !== null
               ? 'operator'
@@ -272,7 +272,7 @@ export const createBankDepositReviewService = (
         command_id: string
         account_id: number
         deposits: NeutralDeposit[]
-        page?: { expected_version: number; cursor: string | null }
+        page?: { expected_version: number; cursor: string | null; holder?: string }
         observations?: Record<string, BankDepositObservation>
       },
     ) {
@@ -284,6 +284,20 @@ export const createBankDepositReviewService = (
         input.deposits.length > 100
       )
         fail('invalid', 'Import between one and 100 credit records into a feed account.')
+      const observationEntries = Object.entries(input.observations ?? {})
+      if (observationEntries.length > 100) fail('invalid', 'Too many provider observations.')
+      for (const [identity, observation] of observationEntries) {
+        clean(identity, 255)
+        if (
+          !observation ||
+          !['final', 'pending', 'reversed', 'ineligible', 'unknown'].includes(observation.status) ||
+          !['external_credit', 'internal_transfer', 'ambiguous_credit'].includes(
+            observation.classification,
+          ) ||
+          (observation.reason !== undefined && !/^[a-z_]{1,64}$/.test(observation.reason))
+        )
+          fail('invalid', 'Provider observation is invalid.')
+      }
       const entries = input.deposits.map(normalize),
         keys = new Set(entries.map((e) => e.provider_transaction_id))
       if (keys.size !== entries.length)
@@ -318,13 +332,20 @@ export const createBankDepositReviewService = (
           ),
         )
       }
+      if (input.page?.holder)
+        statements.push(
+          guard(
+            "EXISTS(SELECT 1 FROM bank_feed_accounts WHERE provider_account_id=? AND lease_holder=? AND julianday(lease_expires_at)>julianday('now'))",
+            [input.account_id, input.page.holder],
+          ),
+        )
       for (const [index, entry] of entries.entries()) {
         const observation = input.observations?.[entry.provider_transaction_id] ?? {
           status: 'unknown',
           classification: 'ambiguous_credit',
         }
         if (
-          !['final', 'pending', 'reversed', 'unknown'].includes(observation.status) ||
+          !['final', 'pending', 'reversed', 'ineligible', 'unknown'].includes(observation.status) ||
           !['external_credit', 'internal_transfer', 'ambiguous_credit'].includes(
             observation.classification,
           ) ||
@@ -375,10 +396,37 @@ export const createBankDepositReviewService = (
           ],
         })
       }
+      for (const [identity, observation] of observationEntries.filter(
+        ([identity]) => !keys.has(identity),
+      )) {
+        statements.push({
+          text: `UPDATE bank_deposit_reviews SET source_status=?,classification=?,source_reason=?,verified_at=NULL,verified_by_user_id=NULL,verification_reference=NULL,version=version+1
+          WHERE deposit_id IN(SELECT id FROM bank_deposits WHERE provider_account_id=? AND provider_transaction_id=?)
+            AND (source_status IS NOT ? OR classification IS NOT ? OR source_reason IS NOT ?) RETURNING deposit_id`,
+          params: [
+            observation.status,
+            observation.classification,
+            observation.reason ?? null,
+            input.account_id,
+            identity,
+            observation.status,
+            observation.classification,
+            observation.reason ?? null,
+          ],
+        })
+      }
       if (input.page)
         statements.push({
-          text: 'UPDATE bank_feed_accounts SET cursor=?,version=version+1,last_synced_at=? WHERE provider_account_id=? RETURNING provider_account_id',
-          params: [input.page.cursor, stamp, input.account_id],
+          text: 'UPDATE bank_feed_accounts SET cursor=?,version=version+1,last_synced_at=?,last_error=NULL,scan_active=?,next_poll_at=? WHERE provider_account_id=? RETURNING provider_account_id',
+          params: [
+            input.page.cursor,
+            stamp,
+            input.page.cursor === null ? 0 : 1,
+            input.page.cursor === null
+              ? new Date(Date.parse(stamp) + 5 * 60000).toISOString()
+              : stamp,
+            input.account_id,
+          ],
         })
       const result = { account_id: input.account_id, processed: entries.length }
       statements.push(
@@ -491,7 +539,10 @@ export const createBankDepositReviewService = (
         )
         if (!admin.length)
           fail('forbidden', 'Only administrators can attest uncertain source funds.')
-        if (deposit.source_status !== 'unknown' || deposit.classification === 'internal_transfer')
+        if (
+          !['unknown', 'final'].includes(deposit.source_status) ||
+          deposit.classification === 'internal_transfer'
+        )
           fail('invalid', 'Only an uncertain external credit can be verified by an operator.')
         clean(input.verification_reference, 200)
       } else if (input.operation === 'reopen' && deposit.state !== 'rejected')
@@ -607,7 +658,7 @@ export const createBankDepositReviewService = (
       if (!permit) {
         const paymentId = (
             await database.all<{ id: number }>(
-              sql`SELECT coalesce(max(id),0)+1 AS id FROM invoice_payments`,
+              sql`SELECT max(value)+1 AS id FROM (SELECT coalesce(max(id),0) AS value FROM invoice_payments UNION ALL SELECT coalesce(max(payment_id),0) AS value FROM bank_deposit_confirmation_permits)`,
             )
           )[0]!.id,
           stamp = now()
@@ -640,6 +691,17 @@ export const createBankDepositReviewService = (
         }
         permit = (
           await database.all<typeof permit & object>(
+            sql`SELECT fingerprint,actor_user_id,payment_id,occurred_at FROM bank_deposit_confirmation_permits WHERE command_id=${input.command_id}`,
+          )
+        )[0]
+      }
+      if (permit) {
+        await database.run(sql`UPDATE bank_deposit_confirmation_permits SET payment_id=(SELECT max(value)+1 FROM (SELECT coalesce(max(id),0) AS value FROM invoice_payments UNION ALL SELECT coalesce(max(payment_id),0) AS value FROM bank_deposit_confirmation_permits))
+          WHERE command_id=${input.command_id} AND fingerprint=${hash} AND EXISTS(SELECT 1 FROM invoice_payments p WHERE p.id=bank_deposit_confirmation_permits.payment_id)
+          AND NOT EXISTS(SELECT 1 FROM invoice_command_ledger l WHERE l.invoice_id=bank_deposit_confirmation_permits.invoice_id AND l.command_id=bank_deposit_confirmation_permits.command_id)
+          AND NOT EXISTS(SELECT 1 FROM bank_deposit_audit a WHERE a.command_id=bank_deposit_confirmation_permits.command_id)`)
+        permit = (
+          await database.all<typeof permit>(
             sql`SELECT fingerprint,actor_user_id,payment_id,occurred_at FROM bank_deposit_confirmation_permits WHERE command_id=${input.command_id}`,
           )
         )[0]
@@ -696,13 +758,59 @@ export const createBankDepositIngestionService = (database: InvoiceStateDatabase
         sql`SELECT a.id,a.provider,a.display_name AS name FROM payment_provider_accounts a JOIN bank_feed_accounts b ON b.provider_account_id=a.id WHERE a.provider=${input.provider} AND a.external_account_id=${input.externalAccountId}`,
       )
       if (rows[0]) return rows[0]
-      return service.createAccount(feedAuthority, {
-        provider: input.provider,
-        name: input.name,
-        external_account_id: input.externalAccountId,
-        command_id:
-          'feed-account-' + (await fingerprint([input.provider, input.externalAccountId])),
-      })
+      try {
+        return await service.createAccount(feedAuthority, {
+          provider: input.provider,
+          name: input.name,
+          external_account_id: input.externalAccountId,
+          command_id:
+            'feed-account-' + (await fingerprint([input.provider, input.externalAccountId])),
+        })
+      } catch (error) {
+        const existing = await database.all<BankFeedAccount>(
+          sql`SELECT a.id,a.provider,a.display_name AS name FROM payment_provider_accounts a JOIN bank_feed_accounts b ON b.provider_account_id=a.id WHERE a.provider=${input.provider} AND a.external_account_id=${input.externalAccountId}`,
+        )
+        if (existing[0]) return existing[0]
+        throw error
+      }
+    },
+    async findAccount(provider: string, key: string) {
+      return (
+        (
+          await database.all<{
+            id: number
+            name: string
+            last_synced_at: string | null
+            last_error: string | null
+            next_poll_at: string | null
+          }>(
+            sql`SELECT a.id,a.display_name AS name,b.last_synced_at,b.last_error,b.next_poll_at FROM payment_provider_accounts a JOIN bank_feed_accounts b ON b.provider_account_id=a.id WHERE a.provider=${provider} AND a.external_account_id=${key}`,
+          )
+        )[0] ?? null
+      )
+    },
+    async claim(accountId: number, holder: string, at: string) {
+      return (
+        (
+          await database.all<{
+            cursor: string | null
+            version: number
+            scan_from: string
+            scan_to: string
+          }>(sql`UPDATE bank_feed_accounts SET lease_holder=${holder},lease_expires_at=${new Date(Date.parse(at) + 60000).toISOString()},
+        scan_from=CASE WHEN scan_active=0 THEN ${new Date(Date.parse(at) - 30 * 86400000).toISOString()} ELSE scan_from END,
+        scan_to=CASE WHEN scan_active=0 THEN ${at} ELSE scan_to END,
+        version=version+CASE WHEN scan_active=0 THEN 1 ELSE 0 END,scan_active=1
+        WHERE provider_account_id=${accountId} AND (next_poll_at IS NULL OR next_poll_at<=${at}) AND (lease_holder IS NULL OR lease_expires_at<=${at})
+        RETURNING cursor,version,scan_from,scan_to`)
+        )[0] ?? null
+      )
+    },
+    async release(accountId: number, holder: string, error: string | null, at: string) {
+      await database.run(sql`UPDATE bank_feed_accounts SET lease_holder=NULL,lease_expires_at=NULL,
+        last_error=CASE WHEN ${error} IS NULL THEN last_error ELSE ${error} END,
+        next_poll_at=CASE WHEN ${error} IS NULL THEN next_poll_at ELSE ${new Date(Date.parse(at) + 60000).toISOString()} END
+        WHERE provider_account_id=${accountId} AND lease_holder=${holder}`)
     },
     async state(accountId: number) {
       return (
@@ -718,7 +826,7 @@ export const createBankDepositIngestionService = (database: InvoiceStateDatabase
       account_id: number
       deposits: NeutralDeposit[]
       observations?: Record<string, BankDepositObservation>
-      page?: { expected_version: number; cursor: string | null }
+      page?: { expected_version: number; cursor: string | null; holder?: string }
     }) => service.ingest(feedAuthority, input),
   }
 }

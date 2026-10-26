@@ -12,12 +12,12 @@ export const bankDepositReviewMigration = [
   `CREATE TABLE bank_feed_accounts (
     provider_account_id INTEGER PRIMARY KEY REFERENCES payment_provider_accounts(id) ON DELETE RESTRICT,
     created_by_user_id INTEGER REFERENCES users(id), created_at TEXT NOT NULL,
-    cursor TEXT, version INTEGER NOT NULL DEFAULT 0 CHECK(version>=0), last_synced_at TEXT
+    cursor TEXT, version INTEGER NOT NULL DEFAULT 0 CHECK(version>=0), last_synced_at TEXT, last_error TEXT, next_poll_at TEXT, scan_from TEXT, scan_to TEXT, scan_active INTEGER NOT NULL DEFAULT 0, lease_holder TEXT, lease_expires_at TEXT
   )`,
   `CREATE TABLE bank_deposit_reviews (
     deposit_id INTEGER PRIMARY KEY REFERENCES bank_deposits(id) ON DELETE RESTRICT,
     source_fingerprint TEXT NOT NULL, version INTEGER NOT NULL DEFAULT 0 CHECK(version>=0),
-    source_status TEXT NOT NULL DEFAULT 'unknown' CHECK(source_status IN ('final','pending','reversed','unknown')),
+    source_status TEXT NOT NULL DEFAULT 'unknown' CHECK(source_status IN ('final','pending','reversed','ineligible','unknown')),
     classification TEXT NOT NULL DEFAULT 'ambiguous_credit' CHECK(classification IN ('external_credit','internal_transfer','ambiguous_credit')),
     source_reason TEXT, verified_at TEXT, verified_by_user_id INTEGER REFERENCES users(id), verification_reference TEXT, rejected_at TEXT, rejected_by_user_id INTEGER REFERENCES users(id),
     CHECK((rejected_at IS NULL)=(rejected_by_user_id IS NULL))
@@ -57,7 +57,7 @@ export const bankDepositReviewMigration = [
         JOIN bank_deposits d ON d.id=p.deposit_id
         JOIN invoice_command_ledger l ON l.invoice_id=p.invoice_id AND l.command_id=p.command_id
         WHERE p.deposit_id=NEW.bank_deposit_id AND p.invoice_id=NEW.invoice_id AND p.payment_id=NEW.id
-          AND p.expected_version=r.version AND r.rejected_at IS NULL AND ((r.source_status='final' AND r.classification='external_credit') OR (r.source_status='unknown' AND r.classification<>'internal_transfer' AND r.verified_at IS NOT NULL)) AND d.updated_at=p.expected_updated_at
+          AND p.expected_version=r.version AND r.rejected_at IS NULL AND ((r.source_status='final' AND r.classification='external_credit') OR (r.source_status IN ('unknown','final') AND r.classification<>'internal_transfer' AND r.verified_at IS NOT NULL)) AND d.updated_at=p.expected_updated_at
           AND p.expected_invoice_version=l.expected_invoice_version AND l.completed=0
           AND l.actor_type='user' AND l.actor_id=p.actor_user_id
           AND NOT EXISTS(SELECT 1 FROM bank_deposit_audit a WHERE a.command_id=p.command_id)

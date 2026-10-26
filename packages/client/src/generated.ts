@@ -815,6 +815,26 @@ export type MyPaymentsEnvelope = {
   "data": MyPayments;
 };
 
+export type BankFeedStatusEnvelope = {
+  "data": Array<{
+  "provider": "mercury" | "wise";
+  "configured": boolean;
+  "account_name": string | null;
+  "last_synced_at": string | null;
+  "last_error": string | null;
+  "next_poll_at": string | null;
+}>;
+};
+
+export type BankFeedSyncInput = Record<string, unknown>;
+
+export type BankFeedSyncEnvelope = {
+  "data": {
+  "checked": number;
+  "failed": number;
+};
+};
+
 export type BankReviewInvoice = {
   "id": number;
   "number": string;
@@ -844,7 +864,7 @@ export type BankDeposit = {
   "state": "unmatched" | "suggested" | "confirmed" | "rejected";
   "version": number;
   "suggested_invoice": BankReviewInvoice | null;
-  "source_status": "final" | "pending" | "reversed" | "unknown";
+  "source_status": "final" | "pending" | "reversed" | "ineligible" | "unknown";
   "classification": "external_credit" | "internal_transfer" | "ambiguous_credit";
   "source_reason": string | null;
   "verified_at": string | null;
@@ -8722,6 +8742,25 @@ export class EzactoClient {
 
     return this.request<MyPaymentsEnvelope>("GET", "/api/v1/me/payments", {
       query: args.query,
+      signal: args.signal,
+      headers,
+    });
+  }
+
+  async getBankFeedStatus(args: { signal?: AbortSignal; headers?: HeadersInit } = {}): Promise<BankFeedStatusEnvelope> {
+    const headers = new Headers(args.headers);
+
+    return this.request<BankFeedStatusEnvelope>("GET", "/api/v1/bank-feed-status", {
+      signal: args.signal,
+      headers,
+    });
+  }
+
+  async syncBankFeeds(args: { body: BankFeedSyncInput; signal?: AbortSignal; headers?: HeadersInit }): Promise<BankFeedSyncEnvelope> {
+    const headers = new Headers(args.headers);
+
+    return this.request<BankFeedSyncEnvelope>("POST", "/api/v1/bank-feeds/sync", {
+      body: args.body,
       signal: args.signal,
       headers,
     });
