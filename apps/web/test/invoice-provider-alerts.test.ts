@@ -30,7 +30,7 @@ it('shows safe provider text and reviewed history; only administrators can revie
     ], reviewInvoiceProviderAlert: review,
   }, false)
   await panel.load(7, session)
-  expect(document.body.textContent).toContain('Refund · $45.00')
+  expect(document.body.textContent).toContain('Refund total reported · $45.00')
   expect(document.body.textContent).toContain('Needs administrator review')
   expect(document.body.textContent).toContain('Reviewed 2026-10-26T01:00:00Z')
   expect(document.querySelector('img')).toBeNull()

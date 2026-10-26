@@ -12,6 +12,7 @@ export const renderInvoiceProviderAlerts = (): string => `
   <section class="invoice-history" data-invoice-provider-alerts hidden aria-labelledby="invoice-provider-alerts-heading">
     <h3 id="invoice-provider-alerts-heading">Stripe payment alerts</h3>
     <p>Refunds and disputes require review. Recorded payments and the invoice balance are unchanged. Marking an alert reviewed only records your review.</p>
+    <p>Each refund report shows the total refunded for its charge. Do not add refund reports together.</p>
     <p data-invoice-provider-alert-status class="form-result" role="status" aria-live="polite"></p>
     <button type="button" data-invoice-provider-alert-retry hidden>Retry alerts</button>
     <ul data-invoice-provider-alert-list></ul>
@@ -63,7 +64,7 @@ export const createInvoiceProviderAlerts = (api: InvoiceProviderAlertApi) => {
         const row = document.createElement('li')
         const heading = document.createElement('strong')
         const amount = new Intl.NumberFormat('en-US', { style: 'currency', currency: alert.currency }).format(alert.amount_cents / 100)
-        heading.textContent = `${alert.kind === 'refund' ? 'Refund' : 'Dispute'} · ${amount}`
+        heading.textContent = `${alert.kind === 'refund' ? 'Refund total reported' : 'Disputed amount'} · ${amount}`
         const detail = document.createElement('p')
         detail.textContent = `${alert.provider_status} · ${alert.occurred_at}`
         const review = document.createElement('p')
