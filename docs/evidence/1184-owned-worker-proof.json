@@ -95,5 +95,11 @@
     "billing_or_entitlement_gate_added": false,
     "worker_availability": "Requires explicit DB, private ATTACHMENTS, CSV_IMPORT_QUEUE, CSV_IMPORT_QUEUE_NAME; existing deployments stay unchanged.",
     "migration": "0172; reserved0171GitHub is absent in this proof. Adding0171later must be verified with that separate release."
+  },
+  "release_followup": {
+    "migration": "0171_csv_worker_staging",
+    "previous_proof_migration": "0172_csv_worker_staging",
+    "schema_statements_byte_identical": true,
+    "reason": "Unreleased migration renumbered to keep the shipped ledger contiguous; production read-only ledger inspection ends at0169. Historical owned-resource proof above retains its original source and migration identity."
   }
 }
