@@ -584,3 +584,5 @@ export { installDeelStagingRoutes, type DeelStagingApiRuntime } from './deel-sta
 export * from './csv-import-staging-contract.js'
 export * from './csv-import-staging-port.js'
 export { isCsvStagingPath, csvStagingAuthority, csvStagingSafeFailure } from './csv-import-staging.js'
+
+export { installInvoiceProviderAlertRoutes, type InvoiceProviderAlertService } from './invoice-provider-alerts.js'

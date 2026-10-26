@@ -328,6 +328,10 @@ export const createWorker = (options: WorkerOptions = {}): ExportedHandler<Worke
         report(error, { phase: 'scheduled', operation: 'scheduled job proposal sweep' })
       }
     }
+    if (controller.cron === '* * * * *' && invoices && services.stripeAlertNotices !== undefined) {
+      try { await services.stripeAlertNotices.processDue(new Date().toISOString()) }
+      catch (error) { console.error('[worker] Stripe alert notice failed', error); report(error, { phase: 'scheduled', operation: 'Stripe alert notice' }) }
+    }
     if (controller.cron === '* * * * *' && invoices && services.scheduledRunNotices !== undefined) {
       try {
         await services.scheduledRunNotices.processDue(new Date().toISOString())

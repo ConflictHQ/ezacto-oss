@@ -1,3 +1,4 @@
+import { invoiceProviderAlertOperations, invoiceProviderAlertSchemas } from './invoice-provider-alert-contract.js'
 import { calendarFeedOperations, calendarFeedSchemas } from './calendar-feed-contract.js'
 import { deelStagingOperations, deelStagingSchemas } from './deel-staging-contract.js'
 import { csvImportStagingOperations, csvImportStagingSchemas } from './csv-import-staging-contract.js'
@@ -3809,6 +3810,7 @@ export const apiContractOperations: readonly ApiContractOperation[] = [
   ...moneyOperations.map(documentInvoiceTokenElevation),
   ...attachmentContractOperations,
   ...staffPaymentOperations,
+  ...invoiceProviderAlertOperations,
   ...deelSyncOperations,
   ...deelStagingOperations,
   ...paymentRunOperations,
@@ -4093,6 +4095,7 @@ export const apiContractSchemas: Readonly<Record<string, JsonSchema>> = {
   ...calendarFeedSchemas,
   ...attachmentContractSchemas,
   ...staffPaymentSchemas,
+  ...invoiceProviderAlertSchemas,
   ...deelSyncSchemas,
   ...deelStagingSchemas,
   ...paymentRunSchemas,

@@ -217,6 +217,7 @@ export const readStrandedNotifications = async (
     newerThan?: string
     scope?: string
     period?: string
+    limit?: number
   }>,
 ): Promise<readonly RecordedNotification[]> => {
   const rows = await database.all<QueuedLedgerRow>(
@@ -233,7 +234,7 @@ export const readStrandedNotifications = async (
           AND (${filter.newerThan ?? null} IS NULL OR notification.created_at >= ${filter.newerThan ?? null})
           AND (${filter.scope ?? null} IS NULL OR notification.scope = ${filter.scope ?? null})
           AND (${filter.period ?? null} IS NULL OR notification.period = ${filter.period ?? null})
-        ORDER BY notification.delivery_id`,
+        ORDER BY notification.delivery_id LIMIT ${filter.limit ?? -1}`,
   )
   return rows.map((row) => {
     const [to] = JSON.parse(row.toJson) as { email: string; name?: string }[]

@@ -1,3 +1,4 @@
+import { createStripePaymentAlertStore, prepareStripePaymentAlertNotifications } from '@ezacto/db'
 import { createCalendarFeedService } from '@ezacto/db'
 import { createDeelPaymentStatusStore } from '@ezacto/db'
 import { createDeelPaymentStatusRuntime } from '@ezacto/integrations'
@@ -556,6 +557,7 @@ export const createContainerRuntime = async (
       },
       notificationMailer,
     )
+    const stripeAlertNotices = createTimeReminderService({ prepare: (now: string) => prepareStripePaymentAlertNotifications(drizzle, { now, from: notificationMailer.from, appUrl: config.appBaseUrl }) }, notificationMailer)
     const scheduledRunNotices = createTimeReminderService(
       {
         prepare: (now: string) => prepareScheduledRunNotifications(drizzle, { reviewLinkSigningKey: config.cursorSigningKey,
@@ -641,6 +643,7 @@ export const createContainerRuntime = async (
       now: () => new Date(),
     })
 
+    const stripeAlerts = createStripePaymentAlertStore(drizzle)
     const stripeLinks = createStripeLinkStore(drizzle)
     const stripe = createStripeRuntime({
       config: {
@@ -648,6 +651,7 @@ export const createContainerRuntime = async (
         webhookSecret: config.stripe?.webhookSecret,
       },
       source: {
+        recordAlert: (input) => stripeAlerts.record(input, new Date().toISOString()),
         readInvoice: async (invoiceId: number) => {
           const rows = await drizzle.all<{
             id: number
@@ -884,6 +888,11 @@ export const createContainerRuntime = async (
         console.error('[container] scheduled job proposal sweep failed', error)
       }
       try {
+        await stripeAlertNotices.processDue(now)
+      } catch (error) {
+        console.error('[container] Stripe alert notice failed', error)
+      }
+      try {
         await scheduledRunNotices.processDue(now)
       } catch (error) {
         console.error('[container] scheduled manifest notice failed', error)
@@ -1039,6 +1048,8 @@ export const createContainerRuntime = async (
         }
       })(),
       stripe,
+      invoiceProviderAlerts: stripeAlerts,
+      stripeAlertNotices,
       // Turning the document on and off. The preference existed before anything
       // could set it, which is a decision made on the operator's behalf that they
       // could not revisit (issue 626).
