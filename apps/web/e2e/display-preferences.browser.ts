@@ -545,6 +545,16 @@ test('[e2e:nav] gives search a row of its own in the sidebar, ring and all', asy
 test('[e2e:nav] highlights the command bar row Enter acts on in the selected tint', async ({
   page,
 }) => {
+  let releaseSearch!: () => void
+  const searchReady = new Promise<void>((resolve) => { releaseSearch = resolve })
+  let heldSearches = 0
+  await page.route((url) =>
+    ['/api/v1/clients', '/api/v1/projects', '/api/v1/tasks'].includes(url.pathname) &&
+    url.searchParams.get('q') === 'inv', async (route) => {
+      heldSearches += 1
+      await searchReady
+      await route.continue()
+    })
   await page.emulateMedia({ colorScheme: 'light' })
   await page.setViewportSize({ width: 1280, height: 800 })
   await page.goto('/')
@@ -553,14 +563,22 @@ test('[e2e:nav] highlights the command bar row Enter acts on in the selected tin
   const dialog = page.locator('[data-command-dialog]')
   const query = dialog.getByRole('combobox', { name: 'Command' })
   await expect(query).toBeFocused()
-  await page.keyboard.type('inv')
+  await query.fill('inv')
   const highlighted = dialog.locator('[data-command-option][aria-selected="true"]')
   await expect(highlighted).toHaveText('Invoices')
-  // #EFF3FF, the selected tint, with the focus colour down its edge.
-  expect(await highlighted.evaluate((row) => getComputedStyle(row).backgroundColor)).toBe(
-    'rgb(239, 243, 255)',
-  )
+  // Read the live row: a search reply may replace it between locator resolution
+  // and getComputedStyle, which returns an empty value for a detached element.
+  await expect(highlighted).toHaveCSS('background-color', 'rgb(239, 243, 255)')
+  await expect.poll(() => heldSearches).toBe(3)
+  await page.keyboard.press('ArrowDown')
+  await expect(highlighted).toHaveText('New invoice')
+  const previousRow = await highlighted.elementHandle()
+  releaseSearch()
+  await expect.poll(() => previousRow!.evaluate((row) => row.isConnected)).toBe(false)
+  await expect(highlighted).toHaveText('New invoice')
+  await expect(highlighted).toHaveCSS('background-color', 'rgb(239, 243, 255)')
   await expect(query).toHaveAttribute('aria-activedescendant', (await highlighted.getAttribute('id'))!)
+  await expect(query).toBeFocused()
   await page.keyboard.press('Escape')
   await expect(dialog).toBeHidden()
 })
