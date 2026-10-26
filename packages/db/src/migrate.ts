@@ -1,3 +1,4 @@
+import { stripePaymentAlertsMigration } from './migrations/0174_stripe_payment_alerts.js'
 import { deelStatusThrottleMigration } from './migrations/0167_deel_status_throttle.js'
 import { planningCalendarFeedsMigration } from './migrations/0168_planning_calendar_feeds.js'
 import { deelPaymentStatusMigration } from './migrations/0166_deel_payment_status.js'
@@ -1697,6 +1698,7 @@ const migrations = [
   { id: '0167_deel_status_throttle', statements: deelStatusThrottleMigration },
   { id: '0168_planning_calendar_feeds', statements: planningCalendarFeedsMigration },
   { id: '0169_csv_staging_instance', statements: csvStagingInstanceMigration },
+  { id: '0174_stripe_payment_alerts', statements: stripePaymentAlertsMigration },
 ] as const
 
 // Fixtures assert against this rather than re-listing ids: a hand-copied ledger merges

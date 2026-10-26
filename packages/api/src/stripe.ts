@@ -22,6 +22,7 @@ export interface StripeService {
     signature: string | null
   }): Promise<
     | { kind: 'recorded'; invoiceId: number }
+    | { kind: 'flagged'; invoiceId: number }
     | { kind: 'ignored'; reason: string }
     | { kind: 'unverified' }
   >

@@ -226,4 +226,26 @@ describe('signed Stripe checkout to the D1 payment ledger (#1131)', () => {
       warning.mockRestore()
     }
   })
+  it('[money] verified refunds and disputes flag the original receipt without changing paid state or duplicating events', async () => {
+    const id = await invoice()
+    const payment = `pi_alert_${id}`
+    await post(payload(id, { payment }))
+    const before = await state(id)
+    const beforeEvents = await events(id)
+    const report = (eventId:string,type:string,amount=5000,currency='usd',intent=payment) => JSON.stringify({id:eventId,type,created:1792454400,data:{object:{id:type==='charge.refunded'?'ch_owned':'dp_owned',payment_intent:intent,amount:10000,amount_refunded:amount,currency,refunded:false,status:'needs_response'}}})
+    const refund = report('evt_owned_refund','charge.refunded')
+    expect((await post(refund,{key:'forged'})).status).toBe(400)
+    expect((await post(refund)).status).toBe(200)
+    expect((await post(refund)).status).toBe(200)
+    expect((await post(report('evt_wrong_currency','charge.refunded',5000,'eur'))).status).toBe(200)
+    expect((await post(report('evt_too_large','charge.refunded',10001))).status).toBe(200)
+    expect((await post(report('evt_unknown','charge.refunded',5000,'usd','pi_unknown'))).status).toBe(200)
+    expect((await post(report('evt_owned_dispute','charge.dispute.created'))).status).toBe(200)
+    const alerts=(await database.prepare('SELECT id,kind,amount_cents,reviewed_at FROM stripe_payment_alerts WHERE invoice_id=? ORDER BY id').bind(id).all()).results
+    expect(alerts).toEqual([{id:'evt_owned_dispute',kind:'dispute',amount_cents:10000,reviewed_at:null},{id:'evt_owned_refund',kind:'refund',amount_cents:5000,reviewed_at:null}])
+    expect(await state(id)).toEqual(before)
+    expect(await events(id)).toEqual(beforeEvents)
+    expect((await receipts(id)).results).toHaveLength(1)
+  })
+
 })
