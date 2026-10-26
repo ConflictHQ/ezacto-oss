@@ -55,6 +55,7 @@ const removedTables = new Set([
   'quickbooks_oauth_states',
   'quickbooks_managed_grants',
   'calendar_proposals',
+  'calendar_connections',
   'allocations',
   'placeholder_assignment_keys',
   'time_off',
@@ -86,7 +87,7 @@ const category = (table: string): AccountRetentionCategory => {
     return 'billing_and_payments'
   return 'audit_and_security'
 }
-const credentialsQuery = `SELECT json_object('identities', json(COALESCE((SELECT json_group_array(json_object('provider',provider,'subject',provider_subject)) FROM (SELECT provider,provider_subject FROM user_identities WHERE user_id=? ORDER BY provider,provider_subject)), '[]')), 'emails', json(COALESCE((SELECT json_group_array(json_object('address',address,'verified',verified_at IS NOT NULL AND invalidated_at IS NULL)) FROM (SELECT address,verified_at,invalidated_at FROM user_emails WHERE user_id=? ORDER BY id)), '[]'))) AS snapshot`
+const credentialsQuery = `SELECT json_object('identities', json(COALESCE((SELECT json_group_array(json_object('provider',provider,'subject',provider_subject)) FROM (SELECT provider,provider_subject FROM user_identities WHERE user_id=? ORDER BY provider,provider_subject)), '[]')), 'emails', json(COALESCE((SELECT json_group_array(json_object('address',address,'verified',verified_at IS NOT NULL AND invalidated_at IS NULL)) FROM (SELECT address,verified_at,invalidated_at FROM user_emails WHERE user_id=? ORDER BY id)), '[]')), 'calendar_connections', json(COALESCE((SELECT json_group_array(json_object('provider',provider,'generation',generation,'credential_revision',credential_revision,'status',status,'instance',instance_nonce)) FROM (SELECT provider,generation,credential_revision,status,instance_nonce FROM calendar_connections WHERE user_id=? ORDER BY provider)), '[]')), 'calendar_cleanup', json(COALESCE((SELECT json_group_array(json_object('id',id,'status',status)) FROM (SELECT id,status FROM calendar_cleanup_obligations WHERE user_id=? AND instance_nonce=coalesce((SELECT c.instance_nonce FROM calendar_connections c WHERE c.user_id=calendar_cleanup_obligations.user_id AND c.provider=calendar_cleanup_obligations.provider),(SELECT nonce FROM calendar_sync_instance WHERE singleton=1)) ORDER BY id)), '[]'))) AS snapshot`
 
 export function createAccountClosureRepository(database: Database): AccountClosureStore {
   const client = (database as Database & { $client: Native }).$client
@@ -116,6 +117,7 @@ export function createAccountClosureRepository(database: Database): AccountClosu
     )
     const row = rows[0]
     if (!row) return null
+    const cleanup = (await all<{pending:number;manual_required:number;revoked:number}>(client,"SELECT coalesce(sum(status='pending'),0) AS pending,coalesce(sum(status='manual_required'),0) AS manual_required,coalesce(sum(status='revoked'),0) AS revoked FROM calendar_cleanup_obligations WHERE request_id=?",[requestId]))[0]!
     return {
       request_id: row.request_id,
       user_id: row.user_id,
@@ -124,6 +126,7 @@ export function createAccountClosureRepository(database: Database): AccountClosu
       policy_version: row.policy_version,
       policy_snapshot: parseAccountRetentionPolicy(JSON.parse(row.policy_snapshot)),
       inventory: JSON.parse(row.inventory_json) as AccountClosureInventoryItem[],
+      ...(cleanup.pending+cleanup.manual_required+cleanup.revoked>0?{calendar_cleanup:cleanup}:{}),
       retained_identity: row.retained_identity === 1,
       apple_cleanup: row.apple_cleanup,
     }
@@ -183,6 +186,10 @@ export function createAccountClosureRepository(database: Database): AccountClosu
       entries.push(
         `json_object('location','wise_all_webhook_deliveries.transfer_id','count',(SELECT count(*) FROM wise_all_webhook_deliveries delivery WHERE EXISTS (SELECT 1 FROM payout_transfers payout WHERE payout.external_transfer_id=delivery.transfer_id AND payout.user_id=(SELECT id FROM subject)) OR EXISTS (SELECT 1 FROM payment_run_items item WHERE item.transfer_id=delivery.transfer_id AND item.user_id=(SELECT id FROM subject))),'category','billing_and_payments')`,
       )
+    entries.push(`json_object('location','calendar_connections.external_cleanup','count',
+      (SELECT count(*) FROM calendar_connections WHERE user_id=(SELECT id FROM subject) AND sealed_grant IS NOT NULL)
+      +(SELECT count(*) FROM calendar_cleanup_obligations WHERE user_id=(SELECT id FROM subject) AND instance_nonce=coalesce((SELECT c.instance_nonce FROM calendar_connections c WHERE c.user_id=calendar_cleanup_obligations.user_id AND c.provider=calendar_cleanup_obligations.provider),(SELECT nonce FROM calendar_sync_instance WHERE singleton=1)) AND status<>'revoked'),
+      'category','audit_and_security')`)
     // D1 has tighter compound-SELECT and function-argument limits than SQLite.
     // Each bounded array contains objects, so trimming its outer brackets is exact.
     const groups: string[] = []
@@ -236,7 +243,7 @@ export function createAccountClosureRepository(database: Database): AccountClosu
       )
     )[0]!.secret
     const snapshot = (
-      await all<{ snapshot: string }>(client, credentialsQuery, [person.user_id, person.user_id])
+      await all<{ snapshot: string }>(client, credentialsQuery, [person.user_id, person.user_id, person.user_id, person.user_id])
     )[0]!.snapshot
     const reviewToken = accountClosureDigest(
       secret,
@@ -368,6 +375,8 @@ export function createAccountClosureRepository(database: Database): AccountClosu
           userId,
           reviewed.person.user_version,
           input.expectedPolicyVersion,
+          userId,
+          userId,
           userId,
           userId,
           userId,

@@ -420,6 +420,39 @@ export type ResourceCalendarEnvelope = {
 };
 };
 
+export type CalendarCleanupEnvelope = {
+  "data": CalendarCleanupStatus;
+};
+
+export type CalendarConnectionList = {
+  "data": Array<{
+  "provider": "google" | "microsoft";
+  "status": "connected" | "needs_reauth" | "disconnected";
+  "generation": number;
+  "last_synced_at": unknown;
+  "last_error": "credential_unavailable" | "authorization" | "unavailable" | "invalid_source" | "limit" | "changed" | null;
+  "syncing": boolean;
+  "cleanup_pending": boolean;
+  "available": boolean;
+}>;
+};
+
+export type CalendarRefreshInput = {
+  "past_days"?: number;
+  "future_days"?: number;
+};
+
+export type CalendarDisconnectInput = {
+  "generation": number;
+};
+
+export type CalendarRefreshResult = {
+  "data": {
+  "state": "connected" | "needs_reauth";
+  "applied": number;
+};
+};
+
 export type AttachmentUploadInput = {
   "file": string;
 };
@@ -2645,6 +2678,12 @@ export type TimeEntryPage = {
   "page": PageMetadata;
 };
 
+export type CalendarCleanupStatus = {
+  "pending": number;
+  "manual_required": number;
+  "revoked": number;
+};
+
 export type CalendarProposal = {
   "id": number;
   "provider": "google" | "microsoft";
@@ -2657,6 +2696,8 @@ export type CalendarProposal = {
   "status": "proposed" | "accepted" | "discarded" | "cancelled";
   "time_entry_id": number | null;
   "decided_at": string | null;
+  "source_changed_at"?: string | null;
+  "source_cancelled_at"?: string | null;
   "created_at": string;
   "updated_at": string;
 };
@@ -3010,6 +3051,7 @@ export type AccountClosureRecord = {
   "policy_snapshot": AccountRetentionPolicy;
   "inventory": Array<AccountClosureInventoryItem>;
   "retained_identity": boolean;
+  "calendar_cleanup"?: CalendarCleanupStatus;
   "apple_cleanup": AppleCleanupStatus;
 };
 
@@ -3128,6 +3170,7 @@ export type AccountDeletionClosureDisclosure = {
 };
 
 export type AccountDeletionTrackingStatus = {
+  "calendar_cleanup"?: CalendarCleanupStatus;
   "apple_cleanup"?: AppleCleanupStatus;
   "request_id": string;
   "status": "pending" | "in_progress" | "action_required" | "completed";
@@ -3161,6 +3204,7 @@ export type AccountDeletionUpdate = {
 };
 
 export type AccountDeletionRecord = {
+  "calendar_cleanup"?: CalendarCleanupStatus;
   "apple_cleanup"?: AppleCleanupStatus;
   "id": string;
   "user_id": number;
@@ -7057,6 +7101,44 @@ export class EzactoClient {
     const headers = new Headers(args.headers);
 
     return this.request<CalendarProposalEnvelope>("POST", "/api/v1/calendar-proposals/:id/discard".replace(":id", encodeURIComponent(String(args["id"]))), {
+      signal: args.signal,
+      headers,
+    });
+  }
+
+  async getCalendarCleanupStatus(args: { signal?: AbortSignal; headers?: HeadersInit } = {}): Promise<CalendarCleanupEnvelope> {
+    const headers = new Headers(args.headers);
+
+    return this.request<CalendarCleanupEnvelope>("GET", "/api/v1/calendar-cleanup-status", {
+      signal: args.signal,
+      headers,
+    });
+  }
+
+  async listCalendarConnections(args: { signal?: AbortSignal; headers?: HeadersInit } = {}): Promise<CalendarConnectionList> {
+    const headers = new Headers(args.headers);
+
+    return this.request<CalendarConnectionList>("GET", "/api/v1/calendar-connections", {
+      signal: args.signal,
+      headers,
+    });
+  }
+
+  async disconnectCalendarConnection(args: { "provider": "google" | "microsoft"; body: CalendarDisconnectInput; signal?: AbortSignal; headers?: HeadersInit }): Promise<void> {
+    const headers = new Headers(args.headers);
+
+    return this.request<void>("DELETE", "/api/v1/calendar-connections/:provider".replace(":provider", encodeURIComponent(String(args["provider"]))), {
+      body: args.body,
+      signal: args.signal,
+      headers,
+    });
+  }
+
+  async refreshCalendarConnection(args: { "provider": "google" | "microsoft"; body: CalendarRefreshInput; signal?: AbortSignal; headers?: HeadersInit }): Promise<CalendarRefreshResult> {
+    const headers = new Headers(args.headers);
+
+    return this.request<CalendarRefreshResult>("POST", "/api/v1/calendar-connections/:provider/refresh".replace(":provider", encodeURIComponent(String(args["provider"]))), {
+      body: args.body,
       signal: args.signal,
       headers,
     });

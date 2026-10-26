@@ -84,3 +84,9 @@ housekeeping. Requests are body-size limited and the instance permits at most
 mean erasure completed. Keep the request reference and contact the operator if
 tracking expires; only an explicit completion confirmation establishes the
 reported outcome.
+
+### Calendar OAuth custody (#1299)
+
+`calendar_connections` holds per-user OAuth credentials and cursors only as purpose-separated AES-GCM envelopes. Native API responses contain status only. The account-closure trigger deletes these rows along with the existing calendar proposals; sync commits repeat the current-user/closure fence. Demo reset rotates `calendar_sync_instance` and deletes connections. CLI backup restore rotates the incarnation and discards encrypted grants/cursors, requiring new OAuth consent; accepted time and proposal history remain. For an operator-managed raw SQL restore, rotate the incarnation and clear calendar credentials before opening the instance.
+
+Calendar grant deletion is local only. Before a disconnect, reauthorization failure, or closure removes the live connection, encrypted material and its original user/provider/incarnation identity move into `calendar_cleanup_obligations`. Those rows remain pending until a future verified provider adapter records revocation evidence. Key loss, physical restore, and demo reset preserve unresolved custody as `manual_required`; the administrator-only aggregate exposes it even when the original user row no longer exists. Closure review includes generation/revision changes and disclosed cleanup counts. No endpoint in this slice marks an obligation revoked.

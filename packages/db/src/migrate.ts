@@ -1,3 +1,4 @@
+import { calendarConnectionsMigration } from './migrations/0173_calendar_connections.js'
 import { deelStatusThrottleMigration } from './migrations/0167_deel_status_throttle.js'
 import { deelPaymentStatusMigration } from './migrations/0166_deel_payment_status.js'
 import { isOrdinaryD1SchemaStatement } from './internal/d1-cold-migrations.js'
@@ -1693,6 +1694,7 @@ const migrations = [
   { id: '0165_nonzero_stopped_time', statements: nonzeroStoppedTimeMigration },
   { id: '0166_deel_payment_status', statements: deelPaymentStatusMigration },
   { id: '0167_deel_status_throttle', statements: deelStatusThrottleMigration },
+  { id: '0173_calendar_connections', statements: calendarConnectionsMigration },
 ] as const
 
 // Fixtures assert against this rather than re-listing ids: a hand-copied ledger merges

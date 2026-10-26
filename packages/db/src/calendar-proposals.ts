@@ -48,6 +48,9 @@ export interface CalendarProposalRecord {
   endsAt: string
   status: CalendarProposalStatus
   sourceVersion: string | null
+  observedSourceVersion: string | null
+  sourceChangedAt: string | null
+  sourceCancelledAt: string | null
   timeEntryId: number | null
   decidedAt: string | null
   createdAt: string

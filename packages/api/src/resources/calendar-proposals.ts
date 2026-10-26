@@ -52,6 +52,8 @@ export interface CalendarProposalRecord {
   status: CalendarProposalStatus
   timeEntryId: number | null
   decidedAt: string | null
+  sourceChangedAt?: string | null
+  sourceCancelledAt?: string | null
   createdAt: string
   updatedAt: string
 }
@@ -98,6 +100,8 @@ interface CalendarProposalOutput {
   status: CalendarProposalStatus
   time_entry_id: number | null
   decided_at: string | null
+  source_changed_at: string | null
+  source_cancelled_at: string | null
   created_at: string
   updated_at: string
 }
@@ -116,6 +120,8 @@ export const serializeCalendarProposal = (
   status: proposal.status,
   time_entry_id: proposal.timeEntryId,
   decided_at: proposal.decidedAt,
+  source_changed_at: proposal.sourceChangedAt ?? null,
+  source_cancelled_at: proposal.sourceCancelledAt ?? null,
   created_at: proposal.createdAt,
   updated_at: proposal.updatedAt,
 })

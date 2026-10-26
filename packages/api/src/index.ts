@@ -1,3 +1,4 @@
+export { installCalendarConnectionRoutes, type CalendarConnectionPort } from './calendar-connections.js'
 export { installDeelPaymentStatusRoutes } from './deel-payment-status.js'
 export { createManagedDeelConnectionCommands, type ManagedDeelConnectionOptions } from './managed-deel.js'
 export { createManagedBillConnectionCommands, type ManagedBillConnectionOptions, type ManagedBillConnectCommand, type ManagedBillDisconnectInput } from './managed-bill.js'

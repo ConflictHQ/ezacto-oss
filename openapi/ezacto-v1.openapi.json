@@ -9306,6 +9306,268 @@
         ]
       }
     },
+    "/api/v1/calendar-cleanup-status": {
+      "get": {
+        "operationId": "getCalendarCleanupStatus",
+        "summary": "Show unresolved calendar cleanup counts across retained incarnations",
+        "tags": [
+          "time-entries"
+        ],
+        "security": [
+          {
+            "cookieSession": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CalendarCleanupEnvelope"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/MalformedRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/AuthenticationRequired"
+          },
+          "403": {
+            "$ref": "#/components/responses/InsufficientPermission"
+          },
+          "404": {
+            "$ref": "#/components/responses/ResourceNotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/StateConflict"
+          },
+          "413": {
+            "$ref": "#/components/responses/PayloadTooLarge"
+          },
+          "422": {
+            "$ref": "#/components/responses/ValidationFailed"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "503": {
+            "$ref": "#/components/responses/ServiceUnavailable"
+          }
+        },
+        "x-ezacto-runtime-path": "/api/v1/calendar-cleanup-status",
+        "x-ezacto-generate-client": true
+      }
+    },
+    "/api/v1/calendar-connections": {
+      "get": {
+        "operationId": "listCalendarConnections",
+        "summary": "List the acting user’s private calendar connection status",
+        "tags": [
+          "time-entries"
+        ],
+        "security": [
+          {
+            "cookieSession": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CalendarConnectionList"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/MalformedRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/AuthenticationRequired"
+          },
+          "403": {
+            "$ref": "#/components/responses/InsufficientPermission"
+          },
+          "404": {
+            "$ref": "#/components/responses/ResourceNotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/StateConflict"
+          },
+          "413": {
+            "$ref": "#/components/responses/PayloadTooLarge"
+          },
+          "422": {
+            "$ref": "#/components/responses/ValidationFailed"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "503": {
+            "$ref": "#/components/responses/ServiceUnavailable"
+          }
+        },
+        "x-ezacto-runtime-path": "/api/v1/calendar-connections",
+        "x-ezacto-generate-client": true
+      }
+    },
+    "/api/v1/calendar-connections/{provider}": {
+      "delete": {
+        "operationId": "disconnectCalendarConnection",
+        "summary": "Disconnect the acting user’s calendar and cancel open proposals",
+        "tags": [
+          "time-entries"
+        ],
+        "security": [
+          {
+            "cookieSession": []
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "No content"
+          },
+          "400": {
+            "$ref": "#/components/responses/MalformedRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/AuthenticationRequired"
+          },
+          "403": {
+            "$ref": "#/components/responses/InsufficientPermission"
+          },
+          "404": {
+            "$ref": "#/components/responses/ResourceNotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/StateConflict"
+          },
+          "413": {
+            "$ref": "#/components/responses/PayloadTooLarge"
+          },
+          "422": {
+            "$ref": "#/components/responses/ValidationFailed"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "503": {
+            "$ref": "#/components/responses/ServiceUnavailable"
+          }
+        },
+        "x-ezacto-runtime-path": "/api/v1/calendar-connections/:provider",
+        "x-ezacto-generate-client": true,
+        "parameters": [
+          {
+            "name": "provider",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "enum": [
+                "google",
+                "microsoft"
+              ]
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CalendarDisconnectInput"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/calendar-connections/{provider}/refresh": {
+      "post": {
+        "operationId": "refreshCalendarConnection",
+        "summary": "Refresh proposals from an available calendar provider",
+        "description": "No time entry is created or changed. Returns unavailable until an approved provider adapter is configured. No token may be supplied.",
+        "tags": [
+          "time-entries"
+        ],
+        "security": [
+          {
+            "cookieSession": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CalendarRefreshResult"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/MalformedRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/AuthenticationRequired"
+          },
+          "403": {
+            "$ref": "#/components/responses/InsufficientPermission"
+          },
+          "404": {
+            "$ref": "#/components/responses/ResourceNotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/StateConflict"
+          },
+          "413": {
+            "$ref": "#/components/responses/PayloadTooLarge"
+          },
+          "422": {
+            "$ref": "#/components/responses/ValidationFailed"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "503": {
+            "$ref": "#/components/responses/ServiceUnavailable"
+          }
+        },
+        "x-ezacto-runtime-path": "/api/v1/calendar-connections/:provider/refresh",
+        "x-ezacto-generate-client": true,
+        "parameters": [
+          {
+            "name": "provider",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "enum": [
+                "google",
+                "microsoft"
+              ]
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CalendarRefreshInput"
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/allocations": {
       "get": {
         "operationId": "listAllocations",
@@ -36142,6 +36404,156 @@
         ],
         "additionalProperties": false
       },
+      "CalendarCleanupEnvelope": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "data"
+        ],
+        "properties": {
+          "data": {
+            "$ref": "#/components/schemas/CalendarCleanupStatus"
+          }
+        }
+      },
+      "CalendarConnectionList": {
+        "type": "object",
+        "required": [
+          "data"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "data": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "provider",
+                "status",
+                "generation",
+                "last_synced_at",
+                "last_error",
+                "syncing",
+                "cleanup_pending",
+                "available"
+              ],
+              "properties": {
+                "provider": {
+                  "type": "string",
+                  "enum": [
+                    "google",
+                    "microsoft"
+                  ]
+                },
+                "status": {
+                  "type": "string",
+                  "enum": [
+                    "connected",
+                    "needs_reauth",
+                    "disconnected"
+                  ]
+                },
+                "generation": {
+                  "type": "integer",
+                  "minimum": 1
+                },
+                "last_synced_at": {
+                  "type": [
+                    "string",
+                    "null"
+                  ],
+                  "format": "date-time"
+                },
+                "last_error": {
+                  "type": [
+                    "string",
+                    "null"
+                  ],
+                  "enum": [
+                    "credential_unavailable",
+                    "authorization",
+                    "unavailable",
+                    "invalid_source",
+                    "limit",
+                    "changed",
+                    null
+                  ]
+                },
+                "syncing": {
+                  "type": "boolean"
+                },
+                "cleanup_pending": {
+                  "type": "boolean"
+                },
+                "available": {
+                  "type": "boolean"
+                }
+              }
+            }
+          }
+        }
+      },
+      "CalendarRefreshInput": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "past_days": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 90
+          },
+          "future_days": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 90
+          }
+        }
+      },
+      "CalendarDisconnectInput": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "generation"
+        ],
+        "properties": {
+          "generation": {
+            "type": "integer",
+            "minimum": 1
+          }
+        }
+      },
+      "CalendarRefreshResult": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "data"
+        ],
+        "properties": {
+          "data": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "state",
+              "applied"
+            ],
+            "properties": {
+              "state": {
+                "type": "string",
+                "enum": [
+                  "connected",
+                  "needs_reauth"
+                ]
+              },
+              "applied": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 90
+              }
+            }
+          }
+        }
+      },
       "AttachmentUploadInput": {
         "type": "object",
         "required": [
@@ -46880,6 +47292,29 @@
         },
         "additionalProperties": false
       },
+      "CalendarCleanupStatus": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "pending",
+          "manual_required",
+          "revoked"
+        ],
+        "properties": {
+          "pending": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "manual_required": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "revoked": {
+            "type": "integer",
+            "minimum": 0
+          }
+        }
+      },
       "CalendarProposal": {
         "type": "object",
         "required": [
@@ -46952,6 +47387,28 @@
             "description": "The entry an accepted proposal became; null until then."
           },
           "decided_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "source_changed_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "source_cancelled_at": {
             "anyOf": [
               {
                 "type": "string",
@@ -48494,6 +48951,9 @@
           "retained_identity": {
             "type": "boolean"
           },
+          "calendar_cleanup": {
+            "$ref": "#/components/schemas/CalendarCleanupStatus"
+          },
           "apple_cleanup": {
             "$ref": "#/components/schemas/AppleCleanupStatus"
           }
@@ -49019,6 +49479,9 @@
           "expires_at"
         ],
         "properties": {
+          "calendar_cleanup": {
+            "$ref": "#/components/schemas/CalendarCleanupStatus"
+          },
           "apple_cleanup": {
             "$ref": "#/components/schemas/AppleCleanupStatus"
           },
@@ -49226,6 +49689,9 @@
           "updated_at"
         ],
         "properties": {
+          "calendar_cleanup": {
+            "$ref": "#/components/schemas/CalendarCleanupStatus"
+          },
           "apple_cleanup": {
             "$ref": "#/components/schemas/AppleCleanupStatus"
           },

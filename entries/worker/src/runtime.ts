@@ -1,3 +1,5 @@
+import { createCalendarConnectionStore } from '@ezacto/db/d1'
+import { createCalendarSyncService } from '@ezacto/integrations'
 import { createDeelPaymentStatusStore } from '@ezacto/db/d1'
 import { createDeelPaymentStatusRuntime } from '@ezacto/integrations'
 import { createDeelStageStore } from '@ezacto/db/d1'
@@ -707,6 +709,7 @@ const readOnlyObjects = (objects: AttachmentObjectPort): AttachmentObjectPort =>
 export const createRuntimeServices = async (
   env: WorkerEnv,
   options: {
+    calendarSources?: Parameters<typeof createCalendarSyncService>[0]['sources'];
     emailProvider?: HttpEmailProvider;
     ses?: SesMailerOptions;
     mailgun?: MailgunOptions;
@@ -1336,6 +1339,7 @@ export const createRuntimeServices = async (
     },
     activityRoll: createActivityRoll(drizzle, () => new Date().toISOString()),
     trackedResources,
+    calendarConnections: await createCalendarSyncService({store:createCalendarConnectionStore(drizzle),deploymentKey:cursorSigningKey,...(options.calendarSources?{sources:options.calendarSources}:{})}),
     calendarProposals: new DrizzleCalendarProposalRepository(drizzle, trackedResources),
     placeholderPlanning: createPlaceholderAllocationRepository(drizzle),
       allocations: new DrizzleAllocationRepository(drizzle),

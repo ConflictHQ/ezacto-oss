@@ -1,3 +1,4 @@
+import { calendarConnectionOperations, calendarConnectionSchemas } from './calendar-connection-contract.js'
 import { deelStagingOperations, deelStagingSchemas } from './deel-staging-contract.js'
 import { moduleForPath } from './module-availability.js'
 import { organizationHolidayOperations, organizationHolidaySchemas } from './organization-holiday-contract.js'
@@ -3792,6 +3793,7 @@ export const apiContractOperations: readonly ApiContractOperation[] = [
   ...rateOperations(),
   ...timeEntryOperations,
   ...calendarProposalOperations,
+  ...calendarConnectionOperations,
   ...allocationOperations,
   ...timeOffOperations,
   ...organizationHolidayOperations,
@@ -4084,6 +4086,7 @@ export const apiContractSchemas: Readonly<Record<string, JsonSchema>> = {
   ...organizationHolidaySchemas,
   ...placeholderPlanningSchemas,
   ...resourceCalendarSchemas,
+  ...calendarConnectionSchemas,
   ...attachmentContractSchemas,
   ...staffPaymentSchemas,
   ...deelSyncSchemas,
@@ -6072,6 +6075,7 @@ export const apiContractSchemas: Readonly<Record<string, JsonSchema>> = {
   },
   TimeEntryEnvelope: envelope("TimeEntry"),
   TimeEntryPage: page("TimeEntry"),
+  CalendarCleanupStatus: {type:'object',additionalProperties:false,required:['pending','manual_required','revoked'],properties:{pending:{type:'integer',minimum:0},manual_required:{type:'integer',minimum:0},revoked:{type:'integer',minimum:0}}},
   CalendarProposal: {
     type: "object",
     required: [
@@ -6107,6 +6111,8 @@ export const apiContractSchemas: Readonly<Record<string, JsonSchema>> = {
         description: "The entry an accepted proposal became; null until then.",
       },
       decided_at: nullable(timestampSchema),
+      source_changed_at: nullable(timestampSchema),
+      source_cancelled_at: nullable(timestampSchema),
       created_at: timestampSchema,
       updated_at: timestampSchema,
     },
@@ -6577,7 +6583,7 @@ export const apiContractSchemas: Readonly<Record<string, JsonSchema>> = {
   AppleLifecycleProofInput: {type:"object",additionalProperties:false,required:["receipt"],properties:{receipt:{type:"string",maxLength:16384}}},
   AppleCleanupStatus: {type:"string",enum:["not_linked","pending","revoked","manual_required"]},
   AccountClosureInventoryItem: { type: "object", additionalProperties: false, required: ["location", "count", "category"], properties: { location: stringSchema, count: integerSchema, category: { type: "string", enum: ["time_and_worker_attribution", "billing_and_payments", "audit_and_security", "legal_hold"] } } },
-  AccountClosureRecord: { type: "object", additionalProperties: false, required: ["request_id", "user_id", "actor_user_id", "closed_at", "policy_version", "policy_snapshot", "inventory", "retained_identity", "apple_cleanup"], properties: { request_id: stringSchema, user_id: integerSchema, actor_user_id: integerSchema, closed_at: timestampSchema, policy_version: integerSchema, policy_snapshot: reference("AccountRetentionPolicy"), inventory: { type: "array", items: reference("AccountClosureInventoryItem") }, retained_identity: booleanSchema, apple_cleanup: reference("AppleCleanupStatus") } },
+  AccountClosureRecord: { type: "object", additionalProperties: false, required: ["request_id", "user_id", "actor_user_id", "closed_at", "policy_version", "policy_snapshot", "inventory", "retained_identity", "apple_cleanup"], properties: { request_id: stringSchema, user_id: integerSchema, actor_user_id: integerSchema, closed_at: timestampSchema, policy_version: integerSchema, policy_snapshot: reference("AccountRetentionPolicy"), inventory: { type: "array", items: reference("AccountClosureInventoryItem") }, retained_identity: booleanSchema, calendar_cleanup: reference("CalendarCleanupStatus"), apple_cleanup: reference("AppleCleanupStatus") } },
   AccountClosurePreview: { type: "object", additionalProperties: false, required: ["request_id", "user_id", "request_version", "review_token", "policy_version", "policy_snapshot", "inventory", "uncovered_categories", "owner_transfer_required", "running_timer", "closure"], properties: { apple_cleanup_retry_available:booleanSchema, request_id: stringSchema, user_id: integerSchema, request_version: integerSchema, review_token: { type: "string", pattern: "^[0-9a-f]{64}$" }, policy_version: nullable(integerSchema), policy_snapshot: nullable(reference("AccountRetentionPolicy")), inventory: { type: "array", items: reference("AccountClosureInventoryItem") }, uncovered_categories: { type: "array", items: { type: "string", enum: ["time_and_worker_attribution", "billing_and_payments", "audit_and_security", "legal_hold"] } }, owner_transfer_required: booleanSchema, running_timer: booleanSchema, closure: nullable(reference("AccountClosureRecord")) } },
   EmptyObject: {type:"object",additionalProperties:false,properties:{}},
   AppleCleanupStatusEnvelope: {type:"object",additionalProperties:false,required:["data"],properties:{data:{type:"object",additionalProperties:false,required:["apple_cleanup"],properties:{apple_cleanup:reference("AppleCleanupStatus")}}}},
@@ -6594,7 +6600,7 @@ export const apiContractSchemas: Readonly<Record<string, JsonSchema>> = {
   AccountDeletionTrackingInput: { type: "object", required: ["token"], additionalProperties: false, properties: { token: { type: "string", maxLength: 100 } } },
   AccountDeletionRetainedDisclosure: { type: "object", additionalProperties: false, required: ["category", "reason", "period", "review_after_days", "review_due"], properties: { category: stringSchema, reason: stringSchema, period: stringSchema, review_after_days: integerSchema, review_due: timestampSchema } },
   AccountDeletionClosureDisclosure: { type: "object", additionalProperties: false, required: ["retained_records", "backup_handling", "user_notice", "operator_contact"], properties: { retained_records: { type: "array", items: reference("AccountDeletionRetainedDisclosure") }, backup_handling: stringSchema, user_notice: stringSchema, operator_contact: stringSchema } },
-  AccountDeletionTrackingStatus: { type: "object", additionalProperties: false, required: ["request_id", "status", "requested_at", "expected_completion_at", "closed_at", "completed_at", "message", "completion_confirmation", "policy_version", "policy_snapshot", "policy_reviewed", "closure_disclosure", "operator_contact", "expires_at"], properties: { apple_cleanup: reference("AppleCleanupStatus"), request_id: stringSchema, status: { type: "string", enum: ["pending", "in_progress", "action_required", "completed"] }, requested_at: timestampSchema, expected_completion_at: nullable(timestampSchema), closed_at: nullable(timestampSchema), completed_at: nullable(timestampSchema), message: stringSchema, completion_confirmation: nullable(stringSchema), policy_version: nullable(integerSchema), policy_snapshot: nullable(reference("AccountRetentionPolicy")), policy_reviewed: booleanSchema, closure_disclosure: nullable(reference("AccountDeletionClosureDisclosure")), operator_contact: nullable(stringSchema), expires_at: timestampSchema } },
+  AccountDeletionTrackingStatus: { type: "object", additionalProperties: false, required: ["request_id", "status", "requested_at", "expected_completion_at", "closed_at", "completed_at", "message", "completion_confirmation", "policy_version", "policy_snapshot", "policy_reviewed", "closure_disclosure", "operator_contact", "expires_at"], properties: { calendar_cleanup: reference("CalendarCleanupStatus"), apple_cleanup: reference("AppleCleanupStatus"), request_id: stringSchema, status: { type: "string", enum: ["pending", "in_progress", "action_required", "completed"] }, requested_at: timestampSchema, expected_completion_at: nullable(timestampSchema), closed_at: nullable(timestampSchema), completed_at: nullable(timestampSchema), message: stringSchema, completion_confirmation: nullable(stringSchema), policy_version: nullable(integerSchema), policy_snapshot: nullable(reference("AccountRetentionPolicy")), policy_reviewed: booleanSchema, closure_disclosure: nullable(reference("AccountDeletionClosureDisclosure")), operator_contact: nullable(stringSchema), expires_at: timestampSchema } },
   AccountDeletionTrackingEnvelope: { type: "object", additionalProperties: false, required: ["data"], properties: { data: reference("AccountDeletionTrackingStatus") } },
   AccountDeletionSubmission: {
     type: "object", additionalProperties: false,
@@ -6613,7 +6619,7 @@ export const apiContractSchemas: Readonly<Record<string, JsonSchema>> = {
     type: "object", additionalProperties: false,
     required: ["id", "user_id", "requested_at", "policy_version", "policy_snapshot", "policy_reviewed", "status", "version", "message", "response_target_at", "expected_completion_at", "completed_at", "completion_confirmation", "notification", "notification_updated_at", "notification_delivery_id", "updated_at"],
     properties: {
-      apple_cleanup: reference("AppleCleanupStatus"),
+      calendar_cleanup: reference("CalendarCleanupStatus"), apple_cleanup: reference("AppleCleanupStatus"),
       id: stringSchema, user_id: integerSchema, requested_at: timestampSchema,
       policy_version: nullable(integerSchema), policy_snapshot: nullable(reference("AccountRetentionPolicy")), policy_reviewed: booleanSchema,
       status: { type: "string", enum: ["pending", "in_progress", "action_required", "completed"] },

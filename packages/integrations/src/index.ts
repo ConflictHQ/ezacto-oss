@@ -1,3 +1,4 @@
+export { createCalendarSyncService, type CalendarSyncService } from './calendar-sync.js'
 export { createDeelPaymentStatusRuntime, type DeelPaymentStatusRuntime, type DeelPaymentStatusStore, type DeelPaymentStatusClaim, type DeelPaymentStatusResult } from './deel/payment-status.js'
 export {
   createStripeRuntime,

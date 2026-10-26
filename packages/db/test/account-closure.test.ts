@@ -1,3 +1,6 @@
+import { createCalendarGrantVault } from '@ezacto/core'
+import { createCalendarConnectionStore } from '../src/calendar-connections.js'
+import { createCalendarSyncService } from '../../integrations/src/calendar-sync.js'
 import BetterSqlite3 from 'better-sqlite3'
 import { Miniflare } from 'miniflare'
 import { afterEach, describe, expect, it } from 'vitest'
@@ -264,6 +267,23 @@ for (const runtime of ['SQLite', 'D1'])
       expect(await rows('SELECT is_active,first_name FROM users WHERE id=3')).toEqual([
         { is_active: 1, first_name: 'Jo' },
       ])
+    })
+    it('erases OAuth custody and invalidates a closure review when the grant changes', async () => {
+      const {closure,db,sessions,rows}=await setup()
+      const service=await createCalendarSyncService({store:createCalendarConnectionStore(db),deploymentKey:new Uint8Array(32).fill(7),now:()=>new Date(at)})
+      const person={userId:2,sessionId:(await sessions.issue(2)).session.id}
+      const other={userId:3,sessionId:(await sessions.issue(3)).session.id}
+      await service.completeOAuth(person,'google',0,{refreshToken:'OWNED_PRIVATE_REFRESH',scopes:['calendar.readonly']})
+      await service.completeOAuth(other,'google',0,{refreshToken:'OTHER_PRIVATE_REFRESH',scopes:['calendar.readonly']})
+      const preview=await closure.preview(1,'close-pat')
+      const custody=createCalendarConnectionStore(db),held=(await custody.read(2,'google'))!,lease=(await custody.claim(held,'rotate-for-proof',at,later))!,vault=await createCalendarGrantVault(new Uint8Array(32).fill(7))
+      const next={...lease,credentialRevision:lease.credentialRevision+1}
+      await custody.rotate(lease,{keyId:vault.keyId,sealedGrant:await vault.sealGrant({refreshToken:'ROTATED_PRIVATE_REFRESH',scopes:['calendar.readonly']},next),sealedCursor:null},at)
+      await expect(closure.close({actorUserId:1,id:'close-pat',reviewToken:preview.review_token,expectedVersion:1,expectedPolicyVersion:1,now:later,acknowledged:true})).rejects.toMatchObject({code:'concurrent_change'})
+      await closure.close({actorUserId:1,id:'close-pat',reviewToken:(await closure.preview(1,'close-pat')).review_token,expectedVersion:1,expectedPolicyVersion:1,now:later,acknowledged:true})
+      expect(await rows('SELECT user_id FROM calendar_connections')).toEqual([{user_id:3}])
+      expect(await rows("SELECT user_id,status,request_id FROM calendar_cleanup_obligations")).toEqual([{user_id:2,status:'pending',request_id:'close-pat'}])
+      expect(JSON.stringify(await rows('SELECT * FROM account_closures'))).not.toContain('PRIVATE_REFRESH')
     })
     it('erases the closed person’s calendar proposals (issue 428) and nobody else’s', async () => {
       const { closure, rows, exec } = await setup()

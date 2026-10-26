@@ -31,7 +31,8 @@ export interface CalendarSourceEvent {
   readonly allDay: boolean;
   /** The provider withdrew the event (deleted or cancelled). */
   readonly cancelled: boolean;
-  readonly response: "accepted" | "tentative" | "declined" | "none" | "organizer";
+  readonly response:
+    "accepted" | "tentative" | "declined" | "none" | "organizer";
   readonly showAs: "busy" | "free" | "oof";
   /** The provider's edit stamp (etag or last-modified). */
   readonly version: string;
@@ -58,6 +59,7 @@ export interface CalendarSource {
     /** The cursor from the last completed sync, or null for a full read of the window. */
     readonly cursor: string | null;
     readonly page: string | null;
+    readonly signal?: AbortSignal;
   }): Promise<CalendarSourcePage>;
 }
 
@@ -79,8 +81,12 @@ export class CalendarAuthorizationError extends Error {
   }
 }
 
-export const calendarConnectionStatuses = ["connected", "needs_reauth"] as const;
-export type CalendarConnectionStatus = (typeof calendarConnectionStatuses)[number];
+export const calendarConnectionStatuses = [
+  "connected",
+  "needs_reauth",
+] as const;
+export type CalendarConnectionStatus =
+  (typeof calendarConnectionStatuses)[number];
 
 export const defaultCalendarWindowDays = { past: 14, future: 0 } as const;
 export const maximumCalendarWindowDays = 90;
@@ -93,11 +99,19 @@ export const calendarSyncWindow = (
   days: { readonly past?: number; readonly future?: number } = {},
 ): CalendarSyncWindow => {
   const clamp = (value: number | undefined, fallback: number) =>
-    Math.min(Math.max(Math.trunc(value ?? fallback), 0), maximumCalendarWindowDays);
+    Math.min(
+      Math.max(Math.trunc(value ?? fallback), 0),
+      maximumCalendarWindowDays,
+    );
   const at = Date.parse(now);
   return {
-    from: new Date(at - clamp(days.past, defaultCalendarWindowDays.past) * dayMilliseconds).toISOString(),
-    to: new Date(at + clamp(days.future, defaultCalendarWindowDays.future) * dayMilliseconds).toISOString(),
+    from: new Date(
+      at - clamp(days.past, defaultCalendarWindowDays.past) * dayMilliseconds,
+    ).toISOString(),
+    to: new Date(
+      at +
+        clamp(days.future, defaultCalendarWindowDays.future) * dayMilliseconds,
+    ).toISOString(),
   };
 };
 
@@ -126,7 +140,9 @@ export type CalendarSyncAction =
   | { readonly kind: "flag_changed"; readonly event: CalendarSourceEvent }
   | { readonly kind: "cancel"; readonly event: CalendarSourceEvent };
 
-export const calendarEventKey = (event: Pick<CalendarSourceEvent, "calendarId" | "eventId" | "occurrence">): string =>
+export const calendarEventKey = (
+  event: Pick<CalendarSourceEvent, "calendarId" | "eventId" | "occurrence">,
+): string =>
   JSON.stringify([event.calendarId, event.eventId, event.occurrence]);
 
 /**
@@ -144,16 +160,23 @@ export const planCalendarSync = (
     if (event.cancelled) {
       // Withdrawn events cancel what is still open; an accepted entry is never deleted.
       if (held?.status === "proposed") actions.push({ kind: "cancel", event });
+      else if (held?.status === "accepted" && held.version !== event.version)
+        actions.push({ kind: "flag_changed", event });
       continue;
     }
     if (held === undefined) {
-      if (isCalendarEventEligible(event)) actions.push({ kind: "propose", event });
+      if (isCalendarEventEligible(event))
+        actions.push({ kind: "propose", event });
       continue;
     }
     if (held.version === event.version) continue;
     if (held.status === "proposed") {
       // An edit can make a proposal ineligible (declined, moved to all-day): withdraw it.
-      actions.push(isCalendarEventEligible(event) ? { kind: "update", event } : { kind: "cancel", event });
+      actions.push(
+        isCalendarEventEligible(event)
+          ? { kind: "update", event }
+          : { kind: "cancel", event },
+      );
     } else if (held.status === "accepted") {
       actions.push({ kind: "flag_changed", event });
     }
@@ -162,9 +185,25 @@ export const planCalendarSync = (
   return actions;
 };
 
+export class CalendarSyncLimitError extends Error {
+  constructor() {
+    super("The calendar sync exceeded its bounded page or event limit.");
+    this.name = "CalendarSyncLimitError";
+  }
+}
+export const calendarSyncLimits = { pages: 10, events: 90 } as const;
+
 export type CalendarSyncOutcome =
-  | { readonly status: "connected"; readonly cursor: string | null; readonly actions: CalendarSyncAction[] }
-  | { readonly status: "needs_reauth"; readonly cursor: string | null; readonly actions: [] };
+  | {
+      readonly status: "connected";
+      readonly cursor: string | null;
+      readonly actions: CalendarSyncAction[];
+    }
+  | {
+      readonly status: "needs_reauth";
+      readonly cursor: string | null;
+      readonly actions: [];
+    };
 
 /**
  * One sync pass: page through the window and plan. Expired cursor means read
@@ -178,15 +217,28 @@ export const runCalendarSync = async (input: {
   readonly days?: { readonly past?: number; readonly future?: number };
   readonly cursor: string | null;
   readonly existing: ReadonlyMap<string, CalendarProposalSnapshot>;
+  readonly signal?: AbortSignal;
 }): Promise<CalendarSyncOutcome> => {
   const window = calendarSyncWindow(input.now, input.days);
   const read = async (cursor: string | null) => {
     const events: CalendarSourceEvent[] = [];
     let page: string | null = null;
     let nextCursor: string | null;
+    const pages = new Set<string | null>();
     do {
-      const result: CalendarSourcePage = await input.source.listEvents({ window, cursor, page });
+      input.signal?.throwIfAborted();
+      if (pages.has(page) || pages.size >= calendarSyncLimits.pages)
+        throw new CalendarSyncLimitError();
+      pages.add(page);
+      const result: CalendarSourcePage = await input.source.listEvents({
+        window,
+        cursor,
+        page,
+        ...(input.signal ? { signal: input.signal } : {}),
+      });
       events.push(...result.events);
+      if (events.length > calendarSyncLimits.events)
+        throw new CalendarSyncLimitError();
       page = result.nextPage;
       nextCursor = result.nextCursor;
     } while (page !== null);

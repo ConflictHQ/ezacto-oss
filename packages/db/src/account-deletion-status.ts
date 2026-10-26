@@ -68,9 +68,11 @@ export function createAccountDeletionStatusRepository(
         closed_at: string | null
         closure_policy: string | null
         inventory_json: string | null
+        calendar_cleanup: string
         current_policy: string | null
       }>(sql`SELECT request.id,request.status,request.requested_at,request.expected_completion_at,request.completed_at,request.message,request.completion_confirmation,
         request.policy_version,request.policy_snapshot,request.policy_reviewed,access.expires_at,closure.closed_at,closure.policy_snapshot AS closure_policy,closure.inventory_json,
+        (SELECT json_object('pending',coalesce(sum(status='pending'),0),'manual_required',coalesce(sum(status='manual_required'),0),'revoked',coalesce(sum(status='revoked'),0)) FROM calendar_cleanup_obligations WHERE request_id=request.id) AS calendar_cleanup,
         (SELECT policy_json FROM account_retention_policies ORDER BY version DESC LIMIT 1) AS current_policy
         FROM account_deletion_status_access access JOIN account_deletion_requests request ON request.id=access.request_id
         LEFT JOIN account_closures closure ON closure.request_id=request.id
@@ -93,8 +95,10 @@ export function createAccountDeletionStatusRepository(
       const inventory = (
         row.inventory_json === null ? [] : JSON.parse(row.inventory_json)
       ) as AccountClosureInventoryItem[]
+      const cleanup = JSON.parse(row.calendar_cleanup) as {pending:number;manual_required:number;revoked:number}
       return {
         request_id: row.id,
+        ...(cleanup.pending+cleanup.manual_required+cleanup.revoked>0?{calendar_cleanup:cleanup}:{}),
         status: row.status,
         requested_at: row.requested_at,
         expected_completion_at: row.expected_completion_at,
