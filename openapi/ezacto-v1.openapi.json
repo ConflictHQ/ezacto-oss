@@ -36899,6 +36899,68 @@
         ],
         "additionalProperties": false,
         "properties": {
+          "deel_staging": {
+            "type": "object",
+            "required": [
+              "status",
+              "staged_entries",
+              "unstaged_entries",
+              "unresolved_entries",
+              "changed_entries",
+              "zero_duration_entries",
+              "unsyncable_entries",
+              "staged_seconds",
+              "unstaged_seconds",
+              "last_staged_at"
+            ],
+            "additionalProperties": false,
+            "properties": {
+              "status": {
+                "type": "string",
+                "enum": [
+                  "not_staged",
+                  "partially_staged",
+                  "staged",
+                  "attention",
+                  "no_hours"
+                ]
+              },
+              "staged_entries": {
+                "type": "integer"
+              },
+              "unstaged_entries": {
+                "type": "integer"
+              },
+              "unresolved_entries": {
+                "type": "integer"
+              },
+              "changed_entries": {
+                "type": "integer"
+              },
+              "zero_duration_entries": {
+                "type": "integer"
+              },
+              "unsyncable_entries": {
+                "type": "integer"
+              },
+              "staged_seconds": {
+                "type": "integer"
+              },
+              "unstaged_seconds": {
+                "type": "integer"
+              },
+              "last_staged_at": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              }
+            }
+          },
           "is_contractor": {
             "type": "boolean"
           },

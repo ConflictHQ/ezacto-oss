@@ -1,4 +1,5 @@
 import { createDeelStageController, type DeelStageApi } from './deel-stage-browser.js'
+import { deelStagingLabel, renderDeelStagingStatus } from './deel-status.js'
 import { createContractorReviewController, type ContractorReviewApi } from './reconciliation-browser.js'
 import { createStaffInvoicesController, type StaffInvoicesApi } from './invoices-browser.js'
 import { createAdvanceCreditsController, type AdvanceCreditsApi } from './advances-browser.js'
@@ -180,6 +181,9 @@ export const createStaffPaymentsController = (api: StaffPaymentsApi) => {
       row.status === 'settled'
         ? `Confirmed settled through ${row.settled_through}. ${row.amount_basis === 'contractor_cost' ? 'Amount reflects current contractor cost for this work month; payment receipts and dates are unspecified.' : 'Historical amounts are unspecified.'}`
         : `${staffPaymentStatus(row)}. Remaining: ${staffPaymentMoney(row.balance_cents, row.currency)}.`
+    element<HTMLElement>(person, '[data-payment-person-deel]').replaceChildren(
+      ...(row.deel_staging || row.payout_provider === 'deel' ? [renderDeelStagingStatus(row)] : []),
+    )
     const preferenceForm = providerForms.find(
       (item) => item.dataset.paymentProviderForm === 'person',
     )!
@@ -316,7 +320,14 @@ export const createStaffPaymentsController = (api: StaffPaymentsApi) => {
                 paintPerson()
                 person.scrollIntoView({ block: 'nearest' })
               })
-              return button
+              if (!row.deel_staging && row.payout_provider !== 'deel') return button
+              const name = document.createElement('div')
+              const staging = document.createElement('small')
+              staging.dataset.deelStagingLabel = String(row.user_id)
+              staging.textContent = deelStagingLabel(row)
+              staging.style.display = 'block'
+              name.append(button, staging)
+              return name
             },
           },
           {
@@ -371,6 +382,12 @@ export const createStaffPaymentsController = (api: StaffPaymentsApi) => {
             label: 'Status',
             sortValue: staffPaymentStatus,
             render: (row) => staffPaymentStatus(row),
+          },
+          {
+            key: 'deel-staging',
+            label: 'Deel staging',
+            sortValue: deelStagingLabel,
+            render: renderDeelStagingStatus,
           },
           {
             key: 'due',
@@ -577,7 +594,7 @@ export const createStaffPaymentsController = (api: StaffPaymentsApi) => {
     paintList()
     paintPerson()
   }
-  const load = async (): Promise<void> => {
+  const load = async (preserveDeelStage = false): Promise<void> => {
     const active = signal
     if (active === null || active.aborted || api.getStaffPaymentReport === undefined) return
     const ownGeneration = ++generation
@@ -598,7 +615,7 @@ export const createStaffPaymentsController = (api: StaffPaymentsApi) => {
       const response = await api.getStaffPaymentReport(month.value, active)
       if (active.aborted || generation !== ownGeneration) return
       report = response
-      deelStage.update(response)
+      if (!preserveDeelStage) deelStage.update(response)
       paint()
       runs.ledger(response)
       actuals.ledger(response, active)
@@ -828,7 +845,7 @@ export const createStaffPaymentsController = (api: StaffPaymentsApi) => {
     download(true),
   )
   const stageButton = element<HTMLButtonElement>(page, '[data-payment-stage-deel]')
-  const deelStage = createDeelStageController(page, api, () => { stageButton.hidden = !deelStage.available(); if (report) paintList() })
+  const deelStage = createDeelStageController(page, api, () => { stageButton.hidden = !deelStage.available(); if (report) paintList() }, () => load(true))
   stageButton.addEventListener('click', () => { tabs.select('balances'); deelStage.open() })
   const deelSync = createDeelSyncController(page, api)
   const advances = createAdvanceCreditsController(page, api, failure)
@@ -869,6 +886,7 @@ export const createStaffPaymentsController = (api: StaffPaymentsApi) => {
           person.hidden = true
           element<HTMLElement>(person, '[data-payment-person-title]').textContent = ''
           element<HTMLElement>(person, '[data-payment-person-summary]').textContent = ''
+          element<HTMLElement>(person, '[data-payment-person-deel]').replaceChildren()
           status.textContent = ''
           element<HTMLElement>(page, '[data-payment-opening-people]').replaceChildren()
         },

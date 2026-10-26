@@ -20,6 +20,7 @@ export const createDeelStageController = (
   page: HTMLElement,
   api: DeelStageApi,
   changed: () => void,
+  progressChanged: () => Promise<void> = async () => {},
 ) => {
   const root = page.querySelector<HTMLElement>("[data-deel-stage]")!;
   const form = root.querySelector<HTMLFormElement>("form")!;
@@ -234,6 +235,7 @@ export const createDeelStageController = (
     const signal = active,
       revision = generation,
       command = pending;
+    let refreshProgress = false;
     busy = true;
     controls();
     message.textContent = "Checking or staging the exact reviewed selection…";
@@ -252,6 +254,7 @@ export const createDeelStageController = (
           "No accepted command was found. Retry this exact reviewed command.";
         return;
       }
+      refreshProgress = true;
       if (result.status === "running") {
         handoff.hidden = false;
         message.textContent =
@@ -299,6 +302,7 @@ export const createDeelStageController = (
           message.textContent =
             "The command was refused. Review a fresh selection before trying again.";
         } else {
+          refreshProgress = true;
           handoff.hidden = false;
           message.textContent =
             "The outcome is unknown. Check status or retry the same command; do not create another selection.";
@@ -308,6 +312,7 @@ export const createDeelStageController = (
       if (current(signal, revision)) {
         busy = false;
         controls();
+        if (refreshProgress) await progressChanged();
       }
     }
   };

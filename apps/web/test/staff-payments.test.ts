@@ -5,6 +5,7 @@ import {
   type StaffPaymentCommand,
   type StaffPaymentReport,
   type StaffPaymentEvent,
+  type StaffPaymentRow,
 } from '@ezacto/core'
 import { renderStaffPayments } from '../src/staff-payments/render.js'
 import { createStaffPaymentsController } from '../src/staff-payments/browser.js'
@@ -45,6 +46,21 @@ const report = (events: StaffPaymentEvent[] = [event]): StaffPaymentReport => ({
   as_of: '2026-09-24',
   rows: [summarizeStaffPayments(person, '2026-08', events, '2026-09-24')],
 })
+const stagingProgress = (
+  overrides: Partial<NonNullable<StaffPaymentRow['deel_staging']>> = {},
+): NonNullable<StaffPaymentRow['deel_staging']> => ({
+  status: 'partially_staged',
+  staged_entries: 1,
+  unstaged_entries: 1,
+  unresolved_entries: 0,
+  changed_entries: 0,
+  unsyncable_entries: 0,
+  zero_duration_entries: 1,
+  staged_seconds: 3600,
+  unstaged_seconds: 7200,
+  last_staged_at: '2026-09-24T10:00:00Z',
+  ...overrides,
+})
 const form = (): HTMLFormElement => document.querySelector('[data-payment-entry-form]')!
 const field = (name: string): HTMLInputElement =>
   form().elements.namedItem(name) as HTMLInputElement
@@ -55,6 +71,71 @@ beforeEach(() => {
   HTMLElement.prototype.scrollIntoView = vi.fn()
 })
 describe('monthly payment register', () => {
+  it('refreshes staged batches in the ledger and restores saved progress when Payments is reopened', async () => {
+    const value = report()
+    const row = value.rows[0]!
+    row.payout_provider = 'deel'
+    row.deel_staging = stagingProgress()
+    const read = vi.fn(async () => structuredClone(value))
+    const stage = vi.fn(async () => {
+      row.deel_staging = stagingProgress({ status: 'staged', staged_entries: 2, unstaged_entries: 0, staged_seconds: 10800, unstaged_seconds: 0 })
+      return { data: { status: 'staged' as const, command_id: 'saved', run_id: 1, timesheets_staged: 1, entries_staged: 1, already_staged: 1, unresolved_entry_ids: [], code: null } }
+    })
+    const api = {
+      getStaffPaymentReport: read,
+      recordStaffPaymentEvent: vi.fn(),
+      getDeelStaging: async () => ({ data: { configured: true, reason: null, start_date: '2026-08-01', last_complete_date: '2026-09-30' } }),
+      previewDeelStaging: async () => ({ data: { status: 'ready' as const, from: '2026-08-01', to: '2026-08-31', user_ids: [2], preview_fingerprint: 'a'.repeat(64), entry_ids: [42], seconds: 7200, timesheets: 1, already_staged: 1, already_staged_entry_ids: [41], people: [{ user_id: 2, contract_id: 'contract', seconds: 7200, entries: 1 }], conflict_entry_ids: [], unsyncable_entry_ids: [], zero_duration_entry_ids: [43], unmatched: [], unresolved_entry_ids: [] } }),
+      stageDeelHours: stage,
+      getDeelStageStatus: stage,
+    }
+    const active = new AbortController()
+    await createStaffPaymentsController(api).activate({ profile: 'administrator' }, active.signal)
+    const month = document.querySelector<HTMLInputElement>('[data-payment-month]')!.value
+    const status = () => document.querySelector('[data-payment-list] [data-deel-staging-status="2"]')!
+    expect(status().textContent).toContain('Partially staged')
+    expect(status().textContent).toContain('1.00 h staged')
+    expect(status().textContent).toContain('2.00 h remaining')
+    expect(status().textContent).toContain('1 zero-hour entries skipped')
+    document.querySelector<HTMLButtonElement>('[aria-label="Stage hours in Deel: Fixture Person"]')!.click()
+    document.querySelector<HTMLFormElement>('[data-deel-stage-form]')!.dispatchEvent(new SubmitEvent('submit', { bubbles: true, cancelable: true }))
+    await vi.waitFor(() => expect(document.querySelector('[data-deel-stage-preview]')!.textContent).toContain('7200 seconds'))
+    const reviewed = document.querySelector<HTMLInputElement>('[data-deel-stage-reviewed]')!
+    reviewed.checked = true
+    reviewed.dispatchEvent(new Event('change'))
+    document.querySelector<HTMLButtonElement>('[data-deel-stage-send]')!.click()
+    await vi.waitFor(() => expect(status().textContent).toContain('Staged in Deel'))
+    expect(status().textContent).toContain('3.00 h staged')
+    expect(status().textContent).toContain('0.00 h remaining')
+    expect(document.querySelector('[data-deel-stage-message]')!.textContent).toContain('not marked paid here')
+    expect(document.querySelector<HTMLInputElement>('[data-payment-month]')!.value).toBe(month)
+    expect(row.paid_cents).toBe(0)
+    expect(row.status).toBe('pending')
+    active.abort()
+    document.body.innerHTML = renderStaffPayments('staff-payments')
+    const reopened = new AbortController()
+    await createStaffPaymentsController(api).activate({ profile: 'administrator' }, reopened.signal)
+    expect(status().textContent).toContain('Staged in Deel')
+    expect(status().textContent).toContain('3.00 h staged')
+    expect(stage).toHaveBeenCalledOnce()
+    reopened.abort()
+  })
+  it('shows unresolved and changed Deel entries beside their saved staging totals', async () => {
+    const value = report([])
+    value.rows[0]!.payout_provider = 'deel'
+    value.rows[0]!.has_hours = false
+    value.rows[0]!.deel_staging = stagingProgress({ status: 'attention', unresolved_entries: 2, changed_entries: 1, unsyncable_entries: 1 })
+    const active = new AbortController()
+    await createStaffPaymentsController({ getStaffPaymentReport: async () => value, recordStaffPaymentEvent: vi.fn() }).activate({ profile: 'administrator' }, active.signal)
+    const progress = document.querySelector('[data-payment-list] [data-deel-staging-status="2"]')!
+    expect(progress.textContent).toContain('Needs attention')
+    expect(progress.textContent).toContain('2 awaiting reconciliation')
+    expect(progress.textContent).toContain('1 changed since staging')
+    expect(progress.textContent).toContain('1 invalid entries need review')
+    document.querySelector<HTMLButtonElement>('[data-payment-list] tbody button')!.click()
+    expect(document.querySelector('[data-payment-person-deel]')!.textContent).toBe(progress.textContent)
+    active.abort()
+  })
   it('requires administrator access before loading payroll', async () => {
     const read = vi.fn(async () => report())
     const controller = createStaffPaymentsController({
