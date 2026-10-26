@@ -1,6 +1,6 @@
-import { installCalendarConnectionRoutes, type CalendarConnectionPort } from '@ezacto/api'
+import { installCalendarConnectionRoutes, installCalendarAuthorizationRoutes, type CalendarConnectionPort, type CalendarAuthorizationPort } from '@ezacto/api'
 import { installInvoiceProviderAlertRoutes, type InvoiceProviderAlertService } from '@ezacto/api'
-import type { BankFeedEnvironment } from '@ezacto/integrations'
+import type { BankFeedEnvironment, CalendarEnvironment } from '@ezacto/integrations'
 import { installBankDepositRoutes, type BankDepositReviewApi } from '@ezacto/api'
 import { installCalendarFeedRoutes, installCalendarSubscriptionRoute } from '@ezacto/api'
 import type { CalendarFeedService } from '@ezacto/core'
@@ -301,7 +301,7 @@ export type AppEnv = Env & {
   BACKUPS_ENABLED?: string
 }
 
-export type WorkerEnv = AppEnv & OffsiteBackupEnvironment & BankFeedEnvironment & {
+export type WorkerEnv = AppEnv & OffsiteBackupEnvironment & BankFeedEnvironment & CalendarEnvironment & {
   DB: D1Database
   SCHEDULED_RUN_WORKFLOW?: Workflow<{runId: number; proposedAt: string}>
   /** Sentry DSN. Absent means error reporting is off (a no-op wrapper). */
@@ -447,6 +447,8 @@ export interface RuntimeServices {
   trackedResources: TrackedResourceRepository & HarvestTimeEntrySource & HarvestExpenseSource
   /** Calendar events offered as time, accepted through `trackedResources` (issue 428). */
   calendarConnections?: CalendarConnectionPort
+  calendarAuthorization?: CalendarAuthorizationPort
+  calendarMaintenance?: { processDue(): Promise<void> }
   calendarProposals: CalendarProposalRepository
   /** Planned hours per week and the capacity view (issue 1007). */
   organizationHolidays?: OrganizationHolidayRepository
@@ -986,6 +988,7 @@ export const createApp = (
               now: () => new Date(systemClock.now().instant),
             })
             if(services.calendarConnections) installCalendarConnectionRoutes(api,services.calendarConnections)
+            if(services.calendarAuthorization) installCalendarAuthorizationRoutes(api,services.calendarAuthorization)
             installCalendarProposalRoutes(api, {
               repository: services.calendarProposals,
               clock: systemClock,

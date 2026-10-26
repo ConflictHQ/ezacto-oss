@@ -1,3 +1,5 @@
+import { createConfiguredCalendarServices } from '@ezacto/integrations'
+import { createCalendarOAuthStore } from '@ezacto/db/d1'
 import { createConfiguredBankFeedRuntime } from '@ezacto/integrations'
 import { createBankDepositIngestionService } from '@ezacto/db/d1'
 import { createBankDepositReviewService } from '@ezacto/db/d1'
@@ -661,6 +663,7 @@ export const createD1AttachmentOwnerAuthorizer =
 type ProviderCredentials = Pick<
   WorkerEnv,
   | "MERCURY_BANK_FEED_TOKEN" | "MERCURY_BANK_FEED_ACCOUNT_ID" | "MERCURY_BANK_FEED_CURRENCY" | "WISE_BANK_FEED_TOKEN" | "WISE_BANK_FEED_PROFILE_ID" | "WISE_BANK_FEED_BALANCE_ID" | "WISE_BANK_FEED_CURRENCY" | "BANK_FEED_ENVIRONMENT"
+  | "GOOGLE_CALENDAR_CLIENT_ID" | "GOOGLE_CALENDAR_CLIENT_SECRET" | "MICROSOFT_CALENDAR_CLIENT_ID" | "MICROSOFT_CALENDAR_CLIENT_SECRET" | "MICROSOFT_CALENDAR_TENANT"
   | "QUICKBOOKS_CLIENT_ID"
   | "QUICKBOOKS_CLIENT_SECRET"
   | "QUICKBOOKS_WEBHOOK_VERIFIER_TOKEN"
@@ -760,6 +763,7 @@ export const createRuntimeServices = async (
   // The nightly demo wipe can make a populated database empty again.
   await ensureOrdinaryMigrationAccess(binding, !demo);
   const drizzle = createD1Database(database);
+  const calendar = await createConfiguredCalendarServices({store:createCalendarConnectionStore(drizzle),oauthStore:createCalendarOAuthStore(drizzle),deploymentKey:cursorSigningKey,environment:credentials,...(env.APP_BASE_URL?{appOrigin:env.APP_BASE_URL}:{}),...(options.calendarSources?{sourceOverrides:options.calendarSources}:{})});
   const timesheetLockPolicy = createTimesheetLockPolicyRepository(drizzle);
   const trackedResources = new DrizzleTrackedResourceRepository(drizzle, timesheetLockPolicy);
   const touchIntervalMs = lastSeenIntervalFromSeconds(env.LAST_SEEN_INTERVAL_SECONDS);
@@ -1354,7 +1358,9 @@ export const createRuntimeServices = async (
     },
     activityRoll: createActivityRoll(drizzle, () => new Date().toISOString()),
     trackedResources,
-    calendarConnections: await createCalendarSyncService({store:createCalendarConnectionStore(drizzle),deploymentKey:cursorSigningKey,...(options.calendarSources?{sources:options.calendarSources}:{})}),
+    calendarConnections: calendar.sync,
+    calendarAuthorization: calendar.authorization,
+    calendarMaintenance: calendar.maintenance,
     calendarProposals: new DrizzleCalendarProposalRepository(drizzle, trackedResources),
     placeholderPlanning: createPlaceholderAllocationRepository(drizzle),
       allocations: new DrizzleAllocationRepository(drizzle),

@@ -184,6 +184,7 @@ export const deploySecretPayload = (environment) => {
   }
 
   return {
+    ...Object.fromEntries(['GOOGLE_CALENDAR_CLIENT_ID','GOOGLE_CALENDAR_CLIENT_SECRET','MICROSOFT_CALENDAR_CLIENT_ID','MICROSOFT_CALENDAR_CLIENT_SECRET','MICROSOFT_CALENDAR_TENANT'].map(key=>[key,optionalCredential(environment[key])])),
     API_CURSOR_SIGNING_KEY: cursor,
     MAGIC_LINK_SIGNING_KEY: magicLink,
     PORTAL_MAGIC_LINK_SIGNING_KEY: portalMagicLink,

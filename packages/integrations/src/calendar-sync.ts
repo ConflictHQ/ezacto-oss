@@ -226,7 +226,7 @@ export const createCalendarSyncService = async (options: {
       store.cleanupStatus(authority, now()),
     async connections(authority: CalendarConnectionAuthority) {
       const values = await store.list(authority, now())
-      return Promise.all(
+      const connected = await Promise.all(
         values.map(async (value) => {
           const held = await store.read(authority.userId, value.provider)
           return {
@@ -239,6 +239,9 @@ export const createCalendarSyncService = async (options: {
           }
         }),
       )
+      return [...connected, ...available().filter(provider => !values.some(value => value.provider === provider)).map(provider => ({
+        provider, state: 'disconnected' as const, generation: 0, lastSyncedAt: null, lastError: null, cleanupPending: false, syncing: false, available: true,
+      }))]
     },
     /** Called only by a verified, native-session-bound OAuth callback. */
     async completeOAuth(
@@ -299,6 +302,8 @@ export const createCalendarSyncService = async (options: {
       // while disconnect, closure, and connection/lease fences cancel this one.
       return refresh(authority.userId, provider, signal, days)
     },
+    /** Runtime-only admission through a previously consented, fenced connection. */
+    refreshConnected: (userId: number, provider: CalendarProvider, signal?: AbortSignal) => refresh(userId, provider, signal),
   }
 }
 export type CalendarSyncService = Awaited<ReturnType<typeof createCalendarSyncService>>

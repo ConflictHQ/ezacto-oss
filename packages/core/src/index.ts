@@ -121,3 +121,4 @@ export type { CsvStagingAuthority } from './csv-staging.js'
 export * from './csv-apply-runtime.js'
 
 export * from './bank-deposit-review.js'
+export * from './calendar-oauth.js'

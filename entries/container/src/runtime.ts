@@ -1,3 +1,5 @@
+import { createConfiguredCalendarServices } from '@ezacto/integrations'
+import { createCalendarOAuthStore } from '@ezacto/db'
 import { createCalendarConnectionStore } from '@ezacto/db'
 import { createCalendarSyncService } from '@ezacto/integrations'
 import { createStripePaymentAlertStore, prepareStripePaymentAlertNotifications } from '@ezacto/db'
@@ -482,6 +484,7 @@ export const createContainerRuntime = async (
     csvSweep=setInterval(()=>{void csvStaging!.sweep().catch(()=>console.error('ezacto: private CSV expiry cleanup deferred'))},60_000)
     csvSweep.unref()
     const drizzle = createContainerDatabase(database)
+    const calendar = await createConfiguredCalendarServices({store:createCalendarConnectionStore(drizzle),oauthStore:createCalendarOAuthStore(drizzle),deploymentKey:config.cursorSigningKey,environment:demoDeployment(config.appEnv)?{}:config.calendar??{},appOrigin:config.appBaseUrl,...(options.calendarSources?{sourceOverrides:options.calendarSources}:{})})
     const bankFeeds=createConfiguredBankFeedRuntime({store:createBankDepositIngestionService(drizzle),environment:demoDeployment(config.appEnv)?{}:config.bankFeeds??{}})
     const deelPaymentStatus = createDeelPaymentStatusRuntime({ token: demoDeployment(config.appEnv) ? undefined : config.deel?.token, store: createDeelPaymentStatusStore(drizzle), fetch: (request: Request) => fetch(request), now: () => new Date() })
     const webhooks = createWebhookService(drizzle, {
@@ -902,6 +905,7 @@ export const createContainerRuntime = async (
       } catch (error) {
         console.error('[container] automatic approval sweep failed', error)
       }
+      try { await calendar.maintenance.processDue() } catch(error) { reportWorkerError(options.reportError,error,{phase:'scheduled',operation:'calendar sync',traceId:runtimeTraceId()}) }
       if (!invoicesOn) return
       try { await stripeAlerts.processDue(now) } catch { console.error('[container] Stripe report reconciliation failed') }
       try { await bankFeeds.processDue() } catch { console.error('[container] Bank feed reconciliation deferred') }
@@ -974,7 +978,9 @@ export const createContainerRuntime = async (
     estimateTemplates: createEstimateTemplateRepository(drizzle),
     clientRateCards: createClientRateCardRepository(drizzle),
       trackedResources,
-      calendarConnections: await createCalendarSyncService({store:createCalendarConnectionStore(drizzle),deploymentKey:config.cursorSigningKey,...(options.calendarSources?{sources:options.calendarSources}:{})}),
+      calendarConnections: calendar.sync,
+      calendarAuthorization: calendar.authorization,
+      calendarMaintenance: calendar.maintenance,
       calendarProposals: new DrizzleCalendarProposalRepository(drizzle, trackedResources),
       placeholderPlanning: createPlaceholderAllocationRepository(drizzle),
       allocations: new DrizzleAllocationRepository(drizzle),

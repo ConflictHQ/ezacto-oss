@@ -329,3 +329,5 @@ export { BankFeedError, type FeedObservation, type FeedObservations } from './ba
 export { createBankFeedRuntime, bankFeedConfiguration, type BankFeedConfiguration, type BankFeedEnvironment, type BankFeedRuntimeStore, type BankFeedStatus } from './bank-feed/runtime.js'
 export { createConfiguredBankFeedRuntime } from './bank-feed/runtime.js'
 export { createGoogleCalendarSource, createMicrosoftCalendarSource, type CalendarSourceOptions } from './calendar/sources.js'
+export * from './calendar/oauth.js'
+export * from './calendar/runtime.js'

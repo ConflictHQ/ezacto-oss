@@ -9306,6 +9306,155 @@
         ]
       }
     },
+    "/api/v1/calendar-connections/{provider}/authorize": {
+      "post": {
+        "operationId": "beginCalendarAuthorization",
+        "summary": "Begin personal read-only calendar consent",
+        "tags": [
+          "time-entries"
+        ],
+        "security": [
+          {
+            "cookieSession": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CalendarAuthorizationEnvelope"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/MalformedRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/AuthenticationRequired"
+          },
+          "403": {
+            "$ref": "#/components/responses/InsufficientPermission"
+          },
+          "404": {
+            "$ref": "#/components/responses/ResourceNotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/StateConflict"
+          },
+          "413": {
+            "$ref": "#/components/responses/PayloadTooLarge"
+          },
+          "422": {
+            "$ref": "#/components/responses/ValidationFailed"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "503": {
+            "$ref": "#/components/responses/ServiceUnavailable"
+          }
+        },
+        "x-ezacto-runtime-path": "/api/v1/calendar-connections/:provider/authorize",
+        "x-ezacto-generate-client": true,
+        "parameters": [
+          {
+            "name": "provider",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "enum": [
+                "google",
+                "microsoft"
+              ]
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CalendarAuthorizationInput"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/calendar-connections/{provider}/callback": {
+      "get": {
+        "operationId": "completeCalendarAuthorization",
+        "summary": "Complete native-session-bound calendar consent",
+        "tags": [
+          "time-entries"
+        ],
+        "security": [
+          {
+            "cookieSession": []
+          }
+        ],
+        "responses": {
+          "303": {
+            "description": "Redirect response",
+            "headers": {
+              "Location": {
+                "description": "Redirect target",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/MalformedRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/AuthenticationRequired"
+          },
+          "403": {
+            "$ref": "#/components/responses/InsufficientPermission"
+          },
+          "404": {
+            "$ref": "#/components/responses/ResourceNotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/StateConflict"
+          },
+          "413": {
+            "$ref": "#/components/responses/PayloadTooLarge"
+          },
+          "422": {
+            "$ref": "#/components/responses/ValidationFailed"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "503": {
+            "$ref": "#/components/responses/ServiceUnavailable"
+          }
+        },
+        "x-ezacto-runtime-path": "/api/v1/calendar-connections/:provider/callback",
+        "x-ezacto-generate-client": false,
+        "parameters": [
+          {
+            "name": "provider",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "enum": [
+                "google",
+                "microsoft"
+              ]
+            }
+          }
+        ]
+      }
+    },
     "/api/v1/calendar-cleanup-status": {
       "get": {
         "operationId": "getCalendarCleanupStatus",
@@ -38736,6 +38885,40 @@
         ],
         "additionalProperties": false
       },
+      "CalendarAuthorizationInput": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "generation"
+        ],
+        "properties": {
+          "generation": {
+            "type": "integer",
+            "minimum": 0
+          }
+        }
+      },
+      "CalendarAuthorizationEnvelope": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "data"
+        ],
+        "properties": {
+          "data": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "authorization_url"
+            ],
+            "properties": {
+              "authorization_url": {
+                "type": "string"
+              }
+            }
+          }
+        }
+      },
       "CalendarCleanupEnvelope": {
         "type": "object",
         "additionalProperties": false,
@@ -38788,7 +38971,7 @@
                 },
                 "generation": {
                   "type": "integer",
-                  "minimum": 1
+                  "minimum": 0
                 },
                 "last_synced_at": {
                   "type": [

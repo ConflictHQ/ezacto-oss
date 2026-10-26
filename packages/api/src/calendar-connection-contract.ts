@@ -7,6 +7,30 @@ const provider = {
 };
 export const calendarConnectionOperations: readonly ApiContractOperation[] = [
   {
+    method: "post",
+    path: "/api/v1/calendar-connections/:provider/authorize",
+    operationId: "beginCalendarAuthorization",
+    summary: "Begin personal read-only calendar consent",
+    tag: "time-entries",
+    sessionOnly: true,
+    responseStatus: 200,
+    responseSchema: "CalendarAuthorizationEnvelope",
+    requestSchema: "CalendarAuthorizationInput",
+    requestRequired: true,
+    parameters: [provider],
+  },
+  {
+    method: "get",
+    path: "/api/v1/calendar-connections/:provider/callback",
+    operationId: "completeCalendarAuthorization",
+    summary: "Complete native-session-bound calendar consent",
+    tag: "time-entries",
+    sessionOnly: true,
+    responseStatus: 303,
+    generateClient: false,
+    parameters: [provider],
+  },
+  {
     method: "get",
     path: "/api/v1/calendar-cleanup-status",
     operationId: "getCalendarCleanupStatus",
@@ -56,6 +80,25 @@ export const calendarConnectionOperations: readonly ApiContractOperation[] = [
   },
 ];
 export const calendarConnectionSchemas = {
+  CalendarAuthorizationInput: {
+    type: "object",
+    additionalProperties: false,
+    required: ["generation"],
+    properties: { generation: { type: "integer", minimum: 0 } },
+  },
+  CalendarAuthorizationEnvelope: {
+    type: "object",
+    additionalProperties: false,
+    required: ["data"],
+    properties: {
+      data: {
+        type: "object",
+        additionalProperties: false,
+        required: ["authorization_url"],
+        properties: { authorization_url: { type: "string" } },
+      },
+    },
+  },
   CalendarCleanupEnvelope: {
     type: "object",
     additionalProperties: false,
@@ -90,7 +133,7 @@ export const calendarConnectionSchemas = {
               type: "string",
               enum: ["connected", "needs_reauth", "disconnected"],
             },
-            generation: { type: "integer", minimum: 1 },
+            generation: { type: "integer", minimum: 0 },
             last_synced_at: { type: ["string", "null"], format: "date-time" },
             last_error: {
               type: ["string", "null"],

@@ -1,4 +1,4 @@
-import type { BankFeedEnvironment } from '@ezacto/integrations'
+import type { BankFeedEnvironment, CalendarEnvironment } from '@ezacto/integrations'
 import { isAbsolute, normalize, resolve } from 'node:path'
 import { lastSeenIntervalFromSeconds } from '@ezacto/db'
 import { moduleAvailability, OPERATOR_MODULE_FLAGS, OPERATOR_MODULES } from '@ezacto/api'
@@ -40,6 +40,7 @@ export interface ContainerConfig {
    * routes are not mounted, because a connect button that cannot connect is
    * worse than no button. Same rule as the Worker's.
    */
+  calendar?: CalendarEnvironment
   bankFeeds?: BankFeedEnvironment
   stripe?: { apiKey: string; webhookSecret?: string }
   bill?: {
@@ -276,7 +277,9 @@ export const readContainerConfig = (
       'WISE_BANK_FEED_CURRENCY', 'BANK_FEED_ENVIRONMENT']
       .flatMap(key => environment[key] === undefined ? [] : [[key, optional(environment, key, 1000)!]]),
   )
+  const calendar: CalendarEnvironment = Object.fromEntries(['GOOGLE_CALENDAR_CLIENT_ID','GOOGLE_CALENDAR_CLIENT_SECRET','MICROSOFT_CALENDAR_CLIENT_ID','MICROSOFT_CALENDAR_CLIENT_SECRET','MICROSOFT_CALENDAR_TENANT'].flatMap(key=>environment[key]===undefined?[]:[[key,optional(environment,key,4096)!]]))
   return {
+    ...(Object.keys(calendar).length ? {calendar} : {}),
     ...(Object.keys(bankFeeds).length ? { bankFeeds } : {}),
     host: optional(environment, 'HOST', 255) ?? '0.0.0.0',
     port: port(environment.PORT),

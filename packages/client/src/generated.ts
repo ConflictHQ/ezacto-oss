@@ -420,6 +420,16 @@ export type ResourceCalendarEnvelope = {
 };
 };
 
+export type CalendarAuthorizationInput = {
+  "generation": number;
+};
+
+export type CalendarAuthorizationEnvelope = {
+  "data": {
+  "authorization_url": string;
+};
+};
+
 export type CalendarCleanupEnvelope = {
   "data": CalendarCleanupStatus;
 };
@@ -7507,6 +7517,16 @@ export class EzactoClient {
     const headers = new Headers(args.headers);
 
     return this.request<CalendarProposalEnvelope>("POST", "/api/v1/calendar-proposals/:id/discard".replace(":id", encodeURIComponent(String(args["id"]))), {
+      signal: args.signal,
+      headers,
+    });
+  }
+
+  async beginCalendarAuthorization(args: { "provider": "google" | "microsoft"; body: CalendarAuthorizationInput; signal?: AbortSignal; headers?: HeadersInit }): Promise<CalendarAuthorizationEnvelope> {
+    const headers = new Headers(args.headers);
+
+    return this.request<CalendarAuthorizationEnvelope>("POST", "/api/v1/calendar-connections/:provider/authorize".replace(":provider", encodeURIComponent(String(args["provider"]))), {
+      body: args.body,
       signal: args.signal,
       headers,
     });

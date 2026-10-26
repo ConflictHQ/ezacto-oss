@@ -277,6 +277,7 @@ export const createWorker = (options: WorkerOptions = {}): ExportedHandler<Worke
         return undefined
       }
     }
+    if (controller.cron === '* * * * *' && services.calendarMaintenance) await isolate('calendar sync', () => services.calendarMaintenance!.processDue())
     if (controller.cron === '* * * * *' && services.webhooks) {
       await isolate('webhook sweep', () => services.webhooks!.processDue())
       await isolate('webhook purge', () => services.webhooks!.purge())
