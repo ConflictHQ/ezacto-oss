@@ -85,5 +85,9 @@
       "integrations"
     ],
     "targeted_lint": "passed"
+  },
+  "release_followup": {
+    "migration": "0172_calendar_connections",
+    "reason": "Unreleased migration follows CSV 0171; original proof source and0173 numbering above retained. SQL statements unchanged."
   }
 }
