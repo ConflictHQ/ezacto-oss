@@ -77,21 +77,46 @@ try:
  req(base+'/apply',command,token=admin);req('/__proof/duplicate',{'stage_id':stage['id']});time.sleep(5)
  result=req('/__proof/inspect');assert result['time']=={'count':2,'seconds':7200},result['time'];assert max(result['calls'])<=50,result['calls'];assert result['money']==before['money']
  req(base+'/input',method='DELETE',token=admin,expected=204);final=req('/__proof/inspect');assert not final['objects'];assert final['time']==result['time']
- # A second actual API import pauses after one durable row, then native
- # cancellation must survive queued redelivery and retain exactly that row.
- second=data.replace(b'2026-09-01',b'2026-10-01').replace(b'2026-09-02',b'2026-10-02')
- two=req('/api/v1/csv-imports',second,token=admin,raw=True,expected=201)['data'];base2='/api/v1/csv-imports/'+two['id']
- req(base2+'/mapping',{'version':two['version'],'workspace_identity':name,'exporter_zone':'UTC','date_format':'iso','destination_interpretation':'source_wall_time','currency_policy':'destination_rates','mapping':{},'excluded_lines':[]},method='PATCH',token=admin)
+ # Changing the immutable source file is refused, preserving completed time.
+ changed=data.replace(b'2026-09-01',b'2026-10-01').replace(b'2026-09-02',b'2026-10-02')
+ changed_stage=req('/api/v1/csv-imports',changed,token=admin,raw=True,expected=201)['data'];changed_base='/api/v1/csv-imports/'+changed_stage['id']
+ req(changed_base+'/mapping',{'version':changed_stage['version'],'workspace_identity':name,'exporter_zone':'UTC','date_format':'iso','destination_interpretation':'source_wall_time','currency_policy':'destination_rates','mapping':{},'excluded_lines':[]},method='PATCH',token=admin)
+ changed_preview=req(changed_base+'/preview',{},token=admin)['data']
+ changed_cmd=dict(command,command_id=str(uuid.uuid4()),preview_id=changed_preview['preview_id'],version=changed_preview['run']['version'])
+ req(changed_base+'/apply',changed_cmd,token=admin);deadline=time.time()+120
+ while True:
+  changed_state=req(changed_base+'/apply',token=admin)['data']
+  if changed_state['state']=='paused':break
+  if time.time()>deadline:raise RuntimeError('Changed source refusal deadline')
+  time.sleep(2)
+ assert changed_state['code']=='policy_changed' and req('/__proof/inspect')['time']==final['time']
+ req(changed_base+'/cancel',{'command_id':str(uuid.uuid4())},token=admin)
+ req(changed_base+'/input',method='DELETE',token=admin,expected=204)
+ # A distinct database preserves the contract: one immutable dataset per instance.
+ cancel_name=name+'-cancel'
+ created=cli('d1','create',cancel_name);match=re.search(r'"database_id"\s*:\s*"([a-f0-9-]+)"',created)
+ if not match:match=re.search(r'([a-f0-9]{8}-[a-f0-9-]{27,})',created)
+ if not match:raise RuntimeError('Cancellation D1 identifier missing')
+ manifest['cancel_database_id']=match.group(1);manifest['created'].append('d1_cancel');save()
+ value['d1_databases']=[{'binding':'DB','database_name':cancel_name,'database_id':match.group(1)}];config.write_text(json.dumps(value))
+ deployed=cli('deploy','--config',str(config));match=re.search(r'Current Version ID:\s*([a-f0-9-]+)',deployed);manifest['cancel_deployed_revision']=match.group(1) if match else 'see private log';save()
+ step=0
+ while not req('/__proof/schema',{'step':step})['done']:step+=1
+ admin=req('/__proof/seed',{})['admin']
+ two=req('/api/v1/csv-imports',data,token=admin,raw=True,expected=201)['data'];base2='/api/v1/csv-imports/'+two['id']
+ req(base2+'/mapping',{'version':two['version'],'workspace_identity':cancel_name,'exporter_zone':'UTC','date_format':'iso','destination_interpretation':'source_wall_time','currency_policy':'destination_rates','mapping':{},'excluded_lines':[]},method='PATCH',token=admin)
  prev2=req(base2+'/preview',{},token=admin)['data'];cmd2=dict(command,command_id=str(uuid.uuid4()),preview_id=prev2['preview_id'],version=prev2['run']['version'])
- req('/__proof/hold',{'stage_id':two['id']});req(base2+'/apply',cmd2,token=admin);deadline=time.time()+120
- while req('/__proof/inspect')['time']['count']<3:
+ req('/__proof/hold',{'stage_id':two['id']});req(base2+'/apply',cmd2,token=admin);req('/__proof/repair',{});deadline=time.time()+120
+ print('Fresh owned database prepared; awaiting first row before cancellation',flush=True)
+ while req('/__proof/inspect')['time']['count']<1:
   if time.time()>deadline:raise RuntimeError('Partial cancellation proof did not commit first row')
   time.sleep(2)
  req(base2+'/cancel',{'command_id':str(uuid.uuid4())},token=admin);req('/__proof/hold',{'stage_id':None});req('/__proof/duplicate',{'stage_id':two['id']});time.sleep(6)
- cancelled=req('/__proof/inspect');assert cancelled['time']=={'count':3,'seconds':10800},cancelled['time']
+ cancelled=req('/__proof/inspect');assert cancelled['time']=={'count':1,'seconds':3600},cancelled['time']
  assert [r for r in cancelled['stages'] if r['id']==two['id']][0]['status']=='cancelled'
+ assert max(cancelled['calls'])<=50,cancelled['calls']
  req(base2+'/input',method='DELETE',token=admin,expected=204);cancelled=req('/__proof/inspect');assert not cancelled['objects'];assert cancelled['money']==before['money']
- evidence={'manifest':manifest,'checks':{'ordinary_native_auth':True,'other_admin_denied':True,'staff_denied':True,'anonymous_denied':True,'preview_time_writes':0,'lost_publication_repaired':True,'replay_and_duplicate_safe':True,'time':final['time'],'money_before':before['money'],'money_after':final['money'],'queue_d1_calls':result['calls'],'private_objects_after_purge':len(cancelled['objects']),'partial_cancel_retains_exactly_one_row':True,'after_partial_cancel_time':cancelled['time'],'altered_command_denied':True}}
+ evidence={'manifest':manifest,'checks':{'ordinary_native_auth':True,'other_admin_denied':True,'staff_denied':True,'anonymous_denied':True,'preview_time_writes':0,'lost_publication_repaired':True,'replay_and_duplicate_safe':True,'time':final['time'],'money_before':before['money'],'money_after':final['money'],'queue_d1_calls':result['calls'],'private_objects_after_purge':len(cancelled['objects']),'changed_file_refused_without_new_writes':True,'cancel_queue_d1_calls':cancelled['calls'],'partial_cancel_retains_exactly_one_row':True,'after_partial_cancel_time':cancelled['time'],'altered_command_denied':True}}
  (out/'evidence.json').write_text(json.dumps(evidence,indent=2)+'\n');print('Owned deployed proof passed; evidence '+str(out/'evidence.json'),flush=True)
 finally:
  errors=[]
@@ -103,7 +128,8 @@ finally:
   except Exception as e:errors.append(str(e))
  for kind in reversed(manifest['created']):
   try:
-   if kind=='worker':cli('delete','--name',name,'--force','--config',str(config))
+   if kind=='d1_cancel':cli('d1','delete',name+'-cancel','--skip-confirmation')
+   elif kind=='worker':cli('delete','--name',name,'--force','--config',str(config))
    elif kind=='dlq':cli('queues','delete',name+'-dlq')
    elif kind=='queue':cli('queues','delete',name)
    elif kind=='r2':cli('r2','bucket','delete',name)
