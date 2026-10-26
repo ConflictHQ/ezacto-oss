@@ -44,3 +44,5 @@ partial cancellation, unknown D1 acknowledgements, completed-run recovery, and
 oversized confirmation. Local emulator evidence is not evidence of a Cloudflare
 deployment; deployed owned-target evidence must record its own source revision,
 Worker deployment revision, resource identifiers, and cleanup receipt.
+
+The completed acceptance receipt is [1184-owned-worker-proof.json](evidence/1184-owned-worker-proof.json). It records two real disposable Cloudflare D1 databases, the Worker deployment revisions, exact bundle digest, R2/Queue names, completion and partial cancellation totals, native authorization denials, and successful removal of every owned resource. The distinct cancellation database preserves the native contract that an instance's registered CSV workspace is bound to one immutable file. Local fault-injection checks remain separately identified; they are not described as remote results.
