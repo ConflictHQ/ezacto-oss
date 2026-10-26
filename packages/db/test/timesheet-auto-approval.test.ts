@@ -154,6 +154,28 @@ for (const [runtime, factory] of factories) {
     let database: TestDatabase | undefined
     afterEach(async () => database?.close())
 
+    it('[db #1309] skips a genuinely empty first-run instance without approval writes', async () => {
+      database = await factory()
+      expect(await runTimesheetAutoApproval(database.orm, submittedAt)).toEqual({ approved: [], skipped: 0, failed: [] })
+      expect(await database.rows('SELECT id FROM organizations')).toEqual([])
+      expect(await database.rows('SELECT command_id FROM timesheet_automatic_approval_receipts')).toEqual([])
+      expect(await database.rows('SELECT command_id FROM timesheet_bulk_approval_commands')).toEqual([])
+      // Configuration reads still require an organization; only the background sweep skips.
+      await expect(readTimesheetAutoApproval(database.orm)).rejects.toThrow('Organization settings do not exist')
+    })
+
+    it('[db #1309] reports missing settings once an identity exists', async () => {
+      database = await factory()
+      await database.run("INSERT INTO users(id,first_name,last_name,profile,manager_grants,created_at,updated_at) VALUES(1,'Existing','Owner','administrator','[]',?,?)", t0, t0)
+      await expect(runTimesheetAutoApproval(database.orm, submittedAt)).rejects.toThrow('Organization settings do not exist')
+    })
+
+    it('[db #1309] propagates actual storage failures on the empty-instance path', async () => {
+      database = await factory()
+      await database.run('DROP TABLE organizations')
+      await expect(runTimesheetAutoApproval(database.orm, submittedAt)).rejects.toThrow()
+    })
+
     it('[db #1009] is off by default and approves nothing until an administrator enables it', async () => {
       database = await factory()
       await install(database)
