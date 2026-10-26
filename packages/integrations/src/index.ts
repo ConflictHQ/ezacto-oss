@@ -39,6 +39,7 @@ export {
 export {
   createBillMirrorSubscriber,
   createBillRuntime,
+  billConfigured,
   type BillConfig,
   type BillConnectionStatus,
   type BillMirrorSource,
@@ -142,6 +143,7 @@ export {
 export {
   createDeelSyncRuntime,
   type DeelSyncClient,
+  deelConfigurationProblem,
   type DeelSyncConfig,
   type DeelSyncPreview,
   type DeelSyncPreviewResult,
@@ -259,6 +261,7 @@ export {
 export {
   createQuickBooksMirrorSubscriber,
   createQuickBooksRuntime,
+  quickBooksConfigured,
   type QuickBooksCatchUp,
   type QuickBooksConfig,
   type QuickBooksConnectionStatus,
@@ -309,3 +312,4 @@ export * from './work-items/github-read.js'
 export { createWorkerWebhookTransport } from './outbound-webhooks.js'
 
 export * from './deel/staging.js'
+export { wiseConfigured, parseWiseMode } from './wise/runtime.js'

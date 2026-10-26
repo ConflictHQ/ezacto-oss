@@ -1,3 +1,4 @@
+import { accountingProviderAvailable } from '../accounting-providers.js'
 import {
   moduleAvailable,
   SETTINGS_SECTION_MODULES,
@@ -1838,7 +1839,7 @@ export const createModuleSettingsController = (
         'Connecting an accounting system is an administrator action.'
       return
     }
-    if (api.getQuickBooksConnection === undefined || !moduleAvailable('accounting')) {
+    if (api.getQuickBooksConnection === undefined || !accountingProviderAvailable('quickbooks')) {
       quickBooksStatus.textContent =
         'This deployment is not configured for QuickBooks.'
       return

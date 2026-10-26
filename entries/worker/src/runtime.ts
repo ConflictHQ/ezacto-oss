@@ -1,5 +1,6 @@
 import { createDeelStageStore } from '@ezacto/db/d1'
 import { createDeelStagingRuntime } from '@ezacto/integrations'
+import { parseWiseMode } from '@ezacto/integrations'
 import { moduleAvailability } from '@ezacto/api'
 import { retryTransientD1IdempotentOperation } from '@ezacto/db/d1'
 import { createOrganizationHolidayRepository } from '@ezacto/db/d1'
@@ -645,12 +646,6 @@ export const createD1AttachmentOwnerAuthorizer =
         );
     }
   };
-
-const parseWiseMode = (value: string | undefined): 'full' | 'read_only' => {
-  if (value === undefined || value === '') return 'full'
-  if (value === 'read_only') return 'read_only'
-  throw new TypeError('WISE_MODE must be unset or read_only')
-}
 
 /** The secrets that let this deployment reach a payment or accounting provider. */
 type ProviderCredentials = Pick<

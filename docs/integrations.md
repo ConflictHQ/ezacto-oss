@@ -19,6 +19,12 @@ This is the shared deployment procedure for the [operator guides](operator-guide
 
 Use the exact values and completeness rules in the guide for your provider. For example, a partial BILL credential set is rejected, a missing Wise token leaves its routes unmounted, and a provider being configured does not automatically grant a user permission to operate it.
 
+## Accounting availability
+
+**Settings → Company → Accounting** lists the native QuickBooks, BILL, Wise and Deel integrations independently. The list reports deployment configuration, not a successful connection or provider health check. QuickBooks keeps its existing administrator connect flow; BILL credentials are deployment configuration, and Wise payouts and Deel time sync keep their existing controls and authorization.
+
+The section is hidden when none is configured or `ACCOUNTING_ENABLED=false`. A configured provider does not enable another provider's controls: a BILL-only deployment makes no QuickBooks settings or invoice requests, and a deployment without BILL makes no BILL client-delivery requests. The accounting switch retains its existing QuickBooks API/background semantics; it is not a new payout or time-sync kill switch. See each provider's guide for those operations.
+
 ## Worker: authoritative GitHub environments
 
 The application workflow `.github/workflows/deploy.yml` installs secrets from its selected GitHub environment: `dev` or `prod`. Update that store through the organization's approved credential process; do not depend on a manual Worker secret surviving the next deployment. `scripts/render-deploy-secrets.mjs` renders managed names, including null values for removal.

@@ -1,3 +1,4 @@
+import { renderAccountingProviders, type AccountingProviderAvailability } from '../accounting-providers.js'
 import { renderWebhookSettings } from './webhooks-render.js'
 import { renderCompanyDataTools } from './data-tools.js'
 import { renderEmailSuppressionReview } from './email-suppressions-render.js'
@@ -32,7 +33,7 @@ const renderUserSectionStrip = (): string =>
 
 const userPane = (id: string): string => `<div class="settings-user-pane" data-settings-user-pane="${id}" hidden>`
 
-export const renderModuleSettingsPage = (view?: string): string => `
+export const renderModuleSettingsPage = (view?: string, providers?: AccountingProviderAvailability): string => `
   <main class="app-content module-settings-workspace page--settings" data-module-settings-page${view === 'settings-company' ? '' : ' hidden'}>
     <header class="context-row module-settings-header">
       <div><p class="eyebrow">Settings</p><h1>Company</h1></div>
@@ -270,7 +271,10 @@ export const renderModuleSettingsPage = (view?: string): string => `
     </section>
     <section class="settings-section" data-settings-section="integrations" aria-labelledby="settings-integrations-title">
       <header><div class="settings-section-heading"><h2 id="settings-integrations-title">Accounting</h2><button type="button" class="settings-refresh" data-settings-refresh="integrations">Refresh</button></div>
-      <p>Invoices raised here are copied into QuickBooks Online, and payments recorded there come back. Your client tree becomes customers and sub-customers, so a subsidiary is filed under its parent rather than beside it. Connecting is a grant over your whole book, so only an administrator can do it.</p></header>
+      <p>Native accounting and financial integrations available on this deployment. Configuration is separate from an authorized connection. Only an administrator can manage connections.</p></header>
+      ${renderAccountingProviders(providers)}
+      <div data-accounting-quickbooks${providers?.quickbooks === false ? ' hidden' : ''}>
+      <h3>QuickBooks Online</h3>
       <p class="form-result" data-settings-quickbooks-status role="status" aria-live="polite">Loading accounting integrations…</p>
       <dl class="settings-facts" data-settings-quickbooks-facts hidden></dl>
       <div class="settings-form" data-settings-quickbooks-actions hidden>
@@ -286,6 +290,7 @@ export const renderModuleSettingsPage = (view?: string): string => `
         <button class="editor-secondary" type="button" data-quickbooks-reconcile>Compare with QuickBooks</button>
         <p class="form-result" data-quickbooks-reconcile-result role="status" aria-live="polite"></p>
         <div class="settings-table" data-quickbooks-reconcile-table hidden></div>
+      </div>
       </div>
     </section>
     <section class="settings-section" data-settings-section="sso" aria-labelledby="settings-sso-title">

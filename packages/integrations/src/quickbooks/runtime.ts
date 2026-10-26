@@ -93,6 +93,8 @@ export interface QuickBooksSyncResult {
 
 /** Likewise structural: what the routes call, without importing the routes. */
 export interface QuickBooksService {
+  /** Local connect readiness; absent on older/custom service ports. Never makes a provider request. */
+  configured?(): boolean;
   clientId(): string | null;
   callbackUrl(): string | null;
   settingsUrl(): string;
@@ -494,6 +496,13 @@ export interface QuickBooksRuntime {
   reconcile(): Promise<QuickBooksReconciliation | null>;
   catchUp(): Promise<QuickBooksCatchUp | null>;
 }
+
+/** The same local connect prerequisites as the native runtime, without constructing a client. */
+export const quickBooksConfigured = (config: Pick<QuickBooksConfig, 'clientId' | 'clientSecret' | 'appBaseUrl'>): boolean => {
+  if (trimmed(config.clientId) === null || trimmed(config.clientSecret) === null || trimmed(config.appBaseUrl) === null) return false;
+  try { new URL(CALLBACK_PATH, config.appBaseUrl!.trim()); return true; }
+  catch { return false; }
+};
 
 export const createQuickBooksRuntime = (
   options: Readonly<QuickBooksRuntimeOptions>,
@@ -1121,6 +1130,7 @@ export const createQuickBooksRuntime = (
   };
 
   const service: QuickBooksService = {
+    configured: () => quickBooksConfigured(config),
     clientId: () => clientId,
     callbackUrl,
     settingsUrl: () => SETTINGS_PATH,
