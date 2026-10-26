@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { mkdtemp, readFile, rm, mkdir, writeFile, symlink } from "node:fs/promises";
 import { join } from "node:path";
+import { URL } from "node:url";
 import { readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import {
