@@ -25,6 +25,15 @@ export interface SessionMetadata {
 }
 
 export interface SessionStorePort {
+  authenticateAccess?(
+    userId: number,
+    selector: string,
+  ): Promise<{
+    principal: ResolvedUserIdentity
+    session: SessionMetadata
+    issuedToken?: string
+    rotatedToken?: string
+  } | null>
   issue(
     userId: number,
     credentialVersion?: number,
@@ -39,6 +48,8 @@ export interface SessionStorePort {
 }
 
 export interface ApiSessionService extends ApiSessionResolver {
+  /** Internal verified-provider path; selectors are not request credentials. */
+  resolveAccess(userId: number, selector: string): ReturnType<ApiSessionResolver['resolve']>
   issue(
     userId: number,
     credentialVersion?: number,
@@ -88,6 +99,17 @@ const sessionPrincipal = (
 export const createApiSessionService = (
   store: SessionStorePort,
 ): ApiSessionService => ({
+  resolveAccess: async (userId, selector) => {
+    const authenticated = await store.authenticateAccess?.(userId, selector)
+    if (!authenticated) return null
+    const token = authenticated.rotatedToken ?? authenticated.issuedToken
+    return {
+      principal: sessionPrincipal(authenticated.principal, authenticated.session.id),
+      ...(token === undefined
+        ? {}
+        : { setCookie: sessionCookie(token, authenticated.session.absoluteExpiresAt) }),
+    }
+  },
   resolve: async (request) => {
     const token = cookieValue(request)
     if (token === null) return null

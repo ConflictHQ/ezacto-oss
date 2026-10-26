@@ -3,7 +3,7 @@ import {
   type EmailSignInResolution,
 } from '@ezacto/core'
 import { createRemoteJWKSet, customFetch, jwtVerify } from 'jose'
-import type { ApiSessionResolver, SessionPrincipal } from './auth.js'
+import type { ApiSessionResolver } from './auth.js'
 
 export const CLOUDFLARE_ACCESS_JWT_HEADER = 'cf-access-jwt-assertion'
 
@@ -52,10 +52,7 @@ export interface CloudflareAccessIdentityResolver {
 }
 
 export interface CloudflareAccessSessionService extends ApiSessionResolver {
-  issue(userId: number): Promise<{
-    session: { id: number; userId: number }
-    setCookie: string
-  }>
+  resolveAccess(userId: number, selector: string): ReturnType<ApiSessionResolver['resolve']>
 }
 
 export interface CloudflareAccessSessionResolverOptions {
@@ -280,22 +277,30 @@ export const createCloudflareAccessVerifier = (
   }
 }
 
-const principal = (
-  identity: Extract<EmailSignInResolution, { status: 'active' }>,
-  sessionId: number,
-): SessionPrincipal => ({
-  type: 'user',
-  userId: identity.userId,
-  profile: identity.profile,
-  managerGrants: [...identity.managerGrants],
-  authentication: { kind: 'session', sessionId: String(sessionId) },
-})
+/** The selector binds the complete verified JWT (including issuer/audience and
+ * signature) to this provider purpose and local identity. It is not a secret:
+ * native session bearer material remains independently random. */
+const accessSelector = async (userId: number, assertion: string): Promise<string> => {
+  const digest = new Uint8Array(
+    await crypto.subtle.digest(
+      'SHA-256',
+      new TextEncoder().encode(
+        JSON.stringify(['ezacto:cloudflare-access:session:v1', userId, assertion]),
+      ),
+    ),
+  )
+  return btoa(String.fromCharCode(...digest.slice(0, 12)))
+    .replaceAll('+', '-')
+    .replaceAll('/', '_')
+    .replaceAll('=', '')
+}
 
 /**
  * Adds Access as an optional browser identity provider without creating a
  * second application authentication mode. A verified Access email may only
  * select an existing, active user_email row already verified by ezacto; success
- * then issues the same server-side session used by every other browser flow.
+ * then creates or reuses one revocable server-side session per assertion. The first
+ * response issues the same random cookie used by every other browser flow.
  */
 export const createCloudflareAccessSessionResolver = (
   options: CloudflareAccessSessionResolverOptions,
@@ -311,19 +316,20 @@ export const createCloudflareAccessSessionResolver = (
 
     const identity = await options.identities.resolveEmail(verified.email)
     if (identity.status !== 'active') return null
-    const issued = await options.sessions.issue(identity.userId)
+    const resolved = await options.sessions.resolveAccess(
+      identity.userId,
+      await accessSelector(identity.userId, assertion),
+    )
+    if (resolved === null) return null
+    const current = 'principal' in resolved ? resolved.principal : resolved
     if (
-      !Number.isSafeInteger(issued.session.id) ||
-      issued.session.id < 1 ||
-      issued.session.userId !== identity.userId
-    ) {
-      throw new Error(
-        'session service returned inconsistent Access session state',
-      )
-    }
-    return {
-      principal: principal(identity, issued.session.id),
-      setCookie: issued.setCookie,
-    }
+      current.type !== 'user' ||
+      current.userId !== identity.userId ||
+      current.authentication.kind !== 'session' ||
+      !/^[1-9]\d*$/.test(current.authentication.sessionId) ||
+      !Number.isSafeInteger(Number(current.authentication.sessionId))
+    )
+      throw new Error('session service returned inconsistent Access session state')
+    return resolved
   },
 })
