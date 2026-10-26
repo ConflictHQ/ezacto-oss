@@ -6,14 +6,21 @@
   "runtime": "Owned disposable Miniflare D1 and loopback browser harness",
   "provider_network_used": false,
   "provider_fixture_provenance": "Synthetic values, inserted through the trusted runtime ingestion service; no captured bank records or real credentials",
-  "viewport": { "width": 390, "height": 844 },
+  "viewport": {
+    "width": 390,
+    "height": 844
+  },
   "command": "EZACTO_BROWSER_PORT=4293 npx playwright test --config apps/web/playwright.config.ts apps/web/e2e/bank-deposits.browser.ts",
   "result": "passed",
   "duration_seconds": 10.3,
   "checks": {
     "initial_staged_credits": 4,
     "payments_before_confirmation": 0,
-    "confirmed_payment_amounts_cents": [10000, 20000, 35000],
+    "confirmed_payment_amounts_cents": [
+      10000,
+      20000,
+      35000
+    ],
     "unmatched_overpayment_explicitly_assigned": true,
     "overpayment_explicitly_acknowledged": true,
     "unknown_source_requires_administrator_verification": true,
@@ -36,5 +43,13 @@
     "Both provider configurations are intentionally absent in this native fixture; the page reports them as not configured.",
     "Manual sync transport and duplicate-submit behavior are covered by focused controlled tests, not a real provider call.",
     "Issue 101 remains open pending real provider acceptance."
-  ]
+  ],
+  "combined_release_verification": {
+    "source_revision": "9d0e4050fa0ebbba92b4470d14a2efaa33a1f6f7",
+    "result": "passed",
+    "duration_seconds": 13.5,
+    "previous_api_paths_preserved": 344,
+    "previous_api_schemas_preserved": 716,
+    "includes_calendar_stripe_and_csv": true
+  }
 }
