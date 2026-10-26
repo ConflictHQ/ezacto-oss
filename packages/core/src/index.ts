@@ -112,6 +112,7 @@ export * from './csv-import-facts.js'
 
 export * from './deel-staging.js'
 
+export * from './idempotency-conflict.js'
 export * from './calendar-feed-credential.js'
 export * from './calendar-feeds.js'
 export type { CsvStagingAuthority } from './csv-staging.js'

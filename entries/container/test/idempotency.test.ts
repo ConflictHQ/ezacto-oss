@@ -21,6 +21,7 @@ let root: string
 let runtime: ContainerRuntime
 let handle: (request: Request) => Promise<Response>
 let bearer: string
+const reported: Error[] = []
 
 const provider = (messages: EmailMessage[]): HttpEmailProvider => ({
   name: 'smtp',
@@ -54,7 +55,9 @@ beforeAll(async () => {
   runtime = await createContainerRuntime(config, { emailProvider: provider([]) })
   handle = createContainerHandler(
     runtime.services,
-    createApp(runtime.services, runtime.brandAssets, runtime.instanceTheme),
+    createApp(runtime.services, runtime.brandAssets, runtime.instanceTheme, undefined, {
+      reportError: (error) => { reported.push(error) },
+    }),
     config.appEnv,
   )
   const seed = (sql: string, ...params: unknown[]) => runtime.database.prepare(sql).run(...params)
@@ -153,15 +156,35 @@ describe('Idempotency-Key through the container (#952)', () => {
     ).toContainEqual({ state: 'done', kept: 1 })
   })
 
-  it('[api] lands concurrent copies of one keyed write exactly once', async () => {
+  it('[api] lands concurrent copies of one keyed write exactly once without reporting expected contention', async () => {
+    reported.length = 0
     const answers = await Promise.all(
       Array.from({ length: 3 }, () => logTime('container-952-race', 'container 952 race')),
     )
     for (const answer of answers) expect([201, 503]).toContain(answer.status)
+    expect(reported).toEqual([])
     expect(entriesNoted('container 952 race')).toBe(1)
+    for (const answer of answers) {
+      if (answer.status === 503) expect(answer.headers.get('retry-after')).toBe('1')
+    }
     const settled = await logTime('container-952-race', 'container 952 race')
     expect(settled.headers.get('idempotent-replayed')).toBe('true')
     expect(entriesNoted('container 952 race')).toBe(1)
+  })
+
+  it('[api] still reports unrelated native SQL failures', async () => {
+    reported.length = 0
+    runtime.database.exec(`CREATE TRIGGER idempotency_business_failure BEFORE INSERT ON time_entries
+      BEGIN SELECT RAISE(ABORT, 'unrelated business constraint'); END`)
+    try {
+      const response = await logTime('container-1302-unrelated', 'container 1302 rejected')
+      expect(response.status).toBe(500)
+      expect(reported).toHaveLength(1)
+      expect(reported[0]?.message).toContain('unrelated business constraint')
+      expect(entriesNoted('container 1302 rejected')).toBe(0)
+    } finally {
+      runtime.database.exec('DROP TRIGGER idempotency_business_failure')
+    }
   })
 
   it('[security] holds a key to the request it first carried', async () => {
