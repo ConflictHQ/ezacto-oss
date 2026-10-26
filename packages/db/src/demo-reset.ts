@@ -167,6 +167,8 @@ export const PRESERVED_TABLES: ReadonlySet<string> = new Set([
   // The migration creates this singleton with the manual default. Keeping it
   // means a demo wipe does not switch an instance's Deel sync mode or time (#1102).
   'deel_sync_settings',
+  // Keep the migration-seeded throttle row; reset its transient state below.
+  'deel_status_refresh_lock',
   // Seeded with both providers enabled. Keeping it means a demo wipe does not
   // switch an instance's payout providers off (#1152).
   'payout_provider_enablement',
@@ -224,6 +226,7 @@ const wipeStatements = (objects: DemoSchemaObjects): readonly DemoSeedStatement[
   // needs a row to read, and reset because yesterday's demo took every number
   // below it and none of those invoices exist any more.
   { text: 'UPDATE invoice_number_sequence SET next_number = 1', bindings: [] },
+  { text: "UPDATE deel_status_refresh_lock SET lease_id=NULL,lease_until=NULL,cooldown_until='1970-01-01T00:00:00.000Z' WHERE id=1", bindings: [] },
   // Authority changed while its triggers were lifted. Advance the preserved
   // revision in the wipe transaction, even if bootstrap/seed never resumes.
   { text: 'UPDATE idempotency_authorization SET revision = revision + 1 WHERE id = 1', bindings: [] },

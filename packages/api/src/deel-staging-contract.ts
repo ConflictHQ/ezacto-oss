@@ -23,7 +23,7 @@ const selected = {
 };
 export const deelStagingSchemas = {
   DeelPaymentStatusMonth: obj({ month: s }),
-  DeelPaymentStatusRefreshEnvelope: obj({ data: obj({ configured: { type: 'boolean' }, checked: n, failed: n, remaining: n }) }),
+  DeelPaymentStatusRefreshEnvelope: obj({ data: obj({ configured: { type: 'boolean' }, checked: n, failed: n, remaining: n, retry_after_ms: n }) }),
   DeelStagingStatusEnvelope: obj({
     data: obj({
       configured: { type: "boolean" },

@@ -574,9 +574,11 @@ export type StaffPaymentEvent = {
 
 export type StaffPaymentRow = {
   "deel_staging"?: {
-  "status": "not_staged" | "partially_staged" | "staged" | "attention" | "no_hours" | "partially_paid" | "paid";
+  "status": "not_staged" | "partially_staged" | "staged" | "attention" | "no_hours" | "partially_paid" | "paid" | "processing";
   "paid_entries": number;
   "paid_seconds": number;
+  "processing_entries": number;
+  "pending_entries": number;
   "approved_entries": number;
   "rejected_entries": number;
   "unchecked_entries": number;
@@ -849,6 +851,7 @@ export type DeelPaymentStatusRefreshEnvelope = {
   "checked": number;
   "failed": number;
   "remaining": number;
+  "retry_after_ms": number;
 };
 };
 

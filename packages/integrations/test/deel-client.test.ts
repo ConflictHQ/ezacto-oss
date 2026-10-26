@@ -249,3 +249,8 @@ describe('Deel optional person email values', () => {
     await expect(read([entry])).rejects.toThrow('person email must be an object')
   })
 })
+
+it('retains Retry-After on a rate limit without exposing the response body', async () => {
+  const client = new DeelClient({ token: 'test-token', fetch: async () => new Response('private provider detail', { status: 429, headers: { 'retry-after': '3600' } }) })
+  await expect(client.getTimesheet('known-timesheet')).rejects.toMatchObject({ status: 429, retryAfter: '3600', message: 'Deel request failed with status 429' })
+})

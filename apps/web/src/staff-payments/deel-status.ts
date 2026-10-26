@@ -11,6 +11,7 @@ export const deelStagingLabel = (row: StaffPaymentRow): string => {
     no_hours: 'No hours to stage',
     partially_paid: 'Partially paid in Deel',
     paid: 'Paid in Deel',
+    processing: 'Payment processing in Deel',
   }[progress.status]
 }
 
@@ -30,6 +31,8 @@ export const renderDeelStagingStatus = (row: StaffPaymentRow): HTMLElement => {
   const hours = (seconds: number) => `${(seconds / 3600).toFixed(2)} h`
   if (progress.paid_entries) detail(`${hours(progress.paid_seconds)} paid in Deel · ${progress.paid_entries} entries`)
   if (progress.approved_entries) detail(`${progress.approved_entries} approved in Deel, awaiting payment`)
+  if (progress.processing_entries) detail(`${progress.processing_entries} payment processing in Deel`)
+  if (progress.pending_entries) detail(`${progress.pending_entries} awaiting approval in Deel`)
   if (progress.rejected_entries) detail(`${progress.rejected_entries} declined or not payable in Deel`)
   if (progress.unchecked_entries) detail(`${progress.unchecked_entries} awaiting payment status check`)
   detail(`${hours(progress.staged_seconds)} staged · ${progress.staged_entries} entries`)

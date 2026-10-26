@@ -71,7 +71,7 @@ export interface DeelClientOptions {
 export class DeelApiError extends Error {
   readonly status: number
 
-  constructor(status: number) {
+  constructor(status: number, readonly retryAfter: string | null = null) {
     super(`Deel request failed with status ${status}`)
     this.name = 'DeelApiError'
     this.status = status
@@ -206,7 +206,7 @@ export class DeelClient implements DeelTimesheetSink {
 
   async #send(request: Request): Promise<Record<string, unknown>> {
     const response = await this.#fetch(request)
-    if (!response.ok) throw new DeelApiError(response.status)
+    if (!response.ok) throw new DeelApiError(response.status, response.headers.get('retry-after'))
     return record(await response.json(), 'response body')
   }
 

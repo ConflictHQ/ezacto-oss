@@ -6,7 +6,7 @@ import {
   type DeelPaymentStatusApi,
 } from '../src/staff-payments/deel-payment-status-browser.js'
 
-const response = (values = {}) => ({ data: { configured: true, checked: 1, failed: 0, remaining: 0, ...values } })
+const response = (values = {}) => ({ data: { configured: true, checked: 1, failed: 0, remaining: 0, retry_after_ms: 0, ...values } })
 const report = (month = '2026-09', staged = 1) => ({
   month, rows: [{ deel_staging: { staged_entries: staged } }],
 }) as StaffPaymentReport
@@ -58,7 +58,7 @@ describe('automatic Deel payment status refresh', () => {
 
   it('automatically continues through remaining receipts before the regular refresh interval', async () => {
     const { api, refresh, abort, controller, message } = mount()
-    api.refreshDeelPaymentStatus.mockResolvedValueOnce(response({ checked: 20, remaining: 2 }))
+    api.refreshDeelPaymentStatus.mockResolvedValueOnce(response({ checked: 5, remaining: 2 }))
     controller.update(report())
     await vi.advanceTimersByTimeAsync(0)
     expect(message.textContent).toContain('remaining Deel hours')
@@ -69,6 +69,24 @@ describe('automatic Deel payment status refresh', () => {
     expect(refresh).toHaveBeenCalledTimes(2)
     expect(message.textContent).toContain('Showing the latest confirmed Deel statuses')
     abort.abort()
+  })
+
+  it('honors the server cooldown even when more receipts remain and cancels it on abort', async () => {
+    const { api, refresh, abort, controller, message } = mount()
+    api.refreshDeelPaymentStatus.mockResolvedValue(response({ remaining: 2, retry_after_ms: 90_000 }))
+    controller.update(report())
+    await vi.advanceTimersByTimeAsync(0)
+    expect(message.textContent).toContain('Waiting before the next Deel status check')
+    expect(message.getAttribute('aria-busy')).toBe('false')
+    expect(refresh).toHaveBeenCalledOnce()
+    await vi.advanceTimersByTimeAsync(89_999)
+    expect(api.refreshDeelPaymentStatus).toHaveBeenCalledOnce()
+    await vi.advanceTimersByTimeAsync(1)
+    expect(api.refreshDeelPaymentStatus).toHaveBeenCalledTimes(2)
+    abort.abort()
+    await vi.advanceTimersByTimeAsync(180_000)
+    expect(api.refreshDeelPaymentStatus).toHaveBeenCalledTimes(2)
+    expect(message.hidden).toBe(true)
   })
 
   it('keeps the last confirmed status visible when checks fail and retries later', async () => {
