@@ -20,7 +20,7 @@ export interface NeutralDeposit {
 
 /** Provider observations never grant confirmation by omission. */
 export interface BankDepositObservation {
-  status: 'final' | 'pending' | 'reversed' | 'unknown';
+  status: 'final' | 'pending' | 'reversed' | 'ineligible' | 'unknown';
   classification: 'external_credit' | 'internal_transfer' | 'ambiguous_credit';
   reason?: string;
 }
