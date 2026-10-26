@@ -1156,12 +1156,14 @@ if (command === 'sudo') {
       values.json
         ? json({
             restored: true,
+            ...(result.quarantined ? { quarantined: true } : {}),
             tables: result.tablesRestored,
             rows: result.totalRows,
             attachments: result.attachmentsRestored,
           })
         : [
             `restore complete: ${targetDatabasePath}`,
+            ...(result.quarantined ? ['QUARANTINED: keep this database offline. Replay current privacy evidence and record reviewed release before starting service.'] : []),
             `tables: ${result.tablesRestored}, rows: ${result.totalRows}, attachments: ${result.attachmentsRestored}`,
           ].join('\n'),
     )

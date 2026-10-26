@@ -9,7 +9,7 @@ incident.
 | Container physical snapshot | available and Docker-tested      | stopped `/data/db.sqlite` plus `/data/attachments` |
 | D1 Time Travel              | Cloudflare-native, in-place undo | D1 database only; not R2 attachments               |
 | Container logical bundle    | available (`ez backup`)          | database copy, one CSV per table, attachments      |
-| Worker nightly CSV bundle   | written to R2; no restore command | one CSV per table, no schema, no attachment bytes |
+| Worker nightly bundle (0038+) | typed snapshot, restored offline by `ez restore` | exact schema/rows and verified attachment bytes; resulting SQLite remains quarantined |
 | Off-platform S3 copy        | scheduled encrypted Worker logical bundles; container bundles via `--sync-to` | copies in an operator-owned S3-compatible bucket |
 
 ## Container physical snapshots
@@ -160,7 +160,55 @@ then creates a real instance, uploads an attachment, stops and snapshots it,
 deletes the source volume, restores a new volume, and proves both API row state
 and exact attachment bytes through the restored application.
 
-## Worker recovery today
+## Worker bundle recovery (0038 and later)
+
+Download one complete backup ZIP or decrypt one complete off-site run. Preserve
+all relative paths. The manifest lists human-readable CSVs plus checksummed
+`schema.json`, typed row chunks and content-addressed attachments. SQL NULL, empty
+text, embedded NULs, blobs, int64 values and real numbers are distinct in the typed
+snapshot; CSV is for inspection and must not be substituted as restore input.
+
+Run the exact command supplied in the bundle, choosing new paths:
+
+```sh
+ez restore /secure/downloaded-bundle --database /secure/recovered/db.sqlite \
+  --attachments /secure/recovered/attachments
+```
+
+The reader verifies every typed object and attachment, reconstructs the captured
+schema and migration ledger, checks integrity and foreign keys, removes live
+session/link/API-token authority and preserves calendar grant cleanup custody.
+It publishes a private **quarantined** SQLite database with no-overwrite semantics.
+Do not start service yet: preserve current evidence and use the offline replay
+and reviewed release procedure described above. This command targets SQLite;
+it does not replace a live D1 database or grant permission to serve old data.
+A reviewed Container image can then use the recovered database and attachments.
+
+Worker bundle 0037 and older cannot be restored losslessly: those CSVs conflate
+NULL with empty text and do not carry the schema or attachment bytes. The CLI
+explicitly refuses them. Use a separately retained SQL/physical backup or D1 Time
+Travel for those generations; do not infer missing values from the CSV.
+
+The exporter freezes typed rows in temporary D1 tables within one transaction,
+then publishes pages of at most 500 rows and approximately 1 MiB into R2. Ordinary
+edits do not disturb the captured point in time. Account closure, explicit
+retention erasure and organization/user deletion invalidate and purge active
+copies; completion rechecks that authority atomically. Staging tables are present
+but empty in restored bundles, so backups never recursively capture themselves.
+
+Temporary D1 rows expire after one hour. Invalidated or failed R2 prefixes remain
+private and unavailable through backup downloads, then a durable cleanup queue
+removes them after an additional one-hour grace period for in-flight writes.
+Only newly created capture-specific prefixes are eligible; completed historical
+backups remain subject to the existing retention and restore-review policy.
+
+Each encoded row must fit D1's 2 MB value limit. Typed pages, schema, individual
+CSV views and attachment objects must fit the existing 16 MiB encrypted-copy
+limit. Exceeding those bounds fails the export without a completed receipt; use
+an operator SQL export and independent attachment copies for those cases. This
+limit is per object, not the entire database.
+
+## D1 Time Travel recovery
 
 Cloudflare D1 Time Travel can restore the database in place to a recent UTC
 timestamp. It is destructive, cancels in-flight database work, and returns the
@@ -185,16 +233,16 @@ incident.
 | --- | --- | --- |
 | Written by | the `ez` CLI, on demand | the Worker cron, once per UTC day |
 | Lands in | a local directory `ezacto-backup-<timestamp>/` | the R2 bucket under `backups/<date>/` |
-| Contents | `db.sqlite`, `tables/*.csv`, `attachments/`, `manifest.json`, `RESTORE.md` | `tables/*.csv`, `manifest.json`, `RESTORE.md` |
+| Contents | `db.sqlite`, `tables/*.csv`, `attachments/`, `manifest.json`, `RESTORE.md` | `tables/*.csv`, `schema.json`, `rows/`, verified `attachments/`, `manifest.json`, `RESTORE.md` |
 | Manifest | `format_version`, `database_sha256`, per-table `csv_sha256`, attachment hashes | `schema_version`, `bundle_version`, per-table `sha256`, `restore_skips` |
-| Schema | inside `db.sqlite` | not included; rebuild it from the ezacto source |
-| Attachment bytes | included | not included (they stay in R2) |
-| Verify / restore | `ez export --verify`, `ez restore` | no command reads this format yet |
+| Schema | inside `db.sqlite` | captured exact schema and migration ledger in typed snapshot |
+| Attachment bytes | included | included and verified against file/brand metadata |
+| Verify / restore | `ez export --verify`, `ez restore` | `ez restore` verifies typed 0038+ objects and restores quarantined SQLite |
 | Run status | the command's exit code | `backup_runs` and `GET /api/v1/backup/status` |
 
-The Worker bundle is therefore a readable record of the rows, not a restore
-path. Until a single format reads both, the honest Worker recovery is D1 Time
-Travel (above), plus the SQL dump described next. A Harvest migration snapshot is
+Legacy Worker CSV bundles remain a readable record rather than a lossless restore
+path. New 0038+ bundles restore to quarantined SQLite as described above; D1 Time
+Travel and the operational SQL dump remain separate recovery options. A Harvest migration snapshot is
 a different input format and must not be presented as an Ezacto backup.
 
 ### The nightly SQL dump (operational foundation)
@@ -325,9 +373,9 @@ plaintext output; an existing output directory is refused. Retain old keys when
 rotating: a new key/destination produces new copy identities, and cannot decrypt
 previous copies.
 
-**Recovery limit:** these are the Worker's existing logical rows and recovery
-instructions. They do not include attachment bytes or provide an automatic D1
-restore. Keep the physical/SQL recovery paths and attachment copies described
+**Recovery limit:** legacy Worker logical copies lack attachment bytes and a
+lossless reader. New 0038+ copies include the typed snapshot and verified attachments,
+but do not automatically replace D1. Keep the physical/SQL recovery paths and attachment copies described
 above. Container operators can schedule `ez backup --sync-to` with their own cron;
 that command still has the separate format and encryption limits stated above.
 

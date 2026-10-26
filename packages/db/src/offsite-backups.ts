@@ -3,6 +3,7 @@ import {
   backupBase64,
   OffsiteBackupError,
   backupSha256,
+  workerBackupFiles,
   encryptBackupObject,
   type OffsiteBackupRun,
   type OffsiteBackupStatus,
@@ -174,6 +175,11 @@ export const createOffsiteBackupSyncService = (
       if (!claimed.length) return { uploaded: 0 }
       let uploaded = 0
       try {
+        const captured = JSON.parse(row.source_manifest_json) as BackupManifest & {
+          files?: unknown
+        }
+        const files = workerBackupFiles(captured.files)
+        const fileReceipts = new Map(files.map((file) => [file.name, file]))
         const existing = await database.all<{ count: number }>(
           sql`SELECT COUNT(*) AS count FROM offsite_backup_objects WHERE sync_id=${row.id}`,
         )
@@ -186,7 +192,7 @@ export const createOffsiteBackupSyncService = (
             throw new OffsiteBackupError(
               'The L1 manifest differs from its completed run receipt. Restore the original manifest before retrying.',
             )
-          const manifest = JSON.parse(row.source_manifest_json) as BackupManifest
+          const manifest = captured
           const names = Object.keys(manifest.tables).sort()
           if (
             names.length !== manifest.table_count ||
@@ -205,6 +211,7 @@ export const createOffsiteBackupSyncService = (
               name: `tables/${name}.csv`,
               sha: manifest.tables[name]!.sha256,
             })),
+            ...files.map((file) => ({ name: file.name, sha: file.sha256 })),
             { name: 'RESTORE.md', sha: await backupSha256(restore) },
             { name: 'manifest.json', sha: await backupSha256(stored) },
           ]
@@ -225,6 +232,18 @@ export const createOffsiteBackupSyncService = (
             })),
           )
         }
+        // A resumed journal must include every captured file, not merely the
+        // legacy CSV subset. Never call an incomplete older plan a success.
+        if (files.length > 0) {
+          const planned = await database.all<{ name: string; source_sha256: string }>(
+            sql`SELECT name,source_sha256 FROM offsite_backup_objects WHERE sync_id=${row.id}`,
+          )
+          const receipts = new Map(planned.map((item) => [item.name, item.source_sha256]))
+          if (files.some((file) => receipts.get(file.name) !== file.sha256))
+            throw new OffsiteBackupError(
+              'The off-site object journal does not cover every captured backup file. Create a new complete backup before retrying.',
+            )
+        }
         const pending =
           await database.all<ObjectRow>(sql`SELECT name,source_sha256,nonce FROM offsite_backup_objects
       WHERE sync_id=${row.id} AND uploaded_at IS NULL ORDER BY CASE WHEN name='manifest.json' THEN 1 ELSE 0 END,name LIMIT 10`)
@@ -232,7 +251,11 @@ export const createOffsiteBackupSyncService = (
         for (const object of pending) {
           if (Date.now() >= deadline) break
           const bytes = await load(settings.source, row.source_prefix + object.name)
-          if ((await backupSha256(bytes)) !== object.source_sha256)
+          const fileReceipt = fileReceipts.get(object.name)
+          if (
+            (fileReceipt !== undefined && bytes.length !== fileReceipt.byte_size) ||
+            (await backupSha256(bytes)) !== object.source_sha256
+          )
             throw new OffsiteBackupError(
               'An L1 object no longer matches its captured checksum. Restore the original source bundle before retrying.',
             )

@@ -22,6 +22,7 @@
  *   central directory agree. Zip64 is not written; a bundle that needs it is
  *   refused rather than silently corrupted.
  */
+import { workerBackupFiles, WORKER_BACKUP_FILE_MAX_BYTES } from '@ezacto/core'
 import type { BackupManifest, BackupRunRecord } from './backup.js'
 
 /** Reads one object of a bundle by key; null when it does not exist. */
@@ -88,6 +89,7 @@ interface PlanItem {
   key: string
   /** The hash the manifest demands; null for files it does not cover. */
   sha256: string | null
+  byteSize: number | null
 }
 
 const dosStamp = (iso: string): { time: number; date: number } => {
@@ -164,19 +166,35 @@ export const openBackupArchive = async (
       throw new BackupArchiveError('manifest_mismatch', `Manifest names an unsafe table: ${name}.`)
     }
   }
-  if (tableNames.length + 2 > MAX_ENTRIES) {
+  let files: ReturnType<typeof workerBackupFiles>
+  try {
+    files = workerBackupFiles((manifest as BackupManifest & { files?: unknown }).files)
+  } catch {
+    throw new BackupArchiveError(
+      'manifest_mismatch',
+      'The manifest contains invalid backup file receipts.',
+    )
+  }
+  if (tableNames.length + files.length + 2 > MAX_ENTRIES) {
     throw new BackupArchiveError('too_large', 'The bundle has too many files for a ZIP.')
   }
 
   const encoder = new TextEncoder()
   const stamp = dosStamp(manifest.exported_at)
   const plan: PlanItem[] = [
-    { name: 'manifest.json', key: `${prefix}manifest.json`, sha256: null },
-    { name: 'RESTORE.md', key: `${prefix}RESTORE.md`, sha256: null },
+    { name: 'manifest.json', key: `${prefix}manifest.json`, sha256: null, byteSize: null },
+    { name: 'RESTORE.md', key: `${prefix}RESTORE.md`, sha256: null, byteSize: null },
     ...tableNames.map((table) => ({
       name: `tables/${table}.csv`,
       key: `${prefix}tables/${table}.csv`,
       sha256: manifest.tables[table]!.sha256,
+      byteSize: null,
+    })),
+    ...files.map((file) => ({
+      name: file.name,
+      key: `${prefix}${file.name}`,
+      sha256: file.sha256,
+      byteSize: file.byte_size,
     })),
   ]
 
@@ -190,10 +208,13 @@ export const openBackupArchive = async (
     if (data === null) {
       throw new BackupArchiveError('object_missing', `${item.key} is missing.`)
     }
-    if (data.length > MAX_BYTES) {
+    if (data.length > (item.byteSize === null ? MAX_BYTES : WORKER_BACKUP_FILE_MAX_BYTES)) {
       throw new BackupArchiveError('too_large', `${item.key} is too large for a ZIP.`)
     }
-    if (item.sha256 !== null && (await sha256Of(data)) !== item.sha256) {
+    if (
+      (item.byteSize !== null && data.length !== item.byteSize) ||
+      (item.sha256 !== null && (await sha256Of(data)) !== item.sha256)
+    ) {
       throw new BackupArchiveError(
         'checksum_mismatch',
         `${item.key} does not match the checksum in the manifest.`,

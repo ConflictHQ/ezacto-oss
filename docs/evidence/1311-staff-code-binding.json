@@ -1,0 +1,54 @@
+{
+  "issue": 1311,
+  "source_base": "9d0e4050fa0ebbba92b4470d14a2efaa33a1f6f7",
+  "observed_on": "2026-10-26",
+  "before": {
+    "native_sqlite": "victim correct code returned401 after other requester five wrong attempts",
+    "native_d1": "same401 reproduced"
+  },
+  "after": {
+    "native_api_isolation_tests": 2,
+    "existing_staff_magic_link_and_two_factor_tests": 80,
+    "native_store_tests": 14,
+    "chromium_native_container_tests": 2,
+    "chromium_run_seconds": 6.7
+  },
+  "checks": [
+    "per-requester wrong-attempt isolation",
+    "own five-attempt ceiling",
+    "same requester resend supersedes old code but preserves long link",
+    "consumed-row and lost-response resend",
+    "one session from concurrent valid exchanges",
+    "unknown-email identical cookie reuse",
+    "missing/tampered request cookie does not burn victim attempts",
+    "foreign Origin and cross-site Fetch Metadata rejection",
+    "native requests without Origin remain supported",
+    "Secure HttpOnly cookie accepted on localhost and not visible to JavaScript",
+    "success clears requester cookie and produces native session",
+    "current mobile API request/exchange/token-mint functions execute unchanged with browser Fetch cookie jar"
+  ],
+  "mobile_api_source": {
+    "revision": "c148488f356b3e36bf1b9260e0d1d6a0738824db",
+    "file": "src/api/ezacto.ts",
+    "sha256": "7ea7c06523ede7357f9ad422216e0b1cd5118959d35f6f912b3ca769e6d862c3",
+    "changes_made": false,
+    "runtime": "bundled functions in Chromium, local Container API; generated client resolved from tested product checkout"
+  },
+  "local_checks": [
+    "API/DB/Worker/Container typechecks",
+    "API/DB/web lint",
+    "core/integrations/DB/mailer/API builds"
+  ],
+  "privacy": {
+    "provider_network_calls": false,
+    "raw_challenges_codes_cookies_or_credentials_recorded": false,
+    "owned_fixture_directories_remaining": 0,
+    "browser_traces": "off"
+  },
+  "limitations": [
+    "Not React Native, iOS or Android device/storage acceptance.",
+    "Existing user-level email throttle is unchanged; this does not prevent every login denial of service.",
+    "Single pending sign-in flow per browser; concurrent first cookie-less requests may require a fresh code or use of the unchanged email link.",
+    "Already-issued unbound code rows require a new code after migration; their long email links remain valid until normal expiry."
+  ]
+}

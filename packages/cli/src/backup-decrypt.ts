@@ -1,6 +1,12 @@
 import { mkdir, readFile, readdir, rm, stat, writeFile } from 'node:fs/promises'
 import { isAbsolute, join, relative, resolve, sep } from 'node:path'
-import { backupKeyBytes, backupSha256, decryptBackupObject } from '@ezacto/core'
+import {
+  backupKeyBytes,
+  backupSha256,
+  decryptBackupObject,
+  workerBackupFiles,
+  WORKER_BACKUP_FILE_MAX_BYTES,
+} from '@ezacto/core'
 /** Decrypts and verifies a downloaded Worker logical bundle into a new private directory. */
 export const decryptBackupBundle = async (input: {
   inputDirectory: string
@@ -36,6 +42,8 @@ export const decryptBackupBundle = async (input: {
           new Uint8Array(await readFile(join(directory, entry.name))),
           key,
         )
+        if (plain.bytes.length > WORKER_BACKUP_FILE_MAX_BYTES)
+          throw new Error('The decrypted object exceeds the backup format limit.')
         if (relative !== plain.name + '.ezenc' || names.has(plain.name))
           throw new Error('The encrypted object path differs from its authenticated name.')
         names.add(plain.name)
@@ -50,6 +58,7 @@ export const decryptBackupBundle = async (input: {
       table_count: number
       total_rows: number
       tables: Record<string, { sha256: string }>
+      files?: unknown
     }
     if (
       manifest.schema_version !== 1 ||
@@ -69,6 +78,14 @@ export const decryptBackupBundle = async (input: {
       )
         throw new Error(`The decrypted table ${table} does not match its manifest checksum.`)
     }
+    for (const file of workerBackupFiles(manifest.files)) {
+      expected.add(file.name)
+      if (!names.has(file.name)) throw new Error('The decrypted backup is missing a declared file.')
+      const bytes = new Uint8Array(await readFile(join(output, file.name)))
+      if (bytes.length !== file.byte_size || (await backupSha256(bytes)) !== file.sha256)
+        throw new Error('A decrypted backup file does not match its manifest receipt.')
+    }
+    if (expected.size > 65535) throw new Error('The decrypted backup contains too many files.')
     if (names.size !== expected.size || [...names].some((name) => !expected.has(name)))
       throw new Error('The downloaded run contains objects outside its logical manifest.')
     return {

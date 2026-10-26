@@ -98,7 +98,7 @@ describe('Nightly export scheduled handler', () => {
     const run = runs.results[0]!
     expect(run.status).toBe('completed')
     expect(run.trigger).toBe('nightly')
-    expect(run.r2_prefix).toMatch(/^backups\/\d{4}-\d{2}-\d{2}\/$/)
+    expect(run.r2_prefix).toMatch(/^backups\/\d{4}-\d{2}-\d{2}\/[0-9a-f-]{36}\/$/)
     expect(run.table_count).toBeGreaterThan(0)
     expect(run.total_rows).toBeGreaterThanOrEqual(1)
     expect(run.error_message).toBeNull()
