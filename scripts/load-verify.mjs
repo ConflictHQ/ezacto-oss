@@ -35,9 +35,9 @@ export const SHARDS = {
 export function testCommand(shardName) {
   const shard = SHARDS[shardName];
   if (!shard) throw new Error(`unknown shard ${shardName}; one of ${Object.keys(SHARDS).join(", ")}`);
-  // The web script ends with Playwright, which cannot accept Vitest flags
-  // appended by npm. Its load entry point scopes the flag to Vitest and keeps
-  // the complete (already single-worker) browser sequence.
+  // npm appends arguments to the web script's final nested npm command, so
+  // --maxWorkers never reaches Vitest. Scope it in the load entry point while
+  // retaining the complete (already single-worker) browser sequence.
   if (shardName === "web") return ["npm", "run", "test:load", ...shard.workspaces];
   const args = ["test", ...shard.workspaces, "--", "--maxWorkers=1"];
   if (shard.shard) args.push(`--shard=${shard.shard}`);
