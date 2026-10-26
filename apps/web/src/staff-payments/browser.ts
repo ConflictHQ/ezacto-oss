@@ -326,7 +326,8 @@ export const createStaffPaymentsController = (api: StaffPaymentsApi) => {
               staging.dataset.deelStagingLabel = String(row.user_id)
               staging.textContent = deelStagingLabel(row)
               staging.style.display = 'block'
-              name.append(button, staging)
+              name.appendChild(button)
+              name.appendChild(staging)
               return name
             },
           },
