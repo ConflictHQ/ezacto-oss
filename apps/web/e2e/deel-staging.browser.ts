@@ -74,7 +74,7 @@ test("stages administrator-reviewed unsubmitted and approved hours once without 
     .getByRole("button", { name: "Stage hours in Deel", exact: true })
     .click();
   await expect(section.locator("[data-deel-stage-message]")).toContainText(
-    "Nothing is marked paid",
+    "these entries are not marked paid here",
   );
   await expect(
     section.getByRole("link", { name: "Complete invoice and payment in Deel" }),
@@ -104,7 +104,7 @@ test("stages administrator-reviewed unsubmitted and approved hours once without 
     .getByRole("button", { name: "Stage hours in Deel", exact: true })
     .click();
   await expect(section.locator("[data-deel-stage-message]")).toContainText(
-    "Nothing is marked paid",
+    "these entries are not marked paid here",
   );
   await section
     .getByRole("button", { name: "Review hours for Deel", exact: true })
