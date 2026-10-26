@@ -471,6 +471,10 @@ export const restoreBackup = async (
       }
       totalRows += result.count
     }
+    // Raw CSV objects must not be inherited by reused identities after restore.
+    if (database.prepare("SELECT 1 FROM sqlite_schema WHERE type='table' AND name='csv_staging_instance'").get()) {
+      database.prepare("UPDATE csv_staging_instance SET nonce=lower(hex(randomblob(32))) WHERE singleton=1").run()
+    }
     // A restored database is a new credential incarnation; keep opaque UIDs stable.
     if (database.prepare("SELECT 1 FROM sqlite_schema WHERE type='table' AND name='planning_calendar_instance'").get()) {
       database.prepare("UPDATE planning_calendar_instance SET nonce=lower(hex(randomblob(32))) WHERE singleton=1").run()

@@ -270,11 +270,12 @@ export const createCsvImportStaging = async (options: {
   directory: string;
   now?: () => Date;
   work?: typeof runCsvStagingWork;
+  disk?: Awaited<ReturnType<typeof createCsvStagingDisk>>;
   verifyApplyBinding?: (binding: CsvStagingApplyBinding) => boolean;
 }) => {
   const now = options.now ?? (() => new Date()),
     main = options.database;
-  const disk = await createCsvStagingDisk(join(options.directory, "objects"));
+  const disk = options.disk ?? await createCsvStagingDisk(join(options.directory, "objects"));
   const metadataPath = join(options.directory, "metadata.sqlite");
   try {
     const stat = await lstat(metadataPath);
@@ -401,9 +402,11 @@ export const createCsvImportStaging = async (options: {
       bytes: row.bytes,
       staging_expires_at: row.expires_at,
       retention_deadline: row.retention_deadline,
-      purge_allowed: row.status !== "confirmed" && row.status !== "purged",
+      purge_allowed: row.status !== "confirmed" && (row.status !== "purged" || row.object_key !== null),
       allowed_actions:
-        row.status === "confirmed" || row.status === "purged"
+        row.status === "purged"
+          ? row.object_key ? ["purge"] : []
+          : row.status === "confirmed"
           ? []
           : Date.parse(row.expires_at) <= now().getTime()
             ? ["purge"]
@@ -732,7 +735,7 @@ export const createCsvImportStaging = async (options: {
             ) as Stage | undefined;
           if (existing) {
             await disk.delete(object.objectKey);
-            return representation(existing);
+            return representation(current(a, existing));
           }
           const created = now().toISOString(),
             expires = new Date(
@@ -991,16 +994,22 @@ export const createCsvImportStaging = async (options: {
         });
       },
       async purge(a, run) {
-        const row = owned(a, run);
+        let row = owned(a, run);
         if (row.status === "confirmed") fail("run_busy");
-        if (row.status === "purged") return;
-        cas(
-          row,
-          "status='purged',object_key=NULL,choices=NULL,preview_id=NULL,retention_deadline=?",
-          [now().toISOString()],
-        );
-        sidecar.prepare("DELETE FROM previews WHERE stage_id=?").run(row.id);
-        if (row.object_key) await disk.delete(row.object_key);
+        if (row.status !== "purged") {
+          // Revoke reads immediately, but keep custody of the bytes until unlink
+          // succeeds. A failed deletion stays retryable by the caller and sweep.
+          sidecar.transaction(() => {
+            cas(row, "status='purged',choices=NULL,preview_id=NULL,retention_deadline=?", [now().toISOString()]);
+            sidecar.prepare("DELETE FROM previews WHERE stage_id=?").run(row.id);
+          })();
+          row = owned(a, run);
+        }
+        if (row.object_key) {
+          await disk.delete(row.object_key);
+          current(a, row);
+          cas(row, "object_key=NULL", []);
+        }
       },
     };
     const apply: CsvStagingApplyPort = {
@@ -1298,11 +1307,11 @@ export const createCsvImportStaging = async (options: {
         const incarnation = target();
         const expired = (
           sidecar
-            .prepare("SELECT * FROM stages WHERE status<>'purged'")
+            .prepare("SELECT * FROM stages WHERE status<>'purged' OR object_key IS NOT NULL")
             .all() as Stage[]
         ).filter(
           (row) =>
-            row.target !== incarnation ||
+            row.status === "purged" || row.target !== incarnation ||
             !!main
               .prepare("SELECT 1 FROM account_closures WHERE user_id=?")
               .get(row.owner) ||
@@ -1314,14 +1323,17 @@ export const createCsvImportStaging = async (options: {
           sidecar.transaction(() => {
             cas(
               row,
-              "status='purged',object_key=NULL,choices=NULL,preview_id=NULL,retention_deadline=?",
+              "status='purged',choices=NULL,preview_id=NULL,retention_deadline=?",
               [now().toISOString()],
             );
             sidecar
               .prepare("DELETE FROM previews WHERE stage_id=?")
               .run(row.id);
           })();
-          if (row.object_key) await disk.delete(row.object_key);
+          if (row.object_key) {
+            await disk.delete(row.object_key);
+            cas({ ...row, version: row.version + 1 }, "object_key=NULL", []);
+          }
         }
         const known = new Set(
           (

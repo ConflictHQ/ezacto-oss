@@ -5901,6 +5901,198 @@ export type EffectiveClientRateCardEnvelope = {
   "links": Links;
 };
 
+export type CsvImportUploadBytes = Blob | Uint8Array;
+
+export type CsvImportCapabilities = {
+  "runtime": "container" | "worker";
+  "staging_supported": boolean;
+  "browser_ready": false;
+  "apply_supported": false;
+  "max_csv_bytes": number;
+  "max_mapping_bytes": number;
+  "raw_retention_hours": 24;
+};
+
+export type CsvImportTallies = {
+  "file_rows": number;
+  "selected_rows": number;
+  "new_rows": number;
+  "already_imported_rows": number;
+  "rejected_row_count": number;
+  "diagnostic_count": number;
+  "file_error_count": number;
+  "invalid_rows": number;
+  "unsupported_rows": number;
+  "source_seconds": number;
+  "destination_seconds": number;
+  "destination_delta_seconds": number;
+  "deleted_imported_rows": number;
+  "organization_currency": string;
+  "unpriced": true;
+  "ignored_columns": Array<string>;
+  "ignored_column_count": number;
+  "warning_count": number;
+  "people": {
+  "matched": number;
+  "new": number;
+  "rejected": number;
+};
+  "clients": {
+  "matched": number;
+  "new": number;
+  "rejected": number;
+};
+  "projects": {
+  "matched": number;
+  "new": number;
+  "rejected": number;
+};
+  "tasks": {
+  "matched": number;
+  "new": number;
+  "rejected": number;
+};
+  "assignments": {
+  "user_project": number;
+  "project_task": number;
+};
+};
+
+export type CsvImportChoices = {
+  "workspace_identity": string;
+  "source_id": string;
+  "adapter_id": string;
+  "date_format": "iso";
+  "exporter_zone": string;
+  "destination_interpretation": "source_wall_time";
+  "currency_policy": "destination_rates";
+  "excluded_lines": Array<number>;
+  "mapping": {
+  [key: string]: unknown;
+};
+};
+
+export type CsvImportMapping = {
+  "workspace_identity": string;
+  "exporter_zone": string;
+  "date_format": "iso";
+  "destination_interpretation": "source_wall_time";
+  "currency_policy": "destination_rates";
+  "excluded_lines": Array<number>;
+  "mapping": {
+  [key: string]: unknown;
+};
+  "version": number;
+};
+
+export type CsvImportMappingState = {
+  "version": number;
+  "choices": CsvImportChoices | null;
+  "preview_id": string | null;
+};
+
+export type CsvImportRun = {
+  "id": string;
+  "status": "uploading" | "staged" | "previewed" | "confirmed" | "completed" | "failed" | "cancelled" | "expired" | "purged";
+  "version": number;
+  "file_sha256": string;
+  "bytes": number;
+  "staging_expires_at": string;
+  "retention_deadline": string | null;
+  "purge_allowed": boolean;
+  "allowed_actions": Array<"map" | "preview" | "purge">;
+  "retryable": boolean;
+  "preview_id": string | null;
+  "preview_stale": boolean;
+  "source_id": string | null;
+  "tallies": CsvImportTallies | null;
+};
+
+export type CsvImportPreviewRequest = {
+  "preview_id"?: string;
+};
+
+export type CsvImportPreview = {
+  "organization_name": string;
+  "preview_id": string;
+  "run": CsvImportRun;
+  "choices": CsvImportChoices;
+  "tallies": CsvImportTallies;
+};
+
+export type CsvImportLineError = {
+  "line": number;
+  "scope": "file" | "row";
+  "excludable": boolean;
+  "kind": "invalid" | "unsupported" | "warning";
+  "code": string;
+  "message": string;
+};
+
+export type CsvImportErrorPage = {
+  "items": Array<CsvImportLineError>;
+  "total": number;
+  "next_cursor": string | null;
+  "preview_id": string | null;
+};
+
+export type CsvImportSourceEntity = {
+  "kind": "people" | "clients" | "projects" | "tasks";
+  "source_key": string;
+  "label": string;
+  "parent_source_key": string | null;
+  "parents": Array<{
+  "kind": "clients" | "projects";
+  "source_key": string;
+  "label": string;
+}>;
+  "state": "matched" | "new" | "rejected" | "excluded";
+  "selected_id": number | null;
+  "selected_destination": CsvImportCandidate | null;
+  "ambiguous": boolean;
+};
+
+export type CsvImportCandidate = {
+  "id": number;
+  "name": string;
+  "parent_id": number | null;
+  "parent_name": string | null;
+  "is_active": boolean;
+  "selectable": boolean;
+  "currency": string | null;
+};
+
+export type CsvImportCatalogPage = {
+  "items": Array<CsvImportSourceEntity | CsvImportCandidate>;
+  "total": number;
+  "next_cursor": string | null;
+  "preview_id": string | null;
+};
+
+export type CsvImportCapabilitiesEnvelope = {
+  "data": CsvImportCapabilities;
+};
+
+export type CsvImportRunEnvelope = {
+  "data": CsvImportRun;
+};
+
+export type CsvImportMappingStateEnvelope = {
+  "data": CsvImportMappingState;
+};
+
+export type CsvImportPreviewEnvelope = {
+  "data": CsvImportPreview;
+};
+
+export type CsvImportErrorPageEnvelope = {
+  "data": CsvImportErrorPage;
+};
+
+export type CsvImportCatalogPageEnvelope = {
+  "data": CsvImportCatalogPage;
+};
+
 export interface EzactoClientOptions {
   baseUrl: string;
   token?: string;
@@ -5926,6 +6118,7 @@ interface RequestOptions {
   query?: Readonly<Record<string, string | number | boolean | undefined>> | undefined;
   body?: unknown;
   multipart?: boolean | undefined;
+  rawBody?: boolean | undefined;
   binary?: boolean | undefined;
   signal?: AbortSignal | undefined;
   headers?: HeadersInit | undefined;
@@ -5966,15 +6159,24 @@ export class EzactoClient {
     const requestHeaders = new Headers(options.headers);
     requestHeaders.forEach((value, name) => headers.set(name, value));
     if (this.token !== undefined) headers.set("authorization", `Bearer ${this.token}`);
+    let encodedBody: BodyInit | undefined;
+    if (options.body !== undefined) {
+      if (options.rawBody === true) {
+        // Copy only this view's bytes, never an entire shared backing buffer.
+        if (options.body instanceof Uint8Array) encodedBody = new Uint8Array(options.body);
+        else if (options.body instanceof Blob) encodedBody = options.body;
+        else throw new TypeError("Binary request body must be a Blob or Uint8Array.");
+      } else encodedBody = options.multipart === true ? options.body as BodyInit : JSON.stringify(options.body);
+    }
     if (options.multipart === true) headers.delete("content-type");
-    else if (options.body !== undefined) headers.set("content-type", "application/json");
+    else if (options.body !== undefined) headers.set("content-type", options.rawBody === true ? "application/octet-stream" : "application/json");
     const response = await this.fetchImplementation(url, {
       method,
       headers,
       ...(options.signal === undefined ? {} : { signal: options.signal }),
-      ...(options.body === undefined
+      ...(encodedBody === undefined
         ? {}
-        : { body: options.multipart === true ? options.body as BodyInit : JSON.stringify(options.body) }),
+        : { body: encodedBody }),
     });
     if (response.ok && options.binary === true) return await response.arrayBuffer() as T;
     const text = await response.text();
@@ -10332,6 +10534,105 @@ export class EzactoClient {
     if (args["Idempotency-Key"] !== undefined) headers.set("Idempotency-Key", String(args["Idempotency-Key"]));
     return this.request<WebhookDeliveryEnvelope>("POST", "/api/v1/webhook-deliveries/:id/replay".replace(":id", encodeURIComponent(String(args["id"]))), {
       body: args.body,
+      signal: args.signal,
+      headers,
+    });
+  }
+
+  async getCsvImportCapabilities(args: { signal?: AbortSignal; headers?: HeadersInit } = {}): Promise<CsvImportCapabilitiesEnvelope> {
+    const headers = new Headers(args.headers);
+
+    return this.request<CsvImportCapabilitiesEnvelope>("GET", "/api/v1/csv-import-capabilities", {
+      signal: args.signal,
+      headers,
+    });
+  }
+
+  async uploadCsvImport(args: { "X-CSV-SHA256": string; "X-CSV-Bytes": number; body: CsvImportUploadBytes; signal?: AbortSignal; headers?: HeadersInit }): Promise<CsvImportRunEnvelope> {
+    const headers = new Headers(args.headers);
+    if (args["X-CSV-SHA256"] !== undefined) headers.set("X-CSV-SHA256", String(args["X-CSV-SHA256"]));
+    if (args["X-CSV-Bytes"] !== undefined) headers.set("X-CSV-Bytes", String(args["X-CSV-Bytes"]));
+    return this.request<CsvImportRunEnvelope>("POST", "/api/v1/csv-imports", {
+      body: args.body,
+      rawBody: true,
+      signal: args.signal,
+      headers,
+    });
+  }
+
+  async getCsvImportMapping(args: { "runId": string; signal?: AbortSignal; headers?: HeadersInit }): Promise<CsvImportMappingStateEnvelope> {
+    const headers = new Headers(args.headers);
+
+    return this.request<CsvImportMappingStateEnvelope>("GET", "/api/v1/csv-imports/:runId/mapping".replace(":runId", encodeURIComponent(String(args["runId"]))), {
+      signal: args.signal,
+      headers,
+    });
+  }
+
+  async mapCsvImport(args: { "runId": string; body: CsvImportMapping; signal?: AbortSignal; headers?: HeadersInit }): Promise<CsvImportRunEnvelope> {
+    const headers = new Headers(args.headers);
+
+    return this.request<CsvImportRunEnvelope>("PATCH", "/api/v1/csv-imports/:runId/mapping".replace(":runId", encodeURIComponent(String(args["runId"]))), {
+      body: args.body,
+      signal: args.signal,
+      headers,
+    });
+  }
+
+  async previewCsvImport(args: { "runId": string; body?: CsvImportPreviewRequest; signal?: AbortSignal; headers?: HeadersInit }): Promise<CsvImportPreviewEnvelope> {
+    const headers = new Headers(args.headers);
+
+    return this.request<CsvImportPreviewEnvelope>("POST", "/api/v1/csv-imports/:runId/preview".replace(":runId", encodeURIComponent(String(args["runId"]))), {
+      body: args.body,
+      signal: args.signal,
+      headers,
+    });
+  }
+
+  async getCsvImport(args: { "runId": string; signal?: AbortSignal; headers?: HeadersInit }): Promise<CsvImportRunEnvelope> {
+    const headers = new Headers(args.headers);
+
+    return this.request<CsvImportRunEnvelope>("GET", "/api/v1/csv-imports/:runId".replace(":runId", encodeURIComponent(String(args["runId"]))), {
+      signal: args.signal,
+      headers,
+    });
+  }
+
+  async listCsvImportErrors(args: { "runId": string; query?: { "preview_id"?: string; "cursor"?: string; "per_page"?: number; "kind"?: "invalid" | "unsupported" | "warning" }; signal?: AbortSignal; headers?: HeadersInit }): Promise<CsvImportErrorPageEnvelope> {
+    const headers = new Headers(args.headers);
+
+    return this.request<CsvImportErrorPageEnvelope>("GET", "/api/v1/csv-imports/:runId/errors".replace(":runId", encodeURIComponent(String(args["runId"]))), {
+      query: args.query,
+      signal: args.signal,
+      headers,
+    });
+  }
+
+  async listCsvImportCatalog(args: { "runId": string; query: { "preview_id"?: string; "cursor"?: string; "per_page"?: number; "kind": "people" | "clients" | "projects" | "tasks"; "source_key"?: string }; signal?: AbortSignal; headers?: HeadersInit }): Promise<CsvImportCatalogPageEnvelope> {
+    const headers = new Headers(args.headers);
+
+    return this.request<CsvImportCatalogPageEnvelope>("GET", "/api/v1/csv-imports/:runId/catalog".replace(":runId", encodeURIComponent(String(args["runId"]))), {
+      query: args.query,
+      signal: args.signal,
+      headers,
+    });
+  }
+
+  async downloadCsvImportDiagnostics(args: { "runId": string; query?: { "preview_id"?: string }; signal?: AbortSignal; headers?: HeadersInit }): Promise<ArrayBuffer> {
+    const headers = new Headers(args.headers);
+
+    return this.request<ArrayBuffer>("GET", "/api/v1/csv-imports/:runId/diagnostics".replace(":runId", encodeURIComponent(String(args["runId"]))), {
+      query: args.query,
+      signal: args.signal,
+      binary: true,
+      headers,
+    });
+  }
+
+  async purgeCsvImportInput(args: { "runId": string; signal?: AbortSignal; headers?: HeadersInit }): Promise<void> {
+    const headers = new Headers(args.headers);
+
+    return this.request<void>("DELETE", "/api/v1/csv-imports/:runId/input".replace(":runId", encodeURIComponent(String(args["runId"]))), {
       signal: args.signal,
       headers,
     });

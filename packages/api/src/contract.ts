@@ -3802,7 +3802,6 @@ export const apiContractOperations: readonly ApiContractOperation[] = [
   ...placeholderPlanningOperations,
   ...resourceCalendarOperations,
   ...calendarFeedOperations,
-  ...csvImportStagingOperations,
   ...workItemOperations,
   ...timesheetApprovalOperations,
   ...timesheetLockPolicyOperations,
@@ -3848,6 +3847,7 @@ export const apiContractOperations: readonly ApiContractOperation[] = [
   ...migrationLoadOperations,
   ...invoiceElevationOperations,
   ...outboundWebhookOperations,
+  ...csvImportStagingOperations,
 ];
 
 const reconciliationStatusSchema: JsonSchema = {
@@ -4091,7 +4091,6 @@ export const apiContractSchemas: Readonly<Record<string, JsonSchema>> = {
   ...placeholderPlanningSchemas,
   ...resourceCalendarSchemas,
   ...calendarFeedSchemas,
-  ...csvImportStagingSchemas,
   ...attachmentContractSchemas,
   ...staffPaymentSchemas,
   ...deelSyncSchemas,
@@ -11578,6 +11577,7 @@ export const apiContractSchemas: Readonly<Record<string, JsonSchema>> = {
     additionalProperties: false,
   },
   EffectiveClientRateCardEnvelope: envelope("EffectiveClientRateCard"),
+  ...csvImportStagingSchemas,
 };
 
 const openApiPath = (runtimePath: string): string =>

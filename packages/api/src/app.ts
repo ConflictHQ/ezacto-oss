@@ -1,5 +1,5 @@
 import { Hono } from 'hono'
-import { csvStagingCapabilities, csvStagingOriginalError, isCsvStagingPath, installCsvImportStagingRoutes } from './csv-import-staging.js'
+import { csvStagingCapabilities, isCsvStagingPath, installCsvImportStagingRoutes } from './csv-import-staging.js'
 import {
   apiAuthenticationMiddleware,
   installApiTokenRoutes,
@@ -65,7 +65,7 @@ export const createApiApp = <Bindings extends object = object>(
     await authenticateApi(context, next)
     context.header('cache-control', 'no-store')
   })
-  app.onError((error, context) => errorResponse(error, context, (failure,requestId)=>options.reportError?.(csvStagingOriginalError(failure)??failure,requestId)))
+  app.onError((error, context) => errorResponse(error, context, options.reportError))
   app.notFound((context) => notFoundResponse(context))
   options.installApp?.(app)
 

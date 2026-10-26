@@ -14,9 +14,6 @@ import type {
   CsvStagingMappingInput,
 } from "./csv-import-staging-port.js";
 
-const privateCauses = new WeakMap<Error, Error>();
-export const csvStagingOriginalError = (error: Error): Error | undefined =>
-  privateCauses.get(error);
 export const isCsvStagingPath = (path: string): boolean =>
   path === "/api/v1/csv-imports" || path.startsWith("/api/v1/csv-imports/");
 export const csvStagingCapabilities = (port?: CsvImportStagingPort) => ({
@@ -29,10 +26,20 @@ export const csvStagingCapabilities = (port?: CsvImportStagingPort) => ({
   raw_retention_hours: 24,
 });
 const safeFailure = (error: unknown): never => {
-  if (error instanceof ApiError) throw error;
+  // Only preserve recognized HTTP classifications, never their messages,
+  // fields or causes: even an unexpected ApiError can carry a source cell.
+  const httpStatuses: Readonly<Record<string, number>> = {
+    unsupported_media_type: 415,
+    invalid_content_length: 400,
+    payload_too_large: 413,
+    invalid_json: 400,
+    session_required: 403,
+  };
+  const httpCode = error instanceof ApiError && httpStatuses[error.code] === error.status
+    ? error.code : undefined;
   const expected = error instanceof CsvStagingError;
-  const status = expected ? csvStagingErrorStatus[error.code] : 503;
-  const code = expected ? error.code : "storage_unavailable";
+  const status = expected ? csvStagingErrorStatus[error.code] : httpCode === undefined ? 503 : httpStatuses[httpCode]!;
+  const code = expected ? error.code : httpCode ?? "storage_unavailable";
   const message = "The private CSV operation could not be completed.";
   const safe = new ApiError({
     status: status as ContentfulStatusCode,
@@ -40,13 +47,8 @@ const safeFailure = (error: unknown): never => {
     message,
     ...(status === 422 ? { fields: [{ field: "input", code, message }] } : {}),
   });
-  if (!expected)
-    privateCauses.set(
-      safe,
-      error instanceof Error
-        ? error
-        : new Error("CSV private operation failed"),
-    );
+  // Parser and storage exceptions can contain raw cells. Report only this fixed
+  // boundary error and request id; never retain the original as a cause.
   throw safe;
 };
 const authority = <B extends object>(

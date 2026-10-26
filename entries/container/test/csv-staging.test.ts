@@ -23,7 +23,7 @@ import {
   vi,
 } from "vitest";
 import { migrateContainer, createContainerSessionStore } from "@ezacto/db";
-import { createApiApp, createApiSessionService } from "@ezacto/api";
+import { ApiError, createApiApp, createApiSessionService } from "@ezacto/api";
 import { createCsvImportStaging } from "../src/csv-staging-service.js";
 import { createCsvStagingDisk } from "../src/csv-staging-disk.js";
 import { runCsvStagingWork } from "../src/csv-staging-work.js";
@@ -124,11 +124,19 @@ const fixture = async () => {
   let clock = new Date();
   let injectedError: Error | null = null;
   let afterWork: (() => Promise<void>) | null = null;
+  let deleteError: Error | null = null;
+  let afterDelete: (() => Promise<void>) | null = null;
+  const privateDisk = await createCsvStagingDisk(join(root, "private", "objects"));
   const reported: Error[] = [];
   const service = await createCsvImportStaging({
     database: db,
     databasePath: path,
     directory: join(root, "private"),
+    disk: { ...privateDisk, async delete(key) {
+      if (deleteError) throw deleteError;
+      await privateDisk.delete(key);
+      await afterDelete?.();
+    } },
     now: () => clock,
     work: async (input, signal) => {
       if (injectedError) throw injectedError;
@@ -175,6 +183,8 @@ const fixture = async () => {
     member,
     request,
     reported,
+    setDeleteError: (error: Error | null) => { deleteError = error; },
+    setAfterDelete: (callback: () => Promise<void>) => { afterDelete = callback; },
     setWorkError: (e: Error) => {
       injectedError = e;
     },
@@ -422,6 +432,32 @@ describe("private native CSV admission", () => {
       f.close();
     }
   }, 60000);
+  it("rechecks duplicate-upload authority after deleting redundant bytes", async () => {
+    const f = await fixture();
+    try {
+      const value = bytes(csv);
+      await f.service.port.upload(f.a, chunk(value), proof(value), new AbortController().signal);
+      f.setAfterDelete(async () => { await f.store.revoke(2, f.session.session.id); });
+      await expect(f.service.port.upload(f.a, chunk(value), proof(value), new AbortController().signal)).rejects.toMatchObject({ code: "administrator_required" });
+    } finally { f.close(); }
+  });
+  it.each(["request", "sweep"] as const)("retains deletion custody after unlink failure for %s retry", async (mode) => {
+    const f = await fixture();
+    try {
+      const value = bytes(csv);
+      const run = await f.service.port.upload(f.a, chunk(value), proof(value), new AbortController().signal);
+      if (mode === "sweep") f.setClock(new Date(Date.now() + 25 * 60 * 60 * 1000));
+      f.setDeleteError(new Error("owned unlink failure"));
+      const purge = () => mode === "sweep" ? f.service.sweep() : f.service.port.purge(f.a, run.id);
+      await expect(purge()).rejects.toThrow("owned unlink failure");
+      expect(await readdir(join(f.root, "private", "objects"))).toHaveLength(1);
+      expect(await f.service.port.read(f.a, run.id)).toMatchObject({status: "purged", purge_allowed: true, allowed_actions: ["purge"]});
+      f.setDeleteError(null);
+      await purge();
+      expect(await readdir(join(f.root, "private", "objects"))).toEqual([]);
+      expect(await f.service.port.read(f.a, run.id)).toMatchObject({status: "purged", purge_allowed: false, allowed_actions: []});
+    } finally { f.close(); }
+  });
   it("does not let outer idempotency consume CSV content before route authority", async () => {
     let read = 0;
     const handle = createContainerHandler(
@@ -552,7 +588,10 @@ describe("private native CSV admission", () => {
       f.close();
     }
   }, 60000);
-  it("reports the original private work fault without exposing cells in logs, and rechecks authority after work", async () => {
+  it.each([
+    (secret: string) => new Error(secret),
+    (secret: string) => new ApiError({status: 503, code: "unexpected_parser_failure", message: secret}),
+  ])("sanitizes private work faults before reporting and logging (%#), and rechecks authority after work", async (makeError) => {
     const f = await fixture();
     try {
       const value = bytes(csv),
@@ -564,7 +603,7 @@ describe("private native CSV admission", () => {
         );
       await f.service.port.map(f.a, run.id, choices(0));
       const secret = "owned-private-cell-sentinel";
-      const original = new Error(secret),
+      const original = makeError(secret),
         logged: unknown[][] = [];
       vi.spyOn(console, "error").mockImplementation((...args: unknown[]) => {
         logged.push(args);
@@ -575,7 +614,11 @@ describe("private native CSV admission", () => {
       });
       expect(result.status).toBe(503);
       expect(await result.text()).not.toContain(secret);
-      expect(f.reported).toEqual([original]);
+      expect(f.reported).toHaveLength(1);
+      expect(f.reported[0]).not.toBe(original);
+      expect(f.reported[0]).toMatchObject({ message: "The private CSV operation could not be completed." });
+      expect(JSON.stringify(f.reported)).not.toContain(secret);
+      expect(f.reported[0]?.stack).not.toContain(secret);
       expect(JSON.stringify(logged)).not.toContain(secret);
     } finally {
       f.close();
