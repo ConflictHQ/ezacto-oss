@@ -35096,6 +35096,346 @@
           }
         ]
       }
+    },
+    "/api/v1/csv-imports/{runId}/apply": {
+      "post": {
+        "operationId": "applyCsvImport",
+        "summary": "Confirm and queue the immutable reviewed CSV selection",
+        "description": "Container-only administrator session operation. Current native session, owned stage and target incarnation are checked before content. No source values or credentials are returned. Cancel stops future writes and retains committed time and setup.",
+        "tags": [
+          "csv-imports"
+        ],
+        "security": [
+          {
+            "bearerAuth": []
+          },
+          {
+            "cookieSession": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CsvImportApplyEnvelope"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/MalformedRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/AuthenticationRequired"
+          },
+          "403": {
+            "$ref": "#/components/responses/InsufficientPermission"
+          },
+          "404": {
+            "$ref": "#/components/responses/ResourceNotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/StateConflict"
+          },
+          "413": {
+            "$ref": "#/components/responses/PayloadTooLarge"
+          },
+          "422": {
+            "$ref": "#/components/responses/ValidationFailed"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "503": {
+            "$ref": "#/components/responses/ServiceUnavailable"
+          }
+        },
+        "x-ezacto-runtime-path": "/api/v1/csv-imports/:runId/apply",
+        "x-ezacto-generate-client": true,
+        "parameters": [
+          {
+            "name": "runId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CsvImportApplyCommand"
+              }
+            }
+          }
+        }
+      },
+      "get": {
+        "operationId": "getCsvImportApply",
+        "summary": "Recover authoritative CSV progress and a pending command receipt",
+        "description": "Container-only administrator session operation. Current native session, owned stage and target incarnation are checked before content. No source values or credentials are returned. Cancel stops future writes and retains committed time and setup.",
+        "tags": [
+          "csv-imports"
+        ],
+        "security": [
+          {
+            "bearerAuth": []
+          },
+          {
+            "cookieSession": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CsvImportApplyEnvelope"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/MalformedRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/AuthenticationRequired"
+          },
+          "403": {
+            "$ref": "#/components/responses/InsufficientPermission"
+          },
+          "404": {
+            "$ref": "#/components/responses/ResourceNotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/StateConflict"
+          },
+          "413": {
+            "$ref": "#/components/responses/PayloadTooLarge"
+          },
+          "422": {
+            "$ref": "#/components/responses/ValidationFailed"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "503": {
+            "$ref": "#/components/responses/ServiceUnavailable"
+          }
+        },
+        "x-ezacto-runtime-path": "/api/v1/csv-imports/:runId/apply",
+        "x-ezacto-generate-client": true,
+        "parameters": [
+          {
+            "name": "runId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "command_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ]
+      }
+    },
+    "/api/v1/csv-imports/{runId}/resume": {
+      "post": {
+        "operationId": "resumeCsvImport",
+        "summary": "Explicitly resume the same sealed selection under a current session",
+        "description": "Container-only administrator session operation. Current native session, owned stage and target incarnation are checked before content. No source values or credentials are returned. Cancel stops future writes and retains committed time and setup.",
+        "tags": [
+          "csv-imports"
+        ],
+        "security": [
+          {
+            "bearerAuth": []
+          },
+          {
+            "cookieSession": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CsvImportApplyEnvelope"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/MalformedRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/AuthenticationRequired"
+          },
+          "403": {
+            "$ref": "#/components/responses/InsufficientPermission"
+          },
+          "404": {
+            "$ref": "#/components/responses/ResourceNotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/StateConflict"
+          },
+          "413": {
+            "$ref": "#/components/responses/PayloadTooLarge"
+          },
+          "422": {
+            "$ref": "#/components/responses/ValidationFailed"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "503": {
+            "$ref": "#/components/responses/ServiceUnavailable"
+          }
+        },
+        "x-ezacto-runtime-path": "/api/v1/csv-imports/:runId/resume",
+        "x-ezacto-generate-client": true,
+        "parameters": [
+          {
+            "name": "runId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CsvImportApplyCommand"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/csv-imports/{runId}/cancel": {
+      "post": {
+        "operationId": "cancelCsvImport",
+        "summary": "Stop future CSV writes without rolling back committed rows",
+        "description": "Container-only administrator session operation. Current native session, owned stage and target incarnation are checked before content. No source values or credentials are returned. Cancel stops future writes and retains committed time and setup.",
+        "tags": [
+          "csv-imports"
+        ],
+        "security": [
+          {
+            "bearerAuth": []
+          },
+          {
+            "cookieSession": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CsvImportApplyEnvelope"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/MalformedRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/AuthenticationRequired"
+          },
+          "403": {
+            "$ref": "#/components/responses/InsufficientPermission"
+          },
+          "404": {
+            "$ref": "#/components/responses/ResourceNotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/StateConflict"
+          },
+          "413": {
+            "$ref": "#/components/responses/PayloadTooLarge"
+          },
+          "422": {
+            "$ref": "#/components/responses/ValidationFailed"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "503": {
+            "$ref": "#/components/responses/ServiceUnavailable"
+          }
+        },
+        "x-ezacto-runtime-path": "/api/v1/csv-imports/:runId/cancel",
+        "x-ezacto-generate-client": true,
+        "parameters": [
+          {
+            "name": "runId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CsvImportCancelCommand"
+              }
+            }
+          }
+        }
+      }
     }
   },
   "components": {
@@ -64564,10 +64904,10 @@
             "type": "boolean"
           },
           "browser_ready": {
-            "const": false
+            "type": "boolean"
           },
           "apply_supported": {
-            "const": false
+            "type": "boolean"
           },
           "max_csv_bytes": {
             "type": "integer"
@@ -65415,6 +65755,281 @@
             "$ref": "#/components/schemas/CsvImportCatalogPage"
           }
         }
+      },
+      "CsvImportApplyCommand": {
+        "type": "object",
+        "properties": {
+          "preview_id": {
+            "type": "string",
+            "pattern": "^preview_[a-f0-9]{64}$"
+          },
+          "command_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "version": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "expected_selected_rows": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 50000
+          },
+          "expected_source_seconds": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 4320000000
+          },
+          "expected_destination_seconds": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 9007199254740991
+          },
+          "acknowledge_exclusions": {
+            "type": "boolean"
+          },
+          "acknowledge_destination_difference": {
+            "type": "boolean"
+          },
+          "acknowledge_new_people": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "preview_id",
+          "command_id",
+          "version",
+          "expected_selected_rows",
+          "expected_source_seconds",
+          "expected_destination_seconds",
+          "acknowledge_exclusions",
+          "acknowledge_destination_difference",
+          "acknowledge_new_people"
+        ],
+        "additionalProperties": false
+      },
+      "CsvImportCancelCommand": {
+        "type": "object",
+        "properties": {
+          "command_id": {
+            "type": "string",
+            "format": "uuid"
+          }
+        },
+        "required": [
+          "command_id"
+        ],
+        "additionalProperties": false
+      },
+      "CsvImportApplyRun": {
+        "type": "object",
+        "properties": {
+          "stage_id": {
+            "type": "string"
+          },
+          "preview_id": {
+            "anyOf": [
+              {
+                "type": "string",
+                "pattern": "^preview_[a-f0-9]{64}$"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "state": {
+            "type": "string",
+            "enum": [
+              "not_confirmed",
+              "queued",
+              "running",
+              "paused",
+              "partial",
+              "completed",
+              "cancelled",
+              "failed",
+              "superseded"
+            ]
+          },
+          "code": {
+            "anyOf": [
+              {
+                "type": "string",
+                "enum": [
+                  "authority_expired",
+                  "authority_revoked",
+                  "input_expired",
+                  "input_unavailable",
+                  "policy_changed",
+                  "parse_rejected",
+                  "storage_unavailable",
+                  "cancelled_by_administrator"
+                ]
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "command_id": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "uuid"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "command_known": {
+            "type": "boolean"
+          },
+          "pending_command": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/CsvImportApplyCommand"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "file_rows": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 9007199254740991
+          },
+          "selected_rows": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 9007199254740991
+          },
+          "excluded_rows": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 9007199254740991
+          },
+          "committed_rows": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 9007199254740991
+          },
+          "inserted_rows": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 9007199254740991
+          },
+          "already_imported_rows": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 9007199254740991
+          },
+          "created_setup": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 9007199254740991
+          },
+          "source_seconds_total": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 9007199254740991
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "source_seconds_committed": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 9007199254740991
+          },
+          "destination_seconds": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 9007199254740991
+          },
+          "destination_delta_seconds": {
+            "type": "integer",
+            "minimum": -9007199254740991,
+            "maximum": 9007199254740991
+          },
+          "deleted_imported_rows": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 9007199254740991
+          },
+          "retention_deadline": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "retryable": {
+            "type": "boolean"
+          },
+          "allowed_actions": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "enum": [
+                "apply",
+                "resume",
+                "cancel",
+                "inspect",
+                "purge",
+                "reconcile"
+              ]
+            }
+          }
+        },
+        "required": [
+          "stage_id",
+          "preview_id",
+          "state",
+          "code",
+          "command_id",
+          "command_known",
+          "pending_command",
+          "file_rows",
+          "selected_rows",
+          "excluded_rows",
+          "committed_rows",
+          "inserted_rows",
+          "already_imported_rows",
+          "created_setup",
+          "source_seconds_total",
+          "source_seconds_committed",
+          "destination_seconds",
+          "destination_delta_seconds",
+          "deleted_imported_rows",
+          "retention_deadline",
+          "retryable",
+          "allowed_actions"
+        ],
+        "additionalProperties": false
+      },
+      "CsvImportApplyEnvelope": {
+        "type": "object",
+        "properties": {
+          "data": {
+            "$ref": "#/components/schemas/CsvImportApplyRun"
+          }
+        },
+        "required": [
+          "data"
+        ],
+        "additionalProperties": false
       }
     }
   }

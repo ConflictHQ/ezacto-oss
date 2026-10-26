@@ -1,0 +1,29 @@
+{
+  "issue": 1183,
+  "runtime": "disposable Container/SQLite",
+  "viewport": {
+    "width": 390,
+    "height": 844
+  },
+  "source_sha256": "104938a6e5475f9c4f27d3615dc0e7155c15a442cc2d4b3c5dd50489e0bf6135",
+  "adapter": "clockify-detailed-browser@2",
+  "timezone": "America/Costa_Rica",
+  "currency_policy": "destination_rates",
+  "organization_currency": "USD",
+  "owned_target_nonce": "2259a178b7fce1e40c4dbf606fcf11d89887c822805f373881075bfdad9718d9",
+  "source_rows": 3,
+  "selected_rows": 2,
+  "explicit_exclusions": [
+    4
+  ],
+  "source_seconds": 7201,
+  "destination_seconds": 7201,
+  "time_after_apply": {
+    "rows": 2,
+    "seconds": 7201
+  },
+  "apply_response_lost": true,
+  "repeated_commands_identical": true,
+  "financial_rows_unchanged": true,
+  "actor_user_id": 2
+}

@@ -16,11 +16,14 @@ import type {
 
 export const isCsvStagingPath = (path: string): boolean =>
   path === "/api/v1/csv-imports" || path.startsWith("/api/v1/csv-imports/");
-export const csvStagingCapabilities = (port?: CsvImportStagingPort) => ({
+export const csvStagingCapabilities = (
+  port?: CsvImportStagingPort,
+  applySupported = false,
+) => ({
   runtime: port ? "container" : "worker",
   staging_supported: port !== undefined,
-  browser_ready: false,
-  apply_supported: false,
+  browser_ready: port !== undefined,
+  apply_supported: port !== undefined && applySupported,
   max_csv_bytes: CSV_STAGING_LIMITS.maxBytes,
   max_mapping_bytes: CSV_STAGING_LIMITS.maxMappingBytes,
   raw_retention_hours: 24,
@@ -34,6 +37,16 @@ const safeFailure = (error: unknown): never => {
     payload_too_large: 413,
     invalid_json: 400,
     session_required: 403,
+    run_not_found: 404,
+    authority_required: 401,
+    input_expired: 409,
+    binding_mismatch: 409,
+    apply_busy: 409,
+    cancelled: 409,
+    stale_lease: 409,
+    command_conflict: 409,
+    invalid_command: 400,
+    command_limit_reached: 409,
   };
   const httpCode = error instanceof ApiError && httpStatuses[error.code] === error.status
     ? error.code : undefined;
@@ -268,4 +281,7 @@ export const installCsvImportStagingRoutes = <B extends object>(
   });
 };
 
-export {authority as csvStagingAuthority,safeFailure as csvStagingSafeFailure};
+export {
+  authority as csvStagingAuthority,
+  safeFailure as csvStagingSafeFailure,
+};

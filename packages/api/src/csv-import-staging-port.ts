@@ -102,8 +102,8 @@ export interface CsvStagingCandidate {
 export interface CsvStagingCapabilities {
   runtime: "container" | "worker";
   staging_supported: boolean;
-  browser_ready: false;
-  apply_supported: false;
+  browser_ready: boolean;
+  apply_supported: boolean;
   max_csv_bytes: number;
   max_mapping_bytes: number;
   raw_retention_hours: 24;

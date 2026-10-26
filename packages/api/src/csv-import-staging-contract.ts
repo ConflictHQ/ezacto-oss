@@ -332,8 +332,8 @@ const stagingSchemas = {
   CsvImportCapabilities: object({
     runtime: { type: "string", enum: ["container", "worker"] },
     staging_supported: boolean,
-    browser_ready: { const: false },
-    apply_supported: { const: false },
+    browser_ready: { type: "boolean" },
+    apply_supported: { type: "boolean" },
     max_csv_bytes: integer,
     max_mapping_bytes: integer,
     raw_retention_hours: { const: 24 },

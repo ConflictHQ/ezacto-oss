@@ -424,6 +424,7 @@ export type WorkerEnv = AppEnv & OffsiteBackupEnvironment & {
 
 export interface RuntimeServices {
   csvImportStaging?: import('@ezacto/api').CsvImportStagingPort
+  csvImportApply?: import('@ezacto/api').CsvImportApplyPort
   appleWebLifecycle?: AppleWebLifecyclePort
   bootstrap(input: InstanceBootstrapInput): Promise<InstanceBootstrapResult>
   enrollOwnerPassword(
@@ -854,6 +855,7 @@ export const createApp = (
 
   return createApiApp<AppEnv>({
     ...(services?.csvImportStaging ? {csvImportStaging:services.csvImportStaging}:{}),
+    ...(services?.csvImportApply ? {csvImportApply:services.csvImportApply}:{}),
     // Every 5xx the API answers goes to Sentry with the request id the client
     // was handed (issue 807). A no-op until SENTRY_DSN is set, like the wrapper
     // in index.ts, and never given a request or response body.

@@ -1,10 +1,7 @@
 # Private CSV admission and preview
 
 Refs #1181 and #1012. The Container implements private administrator staging
-and immutable preview over the portable planner from #1180. This slice does not
-confirm or apply time. `getCsvImportCapabilities` reports
-`staging_supported: true` only on that Container, and `browser_ready: false` and
-`apply_supported: false`. Worker discovery reports all three false; its private
+and immutable preview over the portable planner from #1180. Admission never writes time; the separate [durable apply](csv-import-apply.md) composition controls confirmation and execution. `getCsvImportCapabilities` reports staging and browser support on Container. Apply requires both real backend ports. Worker discovery reports all three false; its private
 CSV paths refuse before constructing database services or reading the body.
 
 The canonical DTOs and operations are in

@@ -1224,7 +1224,8 @@ export const createCsvImportStaging = async (options: {
             mapping: parseBrowserMapping(JSON.stringify(choices.mapping)),
             excludedLines: choices.excluded_lines,
           },
-          plan: row.status === "confirmed" ? result.plan : original.plan,
+          plan: result.plan,
+          snapshot: result.snapshot,
           bytes,
         };
       },
