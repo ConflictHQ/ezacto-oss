@@ -195,3 +195,10 @@ export * from './bank-deposit-review.js'
 export * from './calendar-oauth.js'
 
 export { createCalendarOperatorCleanupStore } from './calendar-operator-cleanup.js'
+
+export * from './github-read.js'
+export * from './github-reader-admin.js'
+export * from './github-reader-work.js'
+export * from './github-reader-service.js'
+
+export * from './github-app-setup.js'

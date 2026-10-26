@@ -1,9 +1,12 @@
 export { installCalendarConnectionRoutes, type CalendarConnectionPort } from './calendar-connections.js'
 export { installCalendarFeedRoutes, installCalendarSubscriptionRoute } from './calendar-feeds.js'
 export { installDeelPaymentStatusRoutes } from './deel-payment-status.js'
-export { createManagedDeelConnectionCommands, type ManagedDeelConnectionOptions } from './managed-deel.js'
-export { createManagedBillConnectionCommands, type ManagedBillConnectionOptions, type ManagedBillConnectCommand, type ManagedBillDisconnectInput } from './managed-bill.js'
-export { createManagedQuickBooksGrantCommands, type ManagedQuickBooksGrantOptions } from './managed-quickbooks.js'
+export { createManagedDeelConnectionCommands, type ManagedDeelConnectionOptions,
+} from './managed-deel.js'
+export { createManagedBillConnectionCommands, type ManagedBillConnectionOptions, type ManagedBillConnectCommand, type ManagedBillDisconnectInput,
+} from './managed-bill.js'
+export { createManagedQuickBooksGrantCommands, type ManagedQuickBooksGrantOptions,
+} from './managed-quickbooks.js'
 export { installScheduledJobRoutes } from './scheduled-jobs.js'
 export { createApiApp } from './app.js'
 export { createApiIdempotencyAuthorization } from './idempotency-auth.js'
@@ -95,8 +98,7 @@ export {
 export {
   emailBrandFrom,
   withEmailBrand,
-  type EmailBrandSource,
-} from './email-brand.js'
+  type EmailBrandSource } from './email-brand.js'
 export {
   installInstanceThemeRoutes,
   installInstanceThemeStylesheetRoute,
@@ -109,8 +111,7 @@ export { installMailgunWebhookRoute } from './mailgun-webhook.js'
 export {
   installStripeRoutes,
   installStripeWebhookRoute,
-  type StripeService,
-} from './stripe.js'
+  type StripeService } from './stripe.js'
 export {
   installInvoiceDocumentPreferenceRoutes,
   type InvoiceDocumentPreferenceService,
@@ -150,8 +151,7 @@ export {
 export {
   installBillRoutes,
   type BillService,
-  type BillStatus,
-} from './bill.js'
+  type BillStatus } from './bill.js'
 export {
   apiContractOperations,
   apiContractSchemas,
@@ -287,8 +287,7 @@ export {
 } from './email-log.js'
 export {
   installEmailHealthRoutes,
-  type EmailHealthReader,
-} from './email-health.js'
+  type EmailHealthReader } from './email-health.js'
 export {
   installEmailConfigurationRoutes,
   type EmailConfigurationRouteOptions,
@@ -553,7 +552,8 @@ export {
   type AppleWebRouteOptions,
 } from './apple-web.js'
 
-export { createAppleWebLifecycle, assertAppleWebCustodyConfig, APPLE_WEB_CONNECTION_COOKIE, type AppleWebCustodyConfig } from './apple-web-lifecycle.js'
+export { createAppleWebLifecycle, assertAppleWebCustodyConfig, APPLE_WEB_CONNECTION_COOKIE, type AppleWebCustodyConfig,
+} from './apple-web-lifecycle.js'
 export { installMyPaymentRoutes } from './my-payments.js'
 
 export {
@@ -579,7 +579,8 @@ export * from './migration-loads.js'
 export { installOrganizationHolidayRoutes } from './organization-holidays.js'
 export { installOutboundWebhookRoutes } from './outbound-webhooks.js'
 
-export { installPlaceholderPlanningRoutes, type PlaceholderPlanningRepository } from './resources/placeholder-allocations.js'
+export { installPlaceholderPlanningRoutes, type PlaceholderPlanningRepository,
+} from './resources/placeholder-allocations.js'
 
 export { installDeelStagingRoutes, type DeelStagingApiRuntime } from './deel-staging.js'
 export * from './csv-import-staging-contract.js'
@@ -594,3 +595,5 @@ export { installBankDepositRoutes, type BankDepositReviewApi } from './bank-depo
 export { installCalendarAuthorizationRoutes, type CalendarAuthorizationPort } from './calendar-oauth.js'
 
 export { installCalendarOperatorCleanupRoutes } from './calendar-operator-cleanup.js'
+
+export * from './github-reader.js'

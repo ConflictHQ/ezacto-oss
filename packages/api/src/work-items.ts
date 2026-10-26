@@ -84,7 +84,8 @@ export interface WorkItemRepository {
     now: string,
   ): Promise<WorkItemConnectionRecord>
   disconnect(id: number, now: string): Promise<WorkItemConnectionRecord>
-  links(actor: WorkItemActor, filters: Readonly<WorkItemLinkFilters>): CursorSource<WorkItemLinkRecord>
+  links(actor: WorkItemActor, filters: Readonly<WorkItemLinkFilters>,
+  ): CursorSource<WorkItemLinkRecord>
   getLink(actor: WorkItemActor, id: number): Promise<WorkItemLinkRecord>
   createLink(
     actor: WorkItemActor,
@@ -103,7 +104,7 @@ export interface WorkItemRepository {
 export interface WorkItemRouteOptions {
   repository: WorkItemRepository
   /** Whether this deployment holds the provider's credential. Asked, never read out. */
-  credentialConfigured(provider: WorkItemProviderId): boolean
+  credentialConfigured(provider: WorkItemProviderId): boolean | Promise<boolean>
   clock(): string
   cursorSigningKey: Uint8Array
   activity?: ActivityRecorder
@@ -111,8 +112,7 @@ export interface WorkItemRouteOptions {
 
 const serializeConnection = (
   record: Readonly<WorkItemConnectionRecord>,
-  configured: boolean,
-) => ({
+  configured: boolean) => ({
   id: record.id,
   provider: record.provider,
   status: record.status,
@@ -157,7 +157,8 @@ const translate = (error: unknown): never => {
     throw notFound(error.target === 'time_entry' ? 'time entry' : 'project')
   }
   if (error instanceof WorkItemConnectionInactiveError || error instanceof WorkItemLinkExistsError) {
-    throw new ApiError({ status: 409, code: error.code, message: error.message })
+    throw new ApiError({ status: 409, code: error.code, message: error.message,
+    })
   }
   if (error instanceof RangeError) {
     throw new ApiError({
@@ -208,8 +209,12 @@ export const installWorkItemRoutes = <Bindings extends object>(
     const connections = await options.repository.connections()
     return context.json(
       {
-        data: connections.map((connection) =>
-          serializeConnection(connection, options.credentialConfigured(connection.provider)),
+        data: await Promise.all(
+          connections.map(async (connection) =>
+          serializeConnection(connection,
+              await options.credentialConfigured(connection.provider),
+            ),
+          ),
         ),
         links: { self: '/api/v1/settings/work-item-connections' },
       },
@@ -234,7 +239,7 @@ export const installWorkItemRoutes = <Bindings extends object>(
     const provider = body.provider as WorkItemProviderId
     // A connection without a credential could never be used, and the cure is a
     // deployment secret an administrator here cannot set.
-    if (!options.credentialConfigured(provider)) {
+    if (!(await options.credentialConfigured(provider))) {
       throw new ApiError({
         status: 409,
         code: 'credential_not_configured',
@@ -318,7 +323,8 @@ export const installWorkItemRoutes = <Bindings extends object>(
       try {
         itemId = normalizeWorkItemId(body.item_id)
       } catch (error) {
-        errors.push({ field: 'item_id', code: 'invalid', message: (error as Error).message })
+        errors.push({ field: 'item_id', code: 'invalid', message: (error as Error).message,
+        })
       }
     }
     let url: string | null | undefined
@@ -327,7 +333,8 @@ export const installWorkItemRoutes = <Bindings extends object>(
         url = typeof body.url === 'string' ? normalizeWorkItemUrl(body.url) : undefined
         if (url === undefined) throw new RangeError('url must be a string')
       } catch (error) {
-        errors.push({ field: 'url', code: 'invalid', message: (error as Error).message })
+        errors.push({ field: 'url', code: 'invalid', message: (error as Error).message,
+        })
       }
     }
     assertFields(errors)
@@ -344,7 +351,8 @@ export const installWorkItemRoutes = <Bindings extends object>(
         options.clock(),
       )
       return context.json(
-        { data: serializeWorkItemLink(link), links: { self: `/api/v1/work-item-links/${link.id}` } },
+        { data: serializeWorkItemLink(link), links: { self: `/api/v1/work-item-links/${link.id}` },
+        },
         201,
         { ...noStore, location: `/api/v1/work-item-links/${link.id}` },
       )
@@ -360,7 +368,8 @@ export const installWorkItemRoutes = <Bindings extends object>(
     try {
       const link = await options.repository.getLink(principal, id)
       return context.json(
-        { data: serializeWorkItemLink(link), links: { self: `/api/v1/work-item-links/${id}` } },
+        { data: serializeWorkItemLink(link), links: { self: `/api/v1/work-item-links/${id}` },
+        },
         200,
         noStore,
       )
