@@ -84,7 +84,7 @@ const workerOptions = {
       // Optional/null email values occur in real Deel directories. Keep an
       // unrelated same-name person so preview must still match actual addresses.
       {id:'unrelated',full_name:'Deel owned 50001',emails:[{value:null},{},{value:'  '}],employments:[{id:'unrelated-contract',contract_status:'in_progress'}]},
-      ...[50001,50002].map(id=>({id:`p${id}`,full_name:`Deel owned ${id}`,emails:[{value:null},{},{value:`deel${id}@example.test`}],employments:[{id:`contract${id}`,contract_status:'in_progress'}]})),
+      ...[50001,50002].map(id=>({id:`p${id}`,full_name:`Deel owned ${id}`,emails:[{value:null},{},{value:`deel${id}@example.test`},{value:`DEEL${id}@EXAMPLE.TEST`}],employments:[{id:`contract${id}`,contract_status:'in_progress'}]})),
     ]})
     if (request.method === 'POST' && url.pathname.endsWith('/timesheets')) {
       const body=await request.json(); deelStagingPosts.push(body)
