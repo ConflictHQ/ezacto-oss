@@ -2078,6 +2078,13 @@ export const createShellApi = (client: EzactoClient): ShellApi => ({
   getCapacity: (range, signal) =>
     client.getCapacity({ query: range, ...withSignal(signal) }),
   resourceCalendar: {
+    feeds: {
+      list: async signal => (await client.listCalendarFeeds(withSignal(signal))).data,
+      create: async (body,signal) => (await client.createCalendarFeed({body,...withSignal(signal)})).data,
+      rotate: async (id,signal) => (await client.rotateCalendarFeed({id,...withSignal(signal)})).data,
+      revoke: (id,signal) => client.revokeCalendarFeed({id,...withSignal(signal)}),
+      download: async (id,signal) => new Blob([await client.downloadCalendarFeed({id,...withSignal(signal)})],{type:'text/calendar'}),
+    },
     context: signal => client.getResourceCalendarContext(withSignal(signal)),
     read: (query, cursor, signal) => client.getResourceCalendar({
       query: { ...query, per_page: 50, ...(cursor === undefined ? {} : { cursor }) }, ...withSignal(signal),

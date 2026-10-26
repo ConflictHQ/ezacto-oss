@@ -1,3 +1,4 @@
+import { setRequestBusy } from '../request-feedback.js'
 import type {
   ContractorReview,
   ContractorReviewPerson,
@@ -91,6 +92,7 @@ export const createContractorReviewController = (
     loadButton.disabled = true
     host.replaceChildren()
     status.textContent = ''
+    setRequestBusy(status, false)
   }
   const paint = (
     review: ContractorReview,
@@ -409,6 +411,7 @@ export const createContractorReviewController = (
             loadButton.disabled =
               true
           status.textContent = 'Confirming selected reconciliation changes…'
+          setRequestBusy(status, true)
           void api.acceptContractorReview!(pending, active)
             .then(() => {
               if (active.aborted || own !== generation) return
@@ -421,6 +424,7 @@ export const createContractorReviewController = (
             })
             .finally(() => {
               if (!active.aborted && own === generation) {
+                setRequestBusy(status, false)
                 confirm.disabled = false
                 loadButton.disabled = false
               }
@@ -440,6 +444,7 @@ export const createContractorReviewController = (
     const own = ++generation
     host.replaceChildren()
     status.textContent = 'Loading contractor reconciliation…'
+    setRequestBusy(status, true)
     loadButton.disabled = true
     void Promise.all([
       api.getContractorReview(selectedMonth, active),
@@ -461,7 +466,10 @@ export const createContractorReviewController = (
           status.textContent = errorText(error)
       })
       .finally(() => {
-        if (!active.aborted && own === generation) loadButton.disabled = false
+        if (!active.aborted && own === generation) {
+          setRequestBusy(status, false)
+          loadButton.disabled = false
+        }
       })
   }
   loadButton.addEventListener('click', load)

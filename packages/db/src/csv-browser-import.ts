@@ -107,6 +107,8 @@ export const createCsvBrowserDatasetLedger = (
   options: {
     tracked: Pick<DrizzleTrackedResourceRepository, 'createTimeEntry'>
     now: () => Date
+    /** Trusted request/job authority, repeated inside every native write. Offline CLI defaults to its existing current-role guard. */
+    authorityFence?: (actor: AdministratorActor) => CompiledQuery
     destinationFence: (
       plan: CsvPlanInput,
       pendingSetup?: {
@@ -131,9 +133,19 @@ export const createCsvBrowserDatasetLedger = (
     text: string,
     params: readonly unknown[] = [],
   ): Promise<T[]> => (await atomic([{ text, params }]))[0] as T[]
+  const boundAuthority = (actor: AdministratorActor): CompiledQuery => {
+    const extra = options.authorityFence?.(actor) ?? { sql: '1', params: [] }
+    return {
+      sql: `(${authority}) AND (${extra.sql})`,
+      params: [actorId(actor), ...extra.params],
+    }
+  }
   const checkActor = async (actor: AdministratorActor): Promise<number> => {
     const id = actorId(actor)
-    const [row] = await rows<{ allowed: number }>(`SELECT (${authority}) AS allowed`, [id])
+    const authorized = boundAuthority(actor)
+    const [row] = await rows<{ allowed: number }>(`SELECT (${authorized.sql}) AS allowed`,
+      authorized.params,
+    )
     if (row?.allowed !== 1) refuse('actor_required')
     return id
   }
@@ -165,6 +177,7 @@ export const createCsvBrowserDatasetLedger = (
     },
     checkDestination = true,
   ): CompiledQuery => {
+    const authorized = boundAuthority(actor)
     const destination = checkDestination
       ? options.destinationFence(plan, pendingSetup)
       : { sql: '1', params: [] }
@@ -173,12 +186,12 @@ export const createCsvBrowserDatasetLedger = (
       params: [],
     }
     return {
-      sql: `(${authority}) AND EXISTS(SELECT 1 FROM csv_import_runs r
+      sql: `(${authorized.sql}) AND EXISTS(SELECT 1 FROM csv_import_runs r
       WHERE r.id=? AND r.browser_plan_id=? AND r.browser_state='partial'
       AND r.lease_actor_user_id=? AND r.lease_holder=? AND r.lease_generation=? AND r.lease_expires_at>(${clock.sql}))
       AND (${destination.sql})`,
       params: [
-        actorId(actor),
+        ...authorized.params,
         input.runId,
         input.planId,
         actorId(actor),
@@ -443,7 +456,8 @@ export const createCsvBrowserDatasetLedger = (
       }
     },
     async registerDataset(actor, input) {
-      const id = await checkActor(actor)
+      await checkActor(actor)
+      const authorized = boundAuthority(actor)
       if (
         input.workspaceIdentity.length < 1 ||
         input.workspaceIdentity.length > 255 ||
@@ -460,8 +474,8 @@ export const createCsvBrowserDatasetLedger = (
         await atomic([
           {
             text: `INSERT INTO csv_import_datasets(source_id,workspace_identity,created_at)
-        SELECT ?,?,? WHERE ${authority} ON CONFLICT(workspace_identity) DO NOTHING RETURNING source_id`,
-            params: [sourceId, input.workspaceIdentity, options.now().toISOString(), id],
+        SELECT ?,?,? WHERE (${authorized.sql}) ON CONFLICT(workspace_identity) DO NOTHING RETURNING source_id`,
+            params: [sourceId, input.workspaceIdentity, options.now().toISOString(), ...authorized.params],
           },
         ])
       } catch (error) {
@@ -483,6 +497,7 @@ export const createCsvBrowserDatasetLedger = (
     },
     async seal(actor, input, confirm) {
       const id = await checkActor(actor)
+      const authorized = boundAuthority(actor)
       validPlan(input)
       const plan = {
         ...input,
@@ -513,7 +528,7 @@ export const createCsvBrowserDatasetLedger = (
           text: `INSERT INTO csv_import_runs
         (source_id,file_sha256,mapping_json,mapping_sha256,status,total_rows,created_at,updated_at,
         browser_plan_json,browser_plan_id,browser_state,confirmed_by_user_id)
-        SELECT ?,?,?,?,'partial',?,?,?,?,?,?,? WHERE (${authority}) AND (${destination.sql})
+        SELECT ?,?,?,?,'partial',?,?,?,?,?,?,? WHERE (${authorized.sql}) AND (${destination.sql})
         ON CONFLICT(source_id) WHERE browser_plan_json IS NOT NULL DO UPDATE SET
           file_sha256=excluded.file_sha256,mapping_json=excluded.mapping_json,mapping_sha256=excluded.mapping_sha256,total_rows=excluded.total_rows,
           updated_at=excluded.updated_at,browser_plan_json=excluded.browser_plan_json,browser_plan_id=excluded.browser_plan_id,
@@ -531,7 +546,7 @@ export const createCsvBrowserDatasetLedger = (
             planId,
             confirm ? 'partial' : 'draft',
             confirm ? id : null,
-            id,
+            ...authorized.params,
             ...destination.params,
           ],
         },
@@ -555,6 +570,7 @@ export const createCsvBrowserDatasetLedger = (
     },
     async claimLease(actor, input) {
       const id = await checkActor(actor)
+      const authorized = boundAuthority(actor)
       if (
         !input.holder ||
         input.holder.length > 128 ||
@@ -572,8 +588,8 @@ export const createCsvBrowserDatasetLedger = (
         {
           text: `UPDATE csv_import_runs SET lease_holder=?,lease_actor_user_id=?,lease_generation=lease_generation+1,lease_expires_at=?
         WHERE id=? AND browser_state='partial' AND (lease_expires_at IS NULL OR lease_expires_at<=?)
-        AND lease_generation<9007199254740991 AND ${authority} RETURNING lease_generation,lease_expires_at`,
-          params: [input.holder, id, now + input.ttlMs, input.runId, now, id],
+        AND lease_generation<9007199254740991 AND (${authorized.sql}) RETURNING lease_generation,lease_expires_at`,
+          params: [input.holder, id, now + input.ttlMs, input.runId, now, ...authorized.params],
         },
       ])
       const claimed = updated?.[0]

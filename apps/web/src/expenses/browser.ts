@@ -1,3 +1,4 @@
+import { setRequestBusy } from '../request-feedback.js'
 import { renderDataTable } from '../components/data-table.js'
 import { loadedRowsSortNotice } from '../components/table-sort.js'
 import { isDemoDeployment } from '../demo.js'
@@ -269,6 +270,7 @@ export const createExpenseWorkflowController = (
     api.createWorkflowExpense !== undefined
 
   const syncCreateControls = (): void => {
+    if (!mutationPending) setRequestBusy(createResult, false)
     const canOpen = canOpenCreate()
     createOpen.hidden = !moduleAvailable
     createOpen.disabled = !canOpen || mutationPending
@@ -389,6 +391,10 @@ export const createExpenseWorkflowController = (
   }
 
   const syncDetailControls = (): void => {
+    if (!mutationPending) {
+      setRequestBusy(editResult, false)
+      setRequestBusy(attachmentStatus, false)
+    }
     const hasDetail = current() !== null && moduleAvailable && currentExpense !== null
     const editable =
       hasDetail && currentExpense !== null && expenseIsEditable(currentExpense)
@@ -421,6 +427,7 @@ export const createExpenseWorkflowController = (
     period.setWeekStartDay('monday')
     listPending = false
     mutationPending = false
+    for (const region of [createResult, editResult, attachmentStatus, listStatus, detailStatus]) setRequestBusy(region, false)
     attachmentCommand = null
     moduleAvailable = true
     catalogReady = false
@@ -716,6 +723,7 @@ export const createExpenseWorkflowController = (
     }
     listPending = true
     listStatus.textContent = append ? 'Loading more expenses…' : 'Loading expenses…'
+    setRequestBusy(listStatus, true)
     listRetry.hidden = true
     loadMore.disabled = true
     try {
@@ -747,6 +755,7 @@ export const createExpenseWorkflowController = (
     } finally {
       if (current() === session && requestGeneration === listRequestGeneration) {
         listPending = false
+        setRequestBusy(listStatus, false)
         loadMore.disabled = false
       }
     }
@@ -833,6 +842,7 @@ export const createExpenseWorkflowController = (
     ) return
     const requestGeneration = ++detailRequestGeneration
     detailStatus.textContent = 'Loading expense…'
+    setRequestBusy(detailStatus, true)
     detailArticle.hidden = true
     detailRetry.hidden = true
     try {
@@ -858,6 +868,8 @@ export const createExpenseWorkflowController = (
       detailStatus.textContent = apiMessage(error)
       detailArticle.hidden = true
       detailRetry.hidden = false
+    } finally {
+      if (current() === session && requestGeneration === detailRequestGeneration) setRequestBusy(detailStatus, false)
     }
   }
 
@@ -973,6 +985,7 @@ export const createExpenseWorkflowController = (
     mutationPending = true
     syncCreateControls()
     createResult.textContent = 'Adding expense…'
+    setRequestBusy(createResult, true)
     api.createWorkflowExpense(payload, session.signal).then((expense) => {
       if (current() !== session) return
       createForm.reset()
@@ -1031,6 +1044,7 @@ export const createExpenseWorkflowController = (
     mutationPending = true
     syncDetailControls()
     editResult.textContent = 'Saving expense…'
+    setRequestBusy(editResult, true)
     api.updateWorkflowExpense(currentExpense.id, payload, session.signal).then((expense) => {
       if (current() !== session) return
       renderDetail(expense)
@@ -1077,6 +1091,7 @@ export const createExpenseWorkflowController = (
     const command = attachmentCommand
     const expenseId = currentExpense.id
     attachmentStatus.textContent = 'Uploading receipt…'
+    setRequestBusy(attachmentStatus, true)
     api.uploadWorkflowExpenseAttachment(expenseId, command, data, session.signal).then(async () => {
       if (current() !== session) return
       const attachments = await api.listWorkflowExpenseAttachments!(expenseId, session.signal)

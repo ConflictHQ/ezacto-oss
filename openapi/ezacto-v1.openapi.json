@@ -11719,6 +11719,313 @@
         ]
       }
     },
+    "/api/v1/calendar-feeds": {
+      "get": {
+        "operationId": "listCalendarFeeds",
+        "summary": "List owned advisory calendar subscriptions",
+        "tags": [
+          "capacity"
+        ],
+        "security": [
+          {
+            "cookieSession": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CalendarFeedList"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/MalformedRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/AuthenticationRequired"
+          },
+          "403": {
+            "$ref": "#/components/responses/InsufficientPermission"
+          },
+          "404": {
+            "$ref": "#/components/responses/ResourceNotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/StateConflict"
+          },
+          "413": {
+            "$ref": "#/components/responses/PayloadTooLarge"
+          },
+          "422": {
+            "$ref": "#/components/responses/ValidationFailed"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "503": {
+            "$ref": "#/components/responses/ServiceUnavailable"
+          }
+        },
+        "x-ezacto-runtime-path": "/api/v1/calendar-feeds",
+        "x-ezacto-generate-client": true
+      },
+      "post": {
+        "operationId": "createCalendarFeed",
+        "summary": "Issue a scoped expiring calendar subscription password",
+        "tags": [
+          "capacity"
+        ],
+        "security": [
+          {
+            "cookieSession": []
+          }
+        ],
+        "responses": {
+          "201": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CalendarFeedIssued"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/MalformedRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/AuthenticationRequired"
+          },
+          "403": {
+            "$ref": "#/components/responses/InsufficientPermission"
+          },
+          "404": {
+            "$ref": "#/components/responses/ResourceNotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/StateConflict"
+          },
+          "413": {
+            "$ref": "#/components/responses/PayloadTooLarge"
+          },
+          "422": {
+            "$ref": "#/components/responses/ValidationFailed"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "503": {
+            "$ref": "#/components/responses/ServiceUnavailable"
+          }
+        },
+        "x-ezacto-runtime-path": "/api/v1/calendar-feeds",
+        "x-ezacto-generate-client": true,
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CalendarFeedInput"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/calendar-feeds/{id}/rotate": {
+      "post": {
+        "operationId": "rotateCalendarFeed",
+        "summary": "Replace a subscription password while retaining stable event IDs",
+        "tags": [
+          "capacity"
+        ],
+        "security": [
+          {
+            "cookieSession": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CalendarFeedIssued"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/MalformedRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/AuthenticationRequired"
+          },
+          "403": {
+            "$ref": "#/components/responses/InsufficientPermission"
+          },
+          "404": {
+            "$ref": "#/components/responses/ResourceNotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/StateConflict"
+          },
+          "413": {
+            "$ref": "#/components/responses/PayloadTooLarge"
+          },
+          "422": {
+            "$ref": "#/components/responses/ValidationFailed"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "503": {
+            "$ref": "#/components/responses/ServiceUnavailable"
+          }
+        },
+        "x-ezacto-runtime-path": "/api/v1/calendar-feeds/:id/rotate",
+        "x-ezacto-generate-client": true,
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ]
+      }
+    },
+    "/api/v1/calendar-feeds/{id}": {
+      "delete": {
+        "operationId": "revokeCalendarFeed",
+        "summary": "Revoke a calendar subscription immediately",
+        "tags": [
+          "capacity"
+        ],
+        "security": [
+          {
+            "cookieSession": []
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "No content"
+          },
+          "400": {
+            "$ref": "#/components/responses/MalformedRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/AuthenticationRequired"
+          },
+          "403": {
+            "$ref": "#/components/responses/InsufficientPermission"
+          },
+          "404": {
+            "$ref": "#/components/responses/ResourceNotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/StateConflict"
+          },
+          "413": {
+            "$ref": "#/components/responses/PayloadTooLarge"
+          },
+          "422": {
+            "$ref": "#/components/responses/ValidationFailed"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "503": {
+            "$ref": "#/components/responses/ServiceUnavailable"
+          }
+        },
+        "x-ezacto-runtime-path": "/api/v1/calendar-feeds/:id",
+        "x-ezacto-generate-client": true,
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ]
+      }
+    },
+    "/api/v1/calendar-feeds/{id}/download": {
+      "get": {
+        "operationId": "downloadCalendarFeed",
+        "summary": "Download the current authorized advisory calendar",
+        "tags": [
+          "capacity"
+        ],
+        "security": [
+          {
+            "cookieSession": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Attachment content",
+            "content": {
+              "application/octet-stream": {
+                "schema": {
+                  "type": "string",
+                  "format": "binary"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/MalformedRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/AuthenticationRequired"
+          },
+          "403": {
+            "$ref": "#/components/responses/InsufficientPermission"
+          },
+          "404": {
+            "$ref": "#/components/responses/ResourceNotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/StateConflict"
+          },
+          "413": {
+            "$ref": "#/components/responses/PayloadTooLarge"
+          },
+          "422": {
+            "$ref": "#/components/responses/ValidationFailed"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "503": {
+            "$ref": "#/components/responses/ServiceUnavailable"
+          }
+        },
+        "x-ezacto-runtime-path": "/api/v1/calendar-feeds/:id/download",
+        "x-ezacto-generate-client": true,
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ]
+      }
+    },
     "/api/v1/settings/work-item-connections": {
       "get": {
         "operationId": "listWorkItemConnections",
@@ -34015,6 +34322,780 @@
           }
         }
       }
+    },
+    "/api/v1/csv-import-capabilities": {
+      "get": {
+        "operationId": "getCsvImportCapabilities",
+        "summary": "Discover private CSV staging support",
+        "tags": [
+          "csv-import"
+        ],
+        "security": [],
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CsvImportCapabilitiesEnvelope"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/MalformedRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/AuthenticationRequired"
+          },
+          "403": {
+            "$ref": "#/components/responses/InsufficientPermission"
+          },
+          "404": {
+            "$ref": "#/components/responses/ResourceNotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/StateConflict"
+          },
+          "413": {
+            "$ref": "#/components/responses/PayloadTooLarge"
+          },
+          "422": {
+            "$ref": "#/components/responses/ValidationFailed"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "503": {
+            "$ref": "#/components/responses/ServiceUnavailable"
+          }
+        },
+        "x-ezacto-runtime-path": "/api/v1/csv-import-capabilities",
+        "x-ezacto-generate-client": true
+      }
+    },
+    "/api/v1/csv-imports": {
+      "post": {
+        "operationId": "uploadCsvImport",
+        "summary": "Stream CSV bytes into private administrator staging",
+        "tags": [
+          "csv-import"
+        ],
+        "security": [
+          {
+            "cookieSession": []
+          }
+        ],
+        "responses": {
+          "201": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CsvImportRunEnvelope"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/MalformedRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/AuthenticationRequired"
+          },
+          "403": {
+            "$ref": "#/components/responses/InsufficientPermission"
+          },
+          "404": {
+            "$ref": "#/components/responses/ResourceNotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/StateConflict"
+          },
+          "413": {
+            "$ref": "#/components/responses/PayloadTooLarge"
+          },
+          "415": {
+            "description": "Error response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "422": {
+            "$ref": "#/components/responses/ValidationFailed"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "503": {
+            "$ref": "#/components/responses/ServiceUnavailable"
+          }
+        },
+        "x-ezacto-runtime-path": "/api/v1/csv-imports",
+        "x-ezacto-generate-client": true,
+        "parameters": [
+          {
+            "name": "X-CSV-SHA256",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "pattern": "^[a-f0-9]{64}$"
+            }
+          },
+          {
+            "name": "X-CSV-Bytes",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 5242880
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/octet-stream": {
+              "schema": {
+                "$ref": "#/components/schemas/CsvImportUploadBytes"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/csv-imports/{runId}/mapping": {
+      "get": {
+        "operationId": "getCsvImportMapping",
+        "summary": "Read current administrator-owned source and mapping choices",
+        "tags": [
+          "csv-import"
+        ],
+        "security": [
+          {
+            "cookieSession": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CsvImportMappingStateEnvelope"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/MalformedRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/AuthenticationRequired"
+          },
+          "403": {
+            "$ref": "#/components/responses/InsufficientPermission"
+          },
+          "404": {
+            "$ref": "#/components/responses/ResourceNotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/StateConflict"
+          },
+          "413": {
+            "$ref": "#/components/responses/PayloadTooLarge"
+          },
+          "422": {
+            "$ref": "#/components/responses/ValidationFailed"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "503": {
+            "$ref": "#/components/responses/ServiceUnavailable"
+          }
+        },
+        "x-ezacto-runtime-path": "/api/v1/csv-imports/:runId/mapping",
+        "x-ezacto-generate-client": true,
+        "parameters": [
+          {
+            "name": "runId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ]
+      },
+      "patch": {
+        "operationId": "mapCsvImport",
+        "summary": "Explicitly register the workspace and set source, zone, mapping and exclusions",
+        "tags": [
+          "csv-import"
+        ],
+        "security": [
+          {
+            "cookieSession": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CsvImportRunEnvelope"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/MalformedRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/AuthenticationRequired"
+          },
+          "403": {
+            "$ref": "#/components/responses/InsufficientPermission"
+          },
+          "404": {
+            "$ref": "#/components/responses/ResourceNotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/StateConflict"
+          },
+          "413": {
+            "$ref": "#/components/responses/PayloadTooLarge"
+          },
+          "422": {
+            "$ref": "#/components/responses/ValidationFailed"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "503": {
+            "$ref": "#/components/responses/ServiceUnavailable"
+          }
+        },
+        "x-ezacto-runtime-path": "/api/v1/csv-imports/:runId/mapping",
+        "x-ezacto-generate-client": true,
+        "parameters": [
+          {
+            "name": "runId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CsvImportMapping"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/csv-imports/{runId}/preview": {
+      "post": {
+        "operationId": "previewCsvImport",
+        "summary": "Compute an immutable preview without writing organization rows",
+        "tags": [
+          "csv-import"
+        ],
+        "security": [
+          {
+            "cookieSession": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CsvImportPreviewEnvelope"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/MalformedRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/AuthenticationRequired"
+          },
+          "403": {
+            "$ref": "#/components/responses/InsufficientPermission"
+          },
+          "404": {
+            "$ref": "#/components/responses/ResourceNotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/StateConflict"
+          },
+          "413": {
+            "$ref": "#/components/responses/PayloadTooLarge"
+          },
+          "422": {
+            "$ref": "#/components/responses/ValidationFailed"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "503": {
+            "$ref": "#/components/responses/ServiceUnavailable"
+          }
+        },
+        "x-ezacto-runtime-path": "/api/v1/csv-imports/:runId/preview",
+        "x-ezacto-generate-client": true,
+        "parameters": [
+          {
+            "name": "runId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": false,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CsvImportPreviewRequest"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/csv-imports/{runId}": {
+      "get": {
+        "operationId": "getCsvImport",
+        "summary": "Read private run status, tallies and retention deadline",
+        "tags": [
+          "csv-import"
+        ],
+        "security": [
+          {
+            "cookieSession": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CsvImportRunEnvelope"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/MalformedRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/AuthenticationRequired"
+          },
+          "403": {
+            "$ref": "#/components/responses/InsufficientPermission"
+          },
+          "404": {
+            "$ref": "#/components/responses/ResourceNotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/StateConflict"
+          },
+          "413": {
+            "$ref": "#/components/responses/PayloadTooLarge"
+          },
+          "422": {
+            "$ref": "#/components/responses/ValidationFailed"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "503": {
+            "$ref": "#/components/responses/ServiceUnavailable"
+          }
+        },
+        "x-ezacto-runtime-path": "/api/v1/csv-imports/:runId",
+        "x-ezacto-generate-client": true,
+        "parameters": [
+          {
+            "name": "runId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ]
+      }
+    },
+    "/api/v1/csv-imports/{runId}/errors": {
+      "get": {
+        "operationId": "listCsvImportErrors",
+        "summary": "Read paginated static physical-line diagnostics",
+        "tags": [
+          "csv-import"
+        ],
+        "security": [
+          {
+            "cookieSession": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CsvImportErrorPageEnvelope"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/MalformedRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/AuthenticationRequired"
+          },
+          "403": {
+            "$ref": "#/components/responses/InsufficientPermission"
+          },
+          "404": {
+            "$ref": "#/components/responses/ResourceNotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/StateConflict"
+          },
+          "413": {
+            "$ref": "#/components/responses/PayloadTooLarge"
+          },
+          "422": {
+            "$ref": "#/components/responses/ValidationFailed"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "503": {
+            "$ref": "#/components/responses/ServiceUnavailable"
+          }
+        },
+        "x-ezacto-runtime-path": "/api/v1/csv-imports/:runId/errors",
+        "x-ezacto-generate-client": true,
+        "parameters": [
+          {
+            "name": "runId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "preview_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "cursor",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "per_page",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 100
+            }
+          },
+          {
+            "name": "kind",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "enum": [
+                "invalid",
+                "unsupported",
+                "warning"
+              ]
+            }
+          }
+        ]
+      }
+    },
+    "/api/v1/csv-imports/{runId}/catalog": {
+      "get": {
+        "operationId": "listCsvImportCatalog",
+        "summary": "Read immutable private source labels and explicit destination candidates",
+        "tags": [
+          "csv-import"
+        ],
+        "security": [
+          {
+            "cookieSession": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CsvImportCatalogPageEnvelope"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/MalformedRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/AuthenticationRequired"
+          },
+          "403": {
+            "$ref": "#/components/responses/InsufficientPermission"
+          },
+          "404": {
+            "$ref": "#/components/responses/ResourceNotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/StateConflict"
+          },
+          "413": {
+            "$ref": "#/components/responses/PayloadTooLarge"
+          },
+          "422": {
+            "$ref": "#/components/responses/ValidationFailed"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "503": {
+            "$ref": "#/components/responses/ServiceUnavailable"
+          }
+        },
+        "x-ezacto-runtime-path": "/api/v1/csv-imports/:runId/catalog",
+        "x-ezacto-generate-client": true,
+        "parameters": [
+          {
+            "name": "runId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "preview_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "cursor",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "per_page",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 100
+            }
+          },
+          {
+            "name": "kind",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "enum": [
+                "people",
+                "clients",
+                "projects",
+                "tasks"
+              ]
+            }
+          },
+          {
+            "name": "source_key",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ]
+      }
+    },
+    "/api/v1/csv-imports/{runId}/diagnostics": {
+      "get": {
+        "operationId": "downloadCsvImportDiagnostics",
+        "summary": "Download static diagnostics JSON without CSV cells or notes",
+        "tags": [
+          "csv-import"
+        ],
+        "security": [
+          {
+            "cookieSession": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Attachment content",
+            "content": {
+              "application/octet-stream": {
+                "schema": {
+                  "type": "string",
+                  "format": "binary"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/MalformedRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/AuthenticationRequired"
+          },
+          "403": {
+            "$ref": "#/components/responses/InsufficientPermission"
+          },
+          "404": {
+            "$ref": "#/components/responses/ResourceNotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/StateConflict"
+          },
+          "413": {
+            "$ref": "#/components/responses/PayloadTooLarge"
+          },
+          "422": {
+            "$ref": "#/components/responses/ValidationFailed"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "503": {
+            "$ref": "#/components/responses/ServiceUnavailable"
+          }
+        },
+        "x-ezacto-runtime-path": "/api/v1/csv-imports/:runId/diagnostics",
+        "x-ezacto-generate-client": true,
+        "parameters": [
+          {
+            "name": "runId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "preview_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ]
+      }
+    },
+    "/api/v1/csv-imports/{runId}/input": {
+      "delete": {
+        "operationId": "purgeCsvImportInput",
+        "summary": "Purge private input and diagnostics, preserving minimal dedup facts and imported time",
+        "tags": [
+          "csv-import"
+        ],
+        "security": [
+          {
+            "cookieSession": []
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "No content"
+          },
+          "400": {
+            "$ref": "#/components/responses/MalformedRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/AuthenticationRequired"
+          },
+          "403": {
+            "$ref": "#/components/responses/InsufficientPermission"
+          },
+          "404": {
+            "$ref": "#/components/responses/ResourceNotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/StateConflict"
+          },
+          "413": {
+            "$ref": "#/components/responses/PayloadTooLarge"
+          },
+          "422": {
+            "$ref": "#/components/responses/ValidationFailed"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "503": {
+            "$ref": "#/components/responses/ServiceUnavailable"
+          }
+        },
+        "x-ezacto-runtime-path": "/api/v1/csv-imports/:runId/input",
+        "x-ezacto-generate-client": true,
+        "parameters": [
+          {
+            "name": "runId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ]
+      }
     }
   },
   "components": {
@@ -36139,6 +37220,163 @@
           "data",
           "links",
           "page"
+        ],
+        "additionalProperties": false
+      },
+      "CalendarFeedInput": {
+        "type": "object",
+        "properties": {
+          "scope": {
+            "type": "string",
+            "enum": [
+              "self",
+              "project",
+              "team"
+            ]
+          },
+          "project_id": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "minimum": 1
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "from_date": {
+            "type": "string"
+          },
+          "through_date": {
+            "type": "string"
+          },
+          "include_names": {
+            "type": "boolean"
+          },
+          "expires_at": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "scope",
+          "project_id",
+          "from_date",
+          "through_date",
+          "include_names"
+        ],
+        "additionalProperties": false
+      },
+      "CalendarFeed": {
+        "type": "object",
+        "properties": {
+          "scope": {
+            "type": "string",
+            "enum": [
+              "self",
+              "project",
+              "team"
+            ]
+          },
+          "project_id": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "minimum": 1
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "from_date": {
+            "type": "string"
+          },
+          "through_date": {
+            "type": "string"
+          },
+          "include_names": {
+            "type": "boolean"
+          },
+          "id": {
+            "type": "string"
+          },
+          "issued_at": {
+            "type": "string"
+          },
+          "expires_at": {
+            "type": "string"
+          },
+          "revoked_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "credential_generation": {
+            "type": "integer",
+            "minimum": 1
+          }
+        },
+        "required": [
+          "scope",
+          "project_id",
+          "from_date",
+          "through_date",
+          "include_names",
+          "id",
+          "issued_at",
+          "expires_at",
+          "revoked_at",
+          "credential_generation"
+        ],
+        "additionalProperties": false
+      },
+      "CalendarFeedList": {
+        "type": "object",
+        "properties": {
+          "data": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/CalendarFeed"
+            }
+          }
+        },
+        "required": [
+          "data"
+        ],
+        "additionalProperties": false
+      },
+      "CalendarFeedIssued": {
+        "type": "object",
+        "properties": {
+          "data": {
+            "type": "object",
+            "properties": {
+              "feed": {
+                "$ref": "#/components/schemas/CalendarFeed"
+              },
+              "username": {
+                "type": "string"
+              },
+              "password": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "feed",
+              "username",
+              "password"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "required": [
+          "data"
         ],
         "additionalProperties": false
       },
@@ -63297,6 +64535,886 @@
           }
         },
         "additionalProperties": false
+      },
+      "CsvImportUploadBytes": {
+        "type": "string",
+        "format": "binary"
+      },
+      "CsvImportCapabilities": {
+        "type": "object",
+        "required": [
+          "runtime",
+          "staging_supported",
+          "browser_ready",
+          "apply_supported",
+          "max_csv_bytes",
+          "max_mapping_bytes",
+          "raw_retention_hours"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "runtime": {
+            "type": "string",
+            "enum": [
+              "container",
+              "worker"
+            ]
+          },
+          "staging_supported": {
+            "type": "boolean"
+          },
+          "browser_ready": {
+            "const": false
+          },
+          "apply_supported": {
+            "const": false
+          },
+          "max_csv_bytes": {
+            "type": "integer"
+          },
+          "max_mapping_bytes": {
+            "type": "integer"
+          },
+          "raw_retention_hours": {
+            "const": 24
+          }
+        }
+      },
+      "CsvImportTallies": {
+        "type": "object",
+        "required": [
+          "file_rows",
+          "selected_rows",
+          "new_rows",
+          "already_imported_rows",
+          "rejected_row_count",
+          "diagnostic_count",
+          "file_error_count",
+          "invalid_rows",
+          "unsupported_rows",
+          "source_seconds",
+          "destination_seconds",
+          "destination_delta_seconds",
+          "deleted_imported_rows",
+          "organization_currency",
+          "unpriced",
+          "ignored_columns",
+          "ignored_column_count",
+          "warning_count",
+          "people",
+          "clients",
+          "projects",
+          "tasks",
+          "assignments"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "file_rows": {
+            "type": "integer"
+          },
+          "selected_rows": {
+            "type": "integer"
+          },
+          "new_rows": {
+            "type": "integer"
+          },
+          "already_imported_rows": {
+            "type": "integer"
+          },
+          "rejected_row_count": {
+            "type": "integer"
+          },
+          "diagnostic_count": {
+            "type": "integer"
+          },
+          "file_error_count": {
+            "type": "integer"
+          },
+          "invalid_rows": {
+            "type": "integer"
+          },
+          "unsupported_rows": {
+            "type": "integer"
+          },
+          "source_seconds": {
+            "type": "integer"
+          },
+          "destination_seconds": {
+            "type": "integer"
+          },
+          "destination_delta_seconds": {
+            "type": "integer"
+          },
+          "deleted_imported_rows": {
+            "type": "integer"
+          },
+          "organization_currency": {
+            "type": "string"
+          },
+          "unpriced": {
+            "const": true
+          },
+          "ignored_columns": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "ignored_column_count": {
+            "type": "integer"
+          },
+          "warning_count": {
+            "type": "integer"
+          },
+          "people": {
+            "type": "object",
+            "required": [
+              "matched",
+              "new",
+              "rejected"
+            ],
+            "additionalProperties": false,
+            "properties": {
+              "matched": {
+                "type": "integer"
+              },
+              "new": {
+                "type": "integer"
+              },
+              "rejected": {
+                "type": "integer"
+              }
+            }
+          },
+          "clients": {
+            "type": "object",
+            "required": [
+              "matched",
+              "new",
+              "rejected"
+            ],
+            "additionalProperties": false,
+            "properties": {
+              "matched": {
+                "type": "integer"
+              },
+              "new": {
+                "type": "integer"
+              },
+              "rejected": {
+                "type": "integer"
+              }
+            }
+          },
+          "projects": {
+            "type": "object",
+            "required": [
+              "matched",
+              "new",
+              "rejected"
+            ],
+            "additionalProperties": false,
+            "properties": {
+              "matched": {
+                "type": "integer"
+              },
+              "new": {
+                "type": "integer"
+              },
+              "rejected": {
+                "type": "integer"
+              }
+            }
+          },
+          "tasks": {
+            "type": "object",
+            "required": [
+              "matched",
+              "new",
+              "rejected"
+            ],
+            "additionalProperties": false,
+            "properties": {
+              "matched": {
+                "type": "integer"
+              },
+              "new": {
+                "type": "integer"
+              },
+              "rejected": {
+                "type": "integer"
+              }
+            }
+          },
+          "assignments": {
+            "type": "object",
+            "required": [
+              "user_project",
+              "project_task"
+            ],
+            "additionalProperties": false,
+            "properties": {
+              "user_project": {
+                "type": "integer"
+              },
+              "project_task": {
+                "type": "integer"
+              }
+            }
+          }
+        }
+      },
+      "CsvImportChoices": {
+        "type": "object",
+        "required": [
+          "workspace_identity",
+          "source_id",
+          "adapter_id",
+          "date_format",
+          "exporter_zone",
+          "destination_interpretation",
+          "currency_policy",
+          "excluded_lines",
+          "mapping"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "workspace_identity": {
+            "type": "string"
+          },
+          "source_id": {
+            "type": "string"
+          },
+          "adapter_id": {
+            "type": "string"
+          },
+          "date_format": {
+            "type": "string",
+            "enum": [
+              "iso"
+            ]
+          },
+          "exporter_zone": {
+            "type": "string"
+          },
+          "destination_interpretation": {
+            "type": "string",
+            "enum": [
+              "source_wall_time"
+            ]
+          },
+          "currency_policy": {
+            "type": "string",
+            "enum": [
+              "destination_rates"
+            ]
+          },
+          "excluded_lines": {
+            "type": "array",
+            "items": {
+              "type": "integer"
+            }
+          },
+          "mapping": {
+            "type": "object",
+            "additionalProperties": true
+          }
+        }
+      },
+      "CsvImportMapping": {
+        "type": "object",
+        "required": [
+          "workspace_identity",
+          "exporter_zone",
+          "date_format",
+          "destination_interpretation",
+          "currency_policy",
+          "excluded_lines",
+          "mapping",
+          "version"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "workspace_identity": {
+            "type": "string"
+          },
+          "exporter_zone": {
+            "type": "string"
+          },
+          "date_format": {
+            "type": "string",
+            "enum": [
+              "iso"
+            ]
+          },
+          "destination_interpretation": {
+            "type": "string",
+            "enum": [
+              "source_wall_time"
+            ]
+          },
+          "currency_policy": {
+            "type": "string",
+            "enum": [
+              "destination_rates"
+            ]
+          },
+          "excluded_lines": {
+            "type": "array",
+            "items": {
+              "type": "integer"
+            }
+          },
+          "mapping": {
+            "type": "object",
+            "additionalProperties": true
+          },
+          "version": {
+            "type": "integer"
+          }
+        }
+      },
+      "CsvImportMappingState": {
+        "type": "object",
+        "required": [
+          "version",
+          "choices",
+          "preview_id"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "version": {
+            "type": "integer"
+          },
+          "choices": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/CsvImportChoices"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "preview_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        }
+      },
+      "CsvImportRun": {
+        "type": "object",
+        "required": [
+          "id",
+          "status",
+          "version",
+          "file_sha256",
+          "bytes",
+          "staging_expires_at",
+          "retention_deadline",
+          "purge_allowed",
+          "allowed_actions",
+          "retryable",
+          "preview_id",
+          "preview_stale",
+          "source_id",
+          "tallies"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "uploading",
+              "staged",
+              "previewed",
+              "confirmed",
+              "completed",
+              "failed",
+              "cancelled",
+              "expired",
+              "purged"
+            ]
+          },
+          "version": {
+            "type": "integer"
+          },
+          "file_sha256": {
+            "type": "string"
+          },
+          "bytes": {
+            "type": "integer"
+          },
+          "staging_expires_at": {
+            "type": "string"
+          },
+          "retention_deadline": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "purge_allowed": {
+            "type": "boolean"
+          },
+          "allowed_actions": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "enum": [
+                "map",
+                "preview",
+                "purge"
+              ]
+            }
+          },
+          "retryable": {
+            "type": "boolean"
+          },
+          "preview_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "preview_stale": {
+            "type": "boolean"
+          },
+          "source_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "tallies": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/CsvImportTallies"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        }
+      },
+      "CsvImportPreviewRequest": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "preview_id": {
+            "type": "string"
+          }
+        }
+      },
+      "CsvImportPreview": {
+        "type": "object",
+        "required": [
+          "organization_name",
+          "preview_id",
+          "run",
+          "choices",
+          "tallies"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "organization_name": {
+            "type": "string"
+          },
+          "preview_id": {
+            "type": "string"
+          },
+          "run": {
+            "$ref": "#/components/schemas/CsvImportRun"
+          },
+          "choices": {
+            "$ref": "#/components/schemas/CsvImportChoices"
+          },
+          "tallies": {
+            "$ref": "#/components/schemas/CsvImportTallies"
+          }
+        }
+      },
+      "CsvImportLineError": {
+        "type": "object",
+        "required": [
+          "line",
+          "scope",
+          "excludable",
+          "kind",
+          "code",
+          "message"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "line": {
+            "type": "integer"
+          },
+          "scope": {
+            "type": "string",
+            "enum": [
+              "file",
+              "row"
+            ]
+          },
+          "excludable": {
+            "type": "boolean"
+          },
+          "kind": {
+            "type": "string",
+            "enum": [
+              "invalid",
+              "unsupported",
+              "warning"
+            ]
+          },
+          "code": {
+            "type": "string"
+          },
+          "message": {
+            "type": "string"
+          }
+        }
+      },
+      "CsvImportErrorPage": {
+        "type": "object",
+        "required": [
+          "items",
+          "total",
+          "next_cursor",
+          "preview_id"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/CsvImportLineError"
+            }
+          },
+          "total": {
+            "type": "integer"
+          },
+          "next_cursor": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "preview_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        }
+      },
+      "CsvImportSourceEntity": {
+        "type": "object",
+        "required": [
+          "kind",
+          "source_key",
+          "label",
+          "parent_source_key",
+          "parents",
+          "state",
+          "selected_id",
+          "selected_destination",
+          "ambiguous"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "kind": {
+            "type": "string",
+            "enum": [
+              "people",
+              "clients",
+              "projects",
+              "tasks"
+            ]
+          },
+          "source_key": {
+            "type": "string"
+          },
+          "label": {
+            "type": "string"
+          },
+          "parent_source_key": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "parents": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": [
+                "kind",
+                "source_key",
+                "label"
+              ],
+              "additionalProperties": false,
+              "properties": {
+                "kind": {
+                  "type": "string",
+                  "enum": [
+                    "clients",
+                    "projects"
+                  ]
+                },
+                "source_key": {
+                  "type": "string"
+                },
+                "label": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "state": {
+            "type": "string",
+            "enum": [
+              "matched",
+              "new",
+              "rejected",
+              "excluded"
+            ]
+          },
+          "selected_id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "selected_destination": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/CsvImportCandidate"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "ambiguous": {
+            "type": "boolean"
+          }
+        }
+      },
+      "CsvImportCandidate": {
+        "type": "object",
+        "required": [
+          "id",
+          "name",
+          "parent_id",
+          "parent_name",
+          "is_active",
+          "selectable",
+          "currency"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "id": {
+            "type": "integer"
+          },
+          "name": {
+            "type": "string"
+          },
+          "parent_id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "parent_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "is_active": {
+            "type": "boolean"
+          },
+          "selectable": {
+            "type": "boolean"
+          },
+          "currency": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        }
+      },
+      "CsvImportCatalogPage": {
+        "type": "object",
+        "required": [
+          "items",
+          "total",
+          "next_cursor",
+          "preview_id"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "anyOf": [
+                {
+                  "$ref": "#/components/schemas/CsvImportSourceEntity"
+                },
+                {
+                  "$ref": "#/components/schemas/CsvImportCandidate"
+                }
+              ]
+            }
+          },
+          "total": {
+            "type": "integer"
+          },
+          "next_cursor": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "preview_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        }
+      },
+      "CsvImportCapabilitiesEnvelope": {
+        "type": "object",
+        "required": [
+          "data"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "data": {
+            "$ref": "#/components/schemas/CsvImportCapabilities"
+          }
+        }
+      },
+      "CsvImportRunEnvelope": {
+        "type": "object",
+        "required": [
+          "data"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "data": {
+            "$ref": "#/components/schemas/CsvImportRun"
+          }
+        }
+      },
+      "CsvImportMappingStateEnvelope": {
+        "type": "object",
+        "required": [
+          "data"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "data": {
+            "$ref": "#/components/schemas/CsvImportMappingState"
+          }
+        }
+      },
+      "CsvImportPreviewEnvelope": {
+        "type": "object",
+        "required": [
+          "data"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "data": {
+            "$ref": "#/components/schemas/CsvImportPreview"
+          }
+        }
+      },
+      "CsvImportErrorPageEnvelope": {
+        "type": "object",
+        "required": [
+          "data"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "data": {
+            "$ref": "#/components/schemas/CsvImportErrorPage"
+          }
+        }
+      },
+      "CsvImportCatalogPageEnvelope": {
+        "type": "object",
+        "required": [
+          "data"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "data": {
+            "$ref": "#/components/schemas/CsvImportCatalogPage"
+          }
+        }
       }
     }
   }

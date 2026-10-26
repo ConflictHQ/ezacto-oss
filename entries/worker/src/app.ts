@@ -1,3 +1,5 @@
+import { installCalendarFeedRoutes, installCalendarSubscriptionRoute } from '@ezacto/api'
+import type { CalendarFeedService } from '@ezacto/core'
 import { installDeelPaymentStatusRoutes } from '@ezacto/api'
 import type { DeelPaymentStatusRuntime } from '@ezacto/integrations'
 import { billConfigured, deelConfigurationProblem, quickBooksConfigured, wiseConfigured, parseWiseMode } from '@ezacto/integrations'
@@ -421,6 +423,7 @@ export type WorkerEnv = AppEnv & OffsiteBackupEnvironment & {
 }
 
 export interface RuntimeServices {
+  csvImportStaging?: import('@ezacto/api').CsvImportStagingPort
   appleWebLifecycle?: AppleWebLifecyclePort
   bootstrap(input: InstanceBootstrapInput): Promise<InstanceBootstrapResult>
   enrollOwnerPassword(
@@ -439,6 +442,7 @@ export interface RuntimeServices {
   organizationHolidays?: OrganizationHolidayRepository
   placeholderPlanning?: PlaceholderPlanningRepository
   allocations: AllocationRepository
+  calendarFeeds?: CalendarFeedService
   resourceCalendar?: ResourceCalendarRepository
   /** Issue tracker connections and the links to their items (issue 1008). */
   workItems: {
@@ -849,6 +853,7 @@ export const createApp = (
   }
 
   return createApiApp<AppEnv>({
+    ...(services?.csvImportStaging ? {csvImportStaging:services.csvImportStaging}:{}),
     // Every 5xx the API answers goes to Sentry with the request id the client
     // was handed (issue 807). A no-op until SENTRY_DSN is set, like the wrapper
     // in index.ts, and never given a request or response body.
@@ -957,6 +962,7 @@ export const createApp = (
               clock: systemClock,
               cursorSigningKey: services.cursorSigningKey,
             })
+            if (services.calendarFeeds) installCalendarFeedRoutes(api,services.calendarFeeds)
             if (services.resourceCalendar) installResourceCalendarRoutes(api, {
               repository: services.resourceCalendar,
               cursorSigningKey: services.cursorSigningKey,
@@ -1263,6 +1269,7 @@ export const createApp = (
         await next()
       })
       installModuleGate(app, (env) => moduleAvailability((env ?? {}) as AppEnv))
+      if(services?.calendarFeeds) installCalendarSubscriptionRoute(app,services.calendarFeeds)
       // Before anything that needs a session, and outside the API surface: the
       // wordmark on the sign-in page is fetched by a browser that has none.
       if (brandAssets !== undefined) {

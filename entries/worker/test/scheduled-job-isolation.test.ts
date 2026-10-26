@@ -37,10 +37,21 @@ const minute = [
   "notice",
   "dispatch",
   "expiry",
+  "deelPayment",
   "maintenance",
   "outbox",
 ];
 const daily = ["export", "recurring", "reminder", "maintenance", "outbox"];
+const expectedOperation: Record<string, string> = {
+  webhook: 'webhook sweep', purge: 'webhook purge', payment: 'payment run sweep',
+  budget: 'budget alert evaluation', time: 'time reminders', approval: 'automatic approval sweep',
+  backup: 'off-site backup checkpoint', proposal: 'scheduled job proposal sweep',
+  notice: 'scheduled manifest notice', dispatch: 'scheduled run dispatch', expiry: 'scheduled run expiry',
+  maintenance: 'demo maintenance', outbox: 'outbox drain', export: 'nightly export',
+  recurring: 'recurring invoice generation', reminder: 'payment reminders', bill: 'BILL reconciliation',
+  quickbooks: 'QuickBooks catch-up', deelStatus: 'Deel time sync', deel: 'Deel time sync',
+  deelPayment: 'Deel payment status',
+};
 const hourly = [
   "bill",
   "quickbooks",
@@ -92,6 +103,7 @@ it.each([
       reminders: { processDue: job("reminder", undefined) },
       bill: { reconcilePayments: job("bill", undefined) },
       quickBooks: { catchUp: job("quickbooks", undefined) },
+      deelPaymentStatus: { refresh: job("deelPayment", { configured: true, checked: 0, failed: 0, remaining: 0 }) },
       deelSync: {
         status() {
           calls.push("deelStatus");
@@ -114,7 +126,7 @@ it.each([
     const captured = vi.mocked(Sentry.captureException).mock.calls[0]![0] as Error;
     expect(captured).not.toBe(error);
     expect(captured.message).toBe('eZacto runtime failure');
-    expect(scrubWorkerEvent({ exception: { values: [{ value: error.message }] } }, { originalException: captured })).toMatchObject({ tags: { phase: 'scheduled' }, exception: { values: [{ value: 'eZacto runtime failure' }] } });
+    expect(scrubWorkerEvent({ exception: { values: [{ value: error.message }] } }, { originalException: captured })).toMatchObject({ tags: { phase: 'scheduled', operation: expectedOperation[failure] }, exception: { values: [{ value: 'eZacto runtime failure' }] } });
     expect(createRuntimeServices).toHaveBeenCalledExactlyOnceWith(
       { ATTACHMENTS: {} },
       { retryReadiness: true, reportError: expect.any(Function) },
@@ -142,3 +154,13 @@ it("keeps the outbox independent from a failed demo sender after a successful re
     expect(captured.message).toBe('eZacto runtime failure');
     expect(scrubWorkerEvent({ exception: { values: [{ value: error.message }] } }, { originalException: captured })).toMatchObject({ tags: { phase: 'scheduled' }, exception: { values: [{ value: 'eZacto runtime failure' }] } });
 });
+
+it('identifies an outbox interruption returned without throwing and reports it once', async () => {
+  const interrupted = new Error('owned database interruption')
+  vi.mocked(runDemoMaintenance).mockResolvedValue({ ran: 'nothing' } as never)
+  vi.mocked(createRuntimeServices).mockResolvedValue({ outbox: { drain: vi.fn(async () => ({ delivered: 0, interrupted })) } } as never)
+  await worker.scheduled!({ cron: '* * * * *' } as never, {} as never, {} as never)
+  expect(Sentry.captureException).toHaveBeenCalledTimes(1)
+  const captured = vi.mocked(Sentry.captureException).mock.calls[0]![0] as Error
+  expect(scrubWorkerEvent({}, { originalException: captured })?.tags).toMatchObject({ phase: 'scheduled', operation: 'outbox drain' })
+})

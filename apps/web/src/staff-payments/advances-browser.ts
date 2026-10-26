@@ -1,3 +1,4 @@
+import { setRequestBusy } from '../request-feedback.js'
 import {
   paymentMonthEnd,
   type AdvanceCredit,
@@ -87,12 +88,13 @@ export const createAdvanceCreditsController = (
     generation = 0,
     ledger: StaffPaymentReport | null = null,
     busy = false;
-  const action = async (work: () => Promise<void>) => {
+  const action = async (label: string, work: () => Promise<void>) => {
     const active = signal,
       own = generation;
     if (!active || active.aborted || busy) return;
     busy = true;
-    status.textContent = "Working…";
+    status.textContent = label;
+    setRequestBusy(status, true);
     const controls = [
       ...panel.querySelectorAll<HTMLInputElement>(
         "input,select,button,textarea",
@@ -104,12 +106,23 @@ export const createAdvanceCreditsController = (
     });
     try {
       await work();
-      if (!active.aborted && own === generation) status.textContent = "";
+      if (!active.aborted && own === generation && status.textContent === label) {
+        status.textContent = ({
+          "Loading advance credit…": "Advance credit loaded.",
+          "Loading eligible earnings…": "Eligible earnings loaded.",
+          "Applying advance credit…": "Advance credit applied.",
+          "Recording returned credit…": "Returned credit recorded.",
+          "Reversing credit application…": "Credit application reversed.",
+          "Reviewing advance transfer…": "Advance transfer review ready.",
+          "Confirming advance transfer…": "Advance transfer confirmed.",
+        } as Record<string, string>)[label] ?? "Done.";
+      }
     } catch (error) {
       if (!active.aborted && own === generation)
         status.textContent = errorText(error);
     } finally {
       if (own === generation) {
+        setRequestBusy(status, false);
         busy = false;
         controls.forEach((control, index) => {
           control.disabled = disabled[index] ?? false;
@@ -208,7 +221,7 @@ export const createAdvanceCreditsController = (
         const target = node("div");
         select.addEventListener("submit", (event) => {
           event.preventDefault();
-          void action(async () => {
+          void action("Loading eligible earnings…", async () => {
             const own = generation,
               active = signal!;
             const report = await api.getPaymentAllocationReport!(
@@ -280,7 +293,7 @@ export const createAdvanceCreditsController = (
             form.addEventListener("submit", (e) => {
               e.preventDefault();
               if (!acknowledgement.checked) return;
-              void action(async () => {
+              void action("Applying advance credit…", async () => {
                 const command: ApplyAdvanceCredit = {
                   id,
                   advance_item_id: credit.advance_item_id,
@@ -315,7 +328,7 @@ export const createAdvanceCreditsController = (
         returned.addEventListener("submit", (event) => {
           event.preventDefault();
           if (!confirmed.checked) return;
-          void action(async () => {
+          void action("Recording returned credit…", async () => {
             await api.returnAdvanceCredit!(
               {
                 id: returnId,
@@ -345,7 +358,7 @@ export const createAdvanceCreditsController = (
           const reversalId = crypto.randomUUID();
           form.addEventListener("submit", (event) => {
             event.preventDefault();
-            void action(async () => {
+            void action("Reversing credit application…", async () => {
               await api.reverseAdvanceCredit!(
                 {
                   id: reversalId,
@@ -407,7 +420,7 @@ export const createAdvanceCreditsController = (
     form.addEventListener("change", invalidate);
     form.addEventListener("submit", (event) => {
       event.preventDefault();
-      void action(async () => {
+      void action("Reviewing advance transfer…", async () => {
         const active = signal!,
           own = generation;
         run = await api.previewPaymentRun!(
@@ -457,7 +470,7 @@ export const createAdvanceCreditsController = (
         const send = node("button", "Confirm advance transfer");
         send.type = "button";
         send.addEventListener("click", () => {
-          void action(async () => {
+          void action("Confirming advance transfer…", async () => {
             if (run !== approvedRun) return;
             await api.approvePaymentRun!(
               approvedRun.id,
@@ -487,7 +500,7 @@ export const createAdvanceCreditsController = (
   };
   dates.addEventListener("submit", (event) => {
     event.preventDefault();
-    void action(load);
+    void action("Loading advance credit…", load);
   });
   return {
     activate: (active: AbortSignal) => {
@@ -497,6 +510,7 @@ export const createAdvanceCreditsController = (
       ledger = null;
       host.replaceChildren();
       status.textContent = "";
+      setRequestBusy(status, false);
       const today = new Date().toISOString().slice(0, 10);
       from.value = `${today.slice(0, 7)}-01`;
       to.value = paymentMonthEnd(today.slice(0, 7));
@@ -508,6 +522,7 @@ export const createAdvanceCreditsController = (
           host.replaceChildren();
           panel.querySelector("[data-advance-create]")!.replaceChildren();
           status.textContent = "";
+          setRequestBusy(status, false);
         },
         { once: true },
       );

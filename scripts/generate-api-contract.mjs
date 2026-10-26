@@ -51,8 +51,25 @@ const schemaType = (schema) => {
   return "unknown";
 };
 
+const rawRequestSchemas = new Set(
+  operations
+    .filter(
+      (operation) =>
+        operation.requestContentType === "application/octet-stream",
+    )
+    .map((operation) => operation.requestSchema),
+);
+for (const name of rawRequestSchemas) {
+  if (schemas[name]?.type !== "string" || schemas[name]?.format !== "binary")
+    throw new TypeError(
+      "An octet-stream request must reference a binary string schema.",
+    );
+}
 const typeDeclarations = Object.entries(schemas)
-  .map(([name, schema]) => `export type ${name} = ${schemaType(schema)};`)
+  .map(
+    ([name, schema]) =>
+      `export type ${name} = ${rawRequestSchemas.has(name) ? "Blob | Uint8Array" : schemaType(schema)};`,
+  )
   .join("\n\n");
 
 const queryType = (parameters) => {
@@ -131,7 +148,7 @@ const methodSource = (operation) => {
     const headers = new Headers(args.headers);
 ${headerSource}
     return this.request<${responseType}>(${JSON.stringify(operation.method.toUpperCase())}, ${routeExpression}, {
-      ${query === null ? "" : "query: args.query,\n      "}${operation.requestSchema === undefined ? "" : `body: args.body,\n      ${operation.requestContentType === "multipart/form-data" ? "multipart: true,\n      " : ""}`}signal: args.signal,
+      ${query === null ? "" : "query: args.query,\n      "}${operation.requestSchema === undefined ? "" : `body: args.body,\n      ${operation.requestContentType === "multipart/form-data" ? "multipart: true,\n      " : operation.requestContentType === "application/octet-stream" ? "rawBody: true,\n      " : ""}`}signal: args.signal,
       ${operation.binaryResponse === true ? "binary: true,\n      " : ""}headers,
     });
   }`;
@@ -168,6 +185,7 @@ interface RequestOptions {
   query?: Readonly<Record<string, string | number | boolean | undefined>> | undefined;
   body?: unknown;
   multipart?: boolean | undefined;
+  rawBody?: boolean | undefined;
   binary?: boolean | undefined;
   signal?: AbortSignal | undefined;
   headers?: HeadersInit | undefined;
@@ -208,15 +226,24 @@ export class EzactoClient {
     const requestHeaders = new Headers(options.headers);
     requestHeaders.forEach((value, name) => headers.set(name, value));
     if (this.token !== undefined) headers.set("authorization", \`Bearer \${this.token}\`);
+    let encodedBody: BodyInit | undefined;
+    if (options.body !== undefined) {
+      if (options.rawBody === true) {
+        // Copy only this view's bytes, never an entire shared backing buffer.
+        if (options.body instanceof Uint8Array) encodedBody = new Uint8Array(options.body);
+        else if (options.body instanceof Blob) encodedBody = options.body;
+        else throw new TypeError("Binary request body must be a Blob or Uint8Array.");
+      } else encodedBody = options.multipart === true ? options.body as BodyInit : JSON.stringify(options.body);
+    }
     if (options.multipart === true) headers.delete("content-type");
-    else if (options.body !== undefined) headers.set("content-type", "application/json");
+    else if (options.body !== undefined) headers.set("content-type", options.rawBody === true ? "application/octet-stream" : "application/json");
     const response = await this.fetchImplementation(url, {
       method,
       headers,
       ...(options.signal === undefined ? {} : { signal: options.signal }),
-      ...(options.body === undefined
+      ...(encodedBody === undefined
         ? {}
-        : { body: options.multipart === true ? options.body as BodyInit : JSON.stringify(options.body) }),
+        : { body: encodedBody }),
     });
     if (response.ok && options.binary === true) return await response.arrayBuffer() as T;
     const text = await response.text();

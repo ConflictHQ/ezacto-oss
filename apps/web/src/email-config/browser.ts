@@ -1,3 +1,4 @@
+import { setRequestBusy } from '../request-feedback.js'
 import { renderDataTable } from '../components/data-table.js'
 import { isDemoDeployment } from '../demo.js'
 import {
@@ -128,6 +129,7 @@ export const createEmailConfigurationController = (
     loaded = null
     saveKey = null
     senderPending = false
+    setRequestBusy(senderStatus, false)
     savePending = false
     senderList.replaceChildren()
     templateList.replaceChildren()
@@ -244,7 +246,7 @@ export const createEmailConfigurationController = (
                       {
                         label: 'Make default',
                         primary: true,
-                        disabled: demo,
+                        disabled: demo || senderPending,
                         onSelect: () => {
                           void runSenderCommand('default', identity)
                         },
@@ -252,7 +254,7 @@ export const createEmailConfigurationController = (
                     ]),
                 {
                   label: 'Refresh evidence',
-                  disabled: demo,
+                  disabled: demo || senderPending,
                   onSelect: () => {
                     void runSenderCommand('refresh', identity)
                   },
@@ -264,7 +266,7 @@ export const createEmailConfigurationController = (
                   : [
                       {
                         label: 'Archive',
-                        disabled: demo,
+                        disabled: demo || senderPending,
                         onSelect: () => {
                           void runSenderCommand('archive', identity)
                         },
@@ -299,6 +301,8 @@ export const createEmailConfigurationController = (
       return
     }
     senderPending = true
+    renderSenders()
+    setRequestBusy(senderStatus, true)
     senderStatus.textContent =
       command === 'refresh' ? 'Asking the provider…' : 'Applying the change…'
     try {
@@ -310,7 +314,13 @@ export const createEmailConfigurationController = (
       if (session.onSessionFailure(error)) return
       senderStatus.textContent = messageFor(error)
     } finally {
-      if (current() === session) senderPending = false
+      if (current() === session) {
+        senderPending = false
+        const outcome = senderStatus.textContent
+        renderSenders()
+        senderStatus.textContent = outcome
+        setRequestBusy(senderStatus, false)
+      }
     }
   }
 

@@ -1,3 +1,4 @@
+import { createCalendarFeedService } from '@ezacto/db'
 import { createDeelPaymentStatusStore } from '@ezacto/db'
 import { createDeelPaymentStatusRuntime } from '@ezacto/integrations'
 import { createDeelStageStore } from '@ezacto/db'
@@ -27,6 +28,8 @@ import { sql } from 'drizzle-orm'
 import { chmod, lstat, mkdir, realpath, stat } from 'node:fs/promises'
 import { resolve } from 'node:path'
 import BetterSqlite3 from 'better-sqlite3'
+import { createCsvImportStaging } from './csv-staging-service.js'
+import { join } from 'node:path'
 import {
   bootstrapInstanceContainer,
   createApiTokenStore,
@@ -443,12 +446,18 @@ export const createContainerRuntime = async (
   // Every store below writes through this: in a request that carries an
   // Idempotency-Key, each write commits with the key's claim (#952).
   const database = createIdempotentSqlite(handle)
+  let csvStaging: Awaited<ReturnType<typeof createCsvImportStaging>> | undefined
+  let csvSweep: ReturnType<typeof setInterval> | undefined
   let queue: ContainerEmailQueue | undefined
   let outboxScheduler: ContainerOutboxScheduler | undefined
   try {
     prepareContainerDatabase(database)
     await chmod(config.databasePath, 0o600)
 
+    csvStaging = await createCsvImportStaging({database:handle,databasePath:config.databasePath,directory:join(config.dataDirectory,'csv-staging')})
+    await csvStaging.sweep()
+    csvSweep=setInterval(()=>{void csvStaging!.sweep().catch(()=>console.error('ezacto: private CSV expiry cleanup deferred'))},60_000)
+    csvSweep.unref()
     const drizzle = createContainerDatabase(database)
     const deelPaymentStatus = createDeelPaymentStatusRuntime({ token: demoDeployment(config.appEnv) ? undefined : config.deel?.token, store: createDeelPaymentStatusStore(drizzle), fetch: (request: Request) => fetch(request), now: () => new Date() })
     const webhooks = createWebhookService(drizzle, {
@@ -910,6 +919,7 @@ export const createContainerRuntime = async (
     const instanceTheme = createContainerInstanceThemeSurface(database)
 
     const services: RuntimeServices = {
+      csvImportStaging:csvStaging.port,
       bootstrap: (input) => bootstrapInstanceContainer(database, input),
       enrollOwnerPassword: (input) =>
         enrollInstanceOwnerPasswordContainer(database, input),
@@ -931,6 +941,7 @@ export const createContainerRuntime = async (
       calendarProposals: new DrizzleCalendarProposalRepository(drizzle, trackedResources),
       placeholderPlanning: createPlaceholderAllocationRepository(drizzle),
       allocations: new DrizzleAllocationRepository(drizzle),
+      calendarFeeds: createCalendarFeedService(drizzle),
       resourceCalendar: createResourceCalendarRepository(drizzle),
       organizationHolidays: createOrganizationHolidayRepository(drizzle),
       workItems: {
@@ -1363,6 +1374,8 @@ export const createContainerRuntime = async (
           await queue!.close(timeoutMs)
           database.pragma('wal_checkpoint(TRUNCATE)')
         } finally {
+          if(csvSweep)clearInterval(csvSweep)
+          csvStaging?.close()
           database.close()
         }
       },
@@ -1370,6 +1383,8 @@ export const createContainerRuntime = async (
   } catch (error) {
     await outboxScheduler?.close().catch(() => undefined)
     await queue?.close().catch(() => undefined)
+    if(csvSweep)clearInterval(csvSweep)
+    csvStaging?.close()
     if (database.open) database.close()
     throw error
   }
