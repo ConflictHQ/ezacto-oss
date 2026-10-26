@@ -192,8 +192,29 @@ for (const runtime of ['sqlite', 'd1'] as const) {
       await deliver(event(49983999))
       expect((await store.historyForTransfer('49983999'))[0]).toMatchObject({
         processedAt: clock,
-        skippedReason: 'no matching payout transfer',
+        skippedReason: 'no matching payout transfer or payment run',
       })
+      // Modern payment runs have their own transfer IDs and reconcile through
+      // a scheduled provider read. A missing legacy payout is not an unmatched run.
+      await run(`INSERT INTO payment_runs(id,command_json,name,source_currency,scheduled_at,timezone,state,actor_id,approved_by,created_at,approved_at,request_id)
+        VALUES('callback-run','{"items":[]}','Callback fixture','USD','${received}','UTC','approved',1,1,'${received}','${received}','callback-run')`)
+      await run(`INSERT INTO payment_run_items(id,run_id,user_id,month,expected_version,name,amount_cents,currency,destination_json,quote_json,max_source_cents,state,next_attempt_at,updated_at,transfer_id)
+        VALUES('callback-item','callback-run',2,'2026-10',0,'Synthetic',10000,'USD','{}','{}',10000,'processing','2026-10-25T00:00:00.000Z','${received}','49984000')`)
+      const beforeRun = await rows('SELECT * FROM staff_payment_events')
+      const callback = event(49984000)
+      await deliver(callback)
+      expect((await store.historyForTransfer('49984000'))[0]).toMatchObject({
+        processedAt: clock,
+        skippedReason: 'payment run reconciliation scheduled',
+      })
+      expect(await rows("SELECT state,next_attempt_at FROM payment_run_items WHERE id='callback-item'")).toEqual([
+        { state: 'processing', next_attempt_at: clock },
+      ])
+      expect(await rows('SELECT * FROM staff_payment_events')).toEqual(beforeRun)
+      const runHistory = await store.historyForTransfer('49984000')
+      await deliver(callback)
+      expect(await store.historyForTransfer('49984000')).toEqual(runHistory)
+      expect(await rows('SELECT * FROM staff_payment_events')).toEqual(beforeRun)
       await deliver(event(49983983, 'cancelled'))
       expect(await rows('SELECT state,failure_reason FROM payout_transfers WHERE id=3')).toEqual([
         { state: 'failed', failure_reason: 'wise reported cancelled' },
