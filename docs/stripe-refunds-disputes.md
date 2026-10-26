@@ -60,3 +60,7 @@ They contain provider IDs and minimal financial report evidence, never grants or
 payer/card payloads. Existing account-closure inventory discovers the reviewer's
 foreign-key references and retains them as payment/audit attribution. Demo reset
 uses its ordinary all-table cleanup; there is no hidden external custody here.
+
+## Native browser acceptance
+
+[The recorded local acceptance](evidence/102-stripe-native-browser.json) exercises signed checkout, duplicate refund and dispute deliveries through the native Container, then reviews the alert from a390px Chromium page. The paid invoice, receipt and outbox remain unchanged; logout clears alert data. Provider SMTP delivery and live Stripe accounts were not exercised. All temporary instance resources were removed.
