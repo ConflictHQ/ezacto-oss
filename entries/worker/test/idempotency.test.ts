@@ -1,8 +1,11 @@
+import { Hono } from 'hono'
 import BetterSqlite3 from 'better-sqlite3'
 import { Miniflare } from 'miniflare'
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest'
 import {
   deriveIdempotencySecret,
+  errorResponse,
+  type ApiContext,
   IDEMPOTENCY_KEY_LIFETIME_HEADER,
   withIdempotency,
   type IdempotencyStore,
@@ -409,6 +412,40 @@ for (const [name, create] of runtimes) {
       expect(retry.status).toBe(201)
       expect(retry.headers.get('idempotent-replayed')).toBe('true')
       expect(await notesCalled(`${name} race`)).toBe(1)
+    })
+
+    it('[api #1302] reports no exception for proven claim contention through the native API error boundary', async () => {
+      const bothRead = gate(), committed = gate(), release = gate()
+      let waiting = 0
+      const apiErrors: Error[] = []
+      const app = new Hono<ApiContext>()
+      app.use('*', async (context, next) => { context.set('requestId', crypto.randomUUID()); await next() })
+      app.onError((error, context) => errorResponse(error, context, (failure) => apiErrors.push(failure)))
+      const run = route({
+        beforeWrite: async () => { if (++waiting === 2) bothRead.open(); await bothRead.opened },
+        afterWrite: async () => { committed.open(); await release.opened },
+      })
+      app.post('/api/v1/time-entries', (context) => run(context.req.raw))
+      const key = `${name}-error-boundary`, note = `${name} error boundary`
+      const sendNative = () => send(key, note, async (request) => app.fetch(request), {}, { authorize: async () => 'native-test-user' })
+      const requests = [sendNative(), sendNative()]
+      await committed.opened
+      try {
+        const loser = await Promise.race(requests)
+        expect(loser.status).toBe(503)
+        expect(loser.headers.get('retry-after')).toBe('1')
+        expect(await loser.json()).toMatchObject({ error: { code: 'idempotent_request_in_progress' } })
+        expect(apiErrors).toEqual([])
+      } finally { release.open() }
+      const answers = await Promise.all(requests)
+      const winner = answers.find((response) => response.status === 201)!
+      const winnerBody = await winner.text()
+      const replay = await sendNative()
+      expect(replay.status).toBe(201)
+      expect(replay.headers.get('idempotent-replayed')).toBe('true')
+      expect(await replay.text()).toBe(winnerBody)
+      expect(await notesCalled(note)).toBe(1)
+      expect(apiErrors).toEqual([])
     })
 
     it('[api] an attempt that stopped between its write and its record is reported done, never run again', async () => {
