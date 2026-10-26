@@ -115,6 +115,8 @@ export const githubReaderSchemas = {
   }),
 } as const
 export const githubReaderOperations: readonly ApiContractOperation[] = [
+  {method:'get',path:'/api/v1/work-items/github/setup/callback',operationId:'completeGithubAppSetup',summary:'Finish the private GitHub App registration',tag:'work-items',sessionOnly:true,responseStatus:303,generateClient:false,parameters:[{name:'state',location:'query',required:true,schema:text},{name:'code',location:'query',required:true,schema:text}]},
+
   {
     method: 'get',
     path: '/api/v1/work-items/github/installations',

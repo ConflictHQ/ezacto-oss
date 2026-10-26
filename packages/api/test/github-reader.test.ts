@@ -24,7 +24,7 @@ const fixture = () => {
       registration_url: 'https://github.com/settings/apps/new?state=fixture',
       manifest: '{}',
     })),
-    completeSetup: vi.fn(async () => undefined),
+    completeSetup: vi.fn<GithubReaderApiPort['completeSetup']>(async () => undefined),
     status: vi.fn(async () => ({
       app: null,
       configured: false,
@@ -138,6 +138,10 @@ describe('native GitHub reader boundary', () => {
     )
     expect(port.completeSetup).toHaveBeenCalledWith({ userId: 2, sessionId: 7 }, 'state', 'code')
     expect(await response.text()).not.toContain('PRIVATE KEY')
+    port.completeSetup.mockRejectedValueOnce(new GithubReaderApiError('unavailable'))
+    const failed=await app.request('/api/v1/work-items/github/setup/callback?state=state&code=code',{headers:{cookie:'session=admin'}})
+    expect(failed.status).toBe(303)
+    expect(failed.headers.get('location')).toBe('/settings/company?github_setup=failed#work-items')
   })
   it('keeps mapping to a current native administrator and returns no credential fields', async () => {
     const { post, port } = fixture()

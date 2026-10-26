@@ -242,6 +242,8 @@ export const installGithubReaderRoutes = <Bindings extends object>(
       )
       return context.redirect('/settings/company?github_setup=complete#work-items', 303)
     } catch (error) {
+      if (error instanceof GithubReaderCommandError && error.kind !== 'forbidden')
+        return context.redirect('/settings/company?github_setup=failed#work-items', 303)
       return translate(error)
     }
   })

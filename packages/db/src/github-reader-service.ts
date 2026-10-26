@@ -106,9 +106,9 @@ export const createGithubReaderService = (
     ) {
       // Authenticate before even minting an installation token.
       await admin.status(authority, clock())
-      const credentials = await requireCredentials(),
-        api = client(credentials)
+      const credentials = await requireCredentials()
       try {
+        const api = client(credentials)
         const installation = await api.installation(input.installation_id)
         const repository = await api.repository(input.installation_id, input.repository_id)
         if (installation.accountId !== repository.accountId)
