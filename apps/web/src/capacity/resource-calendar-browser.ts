@@ -3,6 +3,7 @@ import { EzactoApiError } from '@conflict-hq/ezacto-client'
 import type { CapacityApi } from './model.js'
 import { addCalendarDays, hoursText, shortDate, weekHeading } from './model.js'
 import { createPlanningEntry } from './planning-browser.js'
+import { createAllocationGestures } from './allocation-gestures-browser.js'
 import { createPlaceholderPlanningController } from './placeholders-browser.js'
 import { calendarPages, calendarWindow, timelinePosition, type CalendarAllocation, type CalendarProject, type CalendarQuery, type ResourceCalendarApi } from './resource-calendar-model.js'
 
@@ -32,8 +33,9 @@ export const createResourceCalendarController = (api: ResourceCalendarApi, legac
   const notice = element('p'); notice.dataset.calendarNotice = ''; notice.className = 'capacity-intro'
   const more = element('button', 'Load more people'); more.type = 'button'; more.hidden = true; more.dataset.calendarMore = ''
   const timeline = element('section'); timeline.className = 'resource-calendar-timeline'; timeline.hidden = true
+  const gestureHost = element('section'); gestureHost.className = 'allocation-date-editor'; gestureHost.setAttribute('aria-label', 'Allocation date review')
   timeline.setAttribute('aria-label', 'Dated allocations')
-  grid.before(controls, notice); grid.after(timeline, more)
+  grid.before(controls, notice); grid.after(timeline, gestureHost, more)
   let active: AbortSignal | null = null, operation: AbortController | null = null
   let release: (() => void) | null = null, generation = 0, offset = 0, administrator = false, scheduleManager = false
   let context: ResourceCalendarContext | null = null, report: ResourceCalendar | null = null, query: CalendarQuery | null = null
@@ -41,6 +43,18 @@ export const createResourceCalendarController = (api: ResourceCalendarApi, legac
   let nextCursor: string | null = null, paging = false
   const seenCursors = new Set<string>()
   const peopleOptions = new Map<number, string>()
+  const gestures = legacy.planning ? createAllocationGestures(gestureHost, api, legacy.planning,
+    allocationId => {
+      const session = active
+      const refresh = load(true), version = generation
+      void refresh.then(success => {
+        if (!success || generation !== version || active !== session || !session || session.aborted) return
+        status.textContent = 'Allocation dates saved.'
+        timeline.querySelector<HTMLButtonElement>(`[data-allocation-id="${allocationId}"] [data-allocation-gesture="move"]`)?.focus()
+      })
+    },
+    () => { clear(); status.textContent = 'Calendar access is unavailable. Sign in again or retry.'; retry.hidden = false },
+  ) : null
   const fillPeople = () => {
     const selected = person.value
     const choices: [string, string][] = [['', 'All people'], ...[...peopleOptions].map(([id, name]): [string, string] => [String(id), name])]
@@ -70,6 +84,7 @@ export const createResourceCalendarController = (api: ResourceCalendarApi, legac
     },
   }, () => void load()) : null
   const clear = () => {
+    gestures?.reset()
     generation++; operation?.abort(); operation = null
     planning?.unmount(); placeholders?.clear()
     report = null; query = null; context = null; directory = []; allocations = []; nextCursor = null; paging = false; seenCursors.clear()
@@ -80,6 +95,7 @@ export const createResourceCalendarController = (api: ResourceCalendarApi, legac
   const current = (version: number, signal: AbortSignal) => version === generation && !signal.aborted && active !== null && !active.aborted
   const draw = () => {
     if (!report || !query) return
+    gestures?.reset()
     const table = element('table'); table.className = 'data-table'; table.dataset.resourceCalendar = ''
     table.append(element('caption', `${scope.value === 'project' ? 'Project' : 'Team'} plan, availability and rounded actuals`))
     const head = element('thead'), header = element('tr'); header.append(element('th', 'Person'))
@@ -113,10 +129,12 @@ export const createResourceCalendarController = (api: ResourceCalendarApi, legac
     for (const allocation of allocations.filter(row => visiblePeople.has(row.user_id))) {
       const position = timelinePosition(query.from, query.to, allocation.start_date, allocation.end_date)
       if (!position) continue
-      const item = element('article'); item.className = 'resource-calendar-allocation'
+      const item = element('article'); item.className = 'resource-calendar-allocation'; item.dataset.allocationId = String(allocation.id)
       item.append(element('h3', `${visiblePeople.get(allocation.user_id)} · ${allocation.project_name}`), element('p', `${shortDate(allocation.start_date)} to ${shortDate(allocation.end_date)} · ${hoursText(allocation.planned_seconds_per_week)} per touched week`))
       const track = element('div'); track.className = 'resource-calendar-track'; track.setAttribute('aria-hidden', 'true')
-      const bar = element('span'); bar.style.marginInlineStart = `${position.start}%`; bar.style.width = `${position.width}%`; track.append(bar); item.append(track); timeline.append(item)
+      const bar = element('span'); bar.style.marginInlineStart = `${position.start}%`; bar.style.width = `${position.width}%`; track.append(bar); item.append(track)
+      if (administrator && active && !active.aborted && directory.some(project => project.id === allocation.project_id && project.is_active)) gestures?.attach(item, track, bar, allocation, query, active)
+      timeline.append(item)
     }
     if (timeline.childElementCount === 1) timeline.append(element('p', 'No dated allocations for the people shown.'))
     timeline.hidden = mode.value !== 'timeline'
@@ -124,23 +142,24 @@ export const createResourceCalendarController = (api: ResourceCalendarApi, legac
     label.textContent = `${shortDate(query.from)} to ${shortDate(query.to)}`
     notice.textContent = `${administrator ? 'Administrator entry is below.' : 'Read-only calendar.'} Availability is the whole person’s capacity after leave and holidays. Plans are not actual work. ${report.has_other_scope ? 'Other-scope work is included without private project names. ' : ''}Dates follow ${report.context.time_zone}; weeks start ${report.context.week_start_day}.`
   }
-  const load = async (preservePlanningDraft = false) => {
-    if (!active || active.aborted || page.hidden) return
+  const load = async (preservePlanningDraft = false): Promise<boolean> => {
+    if (!active || active.aborted || page.hidden) return false
     const version = ++generation
     operation?.abort(); operation = new AbortController()
+    gestures?.reset()
     const signal = operation.signal
     if (!preservePlanningDraft) planning?.unmount()
     placeholders?.clear(); grid.replaceChildren(); timeline.replaceChildren(); report = null; nextCursor = null; seenCursors.clear(); more.hidden = true
     status.textContent = 'Loading calendar…'; retry.hidden = true
     try {
       const [bootstrap, projects] = await Promise.all([api.context(signal), calendarPages(cursor => api.projects(cursor, signal), signal)])
-      if (!current(version, signal)) return
+      if (!current(version, signal)) return false
       context = bootstrap.data; directory = projects
       const oldProject = project.value
       project.replaceChildren(...projects.map(row => { const option = element('option', `${row.name}${row.is_active ? '' : ' (archived)'}`); option.value = String(row.id); return option }))
       if (projects.some(row => String(row.id) === oldProject)) project.value = oldProject
       const range = calendarWindow(context, offset)
-      if (scope.value === 'project' && project.value === '') { status.textContent = 'No projects are available in this scope.'; return }
+      if (scope.value === 'project' && project.value === '') { status.textContent = 'No projects are available in this scope.'; return false }
       query = { ...range, view: scope.value === 'project' ? 'project' : 'team', ...(scope.value === 'project' ? { project_id: Number(project.value) } : {}), ...(person.value === '' ? {} : { person_id: Number(person.value) }) }
       const selectedQuery = query
       const summary = api.read(selectedQuery, undefined, signal).then(response => {
@@ -150,22 +169,24 @@ export const createResourceCalendarController = (api: ResourceCalendarApi, legac
         return response
       })
       const [response, dated] = await Promise.all([summary, calendarPages(cursor => api.allocations(selectedQuery, cursor, signal), signal)])
-      if (!current(version, signal)) return
+      if (!current(version, signal)) return false
       report = response.data; allocations = dated; nextCursor = response.page.next_cursor
       peopleOptions.clear(); for (const row of report.people) peopleOptions.set(row.person_id, row.name); fillPeople()
       draw()
       const planningRange = { from: report.week_starts[0] ?? range.from, to: report.week_starts.length ? addCalendarDays(report.week_starts.at(-1)!, 6) : range.to }
       const people = report.people.map(person => ({ id: person.person_id, name: person.name }))
       if (administrator && planning) { planning.mount(); await planning.refresh(people, planningRange, signal) }
-      if (!current(version, signal)) return
+      if (!current(version, signal)) return false
       if (scheduleManager && placeholders && selectedQuery.person_id === undefined) await placeholders.refresh({ signal, range: planningRange, weeks: report.week_starts, people, projects: entryProjects(), administrator })
       if (current(version, signal)) status.textContent = ''
+      return current(version, signal)
     } catch (error) {
-      if (!current(version, signal)) return
+      if (!current(version, signal)) return false
       const refused = error instanceof EzactoApiError && (error.status === 401 || error.status === 403)
       if (refused) clear()
       grid.replaceChildren(); timeline.replaceChildren(); planning?.unmount(); placeholders?.clear(); more.hidden = true
       status.textContent = refused ? 'Calendar access is unavailable. Sign in again or retry.' : error instanceof Error ? error.message : 'The calendar could not be loaded.'; retry.hidden = false
+      return false
     }
   }
   const move = (delta: number) => { offset = delta === 0 ? 0 : offset + delta; void load() }

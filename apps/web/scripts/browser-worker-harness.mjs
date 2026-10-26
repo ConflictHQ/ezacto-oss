@@ -1,4 +1,4 @@
-import { createHmac, randomUUID } from 'node:crypto'
+import { createHash, createHmac, randomUUID } from 'node:crypto'
 import { proposeMonthEndPack, executeInvoiceLifecycleCommand, createD1EmailConfigurationStore, createD1EmailLogStore } from '@ezacto/db/d1'
 import { Buffer } from 'node:buffer'
 import http from 'node:http'
@@ -1498,6 +1498,14 @@ const fixtureControl = async (request, response) => {
     if (entries.length !== 1 || entry.user_id !== 1 || entry.project_id !== 1 || entry.task_id !== 1 ||
         entry.spent_date !== '2026-08-27' || entry.seconds !== 3600 || entry.started_time !== null || entry.ended_time !== null ||
         JSON.parse(entry.calendar_event_ref).event_id !== 'browser-1201:120101') throw new Error('Atomic acceptance changed source timing or assignment')
+  } else if (action === 'planning-business-fingerprint') {
+    // Read-only, disposable-harness evidence: never ship a SQL/debug API.
+    const tables = (await database.prepare("SELECT name FROM sqlite_schema WHERE type='table' AND name NOT LIKE 'auth_%' AND (name='time_entries' OR name LIKE '%rate%' OR name LIKE '%invoice%' OR name LIKE '%payment%' OR name LIKE '%approval%') ORDER BY name").all()).results
+    const records = []
+    for (const { name } of tables) records.push([name, (await database.prepare(`SELECT * FROM "${name.replaceAll('"', '""')}"`).all()).results])
+    response.writeHead(200, { 'content-type': 'application/json', 'cache-control': 'no-store' })
+    response.end(JSON.stringify({ sha256: createHash('sha256').update(JSON.stringify(records)).digest('hex'), tables: tables.map(row => row.name) }))
+    return
   } else if (action === 'payment-run-reset' || action === 'sign-in-rate-reset') {
     // Clearing the sign-in limit is all either does. The second name is for a
     // spec that signs in late in a run, after the rest of the suite has spent

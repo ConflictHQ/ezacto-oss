@@ -178,6 +178,7 @@ describe('calendar scope in reused administrator editors', () => {
     api.projects.mockResolvedValue({ data: [{ id: 1, name: 'Other project', is_active: true }, { id: 7, name: 'Selected project', is_active: true }], page: { next_cursor: null } })
     const updateAllocation = vi.fn(async () => ({}))
     const planning: PlanningApi = {
+      getAllocation: async () => (await api.allocations()).data[0]!,
       listProjects: async () => [], listAllocations: async () => [], listTimeOff: async () => [],
       createAllocation: async () => ({}), updateAllocation, deleteAllocation: async () => ({}),
       createTimeOff: async () => ({}), updateTimeOff: async () => ({}), deleteTimeOff: async () => ({}),
@@ -200,6 +201,26 @@ describe('calendar scope in reused administrator editors', () => {
     }
     return { ...mounted, api, session, projectScope, ready, list, updateAllocation }
   }
+  it.each([false, true])('only offers optional allocation gestures to an editing administrator (%s)', async administrator => {
+    const f = editorFixture(); await f.controller.activate(f.session.signal, { administrator })
+    input('Display').value = 'timeline'; input('Display').dispatchEvent(new Event('change'))
+    expect(document.querySelectorAll('[data-allocation-gesture]')).toHaveLength(administrator ? 3 : 0)
+  })
+  it.each([403, 503])('does not hide a failed post-save refresh behind a success notice (%s)', async status => {
+    const f = editorFixture(); await f.controller.activate(f.session.signal, { administrator: true })
+    input('Display').value = 'timeline'; input('Display').dispatchEvent(new Event('change'))
+    document.querySelector<HTMLButtonElement>('[data-allocation-gesture="move"]')!.click()
+    const form = () => document.querySelector<HTMLFormElement>('[data-allocation-date-review]')!
+    const buttons = (name: string) => [...form().querySelectorAll<HTMLButtonElement>('button')].find(button => button.textContent === name)!
+    await vi.waitFor(() => expect(buttons('Preview dates').disabled).toBe(false))
+    const end = form().querySelectorAll<HTMLInputElement>('input')[1]!; end.value = '2026-10-03'; end.dispatchEvent(new Event('input'))
+    buttons('Preview dates').click(); await vi.waitFor(() => expect(buttons('Save date change').disabled).toBe(false))
+    f.api.context.mockRejectedValueOnce(new EzactoApiError(status, { error: { code: 'unavailable', message: 'Refresh unavailable' } }, null))
+    buttons('Save date change').click()
+    await vi.waitFor(() => expect(document.querySelector('[data-capacity-status]')!.textContent).toContain(status === 403 ? 'Calendar access is unavailable' : 'request failed with status 503'))
+    expect(document.querySelector('[data-capacity-status]')!.textContent).not.toContain('Allocation dates saved')
+    expect(f.updateAllocation).toHaveBeenCalledTimes(1)
+  })
   it('defaults a new allocation to the selected project and resets the default on a new scope', async () => {
     const fixture = editorFixture(); await fixture.controller.activate(fixture.session.signal, { administrator: true })
     expect([...document.querySelector<HTMLSelectElement>('[data-planning-allocation-form] [name="project_id"]')!.options].map(option => option.value)).toEqual(['1', '7'])

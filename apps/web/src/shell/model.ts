@@ -2135,8 +2135,9 @@ export const createShellApi = (client: EzactoClient): ShellApi => ({
       ),
     createAllocation: (input, signal) =>
       client.createAllocation({ body: input, ...withSignal(signal) }),
-    updateAllocation: (id, patch, signal) =>
-      client.updateAllocation({ id, body: patch, ...withSignal(signal) }),
+    getAllocation: async (id, signal) => (await client.getAllocation({ id, ...withSignal(signal) })).data,
+    updateAllocation: (id, patch, signal, idempotencyKey) =>
+      client.updateAllocation({ id, body: patch, ...withSignal(signal), ...(idempotencyKey === undefined ? {} : { headers: { 'Idempotency-Key': idempotencyKey } }) }),
     deleteAllocation: (id, version, signal) => client.deleteAllocation({ id, body: { version }, ...withSignal(signal) }),
     listTimeOff: (range, signal) =>
       collectPlanned(

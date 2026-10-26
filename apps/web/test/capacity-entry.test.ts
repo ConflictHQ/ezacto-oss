@@ -93,6 +93,34 @@ const open = async (administrator: boolean, planning = planningApi()) => {
   return { planning, getCapacity };
 };
 
+describe('precise planning form edits (#1193)',()=>{
+  it.each([1,59,60,3601,4442,604799,604800])('round-trips %i stored seconds through an hours field',seconds=>{
+    expect(hoursToSeconds(secondsToHoursField(seconds))).toBe(seconds)
+  })
+  it('preserves exact weekly seconds when only allocation dates change',async()=>{
+    const planning=planningApi()
+    planning.listAllocations=vi.fn(async()=>[{...allocation,planned_seconds_per_week:4442}])
+    await open(true,planning)
+    buttonLabelled('Edit allocation of Maya Member to Atlas').click()
+    input('[data-planning-allocation-form]','start_date').value='2026-10-06'
+    submit('[data-planning-allocation-form]')
+    await vi.waitFor(()=>expect(planning.updateAllocation).toHaveBeenCalledWith(7,{
+      version:0,start_date:'2026-10-06',end_date:'2026-10-30',planned_seconds_per_week:4442,
+    }))
+  })
+  it('preserves a one-second partial day when only time-off dates change',async()=>{
+    const planning=planningApi()
+    planning.listTimeOff=vi.fn(async()=>[{...away,seconds_per_day:1}])
+    await open(true,planning)
+    buttonLabelled('Edit vacation of Maya Member').click()
+    input('[data-planning-timeoff-form]','end_date').value='2026-10-14'
+    submit('[data-planning-timeoff-form]')
+    await vi.waitFor(()=>expect(planning.updateTimeOff).toHaveBeenCalledWith(9,{
+      version:0,start_date:'2026-10-12',end_date:'2026-10-14',kind:'vacation',seconds_per_day:1,
+    }))
+  })
+})
+
 describe("capacity entry model (issue 1007)", () => {
   it("[unit] reads typed hours as whole seconds and refuses anything else", () => {
     expect(hoursToSeconds("16")).toBe(57_600);

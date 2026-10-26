@@ -9861,6 +9861,17 @@ th[aria-sort="descending"] .table-sort [data-part="ascending"] { opacity: 0.15; 
   min-width: 2px;
   background: var(--ez-action);
 }
+.allocation-date-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+.allocation-date-actions button, .allocation-date-review button, .allocation-date-review input {
+  min-height: 44px;
+  min-width: 44px;
+}
+.allocation-date-actions button { touch-action: pan-y; }
+.resource-calendar-track > span[data-gesture-preview] { opacity: 0.6; outline: 2px dashed var(--ez-action); }
+.allocation-date-review { display: grid; max-width: 100%; min-width: 0; }
+.allocation-date-review > * { min-width: 0; }
+.allocation-date-editor h3 { overflow-wrap: anywhere; }
+.allocation-date-review .data-table-scroll { max-height: 24rem; }
 .capacity-form button {
   min-height: 44px;
   padding: 8px 14px;
