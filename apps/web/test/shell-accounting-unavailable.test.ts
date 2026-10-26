@@ -10,13 +10,13 @@ import { browserApi, mountShell, renderBrowserShell } from './support/shell-harn
  */
 describe('accounting unavailable', () => {
   afterEach(async () => {
-    document.documentElement.removeAttribute('data-accounting-unavailable')
+    for (const id of ['accounting', 'quickbooks', 'bill', 'wise', 'deel']) document.documentElement.removeAttribute(`data-${id}-unavailable`)
     globalThis.location.hash = ''
     await new Promise((resolve) => globalThis.setTimeout(resolve, 0))
     vi.unstubAllGlobals()
   })
 
-  const open = async (unavailable: boolean, api: Record<string, unknown>) => {
+  const open = async (unavailable: boolean, api: Record<string, unknown>, quickBooksUnavailable = false) => {
     vi.stubGlobal(
       'fetch',
       vi.fn(
@@ -29,6 +29,7 @@ describe('accounting unavailable', () => {
     )
     renderBrowserShell({ view: 'settings-company' })
     if (unavailable) document.documentElement.setAttribute('data-accounting-unavailable', '')
+    if (quickBooksUnavailable) document.documentElement.setAttribute('data-quickbooks-unavailable', '')
     globalThis.location.hash = '#integrations'
     await mountShell({ ...browserApi(), ...api } as never)
   }
@@ -50,6 +51,17 @@ describe('accounting unavailable', () => {
     expect(section().hidden).toBe(true)
     expect(api.getQuickBooksConnection).not.toHaveBeenCalled()
     expect(api.getQuickBooksReconciliation).not.toHaveBeenCalled()
+  })
+
+  it('[browser #1217] keeps another provider’s Accounting section without waking QuickBooks', async () => {
+    const api = { getQuickBooksConnection: vi.fn(), getQuickBooksReconciliation: vi.fn() }
+    await open(false, api, true)
+    await new Promise(resolve => globalThis.setTimeout(resolve, 0))
+    expect(link().hidden).toBe(false)
+    expect(section().hidden).toBe(false)
+    expect(api.getQuickBooksConnection).not.toHaveBeenCalled()
+    expect(api.getQuickBooksReconciliation).not.toHaveBeenCalled()
+    expect(document.querySelector<HTMLElement>('[data-quickbooks-connect]')!.hidden).toBe(true)
   })
 
   it('[browser #1217] leaves the connect flow unchanged when accounting is available', async () => {

@@ -1320,9 +1320,9 @@ describe('the QuickBooks line and Sync button (issue 819)', () => {
     expect(button().hidden).toBe(true)
   })
 
-  it('[browser #1217] makes no QuickBooks request where accounting is unavailable', async () => {
+  it.each(['accounting', 'quickbooks'])('[browser #1217] makes no QuickBooks request where %s is unavailable', async (unavailable) => {
     renderDetail()
-    document.documentElement.setAttribute('data-accounting-unavailable', '')
+    document.documentElement.setAttribute(`data-${unavailable}-unavailable`, '')
     try {
       const getInvoiceQuickBooks = vi.fn(async () => refusedBeforeConnect)
       const controller = createInvoicePaymentController({
@@ -1341,7 +1341,7 @@ describe('the QuickBooks line and Sync button (issue 819)', () => {
       expect(fact().hidden).toBe(true)
       expect(button().hidden).toBe(true)
     } finally {
-      document.documentElement.removeAttribute('data-accounting-unavailable')
+      document.documentElement.removeAttribute(`data-${unavailable}-unavailable`)
     }
   })
 

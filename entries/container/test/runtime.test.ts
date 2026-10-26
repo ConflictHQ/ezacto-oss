@@ -455,6 +455,31 @@ describe('container runtime composition', () => {
     await second.close()
   }, 30_000)
 
+  it('[native #1217] renders BILL-only and disabled accounting from actual SQLite runtime metadata', async () => {
+    const root = await temporary()
+    const base = config(root)
+    delete base.quickBooks
+    delete base.wise
+    const configuration = { ...base, bill: { devKey: 'private-dev-key-1217', companyId: 'private-company-1217', username: 'private-user-1217', password: 'private-password-1217' } }
+    const outbound = vi.spyOn(globalThis, 'fetch').mockRejectedValue(new Error('provider calls are forbidden'))
+    try {
+      for (const enabled of [true, false]) {
+        const configured = { ...configuration, appEnv: { ...configuration.appEnv, ACCOUNTING_ENABLED: String(enabled) } }
+        const runtime = await createContainerRuntime(configured, { emailProvider: provider([]) })
+        try {
+          const response = await createApp(runtime.services, runtime.brandAssets, runtime.instanceTheme).request('/settings/company', {}, configured.appEnv)
+          expect(response.status).toBe(200)
+          const html = await response.text()
+          expect(html.includes('data-accounting-unavailable')).toBe(!enabled)
+          expect(html).toContain('data-quickbooks-unavailable')
+          expect(html).toContain(`data-accounting-provider="bill" data-provider-available="${String(enabled)}"`)
+          for (const secret of Object.values(configuration.bill)) expect(html).not.toContain(secret)
+          expect(outbound).not.toHaveBeenCalled()
+        } finally { await runtime.close() }
+      }
+    } finally { outbound.mockRestore() }
+  })
+
   // The Worker entry has the same guard over its own composition. Both are
   // needed: the app is shared but the services are not, and a service this
   // runtime leaves out is a documented operation this deployment 404s.
