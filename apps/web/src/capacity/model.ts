@@ -85,6 +85,8 @@ export interface HolidayApi {
   remove(id: number, version: number, signal?: AbortSignal): Promise<unknown>
 }
 export interface PlanningApi {
+  /** Fresh revision for optional calendar gestures. The server still authorizes every write. */
+  getAllocation?(id: number, signal?: AbortSignal): Promise<AllocationRow>
   readonly holidays?: HolidayApi
   listProjects(
     signal?: AbortSignal,
@@ -95,6 +97,7 @@ export interface PlanningApi {
     id: number,
     patch: Partial<Omit<AllocationRow, 'id' | 'version' | 'user_id' | 'project_id'>> & { version: number },
     signal?: AbortSignal,
+    idempotencyKey?: string,
   ): Promise<unknown>
   deleteAllocation(id: number, version: number, signal?: AbortSignal): Promise<unknown>
   listTimeOff(range: PlanningRange, signal?: AbortSignal): Promise<readonly TimeOffRow[]>
@@ -115,9 +118,9 @@ export const hoursToSeconds = (text: string): number | null => {
   return seconds >= 1 ? seconds : null
 }
 
-/** Seconds as the figure an hours field holds: `7.5`, `32`. */
+/** Editable hours must round-trip whole seconds; display rounding would change a date-only edit. */
 export const secondsToHoursField = (seconds: number): string =>
-  String(Math.round((seconds / 3_600) * 100) / 100)
+  String(seconds / 3_600)
 
 /** Eight weeks at a time: a quarter of planning fits a screen without scrolling sideways. */
 export const capacityWindowDays = 56

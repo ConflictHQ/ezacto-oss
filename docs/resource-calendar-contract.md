@@ -107,10 +107,29 @@ Planned, available and rounded tracked seconds remain separate. Unassigned
 demand stays outside person totals. Broader aggregate scope is labelled.
 
 The existing administrator allocation, time-off, holiday and placeholder forms
-remain the mutation path with their saved versions and conflict drafts. Other
+retain their saved versions and conflict drafts. Administrators can also move
+or resize active-project allocation dates in the timeline, or open the same
+date review with keyboard/touch controls. Other
 web profiles are explicitly read-only. Request aborts, scope changes and lost
 authority clear private rows/options and invalidate late replies. Planning never
 creates actual time, staffing grants or accounting entries.
 
-Drag editing, revocable feeds and native application parity remain #1193, #1194
-and #1195 respectively; these read operations do not establish those features.
+The #1193 date review reads the current allocation revision and whole-person
+availability, including other-scope plans. It shows every affected week,
+including freed weeks, with the full exact weekly amount (never a daily
+proration). Long ranges require reviewing bounded pages before saving.
+Over-allocation warns without preventing a save. The weekly amount is omitted
+from the date-only PATCH; editable hours in the existing forms round-trip whole
+seconds without display rounding.
+
+Pointer motion only changes a temporary bar. Escape, cancellation, scrolling,
+pointer cancellation and session loss discard that preview without a command.
+Explicit save sends one revisioned planning PATCH and one random idempotency
+key; an uncertain response retains the exact key/payload for retry. Conflicts
+discard the temporary bar and retain unsaved form dates; refresh current dates
+before retrying. A successful
+refresh restores focus and announces the saved dates; a failed refresh keeps
+its actionable error. No actual-work or financial mutation operation is used.
+
+Revocable feeds and native application parity remain #1194 and #1195;
+responsive web and these read operations do not establish native parity.
