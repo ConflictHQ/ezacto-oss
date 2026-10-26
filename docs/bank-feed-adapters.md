@@ -17,12 +17,12 @@ digits; unsupported minor units are rejected, never converted or rounded.
 Each poll performs one bounded GET. Mercury requests 100 source rows using
 provider pagination. The next cursor uses the last raw transaction ID, including filtered rows; the provider's `nextPage` only signals that another page exists. Wise's statement endpoint has no pagination, so a bounded
 statement response (2 MiB, at most 10,000 rows) is sorted by UTC date and unique
-reference and returned in pages of 100 deposits. Cursors bind provider,
+reference and returned in pages of 100 observations, including exclusions that invalidate an earlier credit. Cursors bind provider,
 environment, account, currency and interval; moving a cursor between these
 contexts fails. A terminal null cursor starts a fresh scan of the same interval
 on the next poll. The scheduler must deliberately select subsequent intervals
 and periodically rescan historical intervals for changes; pagination is not an
-immutable change feed. A failed/oversized/invalid response never returns a cursor.
+immutable change feed. A failed/oversized/invalid response never returns a cursor. Excluded transactions still emit bounded observation-only invalidations so a prior staged receipt cannot retain stale eligibility; these do not create new deposits.
 
 ## Classification and confirmation
 

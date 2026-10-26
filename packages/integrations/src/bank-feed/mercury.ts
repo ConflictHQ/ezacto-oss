@@ -103,6 +103,8 @@ export const createMercuryBankFeed = (
       const seen = new Set<string>()
       for (const raw of body.transactions) {
         const row = object(raw)
+        if (typeof row.kind !== 'string' || typeof row.status !== 'string')
+          throw new BankFeedError('response')
         const id = identifier(row.id)
         if (seen.has(id) || row.accountId !== accountId) throw new BankFeedError('response')
         seen.add(id)
@@ -114,18 +116,50 @@ export const createMercuryBankFeed = (
           if (typeof kind !== 'string') throw new BankFeedError('response')
           return kind
         })
-        if (relations.some((relation: string) => ownReturnRelations.has(relation))) continue
+        if (relations.some((relation: string) => ownReturnRelations.has(relation))) {
+          observations[id] = {
+            status: 'unknown',
+            classification: 'internal_transfer',
+            reason: 'mercury_return_or_refund',
+          }
+          continue
+        }
         if (
           amount <= 0 ||
           omittedKinds.has(String(row.kind)) ||
           own.has(String(row.counterpartyId))
-        )
+        ) {
+          observations[id] = {
+            status: 'unknown',
+            classification: 'internal_transfer',
+            reason: 'mercury_non_receipt',
+          }
           continue
-        if (row.postedAt === null || row.postedAt === undefined) continue
+        }
+        if (['failed', 'cancelled', 'blocked'].includes(row.status)) {
+          observations[id] = {
+            status: 'ineligible',
+            classification: 'ambiguous_credit',
+            reason: 'mercury_not_receivable',
+          }
+          continue
+        }
+        if (row.postedAt === null || row.postedAt === undefined) {
+          observations[id] = {
+            status:
+              row.status === 'reversed' ||
+              relations.some((relation: string) => reversalRelations.has(relation))
+                ? 'reversed'
+                : row.status === 'pending'
+                  ? 'pending'
+                  : 'unknown',
+            classification: 'ambiguous_credit',
+            reason: 'mercury_not_posted',
+          }
+          continue
+        }
         const postedAt = timestamp(row.postedAt)
         if (postedAt < start || postedAt > end) throw new BankFeedError('response')
-        if (typeof row.kind !== 'string' || typeof row.status !== 'string')
-          throw new BankFeedError('response')
         const status = relations.some((relation: string) => reversalRelations.has(relation))
           ? 'reversed'
           : row.status === 'sent'
@@ -136,7 +170,6 @@ export const createMercuryBankFeed = (
                 ? 'reversed'
                 : 'unknown'
         // Failed/cancelled/blocked are never receipts. Unknown provider states remain visible, nonconfirmable.
-        if (['failed', 'cancelled', 'blocked'].includes(row.status)) continue
         deposits.push({
           provider_transaction_id: id,
           amount_cents: amount,

@@ -74,7 +74,12 @@ export const createWiseBankFeed = (options: Readonly<WiseBankFeedOptions>): Obse
         throw new BankFeedError('response')
       if (!Array.isArray(body.transactions) || body.transactions.length > 10_000)
         throw new BankFeedError('response')
-      const candidates: { key: string; deposit: NeutralDeposit; kind: string }[] = []
+      const candidates: {
+        key: string
+        id: string
+        deposit: NeutralDeposit | null
+        observation: FeedObservations[string]
+      }[] = []
       const seen = new Set<string>()
       for (const raw of body.transactions) {
         const row = object(raw)
@@ -84,17 +89,46 @@ export const createWiseBankFeed = (options: Readonly<WiseBankFeedOptions>): Obse
         const amount = object(row.amount)
         if (amount.currency !== options.currency) throw new BankFeedError('response')
         const value = cents(amount.value)
-        if (row.type === 'DEBIT' || value <= 0) continue
-        if (row.type !== 'CREDIT') throw new BankFeedError('response')
-        const details = object(row.details)
-        if (typeof details.type !== 'string') throw new BankFeedError('response')
-        if (excluded.has(details.type)) continue
         const date = timestamp(row.date)
         if (date < start || date > end) throw new BankFeedError('response')
         const key = `${date}|${id}`
+        if (row.type === 'DEBIT' || value <= 0) {
+          candidates.push({
+            key,
+            id,
+            deposit: null,
+            observation: {
+              status: 'unknown',
+              classification: 'internal_transfer',
+              reason: 'wise_non_receipt',
+            },
+          })
+          continue
+        }
+        if (row.type !== 'CREDIT') throw new BankFeedError('response')
+        const details = object(row.details)
+        if (typeof details.type !== 'string') throw new BankFeedError('response')
+        if (excluded.has(details.type)) {
+          candidates.push({
+            key,
+            id,
+            deposit: null,
+            observation: {
+              status: 'unknown',
+              classification: 'internal_transfer',
+              reason: 'wise_non_customer_credit',
+            },
+          })
+          continue
+        }
         candidates.push({
           key,
-          kind: details.type,
+          id,
+          observation: {
+            status: 'unknown',
+            classification: details.type === 'DEPOSIT' ? 'external_credit' : 'ambiguous_credit',
+            reason: 'wise_statement_finality_unverified',
+          },
           deposit: {
             provider_transaction_id: id,
             currency: options.currency,
@@ -109,14 +143,9 @@ export const createWiseBankFeed = (options: Readonly<WiseBankFeedOptions>): Obse
       const remaining = candidates.filter((entry) => after === null || entry.key > after)
       const page = remaining.slice(0, 100)
       const observations: FeedObservations = Object.create(null) as FeedObservations
-      for (const { deposit, kind } of page)
-        observations[deposit.provider_transaction_id] = {
-          status: 'unknown',
-          classification: kind === 'DEPOSIT' ? 'external_credit' : 'ambiguous_credit',
-          reason: 'wise_statement_finality_unverified',
-        }
+      for (const entry of page) observations[entry.id] = entry.observation
       return {
-        deposits: page.map(({ deposit }) => deposit),
+        deposits: page.flatMap(({ deposit }) => (deposit === null ? [] : [deposit])),
         observations,
         cursor: remaining.length > 100 ? cursorOf(scope, page[page.length - 1]!.key) : null,
       }

@@ -114,13 +114,11 @@ describe('Mercury read-only bank feed', () => {
     expect(result.observations.unknown!.status).toBe('unknown')
   })
   it('replays a page and binds the pagination cursor to account/currency/window/environment', async () => {
-    const fetchImplementation = vi
-      .fn<typeof fetch>()
-      .mockImplementation(async () =>
-        mercury([transaction(), transaction({ id: 'filtered-tail', amount: -5 })], {
-          nextPage: 'first-unseen-txn',
-        }),
-      )
+    const fetchImplementation = vi.fn<typeof fetch>().mockImplementation(async () =>
+      mercury([transaction(), transaction({ id: 'filtered-tail', amount: -5 })], {
+        nextPage: 'first-unseen-txn',
+      }),
+    )
     const feed = createMercuryBankFeed({ ...common, accountId: 'account-1', fetchImplementation })
     const first = await feed.poll(null)
     expect(await feed.poll(null)).toEqual(first)
@@ -200,9 +198,9 @@ describe('Wise public statement feed', () => {
     }).poll(null)
     expect(result.deposits.map((d) => d.provider_transaction_id)).toEqual(['ref-6', 'ref-7'])
     expect(
-      Object.values(result.observations).every(
-        (o) => o.status === 'unknown' && o.classification === 'ambiguous_credit',
-      ),
+      result.deposits
+        .map((deposit) => result.observations[deposit.provider_transaction_id]!)
+        .every((o) => o.status === 'unknown' && o.classification === 'ambiguous_credit'),
     ).toBe(true)
   })
   it('paginates by stable date+reference, replays deterministically, and completes a 201-row statement', async () => {
@@ -396,4 +394,94 @@ it('rejects a malformed Wise same-scope cursor before making another request', a
   cursor.key = 'zzzzz'
   await expect(feed.poll(JSON.stringify(cursor))).rejects.toMatchObject({ code: 'cursor' })
   expect(fetchImplementation).toHaveBeenCalledTimes(1)
+})
+
+it('returns observation-only invalidations when a previously seen credit becomes ineligible', async () => {
+  const mercuryResponse = vi
+    .fn<typeof fetch>()
+    .mockResolvedValueOnce(mercury([transaction()]))
+    .mockResolvedValueOnce(mercury([transaction({ status: 'failed' })]))
+  const mercuryFeed = createMercuryBankFeed({
+    ...common,
+    accountId: 'account-1',
+    fetchImplementation: mercuryResponse,
+  })
+  expect((await mercuryFeed.poll(null)).observations['txn-1']!.status).toBe('final')
+  const changed = await mercuryFeed.poll(null)
+  expect(changed.deposits).toEqual([])
+  expect(changed.observations['txn-1']).toMatchObject({
+    status: 'ineligible',
+    reason: 'mercury_not_receivable',
+  })
+  const wiseFeed = createWiseBankFeed({
+    ...common,
+    profileId: '99',
+    balanceId: '12',
+    fetchImplementation: vi
+      .fn<typeof fetch>()
+      .mockResolvedValue(
+        statement([wiseTransaction({ type: 'DEBIT', amount: { value: -12.34, currency: 'USD' } })]),
+      ),
+  })
+  const wiseChanged = await wiseFeed.poll(null)
+  expect(wiseChanged.deposits).toEqual([])
+  expect(wiseChanged.observations['DEPOSIT-1']).toMatchObject({
+    classification: 'internal_transfer',
+    reason: 'wise_non_receipt',
+  })
+})
+
+it('bounds observation-only invalidations across Wise statement pages', async () => {
+  const rows = Array.from({ length: 201 }, (_, i) =>
+    wiseTransaction({
+      referenceNumber: `ref-${String(i).padStart(3, '0')}`,
+      type: 'DEBIT',
+      amount: { currency: 'USD', value: -1 },
+    }),
+  )
+  const feed = createWiseBankFeed({
+    ...common,
+    profileId: '99',
+    balanceId: '12',
+    fetchImplementation: vi.fn<typeof fetch>().mockImplementation(async () => statement(rows)),
+  })
+  const first = await feed.poll(null),
+    second = await feed.poll(first.cursor),
+    third = await feed.poll(second.cursor)
+  expect([first, second, third].map((page) => Object.keys(page.observations).length)).toEqual([
+    100, 100, 1,
+  ])
+  expect([first, second, third].every((page) => page.deposits.length === 0)).toBe(true)
+  expect(third.cursor).toBeNull()
+})
+
+it('does not turn cancelled unposted funds into a verifiable unknown credit', async () => {
+  const feed = createMercuryBankFeed({
+    ...common,
+    accountId: 'account-1',
+    fetchImplementation: vi
+      .fn<typeof fetch>()
+      .mockResolvedValue(mercury([transaction({ status: 'cancelled', postedAt: null })])),
+  })
+  const result = await feed.poll(null)
+  expect(result.deposits).toEqual([])
+  expect(result.observations['txn-1']!.status).toBe('ineligible')
+})
+
+it('preserves known reversal even when the posting date is absent', async () => {
+  for (const changes of [
+    { status: 'reversed' },
+    { relatedTransactions: [{ relationKind: 'OriginalTransactionToReturn' }] },
+  ]) {
+    const feed = createMercuryBankFeed({
+      ...common,
+      accountId: 'account-1',
+      fetchImplementation: vi
+        .fn<typeof fetch>()
+        .mockResolvedValue(mercury([transaction({ ...changes, postedAt: null })])),
+    })
+    const result = await feed.poll(null)
+    expect(result.deposits).toEqual([])
+    expect(result.observations['txn-1']!.status).toBe('reversed')
+  }
 })
