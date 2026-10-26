@@ -94,6 +94,18 @@ describe('Deel sync routes: administrators only', () => {
   )
 })
 
+describe('selected-hour command privacy',()=>{
+ it('keeps private staging envelopes out of legacy run history',async()=>{
+  const {api,deps}=fixture()
+  deps.recentRuns.mockResolvedValue([{id:1,startedAt:'2026-10-20T00:00:00.000Z',finishedAt:null,outcome:'running',timesheetsSubmitted:0,entriesTransferred:0,detail:{staging_command:{id:'private-command',userIds:[12345],fingerprint:'private-fingerprint'},staging_contracts:[{contractId:'private-contract'}]}}] as never)
+  const response=await api.request('/deel-sync')
+  expect(response.status).toBe(200)
+  const body=await response.text()
+  expect(body).toContain('selected_hours')
+  for(const value of ['private-command','12345','private-fingerprint','private-contract','staging_command'])expect(body).not.toContain(value)
+ })
+})
+
 describe('Deel sync routes: settings', () => {
   it('reports the mode, schedule and recent runs in snake_case', async () => {
     const { api } = fixture()

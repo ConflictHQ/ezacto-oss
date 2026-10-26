@@ -174,7 +174,7 @@ export const createDeelSyncStore = (database: Database): DeelSyncStore => ({
     await database.all(sql`
       UPDATE deel_sync_runs
       SET outcome = 'failed', finished_at = ${now},
-        detail = json_object('error',
+        detail = json_set(COALESCE(detail,'{}'),'$.error',
           'abandoned: the run never finished, so a timesheet may have been created at Deel without a log record. Check Deel before the next run is trusted.')
       WHERE outcome = 'running' AND started_at < ${staleBefore}
       RETURNING id`)

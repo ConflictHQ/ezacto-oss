@@ -54,6 +54,7 @@ export interface ContainerConfig {
     webhookVerifierToken?: string
     environment?: string
   }
+  deel?: { token?: string; startDate?: string }
   wise?: {
     token: string
     profileId?: string
@@ -220,6 +221,8 @@ export const readContainerConfig = (
   )
   const accounting = moduleAvailability(moduleFlags).accounting
   const wiseToken = optional(environment, 'WISE_TOKEN', 512)
+  const deelToken = optional(environment, 'DEEL_TOKEN', 4096)
+  const deelStart = optional(environment, 'DEEL_SYNC_START_DATE', 10)
   const githubWorkItemsCredential = optional(environment, 'GITHUB_WORK_ITEMS_CREDENTIAL', 4_096)
   const wiseProfileId = optional(environment, 'WISE_PROFILE_ID', 64)
   const wiseWebhookKey = optional(environment, 'WISE_WEBHOOK_PUBLIC_KEY', 4_096)
@@ -324,6 +327,10 @@ export const readContainerConfig = (
               : { environment: quickBooksEnvironment }),
           },
         }),
+    ...(deelToken === undefined && deelStart === undefined ? {} : {deel: {
+      ...(deelToken === undefined ? {} : {token:deelToken}),
+      ...(deelStart === undefined ? {} : {startDate:deelStart}),
+    }}),
     ...(wiseToken === undefined
       ? {}
       : {

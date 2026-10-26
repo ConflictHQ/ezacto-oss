@@ -170,7 +170,9 @@ export const installDeelSyncRoutes = <Bindings extends object>(
           outcome: run.outcome,
           timesheets_submitted: run.timesheetsSubmitted,
           entries_transferred: run.entriesTransferred,
-          detail: run.detail,
+          detail: typeof run.detail === 'object' && run.detail !== null && Object.hasOwn(run.detail, 'staging_command')
+            ? { kind: 'selected_hours', outcome: run.outcome }
+            : run.detail,
         })),
       },
       200,

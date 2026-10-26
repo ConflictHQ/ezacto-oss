@@ -1,3 +1,4 @@
+import { deelStagingOperations, deelStagingSchemas } from './deel-staging-contract.js'
 import { moduleForPath } from './module-availability.js'
 import { organizationHolidayOperations, organizationHolidaySchemas } from './organization-holiday-contract.js'
 import { placeholderPlanningOperations, placeholderPlanningSchemas } from './placeholder-planning-contract.js'
@@ -3804,6 +3805,7 @@ export const apiContractOperations: readonly ApiContractOperation[] = [
   ...attachmentContractOperations,
   ...staffPaymentOperations,
   ...deelSyncOperations,
+  ...deelStagingOperations,
   ...paymentRunOperations,
   ...advanceCreditOperations,
   ...staffInvoiceOperations,
@@ -4085,6 +4087,7 @@ export const apiContractSchemas: Readonly<Record<string, JsonSchema>> = {
   ...attachmentContractSchemas,
   ...staffPaymentSchemas,
   ...deelSyncSchemas,
+  ...deelStagingSchemas,
   ...paymentRunSchemas,
   ...advanceCreditSchemas,
   ...staffInvoiceSchemas,

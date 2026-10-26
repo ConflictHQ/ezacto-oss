@@ -16,7 +16,7 @@ import type { PaymentRunsService, ScheduledRunsService, ScheduledJobsService } f
 import { workItemProviders, type WorkItemProviderId } from '@ezacto/core'
 import { installContractorReviewRoutes, installStaffInvoiceRoutes, installPaymentRunRoutes } from '@ezacto/api'
 import { installScheduledRunRoutes, installScheduledJobRoutes } from '@ezacto/api'
-import { installDeelSyncRoutes, installStaffPaymentRoutes, type DeelSyncApiDependencies } from '@ezacto/api'
+import { installDeelStagingRoutes, type DeelStagingApiRuntime, installDeelSyncRoutes, installStaffPaymentRoutes, type DeelSyncApiDependencies } from '@ezacto/api'
 import type { ContractorReviewStore, StaffPaymentStore } from '@ezacto/core'
 import { installMyPaymentRoutes } from '@ezacto/api'
 import type { MyPaymentsStore } from '@ezacto/core'
@@ -392,8 +392,8 @@ export type WorkerEnv = AppEnv & OffsiteBackupEnvironment & {
    * Deel time sync (issue 103). Both are needed before anything is sent: the
    * API token, and the first day (ISO) whose approved time may be submitted.
    * The start date is the guard against a first run submitting every earlier
-   * month that was paid by other means. Neither is wired through the stock
-   * deploy workflow; set them as Worker secrets.
+   * month that was paid by other means. Supply both for the deployment; leaving
+   * either absent keeps approved-hour staging unavailable.
    */
   DEEL_TOKEN?: string
   DEEL_SYNC_START_DATE?: string
@@ -643,6 +643,7 @@ export interface RuntimeServices {
   recurringRepair?: RecurringRepairService
   bill?: BillRuntime
   /** Deel time sync, run from the daily cron. Absent on the demo. */
+  deelStaging?: DeelStagingApiRuntime
   deelSync?: DeelSyncRuntime
   /** Administrator control of the Deel sync (#1102): the mode, the schedule and the run history. */
   deelSyncAdmin?: Pick<DeelSyncApiDependencies, 'settings' | 'recentRuns'>
@@ -1018,6 +1019,7 @@ export const createApp = (
             if (services.staffPayments !== undefined) {
               installStaffPaymentRoutes(api, services.staffPayments)
             }
+            if (services.deelStaging !== undefined) installDeelStagingRoutes(api, services.deelStaging)
             if (services.deelSync !== undefined && services.deelSyncAdmin !== undefined) {
               installDeelSyncRoutes(api, {
                 runtime: services.deelSync,
