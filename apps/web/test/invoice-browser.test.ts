@@ -268,6 +268,7 @@ describe('invoice payment controller', () => {
     })
     submit('[data-invoice-attachment-form]')
     await vi.waitFor(() => expect(api.uploadInvoiceAttachment).toHaveBeenCalledTimes(1))
+    expect(status.getAttribute('aria-busy')).toBe('true')
 
     // The side read answers mid-upload: a deployment without the QuickBooks
     // routes, which repaints the controls while the upload holds them.
@@ -282,6 +283,7 @@ describe('invoice payment controller', () => {
     await vi.waitFor(() => expect(status.textContent).toBe('1 file attached.'))
     await new Promise((resolve) => setTimeout(resolve, 0))
     expect(send.disabled).toBe(false)
+    expect(status.getAttribute('aria-busy')).toBe('false')
   })
 
   it('[security] rejects stale detail responses and clears private payment state on abort', async () => {
@@ -719,6 +721,7 @@ describe('invoice payment controller', () => {
     expect(settle.disabled).toBe(true)
     // Progress, too, sits by the button, and the Payments line stays empty.
     expect(pageStatus.textContent).toBe('Recording payment\u2026')
+    expect(pageStatus.getAttribute('aria-busy')).toBe('true')
     expect(paymentStatus.textContent).toBe('')
 
     currentInvoice = { ...currentInvoice, due_amount_cents: 32_500, version: 4 }
@@ -734,6 +737,7 @@ describe('invoice payment controller', () => {
         'The invoice, line, or payment changed elsewhere. Latest values are loaded; review and try again.',
       ),
     )
+    expect(pageStatus.getAttribute('aria-busy')).toBe('false')
     // The reload relabelled the button with the new balance; the sentence that
     // explains why is in the same viewport as the button, not in the Payments
     // section under the line items, totals and notes.

@@ -1,4 +1,5 @@
 import { moduleAvailable } from '../module-availability.js'
+import { setRequestBusy } from '../request-feedback.js'
 import {
   EzactoApiError,
   type ClientRollupMetrics,
@@ -2356,6 +2357,7 @@ const renderDetailedTime = (
         const cell = element('td')
         const checkbox = element('input')
         checkbox.type = 'checkbox'
+        checkbox.dataset.detailedSelect = ''
         checkbox.disabled = row.time_entry_id === undefined
         checkbox.setAttribute('aria-label', `Select time entry ${row.time_entry_id ?? ''}`.trim())
         checkbox.addEventListener('change', () => {
@@ -3052,6 +3054,19 @@ export const createReportsController = (
   page.hidden = !reportsPage
 
   let session: ActiveSession | null = null
+  let shareGeneration = 0
+  let sharePending = false
+  let restoreShareControls = () => {}
+  let builderGeneration = 0
+  let builderPending = false
+  let restoreBuilderControls = () => {}
+  let exportPending = false
+  let timeActionPending = false
+  let libraryRequest = 0
+  let savedScreenRequest = 0
+  let savedRunRequest = 0
+  let bannerGeneration = 0
+  const savedMutations = new Set<string>()
   /**
    * `reports:read` and `team:read` are different sets -- accounting is in the
    * first and not the second -- so whether a teammate name is a link is a
@@ -3162,12 +3177,14 @@ export const createReportsController = (
       `${row.task_name} on ${row.spent_date} will be removed from their timesheet. ` +
       'This cannot be undone.'
     entryDeleteResult.textContent = ''
+    setRequestBusy(entryDeleteResult, false)
     entryDeleteSubmit.disabled = false
     entryDeleteDialog.showModal()
   }
 
   const closeEntryDeletion = (): void => {
     entryDeletion = null
+    setRequestBusy(entryDeleteResult, false)
     if (entryDeleteDialog.open) entryDeleteDialog.close()
   }
 
@@ -3176,21 +3193,25 @@ export const createReportsController = (
     const active = currentSession()
     const deletion = entryDeletion
     const entryId = deletion?.row.time_entry_id
-    if (active === null || deletion === null || entryId === undefined) return
+    if (active === null || deletion === null || entryId === undefined || entryDeleteSubmit.disabled) return
     if (api.deleteTimeEntry === undefined) return
     entryDeleteSubmit.disabled = true
     entryDeleteResult.textContent = 'Deleting entry…'
+    setRequestBusy(entryDeleteResult, true)
     void api
       .deleteTimeEntry(entryId, active.signal)
       .then(() => {
-        if (currentSession() !== active) return
+        if (currentSession() !== active || entryDeletion !== deletion) return
         closeEntryDeletion()
         deletion.reload()
       })
       .catch((error: unknown) => {
-        if (currentSession() !== active || active.onSessionFailure(error)) return
+        if (currentSession() !== active || entryDeletion !== deletion || active.onSessionFailure(error)) return
         entryDeleteSubmit.disabled = false
         entryDeleteResult.textContent = entryActionFailure(error, 'deleted')
+      })
+      .finally(() => {
+        if (currentSession() === active && entryDeletion === deletion) setRequestBusy(entryDeleteResult, false)
       })
   })
   for (const cancel of document.querySelectorAll<HTMLButtonElement>(
@@ -3253,12 +3274,39 @@ export const createReportsController = (
   const openShare = async (report: SavedReport): Promise<void> => {
     const active = currentSession()
     if (active === null) return
+    restoreShareControls()
+    sharePending = false
+    const own = ++shareGeneration
+    const current = () => currentSession() === active && own === shareGeneration && shareDialog.open
     const signal = active.signal
     const people = [...report.shared_with.users]
     const roles = new Set<string>(report.shared_with.profiles)
     shareTitle.textContent = `Share ${report.name}`
     shareResult.textContent = ''
-    const fail = (error: unknown): void => { shareResult.textContent = messageFor(error) }
+    setRequestBusy(shareResult, false)
+    const mutate = async (phase: string, work: () => Promise<() => void>, rollback?: () => void) => {
+      if (!current() || sharePending) return
+      sharePending = true
+      shareResult.textContent = phase
+      setRequestBusy(shareResult, true)
+      const controls = [...shareDialog.querySelectorAll<HTMLInputElement>('input,select,button')].filter(control => control !== shareClose)
+      const disabled = controls.map(control => control.disabled)
+      restoreShareControls = () => { controls.forEach((control, index) => { control.disabled = disabled[index] ?? false }); restoreShareControls = () => {} }
+      controls.forEach(control => { control.disabled = true })
+      try {
+        const commit = await work()
+        if (current()) commit()
+      } catch (error) {
+        if (current()) { rollback?.(); shareResult.textContent = messageFor(error) }
+      } finally {
+        if (current()) {
+          sharePending = false
+          restoreShareControls()
+          shareAdd.disabled = sharePerson.options.length === 0
+          setRequestBusy(shareResult, false)
+        }
+      }
+    }
     const renderPeople = (): void => {
       sharePeople.replaceChildren(...people.map((person) => {
         const item = element('li')
@@ -3267,11 +3315,15 @@ export const createReportsController = (
         remove.setAttribute('aria-label', `Stop sharing with ${person.name}`)
         remove.addEventListener('click', () => {
           if (api.unshareSavedReport === undefined) return
-          void api.unshareSavedReport(report.id, person.user_id, signal).then(() => {
-            people.splice(people.findIndex((candidate) => candidate.user_id === person.user_id), 1)
-            renderPeople()
-            shareResult.textContent = `No longer shared with ${person.name}.`
-          }).catch(fail)
+          void mutate(`Removing ${person.name}…`, async () => {
+            await api.unshareSavedReport!(report.id, person.user_id, signal)
+            return () => {
+              const index = people.findIndex(candidate => candidate.user_id === person.user_id)
+              if (index >= 0) people.splice(index, 1)
+              renderPeople()
+              shareResult.textContent = `No longer shared with ${person.name}.`
+            }
+          })
         })
         item.append(textElement('span', `${person.name} `), remove)
         return item
@@ -3293,43 +3345,51 @@ export const createReportsController = (
       box.type = 'checkbox'
       box.checked = roles.has(role.profile)
       box.addEventListener('change', () => {
+        if (sharePending || !current()) { box.checked = roles.has(role.profile); return }
         const action = box.checked ? api.shareSavedReportWithRole : api.unshareSavedReportWithRole
         if (action === undefined) { box.checked = !box.checked; return }
-        void action(report.id, role.profile, signal).then(() => {
-          if (box.checked) roles.add(role.profile)
-          else roles.delete(role.profile)
-          shareResult.textContent = box.checked ? `Shared with ${role.label}.` : `No longer shared with ${role.label}.`
-        }).catch((error: unknown) => { box.checked = !box.checked; fail(error) })
+        const selected = box.checked
+        void mutate(`Updating sharing with ${role.label}…`, async () => {
+          await action(report.id, role.profile, signal)
+          return () => {
+            if (selected) roles.add(role.profile)
+            else roles.delete(role.profile)
+            shareResult.textContent = selected ? `Shared with ${role.label}.` : `No longer shared with ${role.label}.`
+          }
+        }, () => { box.checked = roles.has(role.profile) })
       })
       label.append(box, document.createTextNode(` ${role.label}`))
       return label
     }))
     renderPeople()
     shareDialog.showModal()
-    if (directoryPeople === null && api.listDirectoryUsers !== undefined) {
-      try {
+    const listDirectoryUsers = api.listDirectoryUsers
+    if (directoryPeople === null && listDirectoryUsers !== undefined) {
+      await mutate('Loading people…', async () => {
         const loaded: GeneralResource[] = []
         let cursor: string | undefined
         do {
-          const page = await api.listDirectoryUsers(cursor, signal)
+          const page = await listDirectoryUsers(cursor, signal)
+          if (!current()) return () => {}
           loaded.push(...page.data.filter((person) => person['is_active'] !== false))
           cursor = page.page.next_cursor ?? undefined
         } while (cursor !== undefined)
-        directoryPeople = loaded
-        renderPeople()
-      } catch (error) {
-        fail(error)
-      }
+        return () => { directoryPeople = loaded; renderPeople(); shareResult.textContent = '' }
+      })
     }
+    if (!current()) return
     shareAdd.onclick = () => {
       const userId = Number(sharePerson.value)
       if (api.shareSavedReport === undefined || !Number.isSafeInteger(userId) || userId < 1) return
-      void api.shareSavedReport(report.id, userId, signal).then(() => {
-        const name = personLabel(userId, directoryPeople ?? [])
-        people.push({ user_id: userId, name })
-        renderPeople()
-        shareResult.textContent = `Shared with ${name}.`
-      }).catch(fail)
+      void mutate('Sharing report…', async () => {
+        await api.shareSavedReport!(report.id, userId, signal)
+        return () => {
+          const name = personLabel(userId, directoryPeople ?? [])
+          people.push({ user_id: userId, name })
+          renderPeople()
+          shareResult.textContent = `Shared with ${name}.`
+        }
+      })
     }
   }
 
@@ -3337,14 +3397,16 @@ export const createReportsController = (
     if (savedScreenActive) return loadSavedScreen()
     const active = currentSession()
     if (active === null || api.listSavedReports === undefined) return
+    const own = ++libraryRequest
     savedStatus.textContent = 'Loading saved reports…'
+    setRequestBusy(savedStatus, true)
     try {
       const reports = await api.listSavedReports({
         view: savedView,
         ...(savedSearch.value.trim() === '' ? {} : { q: savedSearch.value.trim() }),
         ...(savedCustomOnly.checked ? { custom_only: true } : {}),
       }, active.signal)
-      if (currentSession() !== active) return
+      if (currentSession() !== active || own !== libraryRequest) return
       savedList.replaceChildren(...reports.map((report: SavedReport) => {
         const card = element('article', 'report-saved-card')
         const open = textElement('button', report.name)
@@ -3355,12 +3417,19 @@ export const createReportsController = (
           const address = savedReportHref(report)
           if (address !== null) { globalThis.location.assign(address); return }
           if (api.runSavedReport === undefined) return
+          const own = ++savedRunRequest
           savedStatus.textContent = `Running ${report.name}…`
+          setRequestBusy(savedStatus, true)
           void api.runSavedReport(report.id, active.signal).then((result) => {
+            if (currentSession() !== active || own !== savedRunRequest) return
             savedLibrary.hidden = true
             renderRunnerResult(result, report.name)
             status.textContent = `Saved report version ${report.version} loaded with ${report.filters.length} active filters.`
-          }).catch((error: unknown) => { savedStatus.textContent = messageFor(error) })
+          }).catch((error: unknown) => {
+            if (currentSession() === active && own === savedRunRequest) savedStatus.textContent = messageFor(error)
+          }).finally(() => {
+            if (currentSession() === active && own === savedRunRequest) setRequestBusy(savedStatus, false)
+          })
         })
         const metadata = textElement(
           'p',
@@ -3404,7 +3473,9 @@ export const createReportsController = (
       }))
       savedStatus.textContent = reports.length === 0 ? 'No saved reports match.' : `${reports.length} saved reports.`
     } catch (error) {
-      savedStatus.textContent = messageFor(error)
+      if (currentSession() === active && own === libraryRequest) savedStatus.textContent = messageFor(error)
+    } finally {
+      if (currentSession() === active && own === libraryRequest) setRequestBusy(savedStatus, savedMutations.size > 0)
     }
   }
 
@@ -3414,21 +3485,47 @@ export const createReportsController = (
     savedScreenStatus.textContent = message
   }
 
+  const savedAction = async (id: string, phase: string, work: (active: ActiveSession, current: () => boolean) => Promise<string>, refreshLinks = false) => {
+    const active = currentSession()
+    if (active === null || savedMutations.has(id)) return
+    const current = () => currentSession() === active
+    savedMutations.add(id)
+    announceSaved(phase)
+    setRequestBusy(savedStatus, true)
+    setRequestBusy(savedScreenStatus, true)
+    try {
+      const note = await work(active, current)
+      if (!current()) return
+      await Promise.all([...(refreshLinks ? [loadQuickLinks()] : []), loadSavedReports()])
+      if (current()) announceSaved(note)
+    } catch (error) {
+      if (current()) announceSaved(messageFor(error))
+    } finally {
+      if (current()) {
+        savedMutations.delete(id)
+        setRequestBusy(savedStatus, savedMutations.size > 0)
+        setRequestBusy(savedScreenStatus, savedMutations.size > 0)
+      }
+    }
+  }
+
   const togglePin = (report: SavedReport): void => {
     const active = currentSession()
     const action = report.pinned ? api.unpinSavedReport : api.pinSavedReport
     if (active === null || action === undefined) return
-    void action(report.id, active.signal)
-      .then(() => { void loadQuickLinks(); return loadSavedReports() })
-      .catch((error: unknown) => { announceSaved(messageFor(error)) })
+    void savedAction(report.id, report.pinned ? 'Unpinning report…' : 'Pinning report…', async () => {
+      await action(report.id, active.signal)
+      return report.pinned ? 'Report unpinned.' : 'Report pinned.'
+    }, true)
   }
 
   const duplicateReport = (report: SavedReport): void => {
     const active = currentSession()
     if (active === null || api.duplicateSavedReport === undefined) return
-    void api.duplicateSavedReport(report.id, active.signal)
-      .then(() => loadSavedReports())
-      .catch((error: unknown) => { announceSaved(messageFor(error)) })
+    void savedAction(report.id, 'Duplicating report…', async () => {
+      await api.duplicateSavedReport!(report.id, active.signal)
+      return 'Report duplicated.'
+    })
   }
 
   const requestDelete = (report: SavedReport): void => {
@@ -3466,11 +3563,13 @@ export const createReportsController = (
   const loadSavedScreen = async (): Promise<void> => {
     const active = currentSession()
     if (active === null || api.listSavedReports === undefined) return
+    const own = ++savedScreenRequest
     savedScreenStatus.textContent = 'Loading saved reports…'
+    setRequestBusy(savedScreenStatus, true)
     try {
       const query = savedScreenSearch.value.trim()
       const listed = await api.listSavedReports({ view: screenView, ...(query === '' ? {} : { q: query }) }, active.signal)
-      if (currentSession() !== active) return
+      if (currentSession() !== active || own !== savedScreenRequest) return
       // Builder definitions open in the Saved reports library, not here.
       const views = listed.filter((report) => report.view !== null)
       savedScreenTable.replaceChildren(renderSavedViewsTable(views, screenActions))
@@ -3478,11 +3577,16 @@ export const createReportsController = (
         ? 'No saved reports match.'
         : `${views.length} saved ${views.length === 1 ? 'report' : 'reports'}.`
     } catch (error) {
-      if (currentSession() === active) savedScreenStatus.textContent = messageFor(error)
+      if (currentSession() === active && own === savedScreenRequest) savedScreenStatus.textContent = messageFor(error)
+    } finally {
+      if (currentSession() === active && own === savedScreenRequest) setRequestBusy(savedScreenStatus, savedMutations.size > 0)
     }
   }
 
   const showOpenSaved = (): void => {
+    bannerGeneration++
+    openBannerSave.disabled = false
+    setRequestBusy(openBannerResult, false)
     openBanner.hidden = openSaved === null
     openBannerResult.textContent = ''
     if (openSaved === null) return
@@ -3517,6 +3621,7 @@ export const createReportsController = (
     nameSubmit.textContent = rename === null ? 'Save' : 'Rename'
     nameInput.value = rename === null ? reportKindLabel(kind) : rename.name
     nameResult.textContent = ''
+    setRequestBusy(nameResult, false)
     nameSubmit.disabled = false
     nameDialog.showModal()
     nameInput.focus()
@@ -3525,6 +3630,7 @@ export const createReportsController = (
 
   const setPending = (value: boolean): void => {
     pending = value
+    setRequestBusy(status, value || exportPending || timeActionPending)
     run.disabled = value
     period.setDisabled(value)
     catalogInput.disabled = value
@@ -3731,10 +3837,16 @@ export const createReportsController = (
     const active = currentSession()
     const download = api.downloadDetailedTimeReport
     const request = detailedRequest
-    if (active === null || download === undefined || request === null) return
+    if (active === null || download === undefined || request === null || exportPending) return
+    exportPending = true
     status.textContent = 'Preparing the export…'
+    setRequestBusy(status, true)
+    const controls = [...results.querySelectorAll<HTMLButtonElement>('[data-detailed-export] button')]
+    controls.forEach(control => { control.disabled = true })
     void download(request, format, audience, active.signal)
       .then(({ blob, filename }) => {
+        // The download still belongs to its captured request if the user
+        // refreshes the report while it is being rendered.
         if (currentSession() !== active) return
         const href = URL.createObjectURL(blob)
         const link = document.createElement('a')
@@ -3751,6 +3863,12 @@ export const createReportsController = (
         if (active.onSessionFailure(error)) return
         if (active.signal.aborted) return
         status.textContent = messageFor(error)
+      })
+      .finally(() => {
+        if (currentSession() !== active) return
+        exportPending = false
+        controls.forEach(control => { control.disabled = false })
+        setRequestBusy(status, pending || exportPending || timeActionPending)
       })
   }
 
@@ -3844,6 +3962,7 @@ export const createReportsController = (
             ['administrator', 'accounting', 'executive_manager'].includes(active.identity.profile)
             ? {
                 onAction: (action: 'mark_invoiced' | 'mark_uninvoiced' | 'move', entryIds: readonly number[]) => {
+                  if (timeActionPending || currentSession() !== active) return
                   if (action !== 'move' && !moduleAvailable('invoices')) return
                   const invoiceId = action === 'mark_invoiced' ? Number(globalThis.prompt('Draft invoice ID')) : undefined
                   const projectId = action === 'move' ? Number(globalThis.prompt('Destination project ID')) : undefined
@@ -3852,7 +3971,12 @@ export const createReportsController = (
                   if (projectId !== undefined && (!Number.isSafeInteger(projectId) || projectId < 1)) return
                   if (taskId !== undefined && (!Number.isSafeInteger(taskId) || taskId < 1)) return
                   if (!globalThis.confirm(`${action.replaceAll('_', ' ')} ${entryIds.length} selected time entries?`)) return
+                  timeActionPending = true
                   status.textContent = 'Applying confirmed time action…'
+                  setRequestBusy(status, true)
+                  const controls = [...results.querySelectorAll<HTMLInputElement>('[data-detailed-action], [data-detailed-select]')]
+                  const disabled = controls.map(control => control.disabled)
+                  controls.forEach(control => { control.disabled = true })
                   void api.executeDetailedTimeAction?.({
                     command_id: globalThis.crypto.randomUUID(),
                     action,
@@ -3862,9 +3986,17 @@ export const createReportsController = (
                     ...(projectId === undefined ? {} : { project_id: projectId }),
                     ...(taskId === undefined ? {} : { task_id: taskId }),
                   }, active.signal).then((outcome) => {
+                    if (currentSession() !== active || detailedReport !== report) return
                     status.textContent = `${outcome.changed_entry_ids.length} entries changed; ${outcome.ineligible_entry_ids.length} were ineligible.`
                     void loadReport({ ...filters, kind: 'detailed-time' }, false)
-                  }).catch((error: unknown) => { status.textContent = messageFor(error) })
+                  }).catch((error: unknown) => {
+                    if (currentSession() === active && detailedReport === report) status.textContent = messageFor(error)
+                  }).finally(() => {
+                    if (currentSession() !== active) return
+                    timeActionPending = false
+                    controls.forEach((control, index) => { control.disabled = disabled[index] ?? false })
+                    setRequestBusy(status, pending || exportPending || timeActionPending)
+                  })
                 },
               }
             : {}),
@@ -4390,7 +4522,13 @@ export const createReportsController = (
   shareClose.addEventListener('click', () => shareDialog.close())
   // Sharing changes are saved as they are made, so the library only needs to
   // read them back once the dialog is done.
-  shareDialog.addEventListener('close', () => { void loadSavedReports() })
+  shareDialog.addEventListener('close', () => {
+    shareGeneration++
+    sharePending = false
+    restoreShareControls()
+    setRequestBusy(shareResult, false)
+    void loadSavedReports()
+  })
   for (const cancel of deleteDialog.querySelectorAll<HTMLButtonElement>('[data-saved-delete-cancel]')) {
     cancel.addEventListener('click', () => { deleting = null; deleteDialog.close() })
   }
@@ -4401,13 +4539,13 @@ export const createReportsController = (
     deleting = null
     deleteDialog.close()
     announceSaved(`Deleting ${target.name}…`)
-    void api.deleteSavedReport(target.id, active.signal)
-      .then(() => {
+    void savedAction(target.id, `Deleting ${target.name}…`, async (_active, current) => {
+      await api.deleteSavedReport!(target.id, active.signal)
+      if (current()) {
         if (openSaved?.id === target.id) { openSaved = null; showOpenSaved() }
-        void loadQuickLinks()
-        return loadSavedReports().then(() => { announceSaved(`${target.name} deleted.`) })
-      })
-      .catch((error: unknown) => { announceSaved(messageFor(error)) })
+      }
+      return `${target.name} deleted.`
+    }, true)
   })
   for (const choice of document.querySelectorAll<HTMLButtonElement>('[data-saved-view]')) {
     choice.addEventListener('click', () => {
@@ -4438,12 +4576,13 @@ export const createReportsController = (
   for (const cancel of nameDialog.querySelectorAll<HTMLButtonElement>('[data-saved-name-cancel]')) {
     cancel.addEventListener('click', () => { naming = null; nameDialog.close() })
   }
+  nameDialog.addEventListener('close', () => { nameSubmit.disabled = false; setRequestBusy(nameResult, false) })
   nameForm.addEventListener('submit', (event) => {
     event.preventDefault()
     const active = currentSession()
     const target = naming
     const name = nameInput.value.trim()
-    if (active === null || target === null) return
+    if (active === null || target === null || nameSubmit.disabled) return
     if (name === '') { nameResult.textContent = 'Give the report a name.'; return }
     const request = target.rename === null
       ? api.createReportView?.({ name, view: currentReportAddress() }, active.signal)
@@ -4451,7 +4590,9 @@ export const createReportsController = (
     if (request === undefined) return
     nameSubmit.disabled = true
     nameResult.textContent = 'Saving…'
+    setRequestBusy(nameResult, true)
     void request.then((report) => {
+      if (currentSession() !== active || naming !== target) return
       if (target.rename === null) {
         // The page is now that saved report, and a reload keeps it so.
         openSaved = report
@@ -4469,32 +4610,52 @@ export const createReportsController = (
       void loadQuickLinks()
       if (savedScreenActive) void loadSavedScreen()
     }).catch((error: unknown) => {
+      if (currentSession() !== active || naming !== target) return
       nameResult.textContent = messageFor(error)
       nameSubmit.disabled = false
+    }).finally(() => {
+      if (currentSession() === active && naming === target) setRequestBusy(nameResult, false)
     })
   })
   openBannerSave.addEventListener('click', () => {
     const active = currentSession()
     const target = openSaved
-    if (active === null || target === null || api.updateSavedReport === undefined) return
+    if (active === null || target === null || api.updateSavedReport === undefined || openBannerSave.disabled) return
+    const own = ++bannerGeneration
     openBannerSave.disabled = true
     openBannerResult.textContent = 'Saving…'
+    setRequestBusy(openBannerResult, true)
     void api.updateSavedReport(target.id, { version: target.version, view: currentReportAddress() }, active.signal)
       .then((report) => {
+        if (currentSession() !== active || own !== bannerGeneration || openSaved?.id !== target.id) return
         openSaved = report
         showOpenSaved()
         openBannerResult.textContent = 'Changes saved.'
         void loadQuickLinks()
       })
-      .catch((error: unknown) => { openBannerResult.textContent = messageFor(error) })
-      .finally(() => { openBannerSave.disabled = false })
+      .catch((error: unknown) => {
+        if (currentSession() === active && own === bannerGeneration && openSaved?.id === target.id) openBannerResult.textContent = messageFor(error)
+      })
+      .finally(() => {
+        if (currentSession() === active && own === bannerGeneration) { openBannerSave.disabled = false; setRequestBusy(openBannerResult, false) }
+      })
   })
 
   const openBuilder = async (source?: Readonly<SavedReport>): Promise<void> => {
     const active = currentSession()
     if (active === null || api.getReportDefinitionRegistry === undefined) return
+    restoreBuilderControls()
+    builderPending = false
+    const own = ++builderGeneration
+    const current = () => currentSession() === active && own === builderGeneration && builder.open
     builderStatus.textContent = 'Loading fields and metrics…'
+    setRequestBusy(builderStatus, true)
     builder.showModal()
+    builderPending = true
+    const controls = [...builder.querySelectorAll<HTMLInputElement>('input,select,textarea,button')].filter(control => control !== builderClose)
+    const disabled = controls.map(control => control.disabled)
+    restoreBuilderControls = () => { controls.forEach((control, index) => { control.disabled = disabled[index] ?? false }); restoreBuilderControls = () => {} }
+    controls.forEach(control => { control.disabled = true })
     builderFrom.value = period.range().from
     builderTo.value = period.range().to
     if (source === undefined) {
@@ -4502,7 +4663,9 @@ export const createReportsController = (
       builderProjects.value = ''
     }
     try {
-      builderRegistry ??= await api.getReportDefinitionRegistry(active.signal)
+      const registry = builderRegistry ?? await api.getReportDefinitionRegistry(active.signal)
+      if (!current()) return
+      builderRegistry = registry
       const fields = builderRegistry.fields.flatMap((raw) => {
         const field = raw as { id?: unknown; label?: unknown; groupable?: unknown }
         return typeof field.id === 'string' && typeof field.label === 'string' && field.groupable === true
@@ -4527,7 +4690,13 @@ export const createReportsController = (
       for (const option of builderMetrics.options) option.selected = source === undefined ? option.index === 0 : selectedMetrics.has(option.value)
       builderStatus.textContent = ''
     } catch (error) {
-      builderStatus.textContent = messageFor(error)
+      if (current()) builderStatus.textContent = messageFor(error)
+    } finally {
+      if (current()) {
+        builderPending = false
+        restoreBuilderControls()
+        setRequestBusy(builderStatus, false)
+      }
     }
   }
   builderOpen.addEventListener('click', () => { editingSaved = null; void openBuilder() })
@@ -4545,6 +4714,33 @@ export const createReportsController = (
   builderMetricsUp.addEventListener('click', () => moveSelected(builderMetrics, -1))
   builderMetricsDown.addEventListener('click', () => moveSelected(builderMetrics, 1))
   builderClose.addEventListener('click', () => builder.close())
+  builder.addEventListener('close', () => {
+    builderGeneration++
+    builderPending = false
+    restoreBuilderControls()
+    setRequestBusy(builderStatus, false)
+  })
+  const builderAction = async (phase: string, work: (active: ActiveSession, current: () => boolean) => Promise<void>) => {
+    const active = currentSession(), own = builderGeneration
+    if (active === null || builderPending || !builder.open) return
+    const current = () => currentSession() === active && own === builderGeneration && builder.open
+    builderPending = true
+    const controls = [...builder.querySelectorAll<HTMLInputElement>('input,select,textarea,button')].filter(control => control !== builderClose)
+    const disabled = controls.map(control => control.disabled)
+    restoreBuilderControls = () => { controls.forEach((control, index) => { control.disabled = disabled[index] ?? false }); restoreBuilderControls = () => {} }
+    controls.forEach(control => { control.disabled = true })
+    builderStatus.textContent = phase
+    setRequestBusy(builderStatus, true)
+    try { await work(active, current) }
+    catch (error) { if (current()) builderStatus.textContent = messageFor(error) }
+    finally {
+      if (current()) {
+        builderPending = false
+        restoreBuilderControls()
+        setRequestBusy(builderStatus, false)
+      }
+    }
+  }
   builderTemplate.addEventListener('change', () => {
     const template = builderTemplate.value
     if (template === 'detailed-time') {
@@ -4558,32 +4754,36 @@ export const createReportsController = (
     }
   })
   builderPreview.addEventListener('click', () => {
-    const active = currentSession()
-    if (active === null || api.previewReportDefinition === undefined) return
+    if (api.previewReportDefinition === undefined) return
     const input = savedReportInput()
-    builderStatus.textContent = 'Running preview…'
-    void api.previewReportDefinition(input, active.signal).then((report) => {
+    void builderAction('Running preview…', async (active, current) => {
+      const report = await api.previewReportDefinition!(input, active.signal)
+      if (!current()) return
       renderRunnerResult(report, input.name)
       builderStatus.textContent = report.state === 'ready' ? 'Preview is ready.' : report.state === 'empty' ? 'No rows match.' : 'Narrow the report filters.'
-    }).catch((error: unknown) => { builderStatus.textContent = messageFor(error) })
+    })
   })
   builderForm.addEventListener('submit', (event) => {
     event.preventDefault()
-    const active = currentSession()
-    if (active === null || api.createSavedReport === undefined) return
+    if (api.createSavedReport === undefined) return
     const input = savedReportInput()
-    builderStatus.textContent = editingSaved === null ? 'Saving report…' : 'Updating report…'
-    const save = editingSaved === null
-      ? api.createSavedReport(input, active.signal)
-      : api.updateSavedReport?.(editingSaved.id, { version: editingSaved.version, ...input }, active.signal)
-    if (save === undefined) return
-    void save.then((report) => {
+    const editing = editingSaved
+    void builderAction(editing === null ? 'Saving report…' : 'Updating report…', async (active, current) => {
+      const save = editing === null
+        ? api.createSavedReport!(input, active.signal)
+        : api.updateSavedReport?.(editing.id, { version: editing.version, ...input }, active.signal)
+      if (save === undefined) return
+      const report = await save
+      if (!current()) return
       editingSaved = null
+      builderPending = false
+      restoreBuilderControls()
+      setRequestBusy(builderStatus, false)
       builder.close()
       savedLibrary.hidden = false
       savedStatus.textContent = `${report.name} saved.`
       void loadSavedReports()
-    }).catch((error: unknown) => { builderStatus.textContent = messageFor(error) })
+    })
   })
   retry.addEventListener('click', () => {
     retryAction?.()
@@ -4596,15 +4796,51 @@ export const createReportsController = (
     address.searchParams.set('sort', sortToken(sort))
     globalThis.history.replaceState(null, '', `${address.pathname}${address.search}`)
   }
+  const resetAuxiliaryFeedback = (): void => {
+    shareGeneration++
+    builderGeneration++
+    bannerGeneration++
+    sharePending = false
+    builderPending = false
+    exportPending = false
+    timeActionPending = false
+    restoreShareControls()
+    restoreBuilderControls()
+    savedMutations.clear()
+    setRequestBusy(status, false)
+    directoryPeople = null
+    for (const region of [shareResult, builderStatus, nameResult, openBannerResult, savedStatus, savedScreenStatus, entryDeleteResult]) {
+      setRequestBusy(region, false)
+      region.textContent = ''
+    }
+    for (const dialog of [shareDialog, builder, nameDialog, deleteDialog, entryDeleteDialog]) {
+      if (dialog.open) dialog.close()
+    }
+    sharePeople.replaceChildren()
+    sharePerson.replaceChildren()
+    shareRoles.replaceChildren()
+    savedList.replaceChildren()
+    savedLibrary.hidden = true
+    naming = null
+    deleting = null
+    entryDeletion = null
+  }
   return {
     async activate(identity, signal, onSessionFailure) {
       if (!reportsPage) return
+      resetAuxiliaryFeedback()
       if (expenseDiscoverySignal !== signal) {
         expenseDiscoverySignal = signal
         expensesOff = false
         if (expenseTemplateOption !== null) builderTemplate.append(expenseTemplateOption)
       }
       session = { identity, signal, onSessionFailure }
+      libraryRequest++
+      savedScreenRequest++
+      savedRunRequest++
+      savedMutations.clear()
+      exportPending = false
+      timeActionPending = false
       clients = []
       projects = []
       detailedReport = null
@@ -4669,6 +4905,7 @@ export const createReportsController = (
         () => {
           if (session?.signal !== signal) return
           session = null
+          resetAuxiliaryFeedback()
           clients = []
           projects = []
           detailedReport = null

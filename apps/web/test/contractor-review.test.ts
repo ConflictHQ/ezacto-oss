@@ -167,7 +167,9 @@ it('discards delayed responses after month changes and clears private data on ab
     ),
   )
   load()
+  expect(document.querySelector('[data-contractor-review-status]')?.getAttribute('aria-busy')).toBe('true')
   controller.ledger(ledger('2026-08'), active.signal)
+  expect(document.querySelector('[data-contractor-review-status]')?.getAttribute('aria-busy')).toBe('false')
   resolve(review())
   await Promise.resolve()
   await Promise.resolve()
