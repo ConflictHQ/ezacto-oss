@@ -20,5 +20,5 @@ export default defineConfig({
   testDir: './e2e', testMatch: '**/stripe-alerts.container.ts', workers: 1, fullyParallel: false, retries: 0,
   outputDir: './test-results/stripe-alerts', timeout: 60_000, expect: { timeout: 15_000 }, reporter: 'line',
   use: { baseURL: `http://localhost:${process.env['EZACTO_STRIPE_FIXTURE_PORT']}`, browserName: 'chromium', headless: true, viewport: { width: 390, height: 844 }, trace: 'off' },
-  webServer: { command: 'node apps/web/scripts/browser-stripe-container-harness.mjs', cwd: repository, url: `http://localhost:${process.env['EZACTO_STRIPE_FIXTURE_PORT']}/healthz`, reuseExistingServer: false, timeout: 120_000, stdout: 'pipe', stderr: 'pipe' },
+  webServer: { command: 'node apps/web/scripts/browser-stripe-container-harness.mjs', cwd: repository, url: `http://localhost:${process.env['EZACTO_STRIPE_FIXTURE_PORT']}/healthz`, reuseExistingServer: false, timeout: 120_000, stdout: 'pipe', stderr: 'pipe', gracefulShutdown: { signal: 'SIGTERM', timeout: 15_000 } },
 })
