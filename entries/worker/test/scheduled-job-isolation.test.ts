@@ -3,7 +3,7 @@ import { beforeEach, expect, it, vi } from "vitest";
 import { worker } from "../src/index.js";
 import { createRuntimeServices } from "../src/runtime.js";
 import { runDemoMaintenance, seedDemoSender } from "../src/demo.js";
-import { runNightlyExport } from "../src/nightly-export.js";
+import { cleanupAbandonedWorkerBackups, runNightlyExport } from "../src/nightly-export.js";
 import * as Sentry from "@sentry/cloudflare";
 
 vi.mock("../src/runtime.js", async (original) => ({
@@ -15,7 +15,7 @@ vi.mock("../src/demo.js", async (original) => ({
   runDemoMaintenance: vi.fn(),
   seedDemoSender: vi.fn(),
 }));
-vi.mock("../src/nightly-export.js", () => ({ runNightlyExport: vi.fn() }));
+vi.mock("../src/nightly-export.js", () => ({ runNightlyExport: vi.fn(), cleanupAbandonedWorkerBackups: vi.fn() }));
 vi.mock("@sentry/cloudflare", async (original) => ({
   ...(await original<object>()),
   captureException: vi.fn(),
@@ -37,6 +37,7 @@ const minute = [
   "notice",
   "dispatch",
   "expiry",
+  "backupCleanup",
   "deelPayment",
   "maintenance",
   "outbox",
@@ -51,6 +52,7 @@ const expectedOperation: Record<string, string> = {
   recurring: 'recurring invoice generation', reminder: 'payment reminders', bill: 'BILL reconciliation',
   quickbooks: 'QuickBooks catch-up', deelStatus: 'Deel time sync', deel: 'Deel time sync',
   deelPayment: 'Deel payment status',
+  backupCleanup: 'temporary backup cleanup',
 };
 const hourly = [
   "bill",
@@ -80,6 +82,7 @@ it.each([
     vi.mocked(runDemoMaintenance).mockImplementation(
       job("maintenance", { ran: "nothing" }) as never,
     );
+    vi.mocked(cleanupAbandonedWorkerBackups).mockImplementation(job("backupCleanup",undefined) as never);
     vi.mocked(runNightlyExport).mockImplementation(
       job("export", undefined) as never,
     );
