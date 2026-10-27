@@ -12,7 +12,7 @@ itself grant or deny access to rates, costs, invoices or financial reports. The
 shared rules live in
 [`money-permissions.ts`](../packages/core/src/money-permissions.ts).
 
-For the CONFLICT production instance at `app.example.com`, **`own_money`
+For the CONFLICT production instance, **`own_money`
 stays disabled permanently**, per owner decision D44 recorded on
 [issue #549, 2026-10-24](https://github.com/ConflictHQ/ezacto-pvt/issues/549#issuecomment-6390787615).
 Do not enable it during deployment, onboarding or an access-verification run.
