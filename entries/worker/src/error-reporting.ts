@@ -8,7 +8,7 @@ export const workerScheduledOperations = [
   'budget alert evaluation', 'time reminders', 'automatic approval sweep',
   'off-site backup checkpoint', 'scheduled job proposal sweep',
   'Stripe alert notice', 'scheduled manifest notice', 'scheduled run dispatch', 'scheduled run expiry',
-  'nightly export', 'recurring invoice generation', 'payment reminders',
+  'nightly export', 'temporary backup cleanup', 'recurring invoice generation', 'payment reminders',
   'BILL reconciliation', 'QuickBooks catch-up', 'Deel time sync', 'Deel payment status',
   'demo maintenance', 'demo sender seed', 'outbox drain',
 ] as const

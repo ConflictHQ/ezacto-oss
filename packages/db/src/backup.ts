@@ -191,7 +191,7 @@ export const exportBundle = async (
     await store.put(`${prefix}manifest.json`, JSON.stringify(manifest, null, 2))
     return manifest
   } catch (error) {
-    await discardWorkerSnapshot(database,snapshot.captureId)
+    await discardWorkerSnapshot(database,snapshot.captureId,prefix)
     throw error
   }
 }

@@ -12,13 +12,13 @@ export const workerBackupCaptureMigration = [
   ) STRICT`,
   `CREATE TABLE worker_backup_cleanup (
     prefix TEXT PRIMARY KEY, available_at TEXT NOT NULL,
-    attempts INTEGER NOT NULL DEFAULT 0, last_error TEXT
+    attempts INTEGER NOT NULL DEFAULT 0, last_error TEXT, generation INTEGER NOT NULL DEFAULT 0
   ) STRICT`,
   `CREATE TRIGGER worker_backup_capture_cleanup AFTER DELETE ON worker_backup_snapshots
     WHEN OLD.state<>'completed' BEGIN
     INSERT INTO worker_backup_cleanup(prefix,available_at)
       VALUES(OLD.prefix,strftime('%Y-%m-%dT%H:%M:%fZ','now','+1 hour'))
-      ON CONFLICT(prefix) DO UPDATE SET available_at=max(available_at,excluded.available_at);
+      ON CONFLICT(prefix) DO UPDATE SET available_at=max(available_at,excluded.available_at),generation=generation+1;
   END`,
   `CREATE TRIGGER worker_backup_privacy_closure BEFORE INSERT ON account_closures BEGIN
     DELETE FROM worker_backup_snapshots;
