@@ -65,6 +65,33 @@ describe('read-only calendar provider transports', () => {
     expect(planCalendarSync([cancelled], new Map([[calendarEventKey(original), { status: 'proposed', version: original.version }]]))).toEqual([{ kind: 'cancel', event: cancelled }])
   })
 
+  it('resolves explicit IANA wall clocks across DST without inventing elapsed time', async () => {
+    const fetch = transport(googleBody([{ ...google,
+      start: { dateTime: '2026-03-29T01:30:00', timeZone: 'Europe/Berlin' },
+      end: { dateTime: '2026-03-29T03:30:00', timeZone: 'Europe/Berlin' },
+    }]))
+    const [event] = (await createGoogleCalendarSource(options(fetch)).listEvents(request)).events
+    expect(event).toMatchObject({ startsAt: '2026-03-29T00:30:00.000Z', endsAt: '2026-03-29T01:30:00.000Z' })
+  })
+
+  it.each([
+    ['2026-10-10T09:00:00', 'America/Costa_Rica', '2026-10-10T15:00:00.000Z'],
+    ['2026-10-10T00:00:00', 'Pacific/Kiritimati', '2026-10-09T10:00:00.000Z'],
+  ])('resolves offsetless %s in %s', async (dateTime, timeZone, expected) => {
+    const fetch = transport(googleBody([{ ...google, start: { dateTime, timeZone } }]))
+    expect((await createGoogleCalendarSource(options(fetch)).listEvents(request)).events[0]!.startsAt).toBe(expected)
+  })
+
+  it.each([
+    ['2026-03-29T02:30:00', 'Europe/Berlin'],
+    ['2026-10-25T02:30:00', 'Europe/Berlin'],
+    ['2026-10-10T09:00:00', 'invalid/zone'],
+    ['2026-10-10T09:00:00', undefined],
+  ])('refuses nonexistent, ambiguous or unspecified wall clock %s (%s)', async (dateTime, timeZone) => {
+    const fetch = transport(googleBody([{ ...google, start: { dateTime, timeZone } }]))
+    await expect(createGoogleCalendarSource(options(fetch)).listEvents(request)).rejects.toBeInstanceOf(CalendarConnectionError)
+  })
+
   it('maps Google excluded and self-organized events without inventing all-day time', async () => {
     const fetch = transport(googleBody([
       { ...google, id: 'all-day', start: { date: '2026-10-10' }, end: { date: '2026-10-11' } },

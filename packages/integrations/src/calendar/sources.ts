@@ -97,6 +97,34 @@ const deleted = (value: RecordValue): CalendarSourceEvent => ({
   cancelled: true, response: 'none', showAs: 'busy', version: 'deleted',
 })
 
+const googleTime = (value: RecordValue): string => {
+  const dateTime = string(value.dateTime, 64)
+  if (/(?:Z|[+-]\d\d:\d\d)$/u.test(dateTime)) return instant(dateTime)
+  // Google permits a wall-clock value when its IANA timezone is explicit.
+  // Find the unique matching instant; a DST overlap/gap supplies no unambiguous
+  // elapsed time and must not silently gain or lose an hour.
+  const target = instant(dateTime + 'Z'), at = Date.parse(target)
+  const zone = string(value.timeZone, 128)
+  try {
+    const formatter = new Intl.DateTimeFormat('en-CA', {
+      timeZone: zone, hourCycle: 'h23', year: 'numeric', month: '2-digit', day: '2-digit',
+      hour: '2-digit', minute: '2-digit', second: '2-digit', fractionalSecondDigits: 3,
+    })
+    const wall = (stamp: number) => {
+      const parts = formatter.formatToParts(new Date(stamp))
+      const field = (type: Intl.DateTimeFormatPartTypes) => parts.find(part => part.type === type)!.value
+      return `${field('year').padStart(4, '0')}-${field('month')}-${field('day')}T${field('hour')}:${field('minute')}:${field('second')}.${field('fractionalSecond')}`
+    }
+    const offsets = new Set([-48, -24, 0, 24, 48].map(hours => {
+      const stamp = at + hours * 3_600_000
+      return Date.parse(wall(stamp) + 'Z') - stamp
+    }))
+    const matches = [...offsets].map(offset => at - offset).filter(stamp => wall(stamp) + 'Z' === target)
+    if (matches.length !== 1) return invalid()
+    return new Date(matches[0]!).toISOString()
+  } catch { return invalid() }
+}
+
 const googleEvent = (raw: unknown): CalendarSourceEvent => {
   const value = record(raw)
   if (value.status === 'cancelled') return deleted(value)
@@ -116,7 +144,7 @@ const googleEvent = (raw: unknown): CalendarSourceEvent => {
   if (value.transparency !== undefined && !['opaque', 'transparent'].includes(String(value.transparency))) return invalid()
   return {
     ...base(value), summary: summary(value.summary),
-    startsAt: allDay ? '' : instant(start.dateTime), endsAt: allDay ? '' : instant(end.dateTime),
+    startsAt: allDay ? '' : googleTime(start), endsAt: allDay ? '' : googleTime(end),
     allDay, cancelled: false, response,
     showAs: value.eventType === 'outOfOffice' ? 'oof' : value.transparency === 'transparent' ? 'free' : 'busy',
     version: string(value.etag, 256),

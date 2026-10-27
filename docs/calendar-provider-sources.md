@@ -10,6 +10,9 @@ Google uses expanded event instances, deleted-event reporting and UTC on
 `events.list`. The first read sends the chosen window; incremental reads send
 the opaque sync token without the incompatible time bounds. Page tokens are
 encoded as query values. A 410 lets the sync coordinator restart a full read.
+Offsetless event times require an explicit IANA timezone and a unique matching
+instant. Daylight-saving gaps and overlaps are refused rather than silently
+choosing a different duration.
 
 Microsoft uses the primary `calendarView/delta` endpoint. Every request asks for
 immutable event IDs and UTC. Continuations are accepted only for that exact
