@@ -299,6 +299,7 @@ export type AppEnv = Env & {
   GITHUB_APP_PRIVATE_KEY?: string
   GITHUB_APP_WEBHOOK_SECRET?: string
   GITHUB_APP_ENCRYPTION_KEY?: string
+  GITHUB_TIME_PUBLICATION_ENABLED?: string
   /**
    * Publishes sign-in credentials on the front page and lets the nightly cron
    * wipe the database. Both are refused outside a non-production environment

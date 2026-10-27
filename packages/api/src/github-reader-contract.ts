@@ -4,10 +4,10 @@ const integer = { type: 'integer', minimum: 0 } as const
 const bool = { type: 'boolean' } as const
 const nullable = (schema: object) => ({ anyOf: [schema, { type: 'null' }] })
 const array = (items: object) => ({ type: 'array', items })
-const object = (properties: Record<string, unknown>) => ({
+const object = (properties: Record<string, unknown>, optional: readonly string[] = []) => ({
   type: 'object',
   properties,
-  required: Object.keys(properties),
+  required: Object.keys(properties).filter((key) => !optional.includes(key)),
   additionalProperties: false,
 })
 const ref = (name: string) => ({ $ref: `#/components/schemas/${name}` })
@@ -72,14 +72,18 @@ export const githubReaderSchemas = {
     resources: array(ref('GithubReaderResource')),
   }),
   GithubReaderStatusEnvelope: object({
-    data: object({
-      app: nullable(object({ id: text, slug: text, installation_url: text })),
-      configured: bool,
-      setup_supported: bool,
-      available: bool,
-      owned_acceptance_required: bool,
-      connections: array(ref('GithubReaderConnection')),
-    }),
+    data: object(
+      {
+        app: nullable(object({ id: text, slug: text, installation_url: text })),
+        configured: bool,
+        publication_enabled: bool,
+        setup_supported: bool,
+        available: bool,
+        owned_acceptance_required: bool,
+        connections: array(ref('GithubReaderConnection')),
+      },
+      ['publication_enabled'],
+    ),
   }),
   GithubReaderMapRequest: object({
     ...command,
@@ -115,7 +119,20 @@ export const githubReaderSchemas = {
   }),
 } as const
 export const githubReaderOperations: readonly ApiContractOperation[] = [
-  {method:'get',path:'/api/v1/work-items/github/setup/callback',operationId:'completeGithubAppSetup',summary:'Finish the private GitHub App registration',tag:'work-items',sessionOnly:true,responseStatus:303,generateClient:false,parameters:[{name:'state',location:'query',required:true,schema:text},{name:'code',location:'query',required:true,schema:text}]},
+  {
+    method: 'get',
+    path: '/api/v1/work-items/github/setup/callback',
+    operationId: 'completeGithubAppSetup',
+    summary: 'Finish the private GitHub App registration',
+    tag: 'work-items',
+    sessionOnly: true,
+    responseStatus: 303,
+    generateClient: false,
+    parameters: [
+      { name: 'state', location: 'query', required: true, schema: text },
+      { name: 'code', location: 'query', required: true, schema: text },
+    ],
+  },
 
   {
     method: 'get',

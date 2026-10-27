@@ -198,6 +198,7 @@ it.each(['known', 'unknown', 'snapshot_before_attempt'] as const)(
       const pem = `-----BEGIN PRIVATE KEY-----\n${Buffer.from(await crypto.subtle.exportKey('pkcs8', keys.privateKey)).toString('base64')}\n-----END PRIVATE KEY-----`
       let writes = 0
       const service = createGithubPublicationService(createContainerDatabase(restored), {
+        publicationEnabled: true,
         now: () => new Date(),
         credentials: async () => ({ appId: '11', privateKey: pem, webhookSecret: 'owned' }),
         fetch: async (request) => {

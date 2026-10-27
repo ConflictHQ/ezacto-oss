@@ -1263,6 +1263,7 @@ export const createRuntimeServices = async (
       now: () => new Date().toISOString(),
     })
   const githubReader = createGithubReaderService(drizzle, {
+      publicationEnabled: !demoDeployment(env) && env.GITHUB_TIME_PUBLICATION_ENABLED === 'true',
       ...(!demoDeployment(env) && env.APP_BASE_URL ? {setup:{key:env.GITHUB_APP_ENCRYPTION_KEY,origin:env.APP_BASE_URL}} : {}),
       credentials: async () =>
         !demoDeployment(env) &&

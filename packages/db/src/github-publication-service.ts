@@ -47,6 +47,9 @@ export function createGithubPublicationService(
   options: GithubReaderServiceOptions,
 ) {
   const now = () => options.now().getTime()
+  const requireDeployment = () => {
+    if (options.publicationEnabled !== true) throw new GithubPublicationError('unavailable')
+  }
   async function authorized(authority: GithubPublicationAuthority) {
     await transaction(authority, [])
   }
@@ -156,6 +159,7 @@ export function createGithubPublicationService(
       prior: Record<string, unknown>[]
     }
   > {
+    requireDeployment()
     if (!validId(linkId)) throw new GithubPublicationError('invalid')
     const [rows] = await transaction(authority, [
       sql(
@@ -298,6 +302,7 @@ export function createGithubPublicationService(
   }
   const port: GithubPublicationPort & { tick(): Promise<void> } = {
     async list(authority) {
+      requireDeployment()
       const result = await transaction(authority, [
         sql(
           'SELECT connection_id,CASE WHEN instance_nonce=(SELECT nonce FROM github_publication_instance WHERE singleton=1) THEN enabled ELSE 0 END enabled,generation FROM github_publication_policy ORDER BY connection_id LIMIT 100',
@@ -332,6 +337,7 @@ export function createGithubPublicationService(
       }
     },
     async policy(authority, input) {
+      requireDeployment()
       await authorized(authority)
       if (
         !Number.isSafeInteger(input.expected_generation) ||
@@ -372,6 +378,7 @@ export function createGithubPublicationService(
       ])
     },
     async consent(authority, input) {
+      requireDeployment()
       const checked = await receipt(authority, input.command_id, input)
       if (checked.replay) return
       const proposed = await readPreview(authority, input.link_id)
@@ -429,6 +436,7 @@ export function createGithubPublicationService(
       ])
     },
     async act(authority, input) {
+      requireDeployment()
       if (!validId(input.id) || !validId(input.expected_version) || !input.confirm)
         throw new GithubPublicationError('invalid')
       const checked = await receipt(authority, input.command_id, input)
@@ -517,6 +525,7 @@ export function createGithubPublicationService(
       ])
     },
     async tick() {
+      if (options.publicationEnabled !== true) return
       const dispatch = crypto.randomUUID()
       const [claimed] = await atomicStatements(database, [
         sql(

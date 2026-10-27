@@ -131,6 +131,7 @@ for (const runtime of ['SQLite', 'D1'] as const)
         }
       >()
       const service = createGithubPublicationService(database, {
+        publicationEnabled: true,
         credentials: async () => ({ appId: '11', privateKey: pem, webhookSecret: 'owned' }),
         now: () => new Date(clock),
         fetch: async (request) => {
@@ -290,6 +291,7 @@ for (const runtime of ['SQLite', 'D1'] as const)
         posts = 0,
         clock = Date.parse(now)
       const service = createGithubPublicationService(database, {
+        publicationEnabled: true,
         credentials: async () => ({ appId: '11', privateKey: pem, webhookSecret: 'owned' }),
         now: () => new Date(clock),
         fetch: async (request) => {

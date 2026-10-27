@@ -64,6 +64,7 @@ export type GithubReaderStatusEnvelope = {
   "installation_url": string;
 } | null;
   "configured": boolean;
+  "publication_enabled"?: boolean;
   "setup_supported": boolean;
   "available": boolean;
   "owned_acceptance_required": boolean;

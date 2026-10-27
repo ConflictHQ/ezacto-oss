@@ -27,6 +27,7 @@ export interface ContainerConfig {
   appBaseUrl: string
   webhookEncryptionKey?: string
   githubAppEncryptionKey?: string
+  githubTimePublicationEnabled?: boolean
   githubReader?: { appId: string; privateKey: string; webhookSecret: string }
   cursorSigningKey: Uint8Array
   /**
@@ -223,6 +224,8 @@ export const readContainerConfig = (
   const deelToken = optional(environment, 'DEEL_TOKEN', 4096)
   const deelStart = optional(environment, 'DEEL_SYNC_START_DATE', 10)
   const githubWorkItemsCredential = optional(environment, 'GITHUB_WORK_ITEMS_CREDENTIAL', 4_096)
+  const publicationFlag=environment.GITHUB_TIME_PUBLICATION_ENABLED
+  if(publicationFlag!==undefined && publicationFlag!=='true' && publicationFlag!=='false')throw new TypeError('GITHUB_TIME_PUBLICATION_ENABLED must be true or false')
   const githubAppId = optional(environment, 'GITHUB_APP_ID', 16)
   const githubWebhookSecret = optional(environment, 'GITHUB_APP_WEBHOOK_SECRET', 4096)
   const githubAppEncryptionKey = optional(environment, 'GITHUB_APP_ENCRYPTION_KEY', 43)
@@ -353,6 +356,7 @@ export const readContainerConfig = (
               : { environment: quickBooksEnvironment }),
           },
         }),
+    githubTimePublicationEnabled: publicationFlag === 'true',
     ...(githubAppEncryptionKey === undefined ? {} : { githubAppEncryptionKey }),
     ...(githubAppId === undefined ||
     githubPrivateKey === undefined ||

@@ -38380,6 +38380,9 @@
               "configured": {
                 "type": "boolean"
               },
+              "publication_enabled": {
+                "type": "boolean"
+              },
               "setup_supported": {
                 "type": "boolean"
               },

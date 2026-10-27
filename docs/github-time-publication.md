@@ -7,7 +7,13 @@ setting. A GitHub administrator first reviews and grants Issues write on the
 selected installation; eZacto then verifies that permission with an installation
 token narrowed to exactly one mapped repository.
 
-A native eZacto administrator enables the connection policy, previews a linked
+The operator must first explicitly set `GITHUB_TIME_PUBLICATION_ENABLED=true`
+on the native Worker or Container deployment. It defaults to off; while off,
+publication endpoints are not mounted and publication jobs do not run. The
+metadata reader remains available. No live deployment flag was enabled by this
+implementation. Hosted deployments retain the default-off policy (D15).
+
+A native eZacto administrator then enables the connection policy, previews a linked
 entry's destination, date and duration, then opts that individual link in.
 Unselected links remain unpublished. Publication sends only the date and duration
 plus an opaque connection marker; it never sends notes, rates, invoice or payment

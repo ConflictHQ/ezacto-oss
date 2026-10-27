@@ -5,6 +5,7 @@ import { createContainerDatabase, createD1Database } from '../src/adapters.js'
 import { migrateContainer, migrateD1 } from '../src/migrate.js'
 import { NativeGithubReaderAdmin } from '../src/github-reader-admin.js'
 import { atomicStatements } from '../src/atomic-statements.js'
+import { createGithubReaderService } from '../src/github-reader-service.js'
 import { createGithubPublicationService } from '../src/github-publication-service.js'
 import type { InvoiceStateDatabase } from '../src/invoice-state.js'
 const now = '2026-10-25T12:00:00.000Z'
@@ -104,12 +105,35 @@ for (const runtime of ['SQLite', 'D1'] as const)
     afterAll(async () => close?.())
     const service = () =>
       createGithubPublicationService(database, {
+        publicationEnabled: true,
         credentials: async () => null,
         fetch: async () => {
           throw new Error('No provider expected')
         },
         now: () => new Date(now),
       })
+    it('[native] deployment opt-in defaults off and leaves the metadata reader available', async () => {
+      let fetches = 0
+      const options = {
+        credentials: async () => null,
+        fetch: async () => {
+          fetches++
+          throw new Error('Unexpected provider request')
+        },
+        now: () => new Date(now),
+      }
+      const disabled = createGithubReaderService(database, options)
+      expect(disabled.publication).toBeUndefined()
+      expect((await disabled.status(authority)).publication_enabled).toBe(false)
+      await disabled.publishTimeNotes()
+      expect(fetches).toBe(0)
+      await expect(
+        createGithubPublicationService(database, options).list(authority),
+      ).rejects.toThrow('unavailable')
+      const enabled = createGithubReaderService(database, { ...options, publicationEnabled: true })
+      expect(enabled.publication).toBeDefined()
+      expect((await enabled.status(authority)).publication_enabled).toBe(true)
+    })
     it('[native] defaults each link off, previews only destination/date/duration and rejects members', async () => {
       expect((await service().list(authority)).publications).toHaveLength(0)
       const preview = await service().preview(authority, 1)

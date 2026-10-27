@@ -38,6 +38,7 @@ export interface GithubReaderConnectionStatus {
   failure_codes: readonly string[]
 }
 export interface GithubReaderStatus {
+  publication_enabled?: boolean
   configured: boolean
   setup_supported: boolean
   available: boolean

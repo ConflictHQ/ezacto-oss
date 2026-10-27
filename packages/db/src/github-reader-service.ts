@@ -24,6 +24,7 @@ export interface GithubReaderServiceOptions {
   credentials(): Promise<GithubAppCredentials | null>
   fetch(request: Request): Promise<Response>
   now(): Date
+  publicationEnabled?: boolean
   setup?: { key: string | undefined; origin: string }
 }
 
@@ -52,13 +53,18 @@ export const createGithubReaderService = (
     if (!value) throw new GithubReaderCommandError('unavailable')
     return value
   }
-  const publication = createGithubPublicationService(database, {
-    ...options,
-    credentials: credentialsFor,
-  })
+  const publication =
+    options.publicationEnabled === true
+      ? createGithubPublicationService(database, {
+          ...options,
+          credentials: credentialsFor,
+        })
+      : undefined
   return {
-    publication,
-    publishTimeNotes: () => publication.tick(),
+    ...(publication ? { publication } : {}),
+    publishTimeNotes: async () => {
+      await publication?.tick()
+    },
     async installations(authority: GithubReaderAuthority, page: number) {
       await admin.status(authority, clock())
       try {
@@ -93,6 +99,7 @@ export const createGithubReaderService = (
       const configured = (await credentialsFor()) !== null
       return {
         configured,
+        publication_enabled: options.publicationEnabled === true,
         setup_supported: (await setup?.supported()) ?? false,
         app: (await setup?.info()) ?? null,
         available: configured,

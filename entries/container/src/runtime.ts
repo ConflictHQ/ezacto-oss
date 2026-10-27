@@ -487,6 +487,7 @@ export const createContainerRuntime = async (
     csvSweep.unref()
     const drizzle = createContainerDatabase(database)
     const githubReader = createGithubReaderService(drizzle, {
+      publicationEnabled: !demoDeployment(config.appEnv) && config.githubTimePublicationEnabled === true,
       ...(!demoDeployment(config.appEnv) ? {setup:{key: config.githubAppEncryptionKey,origin:config.appBaseUrl}} : {}),
       credentials: async () =>
         demoDeployment(config.appEnv) ? null : (config.githubReader ?? null), fetch: (request: Request) => fetch(request), now: () => new Date(),
