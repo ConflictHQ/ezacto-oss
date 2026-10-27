@@ -1,8 +1,8 @@
 # Operator calendar cleanup (#1316)
 
 This describes source/builds containing #1316. The command and new client
-methods are not included in the earlier 0.1.4 release; use a matching built
-CLI/client pair or the later published version that includes this change.
+methods are prepared for 0.1.5 and are not included in 0.1.4. Until publication,
+use a matching built CLI/client pair; after publication, use 0.1.5 or later.
 
 An active native administrator session can resolve retained old-instance and
 closed-account calendar grants after the operator has actually removed the
