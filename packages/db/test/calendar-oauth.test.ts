@@ -261,6 +261,52 @@ for (const kind of ['sqlite', 'd1'] as const)
         expect(f.calls.filter((call) => call.url.endsWith('/revoke'))).toHaveLength(rows.length)
       }
     })
+    it('recognizes an initial connection committed before its response was lost', async () => {
+      const f = await fixture(kind),
+        start = await f.start()
+      const connect = f.connections.connect.bind(f.connections)
+      f.connections.connect = async (...args) => {
+        await connect(...args)
+        throw new Error('owned lost response')
+      }
+      await expect(
+        f.service.authorization.complete(f.authority, 'google', {
+          state: start.state,
+          requester: start.requester,
+          code: 'owned',
+          denied: false,
+          requestOrigin: 'https://owned.example',
+        }),
+      ).resolves.toBeUndefined()
+      expect(await f.rows('SELECT * FROM calendar_cleanup_obligations')).toEqual([])
+      expect((await f.connections.read(1, 'google'))?.state).toBe('connected')
+      await f.service.authorization.processDue()
+      expect(f.calls.filter((call) => call.url.endsWith('/revoke'))).toHaveLength(0)
+    })
+    it('does not revoke a rotated grant whose write committed before a lost response', async () => {
+      const f = await fixture(kind),
+        start = await f.start()
+      f.setTokenExpiry(1)
+      await f.service.authorization.complete(f.authority, 'google', {
+        state: start.state,
+        requester: start.requester,
+        code: 'owned',
+        denied: false,
+        requestOrigin: 'https://owned.example',
+      })
+      const rotate = f.connections.rotate.bind(f.connections)
+      f.connections.rotate = async (...args) => {
+        await rotate(...args)
+        throw new Error('owned lost response')
+      }
+      await expect(f.service.sync.refresh(f.authority, 'google')).rejects.toThrow()
+      expect(await f.rows('SELECT * FROM calendar_cleanup_obligations')).toEqual([])
+      const installed = await f.connections.read(1, 'google')
+      expect(installed?.state).toBe('connected')
+      expect(installed?.credentialRevision).toBe(2)
+      await f.service.authorization.processDue()
+      expect(f.calls.filter((call) => call.url.endsWith('/revoke'))).toHaveLength(0)
+    })
     it('retains a rotated grant if disconnect wins its refresh race', async () => {
       const f = await fixture(kind),
         start = await f.start()

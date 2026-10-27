@@ -1,5 +1,6 @@
 /** Ephemeral credentials are evidence in a backup, never usable in its restored copy. */
 export const WORKER_BACKUP_CLEAR_TABLES = [
+  "calendar_oauth_attempts",
   "sessions",
   "contact_sessions",
   "api_tokens",

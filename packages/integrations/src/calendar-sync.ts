@@ -96,6 +96,7 @@ export const createCalendarSyncService = async (options: {
             : {}),
           rotateGrant: async (nextGrant) => {
             const original = lease
+            let attempted: { identity: CalendarCredentialIdentity; sealedGrant: string } | undefined
             try {
               if (!lease || !active || timeout.signal.aborted)
                 throw new CalendarConnectionError('changed')
@@ -105,6 +106,7 @@ export const createCalendarSyncService = async (options: {
                 vault.sealGrant(nextGrant, identity),
                 cursor ? vault.sealCursor(cursor, identity) : Promise.resolve(null),
               ])
+              attempted = { identity, sealedGrant }
               if (!active || timeout.signal.aborted) throw new CalendarConnectionError('changed')
               lease = await store.rotate(
                 prior,
@@ -112,6 +114,27 @@ export const createCalendarSyncService = async (options: {
                 now(),
               )
             } catch (error) {
+              // A write can commit even when its response is lost. Never revoke
+              // the exact envelope that a fresh read proves is now installed.
+              if (attempted) {
+                let accepted = false
+                try {
+                  const held = await store.read(
+                    attempted.identity.userId,
+                    attempted.identity.provider,
+                  )
+                  accepted =
+                    held?.state === 'connected' &&
+                    held.instance === attempted.identity.instance &&
+                    held.generation === attempted.identity.generation &&
+                    held.credentialRevision === attempted.identity.credentialRevision &&
+                    held.keyId === vault.keyId &&
+                    held.sealedGrant === attempted.sealedGrant
+                } catch {
+                  /* Unproven custody remains a cleanup obligation. */
+                }
+                if (accepted) throw error
+              }
               if (original && options.retainRejectedGrant) {
                 const random = crypto.getRandomValues(new Uint32Array(2))
                 await options.retainRejectedGrant(nextGrant, {
@@ -300,13 +323,30 @@ export const createCalendarSyncService = async (options: {
           credentialRevision: 1,
         }
       const sealedGrant = await vault.sealGrant(grant, identity)
-      await store.connect(
-        authority,
-        provider,
-        expectedGeneration,
-        { instance, keyId: vault.keyId, sealedGrant },
-        now(),
-      )
+      try {
+        await store.connect(
+          authority,
+          provider,
+          expectedGeneration,
+          { instance, keyId: vault.keyId, sealedGrant },
+          now(),
+        )
+      } catch (error) {
+        let accepted = false
+        try {
+          const held = await store.read(authority.userId, provider)
+          accepted =
+            held?.state === 'connected' &&
+            held.instance === instance &&
+            held.generation === identity.generation &&
+            held.credentialRevision === 1 &&
+            held.keyId === vault.keyId &&
+            held.sealedGrant === sealedGrant
+        } catch {
+          /* Unproven custody is retained by the authorization caller. */
+        }
+        if (!accepted) throw error
+      }
     },
     async disconnect(
       authority: CalendarConnectionAuthority,
