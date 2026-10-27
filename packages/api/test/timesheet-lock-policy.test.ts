@@ -54,139 +54,153 @@ const createHarness = async (): Promise<Harness> => {
     script: 'export default { fetch() { return new Response("ok") } }',
     d1Databases: ['DB'],
   })
-  const d1 = await miniflare.getD1Database('DB')
-  await migrateD1(d1)
-  const run = async (sql: string, ...params: unknown[]): Promise<void> => {
-    await d1.prepare(sql).bind(...params).run()
-  }
-  await run(
-    `INSERT INTO organizations (name, modules, created_at, updated_at)
-     VALUES ('Lock API org', '{"approval":true}', ?, ?)`,
-    now,
-    now,
-  )
-  await run(
-    `INSERT INTO users
-      (id, first_name, last_name, profile, manager_grants, created_at, updated_at)
-     VALUES
-      (1, 'Ada', 'Admin', 'administrator', '[]', ?, ?),
-      (2, 'Eve', 'Executive', 'executive_manager', '[]', ?, ?),
-      (3, 'Pat', 'Manager', 'project_manager', '[]', ?, ?),
-      (4, 'Maya', 'Member', 'member', '[]', ?, ?)`,
-    now,
-    now,
-    now,
-    now,
-    now,
-    now,
-    now,
-    now,
-  )
-  await run(
-    `INSERT INTO clients (id, name, currency, created_at, updated_at)
-     VALUES (1, 'Lock client', 'USD', ?, ?)`,
-    now,
-    now,
-  )
-  await run(
-    `INSERT INTO projects (id, client_id, name, created_at, updated_at)
-     VALUES (1, 1, 'Lock project', ?, ?)`,
-    now,
-    now,
-  )
-  await run(
-    `INSERT INTO tasks (id, name, created_at, updated_at)
-     VALUES (1, 'Lock task', ?, ?)`,
-    now,
-    now,
-  )
-  await run(
-    `INSERT INTO user_assignments (id, project_id, user_id, created_at, updated_at)
-     VALUES (1, 1, 4, ?, ?)`,
-    now,
-    now,
-  )
-  await run(
-    `INSERT INTO task_assignments
-      (id, project_id, task_id, billable, created_at, updated_at)
-     VALUES (1, 1, 1, 1, ?, ?)`,
-    now,
-    now,
-  )
-  await run(
-    `INSERT INTO time_entries (
-      id, user_id, project_id, task_id, user_assignment_id, task_assignment_id,
-      spent_date, seconds, seconds_without_timer, rounded_seconds, billable,
-      created_at, updated_at
-    ) VALUES (1, 4, 1, 1, 1, 1, '2026-08-25', 3600, 3600, 3600, 1, ?, ?)`,
-    now,
-    now,
-  )
+  try {
+    const d1 = await miniflare.getD1Database('DB')
+    await migrateD1(d1)
+    const run = async (sql: string, ...params: unknown[]): Promise<void> => {
+      await d1.prepare(sql).bind(...params).run()
+    }
+    await run(
+      `INSERT INTO organizations (name, modules, created_at, updated_at)
+       VALUES ('Lock API org', '{"approval":true}', ?, ?)`,
+      now,
+      now,
+    )
+    await run(
+      `INSERT INTO users
+        (id, first_name, last_name, profile, manager_grants, created_at, updated_at)
+       VALUES
+        (1, 'Ada', 'Admin', 'administrator', '[]', ?, ?),
+        (2, 'Eve', 'Executive', 'executive_manager', '[]', ?, ?),
+        (3, 'Pat', 'Manager', 'project_manager', '[]', ?, ?),
+        (4, 'Maya', 'Member', 'member', '[]', ?, ?)`,
+      now,
+      now,
+      now,
+      now,
+      now,
+      now,
+      now,
+      now,
+    )
+    await run(
+      `INSERT INTO clients (id, name, currency, created_at, updated_at)
+       VALUES (1, 'Lock client', 'USD', ?, ?)`,
+      now,
+      now,
+    )
+    await run(
+      `INSERT INTO projects (id, client_id, name, created_at, updated_at)
+       VALUES (1, 1, 'Lock project', ?, ?)`,
+      now,
+      now,
+    )
+    await run(
+      `INSERT INTO tasks (id, name, created_at, updated_at)
+       VALUES (1, 'Lock task', ?, ?)`,
+      now,
+      now,
+    )
+    await run(
+      `INSERT INTO user_assignments (id, project_id, user_id, created_at, updated_at)
+       VALUES (1, 1, 4, ?, ?)`,
+      now,
+      now,
+    )
+    await run(
+      `INSERT INTO task_assignments
+        (id, project_id, task_id, billable, created_at, updated_at)
+       VALUES (1, 1, 1, 1, ?, ?)`,
+      now,
+      now,
+    )
+    await run(
+      `INSERT INTO time_entries (
+        id, user_id, project_id, task_id, user_assignment_id, task_assignment_id,
+        spent_date, seconds, seconds_without_timer, rounded_seconds, billable,
+        created_at, updated_at
+      ) VALUES (1, 4, 1, 1, 1, 1, '2026-08-25', 3600, 3600, 3600, 1, ?, ?)`,
+      now,
+      now,
+    )
 
-  const database = createD1Database(d1)
-  const approvals = createTimesheetApprovalRepository(database)
-  const submitted = await approvals.submit(4, '2026-08-24', '2026-08-30', now)
-  await approvals.approve(
-    { userId: 1, profile: 'administrator' },
-    submitted.id,
-    now,
-  )
-  await run(`UPDATE organizations SET modules = '{"approval":false}' WHERE id = 1`)
-  const service = createTimesheetLockPolicyRepository(database, {
-    clock: () => now,
-  })
-  const app = createApiApp({
-    authentication,
-    installApi: (api) => {
-      installTimesheetApprovalRoutes(api, {
-        service: approvals,
-        cursorSigningKey,
-        clock: () => now,
-      })
-      installTimesheetLockPolicyRoutes(api, {
-        service,
-        cursorSigningKey,
-        clock: () => now,
-      })
-    },
-  })
-  return {
-    submissionId: submitted.id,
-    request: (path, init = {}, principal = { userId: 1, profile: 'administrator' }) => {
-      const headers = new Headers(init.headers)
-      headers.set('origin', 'https://api.test')
-      headers.set('x-test-user', String(principal.userId))
-      headers.set('x-test-profile', principal.profile)
-      return Promise.resolve(
-        app.request(`https://api.test/api/v1${path}`, { ...init, headers }),
-      )
-    },
-    setApprovalEnabled: (enabled) => run(
-      `UPDATE organizations SET modules = json_set(modules, '$.approval', json(?)) WHERE id = 1`,
-      enabled ? 'true' : 'false',
-    ),
-    close: () => miniflare.dispose(),
+    const database = createD1Database(d1)
+    const approvals = createTimesheetApprovalRepository(database)
+    const submitted = await approvals.submit(4, '2026-08-24', '2026-08-30', now)
+    await approvals.approve(
+      { userId: 1, profile: 'administrator' },
+      submitted.id,
+      now,
+    )
+    await run(`UPDATE organizations SET modules = '{"approval":false}' WHERE id = 1`)
+    const service = createTimesheetLockPolicyRepository(database, {
+      clock: () => now,
+    })
+    const app = createApiApp({
+      authentication,
+      installApi: (api) => {
+        installTimesheetApprovalRoutes(api, {
+          service: approvals,
+          cursorSigningKey,
+          clock: () => now,
+        })
+        installTimesheetLockPolicyRoutes(api, {
+          service,
+          cursorSigningKey,
+          clock: () => now,
+        })
+      },
+    })
+    return {
+      submissionId: submitted.id,
+      request: (path, init = {}, principal = { userId: 1, profile: 'administrator' }) => {
+        const headers = new Headers(init.headers)
+        headers.set('origin', 'https://api.test')
+        headers.set('x-test-user', String(principal.userId))
+        headers.set('x-test-profile', principal.profile)
+        return Promise.resolve(
+          app.request(`https://api.test/api/v1${path}`, { ...init, headers }),
+        )
+      },
+      setApprovalEnabled: (enabled) => run(
+        `UPDATE organizations SET modules = json_set(modules, '$.approval', json(?)) WHERE id = 1`,
+        enabled ? 'true' : 'false',
+      ),
+      close: () => miniflare.dispose(),
+    }
+  } catch (error) {
+    try { await miniflare.dispose() }
+    catch (cleanupError) {
+      throw new AggregateError([error, cleanupError], 'Lock policy fixture setup and cleanup failed', { cause: cleanupError })
+    }
+    throw error
   }
 }
 
 describe('timesheet lock policy API', () => {
-  let harness: Harness
+  let harness: Harness | undefined
 
+  // Full native schema construction is infrastructure, separate from the 20s API body.
   beforeEach(async () => {
+    harness = undefined
     harness = await createHarness()
+  }, 60_000)
+
+  afterEach(async () => {
+    const active = harness
+    harness = undefined
+    await active?.close()
   })
 
-  afterEach(async () => harness.close())
-
   it('[api][e2e:lock-policy] manages durable weekly and manual locks over real D1', async () => {
-    const denied = await harness.request(
+    const denied = await harness!.request(
       '/timesheet-lock-policy',
       {},
       { userId: 3, profile: 'project_manager' },
     )
     expect(denied.status).toBe(403)
 
-    const updated = await harness.request('/timesheet-lock-policy', {
+    const updated = await harness!.request('/timesheet-lock-policy', {
       method: 'PATCH',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({
@@ -205,7 +219,7 @@ describe('timesheet lock policy API', () => {
       },
     })
 
-    const automatic = await harness.request('/timesheet-locks?active=true&kind=auto')
+    const automatic = await harness!.request('/timesheet-locks?active=true&kind=auto')
     expect(automatic.status).toBe(200)
     expect(await automatic.json()).toMatchObject({
       data: [
@@ -218,8 +232,8 @@ describe('timesheet lock policy API', () => {
       ],
     })
 
-    const disabledWithdrawal = await harness.request(
-      `/timesheet-submissions/${harness.submissionId}/withdraw`,
+    const disabledWithdrawal = await harness!.request(
+      `/timesheet-submissions/${harness!.submissionId}/withdraw`,
       {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
@@ -228,8 +242,8 @@ describe('timesheet lock policy API', () => {
       { userId: 2, profile: 'executive_manager' },
     )
     expect(disabledWithdrawal.status).toBe(404)
-    const disabledMemberWithdrawal = await harness.request(
-      `/timesheet-submissions/${harness.submissionId}/withdraw`,
+    const disabledMemberWithdrawal = await harness!.request(
+      `/timesheet-submissions/${harness!.submissionId}/withdraw`,
       {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
@@ -238,8 +252,8 @@ describe('timesheet lock policy API', () => {
       { userId: 4, profile: 'member' },
     )
     expect(disabledMemberWithdrawal.status).toBe(404)
-    const disabledTokenWithdrawal = await harness.request(
-      `/timesheet-submissions/${harness.submissionId}/withdraw`,
+    const disabledTokenWithdrawal = await harness!.request(
+      `/timesheet-submissions/${harness!.submissionId}/withdraw`,
       {
         method: 'POST',
         headers: {
@@ -251,9 +265,9 @@ describe('timesheet lock policy API', () => {
     )
     expect(disabledTokenWithdrawal.status).toBe(404)
 
-    await harness.setApprovalEnabled(true)
-    const withdrawn = await harness.request(
-      `/timesheet-submissions/${harness.submissionId}/withdraw`,
+    await harness!.setApprovalEnabled(true)
+    const withdrawn = await harness!.request(
+      `/timesheet-submissions/${harness!.submissionId}/withdraw`,
       {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
@@ -268,22 +282,22 @@ describe('timesheet lock policy API', () => {
     }
     expect(withdrawnBody).toMatchObject({
       data: {
-        id: harness.submissionId,
+        id: harness!.submissionId,
         status: 'unsubmitted',
         rejection_reason: 'Correct an approved expense',
       },
     })
-    const withdrawalSelf = await harness.request(
+    const withdrawalSelf = await harness!.request(
       withdrawnBody.links.self.replace('/api/v1', ''),
       {},
       { userId: 2, profile: 'executive_manager' },
     )
     expect(withdrawalSelf.status).toBe(200)
     expect(await withdrawalSelf.json()).toMatchObject({
-      data: { id: harness.submissionId, status: 'unsubmitted' },
+      data: { id: harness!.submissionId, status: 'unsubmitted' },
     })
 
-    const missingCommand = await harness.request('/timesheet-locks', {
+    const missingCommand = await harness!.request('/timesheet-locks', {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({
@@ -293,7 +307,7 @@ describe('timesheet lock policy API', () => {
     })
     expect(missingCommand.status).toBe(422)
 
-    const created = await harness.request('/timesheet-locks', {
+    const created = await harness!.request('/timesheet-locks', {
       method: 'POST',
       headers: {
         'content-type': 'application/json',
@@ -314,7 +328,7 @@ describe('timesheet lock policy API', () => {
       reason: 'Month-end close',
       active: true,
     })
-    const replay = await harness.request('/timesheet-locks', {
+    const replay = await harness!.request('/timesheet-locks', {
       method: 'POST',
       headers: {
         'content-type': 'application/json',
@@ -327,7 +341,7 @@ describe('timesheet lock policy API', () => {
     })
     expect(replay.status).toBe(201)
     expect(await replay.json()).toEqual(manual)
-    const reused = await harness.request('/timesheet-locks', {
+    const reused = await harness!.request('/timesheet-locks', {
       method: 'POST',
       headers: {
         'content-type': 'application/json',
@@ -344,22 +358,22 @@ describe('timesheet lock policy API', () => {
     })
     expect(manual.links.self).toBe(`/api/v1/timesheet-locks/${manual.data.id}`)
 
-    const fetched = await harness.request(manual.links.self.replace('/api/v1', ''))
+    const fetched = await harness!.request(manual.links.self.replace('/api/v1', ''))
     expect(fetched.status).toBe(200)
     expect(await fetched.json()).toEqual(manual)
 
-    const forbidden = await harness.request(
+    const forbidden = await harness!.request(
       manual.links.self.replace('/api/v1', ''),
       {},
       { userId: 3, profile: 'project_manager' },
     )
     expect(forbidden.status).toBe(403)
 
-    const absent = await harness.request('/timesheet-locks/999999')
+    const absent = await harness!.request('/timesheet-locks/999999')
     expect(absent.status).toBe(404)
     expect(await absent.json()).toMatchObject({ error: { code: 'not_found' } })
 
-    const unlocked = await harness.request(`/timesheet-locks/${manual.data.id}/unlock`, {
+    const unlocked = await harness!.request(`/timesheet-locks/${manual.data.id}/unlock`, {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ reason: 'Correction window' }),
@@ -373,7 +387,7 @@ describe('timesheet lock policy API', () => {
       },
     })
 
-    const fetchedUnlocked = await harness.request(
+    const fetchedUnlocked = await harness!.request(
       manual.links.self.replace('/api/v1', ''),
     )
     expect(fetchedUnlocked.status).toBe(200)
@@ -381,7 +395,7 @@ describe('timesheet lock policy API', () => {
       data: { id: manual.data.id, active: false },
     })
 
-    const invalid = await harness.request('/timesheet-lock-policy', {
+    const invalid = await harness!.request('/timesheet-lock-policy', {
       method: 'PATCH',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ timezone: 'Mars/Olympus' }),
