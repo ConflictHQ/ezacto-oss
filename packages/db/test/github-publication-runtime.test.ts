@@ -5,6 +5,7 @@ import { createContainerDatabase, createD1Database } from '../src/adapters.js'
 import { migrateContainer, migrateD1 } from '../src/migrate.js'
 import { NativeGithubReaderAdmin } from '../src/github-reader-admin.js'
 import { atomicStatements } from '../src/atomic-statements.js'
+import { createAccountClosureRepository } from '../src/account-closure.js'
 import { NativeGithubPublicationJournal } from '../src/github-publication-journal.js'
 import { createGithubPublicationService } from '../src/github-publication-service.js'
 import type { InvoiceStateDatabase } from '../src/invoice-state.js'
@@ -272,7 +273,7 @@ for (const runtime of ['SQLite', 'D1'] as const)
     it('[native] a comment 429 delays every publication until the shared provider deadline', async () => {
       for (const id of [2, 3])
         await run(
-          `INSERT INTO github_publications(id,connection_id,entry_id,repository_id,issue_id,issue_number,destination,desired_date,desired_seconds) VALUES(${id},'11:22:33',1,'77','${900 + id}','5','https://github.com/owned/disposable/issues/5','2026-10-01',10800)`,
+          `INSERT INTO github_publications(id,connection_id,entry_id,subject_user_id,subject_created_at,consent_nonce,marker,repository_id,issue_id,issue_number,destination,desired_date,desired_seconds) VALUES(${id},'11:22:33',1,3,(SELECT created_at FROM users WHERE id=3),(SELECT nonce FROM github_publication_instance WHERE singleton=1),'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa','77','${900 + id}','5','https://github.com/owned/disposable/issues/5','2026-10-01',10800)`,
         )
       const keys = await crypto.subtle.generateKey(
         {
@@ -332,12 +333,36 @@ for (const runtime of ['SQLite', 'D1'] as const)
       expect(Number(rows![0]!.cooldown_until)).toBe(Date.parse(now) + 120000)
     })
     it('[native] retained subject closure fences publication even while the installer stays active', async () => {
+      const retention = {
+        frameworks: [],
+        retained_records: [
+          {
+            category: 'audit_and_security',
+            reason: 'Keep reviewed evidence for disputes.',
+            period: 'One year after closure then review deletion.',
+            review_after_days: 30,
+          },
+        ],
+        response_target_days: 14,
+        operator_contact: 'privacy@example.test',
+        user_notice: 'Operator-reviewed closure.',
+        backup_handling: 'Replay closure evidence before restoring access.',
+        acknowledged: true,
+      }
       await run(
-        `INSERT INTO account_retention_policies(version,policy_json,published_by_user_id,published_at) VALUES(1,'{"acknowledged":true}',2,'${now}')`,
+        `INSERT INTO account_retention_policies(version,policy_json,published_by_user_id,published_at) VALUES(1,'${JSON.stringify(retention)}',2,'${now}')`,
       )
       await run(
         `INSERT INTO account_deletion_requests(id,user_id,requested_at,notification_updated_at,updated_at) VALUES('owned-close',3,'${now}','${now}','${now}')`,
       )
+      await run("UPDATE github_publications SET remote_id='owned-remote' WHERE id=2")
+      await run('UPDATE github_publications SET attempted_at=123456 WHERE id=3')
+      const preview = await createAccountClosureRepository(database).preview(2, 'owned-close')
+      expect(preview.inventory).toContainEqual({
+        location: 'github_publications.external_comments',
+        count: 2,
+        category: 'audit_and_security',
+      })
       await run(
         `INSERT INTO account_closures(request_id,user_id,actor_user_id,closed_at,policy_version,policy_snapshot,inventory_json,replay_keys,retained_identity,apple_cleanup) SELECT 'owned-close',3,2,'${now}',version,policy_json,'{}','[]',1,'not_linked' FROM account_retention_policies ORDER BY version DESC LIMIT 1`,
       )

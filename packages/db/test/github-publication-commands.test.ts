@@ -188,6 +188,22 @@ for (const runtime of ['SQLite', 'D1'] as const)
       await service().act(authority, action)
       expect((await service().list(authority)).publications[0]!.status).toBe('unlinked')
     })
+    it('[native] refuses prior-instance comment adoption when the reused subject identity differs', async () => {
+      await run(
+        `INSERT INTO work_item_links(id,connection_id,time_entry_id,provider_item_id,created_by,created_at,updated_at) SELECT 2,work_item_connection_id,1,'owned/disposable#5',2,'${now}','${now}' FROM github_read_connections WHERE id='11:22:33'`,
+      )
+      await run(
+        `INSERT INTO github_publications(connection_id,entry_id,subject_user_id,subject_created_at,consent_nonce,marker,repository_id,issue_id,issue_number,destination,remote_id,last_body) VALUES('11:22:33',1,3,'2000-01-01T00:00:00.000Z','${'d'.repeat(64)}','${'a'.repeat(64)}','77','900','5','https://github.com/owned/disposable/issues/5','123','Old identity body')`,
+      )
+      const preview = await service().preview(authority, 2)
+      await expect(
+        service().consent(authority, {
+          link_id: 2,
+          source_version: preview.source_version,
+          command_id: crypto.randomUUID(),
+        }),
+      ).rejects.toThrow('conflict')
+    })
     it('[native] rejects an expired session using database time even when a caller clock is old', async () => {
       await run(
         "INSERT INTO sessions(id,user_id,selector,secret_hash,profile_snapshot,manager_grants_snapshot,created_at,last_seen_at,idle_expires_at,absolute_expires_at,updated_at) SELECT 104,user_id,'AAAAAAAAAAAAAAAE',secret_hash,profile_snapshot,manager_grants_snapshot,created_at,last_seen_at,'2026-10-26T00:00:00.000Z','2026-10-26T01:00:00.000Z',updated_at FROM sessions WHERE id=102",

@@ -43,7 +43,7 @@ source version, policy generation, lease and restore incarnation are checked
 immediately before a mutation. A request already accepted by GitHub cannot be
 recalled; its known receipt remains journaled after disconnect. A restored
 instance cannot resume the old policy: restore rotates its publication
-incarnation, retains remote receipts, and requires fresh administrator review.
+incarnation, retains remote receipts, and requires fresh administrator review for the connection and every linked entry. Fresh consent reconciles the previous instance’s verified comment or settled unknown attempt before allowing a new write. Historical receipts remain unchanged; a changed or unproven comment requires explicit operator resolution.
 
 ## Acceptance status
 
@@ -57,3 +57,10 @@ that explicit owned test has passed.
 Official API references: [GitHub issue comments](https://docs.github.com/en/rest/issues/comments)
 and the [GitHub REST schema](https://github.com/github/rest-api-description),
 including the nullable `performed_via_github_app` and comment `issue_url` fields.
+
+Account closure blocks new comments and updates for the closed subject, including
+retained time. Closure inventory lists known remote comments and uncertain
+attempts under audit and security. Closing local access does **not** erase a
+GitHub comment: an administrator must review the journal and remove any retained
+remote copy in GitHub. The inventory is evidence of possible external copies,
+not proof of provider deletion.

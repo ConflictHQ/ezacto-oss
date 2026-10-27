@@ -69,6 +69,7 @@ for (const runtime of ['SQLite', 'D1'] as const)
       const id = ++sequence,
         connection = `11:${id}:33`,
         key = { connectionId: connection, entryId: String(id), itemId: '5' }
+      await query('UPDATE users SET is_active=1 WHERE id=2')
       let clock = 100000
       await query(
         "INSERT INTO time_entries(id,user_id,project_id,task_id,user_assignment_id,task_assignment_id,spent_date,seconds,seconds_without_timer,rounded_seconds,billable,created_at,updated_at) VALUES(?,2,1,1,1,1,'2026-10-01',3600,3600,3600,0,'2026-10-26T00:00:00.000Z','2026-10-26T00:00:00.000Z')",
@@ -81,7 +82,7 @@ for (const runtime of ['SQLite', 'D1'] as const)
         '33',
       )
       await query(
-        "INSERT INTO github_read_resources(connection_id,repository_id,full_name) VALUES(?,'77','owned/disposable')",
+        "INSERT INTO github_read_resources(connection_id,repository_id,full_name,project_id) VALUES(?,'77','owned/disposable',1)",
         connection,
       )
       await query(
@@ -90,7 +91,7 @@ for (const runtime of ['SQLite', 'D1'] as const)
         'a'.repeat(64),
       )
       await query(
-        "INSERT INTO github_publications(id,connection_id,entry_id,repository_id,issue_id,issue_number,destination,desired_date,desired_seconds) VALUES(?,?,?,'77','900','5','https://github.com/owned/disposable/issues/5','2026-10-01',3600)",
+        "INSERT INTO github_publications(id,connection_id,entry_id,subject_user_id,subject_created_at,consent_nonce,marker,repository_id,issue_id,issue_number,destination,desired_date,desired_seconds) VALUES(?,?,?,2,(SELECT created_at FROM users WHERE id=2),(SELECT nonce FROM github_publication_instance WHERE singleton=1),'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa','77','900','5','https://github.com/owned/disposable/issues/5','2026-10-01',3600)",
         id,
         connection,
         id,
@@ -145,6 +146,22 @@ for (const runtime of ['SQLite', 'D1'] as const)
         (await query('SELECT remote_id FROM github_publications WHERE id=?', id))[0]!.remote_id,
       ).toBe('900')
     })
+    it('[native] retains an admitted remote receipt without clearing a later subject closure failure', async () => {
+      const { id, key, journal } = await setup(),
+        held = (await journal.claim(key, 1))!
+      await query('UPDATE users SET is_active=0 WHERE id=2')
+      expect(await journal.save({ ...held, status: 'published', remoteId: '321' })).toBe(true)
+      expect(
+        (
+          await query(
+            'SELECT status,remote_id,failure_code FROM github_publications WHERE id=?',
+            id,
+          )
+        )[0],
+      ).toEqual({ status: 'failed', remote_id: '321', failure_code: 'source_unavailable' })
+      expect(await journal.permit(held.fence, 1, 1, 1)).toBe(false)
+    })
+
     it('[native] fences in-flight completion and fresh claims after restore incarnation rotation', async () => {
       const { id, key, journal } = await setup(),
         held = (await journal.claim(key, 1))!

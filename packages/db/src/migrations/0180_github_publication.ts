@@ -15,9 +15,13 @@ export const githubPublicationMigration = [
     generation INTEGER NOT NULL DEFAULT 1, marker TEXT NOT NULL CHECK(length(marker)=64),
     verified_app_id TEXT NOT NULL, verified_at TEXT NOT NULL, instance_nonce TEXT NOT NULL
   ) STRICT`,
+  `CREATE TRIGGER github_publication_connection_disabled AFTER UPDATE OF state ON github_read_connections
+    WHEN NEW.state<>'active' AND OLD.state='active' BEGIN
+      UPDATE github_publication_policy SET enabled=0,generation=generation+1 WHERE connection_id=NEW.id;
+    END`,
   `CREATE TABLE github_publications (
     id INTEGER PRIMARY KEY, connection_id TEXT NOT NULL REFERENCES github_read_connections(id),
-    entry_id INTEGER NOT NULL, link_id INTEGER, repository_id TEXT NOT NULL, issue_id TEXT NOT NULL,
+    entry_id INTEGER NOT NULL, subject_user_id INTEGER NOT NULL, subject_created_at TEXT NOT NULL, consent_nonce TEXT NOT NULL, marker TEXT NOT NULL CHECK(length(marker)=64), link_id INTEGER, repository_id TEXT NOT NULL, issue_id TEXT NOT NULL,
     issue_number TEXT NOT NULL, destination TEXT NOT NULL,
     desired_date TEXT, desired_seconds INTEGER, source_version INTEGER NOT NULL DEFAULT 1,
     status TEXT NOT NULL DEFAULT 'pending' CHECK(status IN ('pending','attempted','published','ambiguous','conflicted','deferred','retired','failed','adopted','unlinked')),
@@ -26,9 +30,15 @@ export const githubPublicationMigration = [
     create_attempts INTEGER NOT NULL DEFAULT 0 CHECK(create_attempts BETWEEN 0 AND 2),
     retry_at INTEGER, next_due INTEGER NOT NULL DEFAULT 0, failure_code TEXT,
     fence INTEGER NOT NULL DEFAULT 0, lease_until INTEGER,
-    UNIQUE(connection_id,entry_id,issue_id),
+    UNIQUE(connection_id,entry_id,issue_id,consent_nonce,subject_user_id,subject_created_at),
     CHECK((desired_date IS NULL)=(desired_seconds IS NULL))
   ) STRICT`,
+  `CREATE TRIGGER github_publication_identity_immutable BEFORE UPDATE ON github_publications
+    WHEN NEW.connection_id IS NOT OLD.connection_id OR NEW.entry_id IS NOT OLD.entry_id
+      OR NEW.subject_user_id IS NOT OLD.subject_user_id OR NEW.subject_created_at IS NOT OLD.subject_created_at OR NEW.consent_nonce IS NOT OLD.consent_nonce
+      OR NEW.marker IS NOT OLD.marker OR NEW.repository_id IS NOT OLD.repository_id
+      OR NEW.issue_id IS NOT OLD.issue_id OR NEW.issue_number IS NOT OLD.issue_number
+    BEGIN SELECT RAISE(ABORT,'github_publication_identity_immutable'); END`,
   `CREATE INDEX github_publications_due ON github_publications(next_due,lease_until)`,
   `CREATE TABLE github_publication_receipts (
     command_id TEXT PRIMARY KEY, body_hash TEXT NOT NULL, actor_user_id INTEGER NOT NULL,
@@ -52,22 +62,22 @@ export const githubPublicationMigration = [
   `CREATE TRIGGER github_publication_subject_closed AFTER UPDATE OF is_active ON users
     WHEN NEW.is_active=0 AND OLD.is_active<>0 BEGIN
       UPDATE github_publications SET status='failed',failure_code='source_unavailable',source_version=source_version+1
-      WHERE entry_id IN (SELECT id FROM time_entries WHERE user_id=NEW.id) AND desired_date IS NOT NULL AND status<>'unlinked';
+      WHERE subject_user_id=NEW.id AND consent_nonce=(SELECT nonce FROM github_publication_instance WHERE singleton=1) AND desired_date IS NOT NULL AND status<>'unlinked';
     END`,
-  `CREATE TRIGGER github_publication_entry_change AFTER UPDATE OF spent_date,seconds,project_id ON time_entries
-    WHEN NEW.spent_date IS NOT OLD.spent_date OR NEW.seconds IS NOT OLD.seconds OR NEW.project_id IS NOT OLD.project_id BEGIN
-    UPDATE github_publications SET desired_date=CASE WHEN NEW.project_id=OLD.project_id AND NEW.seconds>0 THEN NEW.spent_date END,
-      desired_seconds=CASE WHEN NEW.project_id=OLD.project_id AND NEW.seconds>0 THEN NEW.seconds END,
-      link_id=CASE WHEN NEW.project_id<>OLD.project_id THEN NULL ELSE link_id END,
+  `CREATE TRIGGER github_publication_entry_change AFTER UPDATE OF spent_date,seconds,project_id,user_id ON time_entries
+    WHEN NEW.spent_date IS NOT OLD.spent_date OR NEW.seconds IS NOT OLD.seconds OR NEW.project_id IS NOT OLD.project_id OR NEW.user_id IS NOT OLD.user_id BEGIN
+    UPDATE github_publications SET desired_date=CASE WHEN NEW.project_id=OLD.project_id AND NEW.user_id=OLD.user_id AND NEW.seconds>0 THEN NEW.spent_date END,
+      desired_seconds=CASE WHEN NEW.project_id=OLD.project_id AND NEW.user_id=OLD.user_id AND NEW.seconds>0 THEN NEW.seconds END,
+      link_id=CASE WHEN NEW.project_id<>OLD.project_id OR NEW.user_id<>OLD.user_id THEN NULL ELSE link_id END,
       source_version=source_version+1,next_due=0,status=CASE WHEN status='adopted' THEN 'pending' ELSE status END
-      WHERE entry_id=NEW.id AND link_id IS NOT NULL AND status<>'unlinked';
+      WHERE consent_nonce=(SELECT nonce FROM github_publication_instance WHERE singleton=1) AND entry_id=NEW.id AND link_id IS NOT NULL AND status<>'unlinked';
   END`,
   `CREATE TRIGGER github_publication_entry_delete BEFORE DELETE ON time_entries BEGIN
     UPDATE github_publications SET desired_date=NULL,desired_seconds=NULL,link_id=NULL,source_version=source_version+1,next_due=0
-      WHERE entry_id=OLD.id AND status<>'unlinked';
+      WHERE consent_nonce=(SELECT nonce FROM github_publication_instance WHERE singleton=1) AND entry_id=OLD.id AND status<>'unlinked';
   END`,
   `CREATE TRIGGER github_publication_link_delete BEFORE DELETE ON work_item_links BEGIN
     UPDATE github_publications SET desired_date=NULL,desired_seconds=NULL,link_id=NULL,source_version=source_version+1,next_due=0
-      WHERE link_id=OLD.id AND status<>'unlinked';
+      WHERE consent_nonce=(SELECT nonce FROM github_publication_instance WHERE singleton=1) AND link_id=OLD.id AND status<>'unlinked';
   END`,
 ] as const

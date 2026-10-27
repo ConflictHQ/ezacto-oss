@@ -40,8 +40,8 @@ export class NativeGithubPublicationJournal implements PublicationJournal {
       sql(
         `UPDATE github_publications SET fence=fence+1,lease_until=?
       WHERE id=? AND connection_id=? AND entry_id=? AND issue_number=? AND source_version=?
-        AND status NOT IN ('unlinked','adopted') AND (lease_until IS NULL OR lease_until<=?)
-        AND NOT EXISTS(SELECT 1 FROM github_publications other WHERE other.entry_id=github_publications.entry_id AND other.id<>github_publications.id AND (other.lease_until>? OR (github_publications.desired_date IS NOT NULL AND other.status NOT IN ('retired','unlinked') AND (other.remote_id IS NOT NULL OR other.attempted_at IS NOT NULL))))
+        AND consent_nonce=(SELECT nonce FROM github_publication_instance WHERE singleton=1) AND status NOT IN ('unlinked','adopted') AND (lease_until IS NULL OR lease_until<=?)
+        AND NOT EXISTS(SELECT 1 FROM github_publications other WHERE other.entry_id=github_publications.entry_id AND other.id<>github_publications.id AND other.consent_nonce=github_publications.consent_nonce AND (other.lease_until>? OR (github_publications.desired_date IS NOT NULL AND other.status NOT IN ('retired','unlinked') AND (other.remote_id IS NOT NULL OR other.attempted_at IS NOT NULL))))
         AND EXISTS(SELECT 1 FROM github_publication_policy p JOIN github_read_connections c ON c.id=p.connection_id
           WHERE p.connection_id=github_publications.connection_id AND p.enabled=1 AND p.instance_nonce=(SELECT nonce FROM github_publication_instance WHERE singleton=1) AND c.state='active')
       RETURNING *, (SELECT nonce FROM github_publication_instance WHERE singleton=1) incarnation`,
@@ -61,8 +61,9 @@ export class NativeGithubPublicationJournal implements PublicationJournal {
   async save(record: PublicationRecord): Promise<boolean> {
     const [rows] = await atomicStatements(this.database, [
       sql(
-        `UPDATE github_publications SET status=?,remote_id=?,last_body=?,last_date=?,last_seconds=?,attempted_at=?,pending_write=?,retry_at=?,create_attempts=?
+        `UPDATE github_publications SET status=CASE WHEN source_version<>? AND failure_code='source_unavailable' THEN status ELSE ? END,remote_id=?,last_body=?,last_date=?,last_seconds=?,attempted_at=?,pending_write=?,retry_at=?,create_attempts=?
       WHERE id=? AND fence=? AND lease_until>? AND (SELECT nonce FROM github_publication_instance WHERE singleton=1)=? RETURNING id`,
+        record.sourceVersion,
         record.status,
         record.remoteId,
         record.lastBody,
@@ -103,11 +104,11 @@ export class NativeGithubPublicationJournal implements PublicationJournal {
       JOIN github_publication_policy policy ON policy.connection_id=p.connection_id
       JOIN github_read_connections c ON c.id=p.connection_id
       JOIN github_read_resources r ON r.connection_id=c.id AND r.repository_id=p.repository_id
-      WHERE p.id=? AND p.fence=? AND p.lease_until>? AND p.source_version=? AND p.status NOT IN ('unlinked','adopted')
+      WHERE p.id=? AND p.consent_nonce=(SELECT nonce FROM github_publication_instance WHERE singleton=1) AND p.fence=? AND p.lease_until>? AND p.source_version=? AND p.status NOT IN ('unlinked','adopted')
         AND c.state='active' AND c.generation=? AND policy.enabled=1 AND policy.generation=? AND policy.instance_nonce=(SELECT nonce FROM github_publication_instance WHERE singleton=1) AND r.state IN ('active','renamed')
         AND NOT EXISTS(SELECT 1 FROM migration_loads WHERE status<>'completed' AND (status<>'cancelled' OR started_at IS NOT NULL))
         AND NOT EXISTS(SELECT 1 FROM account_closures WHERE user_id=c.owner_user_id)
-        AND (p.desired_date IS NULL OR EXISTS(SELECT 1 FROM time_entries t JOIN users u ON u.id=t.user_id WHERE t.id=p.entry_id AND u.is_active=1 AND NOT EXISTS(SELECT 1 FROM account_closures a WHERE a.user_id=t.user_id)))
+        AND (p.desired_date IS NULL OR EXISTS(SELECT 1 FROM time_entries t JOIN users u ON u.id=t.user_id WHERE t.id=p.entry_id AND t.user_id=p.subject_user_id AND t.project_id=r.project_id AND u.created_at=p.subject_created_at AND u.is_active=1 AND NOT EXISTS(SELECT 1 FROM account_closures a WHERE a.user_id=t.user_id)))
         AND NOT EXISTS(SELECT 1 FROM account_restore_quarantine WHERE id=1 AND quarantined=1)`,
         this.id,
         fence,
