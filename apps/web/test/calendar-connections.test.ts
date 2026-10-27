@@ -137,6 +137,12 @@ describe('calendar consent controls', () => {
     expect(button('Connect').disabled).toBe(true)
     expect(status().textContent).toContain('Disconnected here')
   })
+  it('explains Microsoft administrator consent without reflecting provider errors', async () => {
+    const { controller, signal } = setup()
+    controller.activate(signal.signal, 'admin_consent_required', 'microsoft')
+    await flush()
+    expect(status().textContent).toBe('Your Microsoft tenant requires administrator approval. Contact your tenant administrator, then try connecting again.')
+  })
   it('does not overwrite load failure with successful callback wording', async () => {
     const { controller, signal } = setup({
       list: async () => {

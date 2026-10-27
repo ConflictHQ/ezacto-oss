@@ -7721,7 +7721,7 @@ export const mountShell = async (
     const showPart = (): void => {
       const callback = new URLSearchParams(globalThis.location.search).get('calendar')
       const wanted = resolveSettingsSection(
-        globalThis.location.hash || (callback === 'connected' || callback === 'failed' ? '#calendars' : ''),
+        globalThis.location.hash || (callback === 'connected' || callback === 'failed' || callback === 'admin_consent_required' ? '#calendars' : ''),
         USER_SETTINGS_SECTIONS,
       )
       for (const pane of panes) pane.hidden = pane.dataset['settingsUserPane'] !== wanted

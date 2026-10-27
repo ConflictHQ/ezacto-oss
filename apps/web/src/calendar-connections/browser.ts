@@ -255,6 +255,8 @@ export const createCalendarConnectionController = (
       const owned = controller
       void run('load').then((loaded) => {
         if (!loaded || controller !== owned || owned.signal.aborted || signal.aborted) return
+        if (callbackResult === 'admin_consent_required')
+          status.textContent = 'Your Microsoft tenant requires administrator approval. Contact your tenant administrator, then try connecting again.'
         if (callbackResult === 'failed')
           status.textContent =
             'Calendar connection was not completed. Refresh the connection status before trying Connect again.'
