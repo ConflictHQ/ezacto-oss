@@ -31,6 +31,11 @@ const submit = (name: string) => el<HTMLFormElement>(name).dispatchEvent(new Eve
 beforeEach(() => { document.body.innerHTML = renderGithubReaderSettings(); window.history.replaceState({}, '', '/settings/company#work-items') })
 
 describe('GitHub reader settings', () => {
+  it('does not enable separately controlled publication actions while loading the reader', async () => {
+    const mock = api()
+    await createGithubReaderController(mock).load(session().active)
+    expect(document.querySelector<HTMLButtonElement>('[data-gh-pub-publish]')!.disabled).toBe(true)
+  })
   it('offers named repositories and only tasks assigned to the chosen project, and sends a durable mapping command', async () => {
     const mock = api(), { active } = session(), controller = createGithubReaderController(mock)
     await controller.load(active)

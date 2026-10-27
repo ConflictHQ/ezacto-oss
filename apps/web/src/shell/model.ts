@@ -1204,6 +1204,14 @@ const clientInvoiceSending = (
 })
 
 export const createShellApi = (client: EzactoClient): ShellApi => ({
+  githubPublication: {
+    getGithubPublications: args => client.getGithubPublications(args),
+    getGithubReaderStatus: args => client.getGithubReaderStatus(args),
+    previewGithubPublication: args => client.previewGithubPublication(args),
+    setGithubPublicationPolicy: args => client.setGithubPublicationPolicy(args),
+    consentGithubPublication: args => client.consentGithubPublication(args),
+    actGithubPublication: args => client.actGithubPublication(args),
+  },
   githubReader: {
     getGithubReaderStatus: (args) => client.getGithubReaderStatus(args),
     beginGithubAppSetup: (args) => client.beginGithubAppSetup(args),

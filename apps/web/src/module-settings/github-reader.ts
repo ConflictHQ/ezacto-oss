@@ -55,7 +55,9 @@ export const createGithubReaderController = (api: GithubReaderUiApi | undefined)
   const current = (owner: Active, generation = revision) => active === owner && !owner.signal.aborted && generation === revision
   const controls = () => {
     setRequestBusy(status, busy)
-    for (const node of root.querySelectorAll<HTMLElement & { disabled: boolean }>('input,button,select')) node.disabled = busy || active === null
+    for (const node of root.querySelectorAll<HTMLElement & { disabled: boolean }>('input,button,select')) {
+      if (!node.closest('[data-github-publications]')) node.disabled = busy || active === null
+    }
     field('repository').disabled = busy || repositories.length === 0
     field('task').disabled = busy || !field('project').value || field('task').options.length < 2
     manifestSubmit.disabled = busy || !reviewed.checked || manifestReview.hidden || active === null

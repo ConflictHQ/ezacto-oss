@@ -1,7 +1,8 @@
+import { renderGithubPublicationSettings } from './github-publication-render.js'
 export const renderGithubReaderSettings = (): string => `
   <section class="settings-section" data-settings-section="work-items" aria-labelledby="settings-work-items-title">
     <header><div class="settings-section-heading"><h2 id="settings-work-items-title">Work items</h2><button type="button" class="settings-refresh" data-github-reader-refresh>Refresh GitHub status</button></div>
-    <p>Read GitHub issues into the projects and tasks you choose. This connection reads issue metadata; it does not write to GitHub.</p></header>
+    <p>Read GitHub issues into the projects and tasks you choose. Reading issue metadata does not publish comments. Time-note publication has separate permission and per-entry review below.</p></header>
     <p class="form-result" data-github-reader-status role="status" aria-live="polite">Loading GitHub connection…</p>
     <p class="hint" data-github-reader-setup-return hidden></p>
     <div data-github-reader-content hidden>
@@ -35,4 +36,5 @@ export const renderGithubReaderSettings = (): string => `
       <h3>Repository connections</h3><div data-github-reader-connections></div>
       <button type="button" data-github-reader-sync hidden>Sync GitHub issues now</button>
     </div>
+    ${renderGithubPublicationSettings()}
   </section>`

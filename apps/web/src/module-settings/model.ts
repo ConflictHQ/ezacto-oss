@@ -1,3 +1,4 @@
+import type { GithubPublicationUiApi } from './github-publication.js'
 import type { PayoutProviderSwitchesApi } from './payout-provider-switches.js'
 import type { ImportApi } from '../csv-import/contract.js'
 import type { GithubReaderUiApi } from './github-reader.js'
@@ -264,6 +265,7 @@ export interface TimeRoundingApi {
 export interface CompanySettingsApi extends PayoutProviderSwitchesApi {
   csvImports?: ImportApi
   githubReader?: GithubReaderUiApi
+  githubPublication?: GithubPublicationUiApi
   webhooks?: WebhookApi
   downloadDetailedTimeReport?: ReportWorkspaceApi['downloadDetailedTimeReport']
   getDetailedExpenseReport?: ReportWorkspaceApi['getDetailedExpenseReport']
