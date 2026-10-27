@@ -64,12 +64,20 @@ export async function createGithubCommentSurface(
     }
     if (
       response.status === 429 ||
-      (response.status === 403 && response.headers.has('retry-after'))
+      (response.status === 403 &&
+        (response.headers.has('retry-after') ||
+          response.headers.get('x-ratelimit-remaining') === '0'))
     ) {
-      const seconds = Number(response.headers.get('retry-after'))
-      throw new CooldownError(
-        Number.isFinite(seconds) && seconds > 0 ? Math.min(seconds * 1000, 86400000) : 60000,
-      )
+      const retry = response.headers.get('retry-after'),
+        seconds = Number(retry)
+      const reset = Number(response.headers.get('x-ratelimit-reset'))
+      const wait =
+        retry !== null && Number.isFinite(seconds) && seconds >= 0
+          ? seconds * 1000
+          : response.headers.get('x-ratelimit-remaining') === '0' && Number.isFinite(reset)
+            ? reset * 1000 - options.now()
+            : 60000
+      throw new CooldownError(Math.min(Math.max(wait, 1000), 86400000))
     }
     if (response.status >= 500 && mutation) throw new AmbiguousWriteError()
     if (response.status === 404 && method === 'GET')

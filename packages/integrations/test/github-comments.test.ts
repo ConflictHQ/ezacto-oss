@@ -100,6 +100,17 @@ describe('GitHub issue comment HTTP boundary', () => {
       ),
     ).toBe(true)
   })
+  it('[unit] honors the primary GitHub reset when the quota is exhausted without Retry-After', async () => {
+    const { options } = fixture(
+      () =>
+        new Response(null, {
+          status: 403,
+          headers: { 'x-ratelimit-remaining': '0', 'x-ratelimit-reset': String(now / 1000 + 3600) },
+        }),
+    )
+    const api = await createGithubCommentSurface(options)
+    await expect(api.listComments('5')).rejects.toMatchObject({ retryAfterMs: 3600000 })
+  })
   it('[security] refuses remote writes after the native permit is revoked', async () => {
     let writes = 0
     const { options } = fixture(() => {
