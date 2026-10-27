@@ -37,7 +37,7 @@ describe('read-only calendar provider transports', () => {
     expect(url.searchParams.get('timeMax')).toBe(window.to)
     expect(url.searchParams.get('showDeleted')).toBe('true')
     expect(url.searchParams.get('singleEvents')).toBe('true')
-    expect(init).toMatchObject({ method: 'GET', redirect: 'error', headers: { authorization: 'Bearer private-access-token' } })
+    expect(init).toMatchObject({ method: 'GET', redirect: 'manual', headers: { authorization: 'Bearer private-access-token' } })
     expect(url.href).not.toContain('private-access-token')
   })
 
@@ -90,7 +90,7 @@ describe('read-only calendar provider transports', () => {
     expect(second.nextCursor).toBe(delta)
     expect(String(fetch.mock.calls[1]![0])).toBe(next)
     for (const [, init] of fetch.mock.calls) {
-      expect(init).toMatchObject({ method: 'GET', redirect: 'error' })
+      expect(init).toMatchObject({ method: 'GET', redirect: 'manual' })
       expect((init?.headers as Record<string, string>).prefer).toContain('IdType="ImmutableId"')
       expect((init?.headers as Record<string, string>).prefer).toContain('outlook.timezone="UTC"')
     }
@@ -120,6 +120,15 @@ describe('read-only calendar provider transports', () => {
     const fetch = transport(Response.json({ value: [], '@odata.deltaLink': 'https://evil.example/' }))
     await expect(createMicrosoftCalendarSource(options(fetch)).listEvents(request)).rejects.toBeInstanceOf(CalendarConnectionError)
     expect(fetch).toHaveBeenCalledTimes(1)
+  })
+
+  it.each([301, 302, 307, 308])('refuses HTTP %i without following or forwarding its token', async status => {
+    for (const create of [createGoogleCalendarSource, createMicrosoftCalendarSource]) {
+      const fetch = transport(new Response(null, { status, headers: { location: 'https://other.example/' } }))
+      await expect(create(options(fetch)).listEvents(request)).rejects.toBeInstanceOf(CalendarConnectionError)
+      expect(fetch).toHaveBeenCalledTimes(1)
+      expect(fetch.mock.calls[0]![1]?.redirect).toBe('manual')
+    }
   })
 
   it.each([401, 403, 410, 429, 503])('classifies HTTP %i without disclosing provider bodies', async status => {

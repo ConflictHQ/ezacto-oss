@@ -47,12 +47,15 @@ const read = async (url: URL, options: CalendarSourceOptions, signal?: AbortSign
     if (!token || token.length > 16384 || /\s/u.test(token)) throw new CalendarAuthorizationError()
     controller.signal.throwIfAborted()
     const response = await (options.fetch ?? globalThis.fetch)(url, {
-      method: 'GET', redirect: 'error', signal: controller.signal,
+      method: 'GET', redirect: 'manual', signal: controller.signal,
       headers: { authorization: `Bearer ${token}`, accept: 'application/json', ...(prefer ? { prefer } : {}) },
     })
     if (response.status === 401 || response.status === 403) throw new CalendarAuthorizationError()
     if (response.status === 410) throw new CalendarCursorExpiredError()
-    if (!response.ok || !response.body) throw new CalendarConnectionError('unavailable')
+    if (!response.ok || !response.body) {
+      await response.body?.cancel().catch(() => undefined)
+      throw new CalendarConnectionError('unavailable')
+    }
     const reader = response.body.getReader()
     let length = 0
     const chunks: Uint8Array[] = []
