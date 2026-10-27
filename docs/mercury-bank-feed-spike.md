@@ -58,6 +58,10 @@ Mercury also offers transaction webhooks, but documents that sandbox webhooks ar
 unavailable. Polling therefore permits the first acceptance run without requiring
 a production webhook. [Webhook availability](https://docs.mercury.com/reference/webhooks).
 
-Next: implement durable staging and explicit confirm/reject, then the scoped
-polling adapter and sandbox acceptance. This spike neither closes #101 nor proves
-the provider-fixture or live acceptance criteria.
+Durable staging, explicit confirm/reject and the scoped polling adapter are now
+implemented. [Native review acceptance](evidence/101-bank-review-native.json)
+proves the application flow with synthetic inputs; it does not establish Mercury
+response provenance. Remaining acceptance requires an operator-owned sandbox
+account and read-only token, independently verified account currency, and
+fixtures captured from that sandbox to validate the adapter and matcher. This
+public-documentation spike does not close #101 or claim that provider acceptance.
