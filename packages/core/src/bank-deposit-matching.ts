@@ -18,8 +18,16 @@ export interface NeutralDeposit {
   counterparty: string | null;
 }
 
+/** Provider observations never grant confirmation by omission. */
+export interface BankDepositObservation {
+  status: 'final' | 'pending' | 'reversed' | 'ineligible' | 'unknown';
+  classification: 'external_credit' | 'internal_transfer' | 'ambiguous_credit';
+  reason?: string;
+}
 export interface BankFeedPage {
   deposits: NeutralDeposit[];
+  /** May include previously seen IDs omitted from deposits to revoke eligibility. */
+  observations?: Record<string, BankDepositObservation>;
   /** Opaque resume point; null when the feed has nothing newer. */
   cursor: string | null;
 }
@@ -57,7 +65,7 @@ const MS_PER_DAY = 86_400_000;
 export const isNeutralDeposit = (d: NeutralDeposit): boolean =>
   d.provider_transaction_id.length > 0 &&
   /^[A-Z]{3}$/.test(d.currency) &&
-  /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d{1,2})?Z$/.test(d.posted_at) &&
+  /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d{1,3})?Z$/.test(d.posted_at) &&
   !Number.isNaN(Date.parse(d.posted_at)) &&
   Number.isSafeInteger(d.amount_cents) &&
   d.amount_cents >= 1 &&

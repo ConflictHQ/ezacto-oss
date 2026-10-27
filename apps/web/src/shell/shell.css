@@ -1825,7 +1825,8 @@ html[data-backups-unavailable] [data-settings-data-backups] {
   font-size: 13px;
 }
 .invoice-payment-heading button,
-.invoice-payment-actions button {
+.invoice-payment-actions button,
+[data-invoice-provider-alerts] button {
   min-height: 44px;
   padding: 0 14px;
   border: 1px solid var(--ez-border);
@@ -10208,3 +10209,50 @@ input::file-selector-button:hover { background: var(--ez-surface-2); }
 [data-calendar-feeds] { margin-top: 24px; }
 [data-calendar-feed-secret] label { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin-block: 8px; }
 @media (prefers-reduced-motion: reduce) { .calendar-feed-status[aria-busy='true']::before { animation: none; } }
+/* Browser CSV review stays within the Company pane at phone and desktop widths. */
+.csv-import {
+  border-top: 1px solid var(--ez-border);
+  margin-top: 24px;
+  padding-top: 24px;
+  min-width: 0;
+}
+.csv-import :where(button, input:not([type='checkbox']), select) {
+  min-height: 44px;
+  max-width: 100%;
+  box-sizing: border-box;
+}
+.csv-import :where(button, .settings-toggle) { min-width: 44px; }
+.csv-import :where(.csv-import-actions, .csv-import-kinds) {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.csv-import-card {
+  border: 1px solid var(--ez-border);
+  border-radius: 8px;
+  padding: 16px;
+  margin-block: 12px;
+  overflow-wrap: anywhere;
+}
+.csv-import :where(dl, dd, p, li, h5) { overflow-wrap: anywhere; }
+.csv-import dd { margin-inline-start: 0; }
+.csv-import dt { font-weight: 600; }
+.csv-import :where(.csv-import-facts, .csv-import-parents) {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 2fr);
+  gap: 8px 16px;
+}
+.csv-import .settings-toggle { min-height: 44px; align-items: center; }
+.csv-import [hidden] { display: none !important; }
+
+.bank-deposit-workspace { display: grid; gap: 1rem; min-width: 0; }
+.bank-deposit-workspace button { min-height: 44px; }
+.bank-deposit-toolbar { display: flex; flex-wrap: wrap; align-items: center; gap: .75rem; }
+.bank-deposit-list { list-style: none; padding: 0; display: grid; gap: .5rem; }
+.bank-deposit-list button { width: 100%; min-height: 44px; text-align: left; white-space: normal; overflow-wrap: anywhere; }
+.bank-deposit-facts { display: grid; grid-template-columns: repeat(auto-fit, minmax(15rem, 1fr)); gap: 1rem; }
+.bank-deposit-facts dd { margin: .25rem 0 0; overflow-wrap: anywhere; }
+.bank-deposit-workspace form { display: grid; gap: .75rem; margin: 1rem 0; padding: 1rem; border: 1px solid var(--ez-border); border-radius: .5rem; }
+.bank-deposit-workspace form label { display: block; }
+.bank-deposit-workspace input:not([type=checkbox]), .bank-deposit-workspace select { max-width: 100%; min-height: 44px; }
+.bank-deposit-workspace [hidden] { display: none !important; }

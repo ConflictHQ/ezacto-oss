@@ -1,0 +1,74 @@
+{
+  "id": 10245,
+  "number": "SMP-10245",
+  "purchase_order": "",
+  "amount": 2,
+  "due_amount": 0,
+  "tax": null,
+  "tax_amount": 0,
+  "tax2": null,
+  "tax2_amount": 0,
+  "discount": null,
+  "discount_amount": 0,
+  "subject": "Sample invoices subject 10245",
+  "notes": "Sample invoices notes 10245",
+  "state": "paid",
+  "period_start": "2024-02-03",
+  "period_end": "2024-02-03",
+  "issue_date": "2024-02-03",
+  "due_date": "2024-02-03",
+  "payment_term": "upon receipt",
+  "sent_at": "2024-02-03T10:20:30Z",
+  "paid_at": "2024-02-03T10:20:30Z",
+  "paid_date": "2024-02-03",
+  "closed_at": null,
+  "recurring_invoice_id": null,
+  "created_at": "2024-02-03T10:20:30Z",
+  "updated_at": "2024-02-03T10:20:30Z",
+  "currency": "USD",
+  "payment_options": [
+    "credit_card"
+  ],
+  "client": {
+    "id": 1007,
+    "name": "Sample clients name 1007"
+  },
+  "estimate": null,
+  "retainer": null,
+  "creator": {
+    "id": 4060,
+    "name": "Sample users first_name 4060 Sample users last_name 4060"
+  },
+  "line_items": [
+    {
+      "id": 12023,
+      "kind": "Sample category 1",
+      "description": "Sample invoices notes 10245",
+      "quantity": 2.2,
+      "unit_price": 2,
+      "amount": 2,
+      "taxed": false,
+      "taxed2": false,
+      "project": {
+        "id": 2025,
+        "name": "Sample projects name 2025",
+        "code": "SMP-2025"
+      }
+    },
+    {
+      "id": 12024,
+      "kind": "Sample category 2",
+      "description": "Sample invoices notes 10245",
+      "quantity": 2.22,
+      "unit_price": 2,
+      "amount": 2,
+      "taxed": false,
+      "taxed2": false,
+      "project": {
+        "id": 2025,
+        "name": "Sample projects name 2025",
+        "code": "SMP-2025"
+      }
+    }
+  ]
+}

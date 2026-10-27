@@ -1,0 +1,44 @@
+{
+  "issue": 101,
+  "scope": "Provider-neutral ingest/review, read-only Mercury/Wise adapters, native runtime polling, explicit human confirmation; no live provider acceptance claimed",
+  "migration": "0174_bank_deposit_review",
+  "base": "a9d29876",
+  "adapter_sources": [
+    "06acd24a",
+    "eef7d7ba"
+  ],
+  "tests": {
+    "core_matcher": 10,
+    "core_invariants": 5,
+    "sqlite_d1_review": 16,
+    "sqlite_d1_polling": 4,
+    "audit_survives_invalidation": 2,
+    "legacy_confirmed_deposit_retry": 2,
+    "api_boundary_and_contract": 10,
+    "container_native_session_confirm": 1,
+    "provider_adapter_cases": 24
+  },
+  "proofs": [
+    "Source metadata is immutable while provider eligibility observations can invalidate pending confirmation",
+    "Rejected/confirmed replays create no duplicate receipts or suggestions",
+    "Explicit one-deposit-one-invoice confirmation records receipt, invoice state, events and audit atomically",
+    "Live session/role/version/currency and permit fences reject stale work",
+    "Abandoned payment IDs cannot block another confirmation; occupied unused reservations can be rebound before any command ledger completion",
+    "Provider observations remain literal; separate operator verification is audited and later invalidation clears eligibility while retaining history",
+    "Exact rolling scan window/cursor persists per cycle; failed reads keep cursor; dedicated credentials and partial configuration isolation",
+    "Native Container HTTP confirmation and native Worker/D1 Chromium phone flow use owned synthetic fixtures only"
+  ],
+  "provider_network_used": false,
+  "production_resources_used": false,
+  "validation": {
+    "touched_lint": "passed",
+    "dependency_builds_and_worker_dry_run": "passed",
+    "final_contract_and_typecheck": "passed (core, db, api, integrations, worker, container, web)",
+    "container_fixture_typecheck": "passed"
+  },
+  "browser_receipt": "docs/evidence/101-bank-review-native.json",
+  "remaining_acceptance": [
+    "Consolidated migration174 sequence check after parent merges171/172/173",
+    "Real operator-approved provider account/currency/scope acceptance remains required; issue101 stays open"
+  ]
+}

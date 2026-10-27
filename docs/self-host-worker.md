@@ -1,7 +1,8 @@
 # Self-host on Cloudflare Workers
 
 This path runs Ezacto on a custom domain with one Cloudflare D1 database, one R2
-attachment bucket, and a delivery Queue plus dead-letter Queue. The repository's
+attachment bucket, delivery and migration Queues with separate dead-letter
+Queues, and a scheduled-run Workflow. The repository's
 GitHub Actions workflows deploy and verify the exact commit that reaches the
 domain. For a deployment with no Cloudflare dependency, use the
 [single-container guide](self-host-container.md).
@@ -39,10 +40,16 @@ Edit `entries/worker/wrangler.jsonc` under `env.dev` before the first deploy:
 - choose a unique Worker `name`;
 - replace the `routes[0].pattern` hostname;
 - set `vars.APP_BASE_URL` to the exact HTTPS origin;
-- choose unique D1 `database_name`, R2 `bucket_name`, delivery Queue name, and
-  dead-letter Queue name.
+- choose unique D1 `database_name`, R2 `bucket_name`, delivery and migration
+  Queue names, and both dead-letter Queue names;
+- update `vars.MIGRATION_QUEUE_NAME` to the migration producer's Queue name;
+- choose a unique `workflows[0].name`, keeping its binding and class unchanged;
+- remove `vars.DEMO_MODE` or set it to `"false"`. The checked-in `dev` environment
+  is the public demo: leaving `"true"` enables demo credentials and nightly data
+  replacement. Replace its demo brand text with your own instance identity.
 
-Keep the binding names `DB`, `ATTACHMENTS`, and `EMAIL_QUEUE`, and keep both the
+Keep the binding names `DB`, `ATTACHMENTS`, `EMAIL_QUEUE`, `MIGRATION_QUEUE`, and
+`SCHEDULED_RUN_WORKFLOW`, and keep both the
 top-level and environment-level `workers_dev` values `false`. Enabling
 `workers.dev` creates another public hostname outside the custom-domain policy.
 
@@ -204,7 +211,14 @@ deployed commit:
 
 ```sh
 curl -fsS https://YOUR_HOST/healthz
+curl -fsS https://YOUR_HOST/readyz
 ```
+
+`healthz` identifies the running release; `readyz` checks database readiness and
+pending migrations. Require both to succeed with the intended release. A newly
+created or reattached custom domain may need time for DNS and its certificate to
+become available. Retry these read-only checks with a bounded wait; do not treat
+a successful upload or a cached DNS failure as the application's final state.
 
 ## Updates and recovery
 
@@ -213,11 +227,20 @@ automatically, while `prod` remains an explicit decision. Database migrations
 run before request handling and deployment does not bypass a failed check.
 
 D1 Time Travel is an in-place database undo, not a complete Ezacto backup. It
-does not copy the R2 attachment bucket. The Worker also writes a nightly CSV
-bundle to R2 (`backups/<date>/`): rows only, no schema, no attachment bytes, and
-no command reads that format back yet. Read [RESTORE.md](../RESTORE.md) before an
+does not copy the R2 attachment bucket. The Worker also writes a nightly bundle to R2 (`backups/<date>/`). Format 0038+
+includes typed rows, exact schema and verified attachments; `ez restore` reconstructs
+a quarantined SQLite copy. Older CSV-only bundles are not losslessly restorable. Read [RESTORE.md](../RESTORE.md) before an
 incident, including how the Worker and container bundles differ and what is not
 yet synced off-platform.
+
+Before using Time Travel, preserve current evidence and disable the instance's
+public routes, scheduled triggers, and Queue consumers as described in
+[restore quarantine](account-retention-follow-through.md#container-restore-quarantine).
+An existing warm Worker is not an offline database. Reconcile current privacy
+history before bringing fresh Worker instances back online, then verify native
+sign-in, known rows, and attachment bytes. The
+[independent Worker walkthrough](evidence/99-worker-guide-walkthrough.md) records
+the exact isolated checks performed and their limits.
 
 ## Operational notes
 
@@ -232,9 +255,11 @@ yet synced off-platform.
   request that opens a session adds one. This is accepted rather than fixed, so
   there is no migration. An operator who wants the table trimmed can delete rows
   whose `absolute_expires_at` is long past.
-- **Magic links are confirmed, not consumed, by a GET.** Opening the emailed
-  link shows a confirm page; the link is spent only when the page is submitted,
-  so a mail scanner or link preview cannot use it up.
+- **Staff magic links require confirmation.** Opening a staff sign-in link
+  shows a confirm page; the link is spent only when the page is submitted,
+  so a mail scanner or link preview cannot use it up. This protection does not
+  apply to the legacy client portal's `/portal/verify` GET, which consumes its
+  token when opened.
 - **Admin email templates are privileged.** Whoever can edit email templates
   controls the text of messages sent from your domain, including sign-in and
   password-reset mail. Grant that to administrators you trust with that power.

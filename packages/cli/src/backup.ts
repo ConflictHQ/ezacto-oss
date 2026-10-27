@@ -1,3 +1,4 @@
+import { restoreWorkerBackup } from './worker-backup.js'
 import { createHash, randomUUID } from 'node:crypto'
 import {
   copyFile,
@@ -389,6 +390,7 @@ const recordRestoreActivity = (
 }
 
 export interface RestoreResult {
+  quarantined?: boolean
   tablesRestored: number
   totalRows: number
   attachmentsRestored: number
@@ -412,11 +414,13 @@ export interface RestoreResult {
 export const restoreBackup = async (
   options: RestoreOptions,
 ): Promise<RestoreResult> => {
+  const restoredAt = options.restoredAt ?? new Date().toISOString()
   // Verify the bundle has a manifest
   const manifestPath = join(options.bundleDirectory, 'manifest.json')
   const manifest = JSON.parse(
     await readFile(manifestPath, 'utf8'),
   ) as BackupManifest
+  if ('bundle_version' in manifest) return restoreWorkerBackup(options, manifest as never, restoreBackup)
   if (manifest.format_version !== BACKUP_FORMAT_VERSION) {
     throw new Error(
       `unsupported backup format version: ${String(manifest.format_version)}`,
@@ -471,6 +475,23 @@ export const restoreBackup = async (
       }
       totalRows += result.count
     }
+    if (database.prepare("SELECT 1 FROM sqlite_schema WHERE type='table' AND name='worker_backup_snapshots'").get()) {
+      database.prepare("UPDATE worker_backup_snapshots SET state='completed'").run()
+      database.prepare('DELETE FROM worker_backup_snapshots').run()
+      database.prepare('DELETE FROM worker_backup_rows').run()
+      database.prepare('DELETE FROM worker_backup_cleanup').run()
+    }
+    // OAuth grants belong to one live instance incarnation. A restored copy
+    // retains accepted time and proposal history, but must obtain fresh consent.
+    if (database.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name='calendar_sync_instance'").get()) {
+      database.transaction(() => {
+        database.prepare(`INSERT OR IGNORE INTO calendar_cleanup_obligations(id,user_id,provider,instance_nonce,generation,credential_revision,key_id,sealed_grant,reason,status,created_at)
+          SELECT lower(hex(randomblob(32))),user_id,provider,instance_nonce,generation,credential_revision,key_id,sealed_grant,'restore','manual_required',? FROM calendar_connections WHERE sealed_grant IS NOT NULL`).run(restoredAt)
+        database.prepare("UPDATE calendar_cleanup_obligations SET status='manual_required' WHERE status='pending'").run()
+        database.prepare('UPDATE calendar_sync_instance SET nonce=lower(hex(randomblob(32))) WHERE singleton=1').run()
+        database.prepare("UPDATE calendar_connections SET generation=generation+1,credential_revision=1,status='needs_reauth',key_id=NULL,sealed_grant=NULL,sealed_cursor=NULL,window_from=NULL,window_to=NULL,lease_generation=lease_generation+1,lease_holder=NULL,lease_expires_at=NULL,last_error='authorization'").run()
+      }).immediate()
+    }
     // Raw CSV objects must not be inherited by reused identities after restore.
     if (database.prepare("SELECT 1 FROM sqlite_schema WHERE type='table' AND name='csv_staging_instance'").get()) {
       database.prepare("UPDATE csv_staging_instance SET nonce=lower(hex(randomblob(32))) WHERE singleton=1").run()
@@ -510,7 +531,7 @@ export const restoreBackup = async (
     tablesRestored: manifest.tables.length,
     totalRows,
     attachmentsRestored,
-    restoredAt: options.restoredAt ?? new Date().toISOString(),
+    restoredAt,
   })
 
   return {

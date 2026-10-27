@@ -1,3 +1,4 @@
+export { installCalendarConnectionRoutes, type CalendarConnectionPort } from './calendar-connections.js'
 export { installCalendarFeedRoutes, installCalendarSubscriptionRoute } from './calendar-feeds.js'
 export { installDeelPaymentStatusRoutes } from './deel-payment-status.js'
 export { createManagedDeelConnectionCommands, type ManagedDeelConnectionOptions } from './managed-deel.js'
@@ -584,3 +585,9 @@ export { installDeelStagingRoutes, type DeelStagingApiRuntime } from './deel-sta
 export * from './csv-import-staging-contract.js'
 export * from './csv-import-staging-port.js'
 export { isCsvStagingPath, csvStagingAuthority, csvStagingSafeFailure } from './csv-import-staging.js'
+
+export * from './csv-import-apply-port.js'
+export { installInvoiceProviderAlertRoutes, type InvoiceProviderAlertService } from './invoice-provider-alerts.js'
+export { installHarvestInvoiceRoutes, serializeHarvestInvoice, parseHarvestInvoiceQuery, type HarvestInvoiceSource, type HarvestInvoiceRecord, type HarvestInvoiceFilters } from './harvest-v2/invoices.js'
+
+export { installBankDepositRoutes, type BankDepositReviewApi } from './bank-deposits.js'

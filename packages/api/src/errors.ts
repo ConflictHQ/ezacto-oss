@@ -1,3 +1,4 @@
+import { isIdempotencyClaimConflict } from '@ezacto/core'
 import type { Context } from 'hono'
 import type { ContentfulStatusCode } from 'hono/utils/http-status'
 import type { ApiContext } from './context.js'
@@ -194,6 +195,16 @@ export const errorResponse = <Bindings extends object>(
   context: Context<ApiContext<Bindings>>,
   report?: (error: Error, requestId: string) => void,
 ): Response => {
+  // The outer idempotency layer reads the winning claim and supplies its
+  // existing replay/in-progress answer. Do not report proven contention as an
+  // unexpected exception while it passes through the inner API boundary.
+  if (isIdempotencyClaimConflict(error)) {
+    return context.json(
+      bodyFor(context, 'idempotent_request_in_progress', 'Another request owns this idempotency claim.', []),
+      503,
+      { 'cache-control': 'no-store', 'retry-after': '1' },
+    )
+  }
   if (error instanceof ApiError && error.status < 500) {
     return context.json(
       bodyFor(context, error.code, error.message, error.fields, error.revisionConflict),

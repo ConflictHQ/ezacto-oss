@@ -27,6 +27,7 @@ const signingKey = new Uint8Array(32).fill(0x72)
 const bearers: Readonly<
   Record<string, { userId: number; profile: UserProfile; scopes: string[] }>
 > = {
+  'admin-write': { userId: 1, profile: 'administrator', scopes: ['expenses:read', 'expenses:write'] },
   admin: {
     userId: 1,
     profile: 'administrator',
@@ -124,6 +125,7 @@ const compose = (
         repository,
         timeEntries: tracked,
         expenses: tracked,
+        mutationClock: { now: () => ({ instant: now, date: '2026-08-28', time: '12:00' }) },
         isExpensesModuleEnabled: async () => expensesModuleEnabled,
         isTeamModuleEnabled: async () => teamModuleEnabled,
         clock: () => now,
@@ -815,6 +817,42 @@ describe.each([
       for (const path of ['/expenses/9999', '/expenses/abc', '/expenses/0'])
         expect((await harness.shim(path)).status, path).toBe(404)
       expect((await harness.shim('/expenses', 'admin', json({ notes: 'Sample' }))).status).toBe(404)
+    })
+
+    it('silently drops locked expense identity fields only in the shim; native still returns422', async () => {
+      await harness.exec(`INSERT INTO invoices (id, client_id, number, currency, issue_date, due_date, state,
+        foregone_billable_cents, created_at, updated_at)
+        VALUES (901, ${ids.clientA}, 'SMP-LOCKED', 'USD', '2026-08-28', '2026-09-28', 'open', 0, '${now}', '${now}');
+        UPDATE expenses SET invoice_id=901 WHERE id=${expenses.owner}`)
+      const patch = (body: unknown): RequestInit => ({ ...json(body), method: 'PATCH' })
+      const response = await harness.shim(`/expenses/${expenses.owner}`, 'admin-write', patch({ project_id: -1, expense_category_id: 'ignored' }))
+      expect(response.status).toBe(200)
+      expect(await response.json()).toMatchObject({ id: expenses.owner, project: { id: ids.projectA }, expense_category: { id: mileage }, is_locked: true, is_billed: null, invoice: null, locked_reason: 'This record is locked.' })
+      const native = await harness.native(`/expenses/${expenses.owner}`, patch({ project_id: ids.projectA }))
+      expect(native.status).toBe(422)
+      const mixed = await harness.shim(`/expenses/${expenses.owner}`, 'admin-write', patch({ project_id: ids.projectB, notes: 'Must not partially change' }))
+      expect(mixed.status).toBe(422)
+      expect(await (await harness.shim(`/expenses/${expenses.owner}`)).json()).toMatchObject({ notes: 'Invented note.', project: { id: ids.projectA } })
+    })
+
+    it('updates unlocked expenses through canonical validation with decimal money', async () => {
+      const category = await created(await harness.native('/expense-categories', json({ name: 'Sample Flat', unit_price_cents: null, unit_name: null })))
+      const patch = (body: unknown): RequestInit => ({ ...json(body), method: 'PATCH' })
+      const response = await harness.shim(`/expenses/${expenses.owner}`, 'admin-write', patch({ expense_category_id: category, total_cost: 12.34, notes: 'Updated safely', billable: false }))
+      expect(response.status).toBe(200)
+      expect(await response.json()).toMatchObject({ total_cost: 12.34, notes: 'Updated safely', billable: false, expense_category: { id: category } })
+      const native = await (await harness.native(`/expenses/${expenses.owner}`)).json()
+      expect(native).toMatchObject({ data: { total_cost_cents: 1234 } })
+      expect((await harness.shim(`/expenses/${expenses.owner}`, 'admin-write', patch({ total_cost: -1 }))).status).toBe(422)
+      expect((await harness.shim(`/expenses/${expenses.owner}`, 'admin-write', patch({ total_cost_cents: 1234 }))).status).toBe(422)
+    })
+
+    it('enforces expense writes scope, ownership and module access even for ignored fields', async () => {
+      const patch = { ...json({ project_id: ids.projectA }), method: 'PATCH' }
+      expect((await harness.shim(`/expenses/${expenses.owner}`, 'admin', patch)).status).toBe(403)
+      expect((await harness.shim(`/expenses/${expenses.ada}`, 'admin-write', patch)).status).toBe(404)
+      harness.setExpensesModuleEnabled(false)
+      expect((await harness.shim(`/expenses/${expenses.owner}`, 'admin-write', patch)).status).toBe(403)
     })
   })
 })

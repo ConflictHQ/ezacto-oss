@@ -1,8 +1,17 @@
+import { createCalendarConnectionStore } from '@ezacto/db'
+import { createCalendarSyncService } from '@ezacto/integrations'
+import { createStripePaymentAlertStore, prepareStripePaymentAlertNotifications } from '@ezacto/db'
+import { createConfiguredBankFeedRuntime } from '@ezacto/integrations'
+import { createBankDepositIngestionService } from '@ezacto/db'
+import { createBankDepositReviewService } from '@ezacto/db'
 import { createCalendarFeedService } from '@ezacto/db'
 import { createDeelPaymentStatusStore } from '@ezacto/db'
 import { createDeelPaymentStatusRuntime } from '@ezacto/integrations'
 import { createDeelStageStore } from '@ezacto/db'
 import { createDeelStagingRuntime } from '@ezacto/integrations'
+import { createCsvImportApply } from './csv-apply-service.js'
+import { createCsvApplyRunStore } from '@ezacto/db'
+import { reportWorkerError, runtimeTraceId, type WorkerErrorReporter } from '../../worker/src/error-reporting.js'
 import { moduleAvailability } from '@ezacto/api'
 import { createOrganizationHolidayRepository } from '@ezacto/db'
 import { demoDeployment } from '../../worker/src/app.js'
@@ -333,6 +342,8 @@ export interface ContainerRuntime {
 }
 
 export interface ContainerRuntimeOptions {
+  reportError?: WorkerErrorReporter
+  calendarSources?: Parameters<typeof createCalendarSyncService>[0]['sources']
   emailProvider?: HttpEmailProvider
   verifyEmailProvider?: () => Promise<void>
 }
@@ -448,17 +459,30 @@ export const createContainerRuntime = async (
   const database = createIdempotentSqlite(handle)
   let csvStaging: Awaited<ReturnType<typeof createCsvImportStaging>> | undefined
   let csvSweep: ReturnType<typeof setInterval> | undefined
+  let csvApply: ReturnType<typeof createCsvImportApply> | undefined
+  let csvApplyTimer: ReturnType<typeof setInterval> | undefined
+  const reportCsvFailure=(_cause:unknown)=>{
+    console.error('ezacto: CSV apply work deferred')
+    reportWorkerError(options.reportError,new Error('Private CSV apply failed; inspect safe run status.'),{phase:'queue',traceId:runtimeTraceId()})
+  }
   let queue: ContainerEmailQueue | undefined
   let outboxScheduler: ContainerOutboxScheduler | undefined
   try {
     prepareContainerDatabase(database)
     await chmod(config.databasePath, 0o600)
 
-    csvStaging = await createCsvImportStaging({database:handle,databasePath:config.databasePath,directory:join(config.dataDirectory,'csv-staging')})
+    const csvRuns=createCsvApplyRunStore(handle)
+    csvStaging = await createCsvImportStaging({database:handle,databasePath:config.databasePath,directory:join(config.dataDirectory,'csv-staging'),verifyApplyBinding:csvRuns.verifyStageBinding})
+    if(!demoDeployment(config.appEnv)){
+      csvApply=createCsvImportApply({database:handle,staging:csvStaging.port,privateStaging:csvStaging.apply,reportError:reportCsvFailure})
+      csvApplyTimer=setInterval(()=>{void csvApply!.tick().catch(reportCsvFailure)},5000)
+      csvApplyTimer.unref()
+    }
     await csvStaging.sweep()
     csvSweep=setInterval(()=>{void csvStaging!.sweep().catch(()=>console.error('ezacto: private CSV expiry cleanup deferred'))},60_000)
     csvSweep.unref()
     const drizzle = createContainerDatabase(database)
+    const bankFeeds=createConfiguredBankFeedRuntime({store:createBankDepositIngestionService(drizzle),environment:demoDeployment(config.appEnv)?{}:config.bankFeeds??{}})
     const deelPaymentStatus = createDeelPaymentStatusRuntime({ token: demoDeployment(config.appEnv) ? undefined : config.deel?.token, store: createDeelPaymentStatusStore(drizzle), fetch: (request: Request) => fetch(request), now: () => new Date() })
     const webhooks = createWebhookService(drizzle, {
       vault: !demoDeployment(config.appEnv) && config.webhookEncryptionKey ? await createWebhookSecretVault(config.webhookEncryptionKey) : null,
@@ -556,6 +580,7 @@ export const createContainerRuntime = async (
       },
       notificationMailer,
     )
+    const stripeAlertNotices = createTimeReminderService({ prepare: (now: string) => prepareStripePaymentAlertNotifications(drizzle, { now, from: notificationMailer.from, appUrl: config.appBaseUrl }) }, notificationMailer)
     const scheduledRunNotices = createTimeReminderService(
       {
         prepare: (now: string) => prepareScheduledRunNotifications(drizzle, { reviewLinkSigningKey: config.cursorSigningKey,
@@ -641,6 +666,7 @@ export const createContainerRuntime = async (
       now: () => new Date(),
     })
 
+    const stripeAlerts = createStripePaymentAlertStore(drizzle)
     const stripeLinks = createStripeLinkStore(drizzle)
     const stripe = createStripeRuntime({
       config: {
@@ -648,6 +674,7 @@ export const createContainerRuntime = async (
         webhookSecret: config.stripe?.webhookSecret,
       },
       source: {
+        recordAlert: (input) => stripeAlerts.record(input, new Date().toISOString()),
         readInvoice: async (invoiceId: number) => {
           const rows = await drizzle.all<{
             id: number
@@ -699,6 +726,7 @@ export const createContainerRuntime = async (
             paidOn: new Date().toISOString().slice(0, 10),
             now: new Date().toISOString(),
           })
+          await stripeAlerts.reconcileForPayment(input.paymentIntentId, new Date().toISOString())
         },
       },
       fetch: (request: Request) => fetch(request),
@@ -875,6 +903,8 @@ export const createContainerRuntime = async (
         console.error('[container] automatic approval sweep failed', error)
       }
       if (!invoicesOn) return
+      try { await stripeAlerts.processDue(now) } catch { console.error('[container] Stripe report reconciliation failed') }
+      try { await bankFeeds.processDue() } catch { console.error('[container] Bank feed reconciliation deferred') }
       try { await deelPaymentStatus.refresh(null) } catch { console.error('[container] Deel payment status refresh failed') }
       try {
         const result = await proposeDueScheduledJobs(drizzle, now, objects)
@@ -882,6 +912,11 @@ export const createContainerRuntime = async (
           console.error('[container] scheduled job proposal failed', failure.jobId, failure.message)
       } catch (error) {
         console.error('[container] scheduled job proposal sweep failed', error)
+      }
+      try {
+        await stripeAlertNotices.processDue(now)
+      } catch (error) {
+        console.error('[container] Stripe alert notice failed', error)
       }
       try {
         await scheduledRunNotices.processDue(now)
@@ -920,6 +955,7 @@ export const createContainerRuntime = async (
 
     const services: RuntimeServices = {
       csvImportStaging:csvStaging.port,
+      ...(csvApply?{csvImportApply:csvApply.port}:{}),
       bootstrap: (input) => bootstrapInstanceContainer(database, input),
       enrollOwnerPassword: (input) =>
         enrollInstanceOwnerPasswordContainer(database, input),
@@ -938,6 +974,7 @@ export const createContainerRuntime = async (
     estimateTemplates: createEstimateTemplateRepository(drizzle),
     clientRateCards: createClientRateCardRepository(drizzle),
       trackedResources,
+      calendarConnections: await createCalendarSyncService({store:createCalendarConnectionStore(drizzle),deploymentKey:config.cursorSigningKey,...(options.calendarSources?{sources:options.calendarSources}:{})}),
       calendarProposals: new DrizzleCalendarProposalRepository(drizzle, trackedResources),
       placeholderPlanning: createPlaceholderAllocationRepository(drizzle),
       allocations: new DrizzleAllocationRepository(drizzle),
@@ -1010,6 +1047,9 @@ export const createContainerRuntime = async (
         return row?.enabled === 1
       },
       moneyResources,
+      harvestInvoices: moneyResources,
+    bankDeposits: createBankDepositReviewService(drizzle),
+    bankFeeds,
       ...(quickBooks === null ? {} : { quickBooks: quickBooks.service }),
       ...(wise === null ? {} : { wise: wise.service }),
       ...(wise?.webhook === undefined ? {} : { wiseWebhook: wise.webhook }),
@@ -1039,6 +1079,8 @@ export const createContainerRuntime = async (
         }
       })(),
       stripe,
+      invoiceProviderAlerts: stripeAlerts,
+      stripeAlertNotices,
       // Turning the document on and off. The preference existed before anything
       // could set it, which is a decision made on the operator's behalf that they
       // could not revisit (issue 626).
@@ -1370,6 +1412,8 @@ export const createContainerRuntime = async (
         if (closed) return
         closed = true
         try {
+          if(csvApplyTimer)clearInterval(csvApplyTimer)
+          await csvApply?.close().catch(reportCsvFailure)
           await outboxScheduler!.close(timeoutMs)
           await queue!.close(timeoutMs)
           database.pragma('wal_checkpoint(TRUNCATE)')
@@ -1381,6 +1425,8 @@ export const createContainerRuntime = async (
       },
     }
   } catch (error) {
+    if(csvApplyTimer)clearInterval(csvApplyTimer)
+    await csvApply?.close().catch(reportCsvFailure)
     await outboxScheduler?.close().catch(() => undefined)
     await queue?.close().catch(() => undefined)
     if(csvSweep)clearInterval(csvSweep)

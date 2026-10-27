@@ -1,3 +1,10 @@
+import { createConfiguredBankFeedRuntime } from '@ezacto/integrations'
+import { createBankDepositIngestionService } from '@ezacto/db/d1'
+import { createBankDepositReviewService } from '@ezacto/db/d1'
+import { createCsvWorkerRuntime, csvWorkerConfigured } from './csv-runtime.js'
+import { createCalendarConnectionStore } from '@ezacto/db/d1'
+import { createCalendarSyncService } from '@ezacto/integrations'
+import { createStripePaymentAlertStore, prepareStripePaymentAlertNotifications } from '@ezacto/db/d1'
 import { createCalendarFeedService } from '@ezacto/db/d1'
 import { createDeelPaymentStatusStore } from '@ezacto/db/d1'
 import { createDeelPaymentStatusRuntime } from '@ezacto/integrations'
@@ -653,6 +660,7 @@ export const createD1AttachmentOwnerAuthorizer =
 /** The secrets that let this deployment reach a payment or accounting provider. */
 type ProviderCredentials = Pick<
   WorkerEnv,
+  | "MERCURY_BANK_FEED_TOKEN" | "MERCURY_BANK_FEED_ACCOUNT_ID" | "MERCURY_BANK_FEED_CURRENCY" | "WISE_BANK_FEED_TOKEN" | "WISE_BANK_FEED_PROFILE_ID" | "WISE_BANK_FEED_BALANCE_ID" | "WISE_BANK_FEED_CURRENCY" | "BANK_FEED_ENVIRONMENT"
   | "QUICKBOOKS_CLIENT_ID"
   | "QUICKBOOKS_CLIENT_SECRET"
   | "QUICKBOOKS_WEBHOOK_VERIFIER_TOKEN"
@@ -708,6 +716,7 @@ const readOnlyObjects = (objects: AttachmentObjectPort): AttachmentObjectPort =>
 export const createRuntimeServices = async (
   env: WorkerEnv,
   options: {
+    calendarSources?: Parameters<typeof createCalendarSyncService>[0]['sources'];
     emailProvider?: HttpEmailProvider;
     ses?: SesMailerOptions;
     mailgun?: MailgunOptions;
@@ -726,6 +735,7 @@ export const createRuntimeServices = async (
   const demo = demoDeployment(env);
   const credentials = providerCredentials(env);
   const cursorSigningKey = parseCursorSigningKey(env.API_CURSOR_SIGNING_KEY);
+  const csv = !demo && csvWorkerConfigured(env) ? createCsvWorkerRuntime(binding,env.ATTACHMENTS!,env.CSV_IMPORT_QUEUE!,cursorSigningKey,error=>reportWorkerError(options.reportError,error,{phase:'queue',traceId:runtimeTraceId()})) : undefined;
   // Portal magic-link auth is opt-in on the presence of its key. An install
   // that has not set one does not serve the routes at all, rather than serving
   // them with a weak or absent secret -- the routes hand out sessions, so
@@ -1006,13 +1016,15 @@ export const createRuntimeServices = async (
 
   // Stripe. Composed always -- the runtime answers `configured: false` without
   // a key, which is what the route reports, rather than the route disappearing.
-  const stripeLinks = createStripeLinkStore(drizzle)
+  const stripeAlerts = createStripePaymentAlertStore(drizzle)
+    const stripeLinks = createStripeLinkStore(drizzle)
   const stripe = createStripeRuntime({
     config: {
       apiKey: credentials.STRIPE_API_KEY,
       webhookSecret: credentials.STRIPE_WEBHOOK_SECRET,
     },
     source: {
+      recordAlert: (input) => stripeAlerts.record(input, new Date().toISOString()),
       readInvoice: async (invoiceId: number) => {
         const rows = await database
           .prepare(
@@ -1064,6 +1076,7 @@ export const createRuntimeServices = async (
           paidOn: new Date().toISOString().slice(0, 10),
           now: new Date().toISOString(),
         })
+        await stripeAlerts.reconcileForPayment(input.paymentIntentId, new Date().toISOString())
       },
     },
     fetch: (request: Request) => fetch(request),
@@ -1256,6 +1269,7 @@ export const createRuntimeServices = async (
       now: () => new Date().toISOString(),
     })
   return {
+    ...(csv ? {csvImportStaging:csv.staging,csvImportApply:csv.apply} : {}),
     bootstrap: (input) => bootstrapInstanceD1(database, input),
     enrollOwnerPassword: (input) =>
       enrollInstanceOwnerPasswordD1(database, input),
@@ -1282,6 +1296,9 @@ export const createRuntimeServices = async (
     estimateTemplates: createEstimateTemplateRepository(drizzle),
     clientRateCards: createClientRateCardRepository(drizzle),
     moneyResources,
+    harvestInvoices: moneyResources,
+    bankDeposits: createBankDepositReviewService(drizzle),
+    bankFeeds: createConfiguredBankFeedRuntime({store:createBankDepositIngestionService(drizzle),environment:credentials}),
     invoiceGeneration: createInvoiceGenerationService(drizzle),
     recurringInvoices: createRecurringInvoiceEngine(drizzle),
     reminders: { processDue: processDueReminders },
@@ -1337,6 +1354,7 @@ export const createRuntimeServices = async (
     },
     activityRoll: createActivityRoll(drizzle, () => new Date().toISOString()),
     trackedResources,
+    calendarConnections: await createCalendarSyncService({store:createCalendarConnectionStore(drizzle),deploymentKey:cursorSigningKey,...(options.calendarSources?{sources:options.calendarSources}:{})}),
     calendarProposals: new DrizzleCalendarProposalRepository(drizzle, trackedResources),
     placeholderPlanning: createPlaceholderAllocationRepository(drizzle),
       allocations: new DrizzleAllocationRepository(drizzle),
@@ -1535,6 +1553,9 @@ export const createRuntimeServices = async (
           }),
         }),
     paymentRuns,
+    invoiceProviderAlerts: stripeAlerts,
+    stripeAlertReconciliation: stripeAlerts,
+    stripeAlertNotices: notificationMailer === undefined || env.APP_BASE_URL === undefined ? undefined : createTimeReminderService({ prepare: (now: string) => prepareStripePaymentAlertNotifications(drizzle, { now, from: notificationMailer.from, appUrl: env.APP_BASE_URL! }) }, notificationMailer),
     scheduledRunNotices: notificationMailer === undefined || env.APP_BASE_URL === undefined
       ? undefined
       : createTimeReminderService({

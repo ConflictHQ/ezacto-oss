@@ -1,0 +1,37 @@
+{
+  "source_commit": "308c73ad",
+  "release_base": "9d20989d5fdebce7772a38af10edcd8cf31a8d25",
+  "included_predecessors": [
+    1300,
+    1310,
+    1312,
+    1313
+  ],
+  "backup_source": "f1eb4a06769144ea3f0dc350d228f889fda35a3f",
+  "backup_evidence": "docs/evidence/99-worker-bundle-restore.json",
+  "local_verification": {
+    "combined_dependency_build": "passed",
+    "workspace_types_and_lint": "passed before final bank redirect-mode patch; integrations and Worker types plus touched lint passed after patch",
+    "generated_api_and_privacy_contract": "passed",
+    "actual_worker_bundle_cli_restore_tests": 2,
+    "signed_wise_atomic_replay_tests": 2,
+    "native_bank_transport_tests": 1,
+    "native_bank_transport_cases": [
+      "successful GET",
+      "302 rejected without forwarding authorization"
+    ],
+    "secret_scan": "78 commits; no findings",
+    "identity": "all release commits use the configured organization email"
+  },
+  "bank_runtime_regression": {
+    "original": "workerd rejects redirect:error before HTTP",
+    "fixed": "redirect:manual and non-2xx rejection",
+    "independent_red_green_source": "71a6b0ef50f0418d76a0fa9cbd485200891bf274"
+  },
+  "production_mutations": false,
+  "limits": [
+    "backup export measured on paid Worker/D1 budgets, not the free 50-query limit",
+    "provider fixtures are synthetic; no real bank grant acceptance claimed",
+    "publication and Harvest trial extraction remain separate #98 acceptance"
+  ]
+}

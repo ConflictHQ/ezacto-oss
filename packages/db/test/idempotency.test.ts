@@ -1,3 +1,4 @@
+import { IdempotencyClaimConflict } from '@ezacto/core'
 import BetterSqlite3 from 'better-sqlite3'
 import { drizzle as drizzleBetterSqlite } from 'drizzle-orm/better-sqlite3'
 import { drizzle as drizzleD1 } from 'drizzle-orm/d1'
@@ -240,6 +241,7 @@ for (const [runtime, harness] of runtimes) {
       const lone = await runWithClaim(claimFor('second'), () =>
         db.write('INSERT INTO notes (id, body) VALUES (?, ?)', 2, 'second'),
       )
+      if (!lone.ok) expect(lone.error).toBeInstanceOf(IdempotencyClaimConflict)
       expect(lone).toMatchObject({ ok: false, wrote: false, lost: true })
 
       const together = await runWithClaim(claimFor('third'), () =>
@@ -249,11 +251,24 @@ for (const [runtime, harness] of runtimes) {
         ]),
       )
       expect(together).toMatchObject({ ok: false, wrote: false, lost: true })
+      if (!together.ok) expect(together.error).toBeInstanceOf(IdempotencyClaimConflict)
 
       // Nothing of either losing attempt landed, not even the statements that
       // came before the claim in the same unit.
       expect(await db.rows('SELECT id, body FROM notes ORDER BY id')).toEqual([{ id: 1, body: 'first' }])
       expect(await keyRows(db)).toEqual([{ attempt: 'first', state: 'claimed' }])
+    })
+
+    it('[security] does not classify a business constraint as claim contention even with another owner', async () => {
+      const db = await open()
+      await runWithClaim(claimFor('winner'), () => db.write('INSERT INTO notes (id, body) VALUES (?, ?)', 1, 'kept'))
+      const failed = await runWithClaim(claimFor('loser'), () => db.write('INSERT INTO notes (id, body) VALUES (?, ?)', 1, 'duplicate'))
+      expect(failed.ok).toBe(false)
+      if (!failed.ok) {
+        expect(failed.error).not.toBeInstanceOf(IdempotencyClaimConflict)
+        expect((failed.error as Error).message).toContain('notes.id')
+      }
+      expect(await db.rows('SELECT body FROM notes')).toEqual([{ body: 'kept' }])
     })
 
     it('[unit] a unit of reads claims nothing', async () => {
@@ -510,4 +525,33 @@ describe('idempotency claim rider (container transactions)', () => {
     expect(String((execution as { error: unknown }).error)).toMatch(/cannot carry an idempotency claim/)
     handle.close()
   })
+})
+
+it('[security] preserves the raw D1 claim error when competing ownership cannot be read', async () => {
+  const miniflare = new Miniflare({ modules: true, script: 'export default { fetch() { return new Response("ok") } }', d1Databases: ['DB'] })
+  try {
+    const binding = await miniflare.getD1Database('DB')
+    for (const sql of schema) await binding.prepare(sql).run()
+    const winner = createIdempotentD1(binding)
+    await runWithClaim(claimFor('winner'), () => winner.prepare('INSERT INTO notes VALUES (1, ?)').bind('kept').run())
+    const unreadable = new Proxy(binding, {
+      get(target, property) {
+        if (property === 'prepare') return (sql: string) => {
+          const statement = target.prepare(sql)
+          if (sql !== 'SELECT attempt FROM idempotency_keys WHERE id = ?') return statement
+          return { bind: () => ({ first: async () => { throw new Error('owner read unavailable') } }) }
+        }
+        const value: unknown = Reflect.get(target, property, target)
+        return typeof value === 'function' ? value.bind(target) : value
+      },
+    })
+    const losing = createIdempotentD1(unreadable)
+    const result = await runWithClaim(claimFor('loser'), () => losing.prepare('INSERT INTO notes VALUES (2, ?)').bind('rolled back').run())
+    expect(result).toMatchObject({ ok: false, wrote: false, lost: false })
+    if (!result.ok) {
+      expect(result.error).not.toBeInstanceOf(IdempotencyClaimConflict)
+      expect((result.error as Error).message).toContain('idempotency_keys.id')
+    }
+    expect((await binding.prepare('SELECT id FROM notes').all()).results).toEqual([{ id: 1 }])
+  } finally { await miniflare.dispose() }
 })

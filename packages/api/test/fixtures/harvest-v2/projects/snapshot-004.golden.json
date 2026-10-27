@@ -1,0 +1,29 @@
+{
+  "id": 2004,
+  "name": "Sample projects name 2004",
+  "code": "SMP-2004",
+  "is_active": false,
+  "is_billable": true,
+  "is_fixed_fee": true,
+  "bill_by": "none",
+  "hourly_rate": null,
+  "budget": 26,
+  "budget_by": "person",
+  "budget_is_monthly": false,
+  "notify_when_over_budget": true,
+  "over_budget_notification_percentage": 2,
+  "show_budget_to_all": true,
+  "created_at": "2024-02-03T10:20:30Z",
+  "updated_at": "2024-02-03T10:20:30Z",
+  "starts_on": "2024-02-03",
+  "ends_on": "2024-02-03",
+  "notes": "Sample projects notes 2004",
+  "cost_budget": null,
+  "cost_budget_include_expenses": false,
+  "fee": 2,
+  "client": {
+    "id": 1001,
+    "name": "Sample clients name 1001",
+    "currency": "USD"
+  }
+}

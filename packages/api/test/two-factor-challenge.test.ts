@@ -91,7 +91,7 @@ const post = (
     method: 'POST',
     headers: {
       'content-type': 'application/json',
-      ...(cookie === undefined ? {} : { cookie }),
+      ...(cookie === undefined ? (path === '/auth/magic-link/exchange' ? { cookie: `__Host-ezacto_staff_code=${'A'.repeat(43)}` } : {}) : { cookie }),
     },
     body: JSON.stringify(body),
   })

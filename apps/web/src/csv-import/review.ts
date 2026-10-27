@@ -1,65 +1,65 @@
-import type { ApplyCommand, ImportPreview } from "./contract.js";
+import type { ApplyCommand, ImportPreview } from './contract.js'
+import { CsvUiError } from './errors.js'
 
-/**
- * The review step's state: what the administrator has confirmed against which
- * preview. Pure, so the rules the plan gives for confirmation can be tested
- * without a server or a DOM.
- */
 export interface Review {
-  preview: ImportPreview;
-  /** Signed-in administrator and role the preview was fetched under, as one string. */
-  actor: string;
-  rounding: boolean;
-  partial: boolean;
-  /** The count the reviewer typed or confirmed; null until they do. */
-  excludedCount: number | null;
+  readonly preview: ImportPreview
+  readonly actor: string
+  reviewed: boolean
+  exclusions: boolean
+  destinationDifference: boolean
+  newPeople: boolean
 }
 
-export const startReview = (preview: ImportPreview, actor: string): Review => ({
-  preview,
-  actor,
-  rounding: false,
-  partial: false,
-  excludedCount: null,
-});
-
-/** Why apply is not yet allowed. Empty means the reviewer has done everything asked. */
-export const blockers = (review: Review): string[] => {
-  const { preview } = review;
-  const reasons: string[] = [];
-  if (preview.entries.rejected > 0) {
-    if (!review.partial)
-      reasons.push(
-        "Rejected rows must be excluded as a partial run, or fixed.",
-      );
-    if (review.excludedCount !== preview.entries.rejected)
-      reasons.push(`Confirm the ${preview.entries.rejected} excluded rows.`);
+const freeze = <T>(value: T): T => {
+  if (value !== null && typeof value === 'object') {
+    for (const child of Object.values(value)) freeze(child)
+    Object.freeze(value)
   }
-  if (preview.seconds.source !== preview.seconds.rounded && !review.rounding)
-    reasons.push("Acknowledge that rounded seconds differ from the source.");
-  return reasons;
-};
+  return value
+}
 
-/** Throws rather than building a command the server would have to refuse. */
-export const applyCommand = (review: Review): ApplyCommand => {
-  const reasons = blockers(review);
-  if (reasons.length > 0) throw new Error(reasons.join(" "));
+/** Later UI edits cannot mutate the immutable preview the acknowledgements cover. */
+export const startReview = (preview: ImportPreview, actor: string): Review => ({
+  preview: freeze(structuredClone(preview)), actor,
+  reviewed: false, exclusions: false, destinationDifference: false, newPeople: false,
+})
+
+export const blockers = (review: Review): string[] => {
+  const { tallies, choices } = review.preview
+  const reasons: string[] = []
+  if (tallies.file_error_count > 0) reasons.push('Correct the file errors and upload a valid CSV. File errors cannot be excluded.')
+  if (tallies.rejected_row_count > 0) reasons.push(`Resolve or explicitly exclude all ${tallies.rejected_row_count} rejected rows, then review the new preview.`)
+  if (tallies.selected_rows === 0) reasons.push('Select at least one time row before sealing this dataset.')
+  if (!review.reviewed) reasons.push('Review the destination, file, dataset, mappings and exact selected rows.')
+  if (choices.excluded_lines.length > 0 && !review.exclusions) reasons.push(`Review all ${choices.excluded_lines.length} excluded physical lines.`)
+  if (tallies.destination_delta_seconds !== 0 && !review.destinationDifference) reasons.push('Review the difference between source and destination seconds, including imported history.')
+  if (tallies.people.new > 0 && !review.newPeople) reasons.push('Review the new inactive people; no one will be invited or activated.')
+  return reasons
+}
+
+export const afterSessionChange = (review: Review, actor: string | null): Review | null =>
+  actor === review.actor ? review : null
+
+export const applyCommand = (review: Review, commandId: string, version = review.preview.run.version): ApplyCommand => {
+  const reasons = blockers(review)
+  if (reasons.length) throw new CsvUiError(reasons.join(' '))
+  const { preview } = review
   return {
-    preview_id: review.preview.preview_id,
-    acknowledgements: {
-      rounding: review.rounding,
-      partial: review.partial,
-      excluded_count: review.excludedCount ?? 0,
-    },
-  };
-};
+    preview_id: preview.preview_id, command_id: commandId, version,
+    expected_selected_rows: preview.tallies.selected_rows,
+    expected_source_seconds: preview.tallies.source_seconds,
+    expected_destination_seconds: preview.tallies.destination_seconds,
+    acknowledge_exclusions: review.exclusions,
+    acknowledge_destination_difference: review.destinationDifference,
+    acknowledge_new_people: review.newPeople,
+  }
+}
 
-/**
- * A different signed-in administrator, a signed-out session or a changed role
- * discards the review, so privileged state never outlives the session it was
- * fetched under. Returns null to discard.
- */
-export const afterSessionChange = (
-  review: Review,
-  actor: string | null,
-): Review | null => (actor === review.actor ? review : null);
+export const physicalLines = (text: string): number[] => {
+  if (text.trim() === '') return []
+  const values = text.split(',').map(value => value.trim())
+  if (values.length > 50_000 || values.some(value => !/^[1-9][0-9]*$/.test(value) || Number(value) < 2 || !Number.isSafeInteger(Number(value)))) {
+    throw new CsvUiError('Enter comma-separated data line numbers of 2 or more.')
+  }
+  return [...new Set(values.map(Number))].sort((left, right) => left - right)
+}

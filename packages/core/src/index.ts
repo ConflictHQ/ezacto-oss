@@ -1,3 +1,4 @@
+export * from './calendar-connection.js'
 export * from './managed-deel.js'
 export * from './managed-bill.js'
 export * from './managed-quickbooks.js'
@@ -112,6 +113,14 @@ export * from './csv-import-facts.js'
 
 export * from './deel-staging.js'
 
+export * from './idempotency-conflict.js'
 export * from './calendar-feed-credential.js'
 export * from './calendar-feeds.js'
 export type { CsvStagingAuthority } from './csv-staging.js'
+
+export * from './csv-apply-runtime.js'
+
+export * from './bank-deposit-review.js'
+export { workerBackupFiles, WORKER_BACKUP_FILE_MAX_BYTES, WORKER_BACKUP_FILE_MAX_COUNT, type WorkerBackupFileReceipt, type WorkerBackupFileEntry } from './worker-backup-files.js'
+
+export * from './worker-backup-policy.js'

@@ -1,4 +1,5 @@
 import type { PayoutProviderSwitchesApi } from './payout-provider-switches.js'
+import type { ImportApi } from '../csv-import/contract.js'
 import type { EzactoClient } from '@conflict-hq/ezacto-client'
 export type WebhookApi = Pick<EzactoClient, 'listWebhookSubscriptions' | 'createWebhookSubscription' | 'setWebhookSubscriptionActive' | 'rotateWebhookSecret' | 'deleteWebhookSubscription' | 'listWebhookDeliveries' | 'replayWebhookDelivery'>
 import type { ReportWorkspaceApi } from '../reports/model.js'
@@ -260,6 +261,7 @@ export interface TimeRoundingApi {
 }
 
 export interface CompanySettingsApi extends PayoutProviderSwitchesApi {
+  csvImports?: ImportApi
   webhooks?: WebhookApi
   downloadDetailedTimeReport?: ReportWorkspaceApi['downloadDetailedTimeReport']
   getDetailedExpenseReport?: ReportWorkspaceApi['getDetailedExpenseReport']

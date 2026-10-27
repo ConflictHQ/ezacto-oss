@@ -145,13 +145,17 @@ export const createWiseDeliveryStore = (database: Database): WiseDeliveryStore =
             : `CASE WHEN (SELECT state FROM payout_transfers WHERE id=${payoutId})='planned' THEN NULL
               WHEN EXISTS(SELECT 1 FROM payout_transfers WHERE id=${payoutId})
                 THEN 'payout transfer already '||(SELECT state FROM payout_transfers WHERE id=${payoutId})
-              ELSE 'no matching payout transfer' END`
+              WHEN EXISTS(SELECT 1 FROM payment_run_items WHERE transfer_id=? AND state NOT IN ('failed','cancelled'))
+                THEN 'payment run reconciliation scheduled'
+              WHEN EXISTS(SELECT 1 FROM payment_run_items WHERE transfer_id=?)
+                THEN 'payment run already terminal'
+              ELSE 'no matching payout transfer or payment run' END`
         }
           WHERE ${pending} RETURNING delivery_id`,
         params: [
           ...(input.outcome === null
             ? [input.skippedReason]
-            : [input.transferId, input.transferId, input.transferId]),
+            : [input.transferId, input.transferId, input.transferId, input.transferId, input.transferId]),
           ...tuple,
         ],
       },

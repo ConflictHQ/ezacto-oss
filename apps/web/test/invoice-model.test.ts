@@ -184,6 +184,7 @@ describe('invoice workspace model', () => {
     // segment, would open some other page; it goes by id instead.
     for (const number of [
       'new',
+      'bank-deposits',
       'recurring',
       'retainers',
       'estimates',

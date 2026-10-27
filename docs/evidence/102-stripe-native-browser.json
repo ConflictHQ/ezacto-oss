@@ -1,0 +1,29 @@
+{
+  "nativePasswordSession": true,
+  "signedCheckout": true,
+  "signedRefundAndDispute": true,
+  "replaySafe": true,
+  "reviewApiAndRefresh": true,
+  "invoiceAndPaymentsUnchanged": true,
+  "logoutClearsAlerts": true,
+  "buttonBounds": {
+    "x": 50,
+    "y": 2266.765625,
+    "width": 274,
+    "height": 44
+  },
+  "smtpProviderDeliveryTested": false,
+  "externalProviderCalls": 0,
+  "source_revision": "ae28ff42416ee93072d7b0c3f8e18c1a913521b5",
+  "runtime_revision": "3135fb382fcbc4309f4c744fcbd236879d0211c0",
+  "fixture_cleanup_verified": true,
+  "scope": "Native Container runtime and actual Chromium at390px; fictional fixtures and signed synthetic Stripe events. No production or external payment operations.",
+  "combined_release_verification": {
+    "source_revision": "21a5c5ed7e1243648456c78879da1138e796e53b",
+    "native_browser_case_passed": true,
+    "duration_seconds": 6.4,
+    "includes_calendar_and_csv_migrations": true,
+    "bootstrap_automatic_approval_error_absent": true,
+    "owned_fixture_directories_remaining": 0
+  }
+}

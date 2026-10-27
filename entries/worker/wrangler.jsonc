@@ -37,7 +37,7 @@
       "name": "replace-me-worker-name",
       "workflows": [{"binding":"SCHEDULED_RUN_WORKFLOW","name":"replace-me-worker-name-scheduled-runs","class_name":"ScheduledRunWorkflow"}],
       "routes": [{ "pattern": "replace-me.invalid", "custom_domain": true }],
-      "triggers": { "crons": ["* * * * *", "0 * * * *", "0 3 * * *"] },
+      "triggers": { "crons": ["*/5 * * * *", "* * * * *", "0 * * * *", "0 3 * * *"] },
       "vars": {
         "ENVIRONMENT": "prod",
         "RELEASE": "unknown",
@@ -107,7 +107,7 @@
       "name": "ezacto-dev",
       "workflows": [{"binding":"SCHEDULED_RUN_WORKFLOW","name":"ezacto-dev-scheduled-runs","class_name":"ScheduledRunWorkflow"}],
       "routes": [{ "pattern": "ezacto.io", "custom_domain": true }],
-      "triggers": { "crons": ["* * * * *", "0 * * * *", "0 3 * * *"] },
+      "triggers": { "crons": ["*/5 * * * *", "* * * * *", "0 * * * *", "0 3 * * *"] },
       "vars": {
         "ENVIRONMENT": "dev",
         "RELEASE": "unknown",

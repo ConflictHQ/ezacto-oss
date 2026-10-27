@@ -1,8 +1,9 @@
+import { createCsvWorkerRuntime, csvWorkerConfigured, verifyCsvQueueDatabase } from './csv-runtime.js'
+import { parseCursorSigningKey, ensureRuntimeDatabaseReady } from './runtime.js'
 import { AsyncLocalStorage } from 'node:async_hooks'
 import { apiFailureStatus, reportWorkerError, runtimeTraceId, scrubWorkerEvent, type WorkerErrorContext, type WorkerScheduledOperation, type WorkerOptions } from './error-reporting.js'
 export type { WorkerErrorContext, WorkerErrorPhase, WorkerErrorReporter, WorkerOptions } from './error-reporting.js'
 import { consumeMigrationBatch } from './migration-queue.js'
-import { ensureRuntimeDatabaseReady } from './runtime.js'
 import * as Sentry from '@sentry/cloudflare'
 import { scheduleConfirmedRunWorkflows } from './scheduled-run-workflow-scheduler.js'
 import type { QueuedEmailJob } from '@ezacto/mailer'
@@ -15,7 +16,7 @@ import { workerInstanceThemeSurface } from './instance-theme.js'
 import { consumeCloudflareEmailBatch } from './email-queue.js'
 import { createAttachmentResolver } from './invoice-documents.js'
 import { runDemoMaintenance, seedDemoSender } from './demo.js'
-import { runNightlyExport } from './nightly-export.js'
+import { cleanupAbandonedWorkerBackups, runNightlyExport } from './nightly-export.js'
 import { createScheduledBillReconciliation } from '@ezacto/integrations'
 import {
   createR2AttachmentObjectStore,
@@ -165,10 +166,10 @@ export const createWorker = (options: WorkerOptions = {}): ExportedHandler<Worke
     // below this line should ever compose a response for a cleartext request.
     const refusal = cleartextRefusal(request)
     if (refusal !== null) return refusal
-    if (
+    if (!csvWorkerConfigured(env) && (
       (request.method === 'GET' && new URL(request.url).pathname === '/api/v1/csv-import-capabilities') ||
       isCsvStagingPath(new URL(request.url).pathname)
-    ) return withStrictTransport(request, await publicApp.fetch(request, env, executionContext))
+    )) return withStrictTransport(request, await publicApp.fetch(request, env, executionContext))
     if (new URL(request.url).pathname === '/readyz') return readiness(env, report)
     if (!isDataRequest(request)) {
       return withStrictTransport(
@@ -188,6 +189,7 @@ export const createWorker = (options: WorkerOptions = {}): ExportedHandler<Worke
       // A write with an Idempotency-Key runs once and is replayed after that
       // (#952). Every data answer says so in Idempotency-Key-Lifetime, which is
       // what lets a client retry a write here at all.
+      if (isCsvStagingPath(new URL(request.url).pathname)) return withStrictTransport(request,await app.fetch(request,env,executionContext))
       return withStrictTransport(
         request,
         await withIdempotency(
@@ -221,6 +223,11 @@ export const createWorker = (options: WorkerOptions = {}): ExportedHandler<Worke
   async queue(batch, env, executionContext) {
     const report = reporter(options, executionContext)
     try {
+    if(!demoDeployment(env)&&csvWorkerConfigured(env)&&batch.queue===env.CSV_IMPORT_QUEUE_NAME){
+      await verifyCsvQueueDatabase(env.DB!)
+      const csv=createCsvWorkerRuntime(env.DB!,env.ATTACHMENTS!,env.CSV_IMPORT_QUEUE!,parseCursorSigningKey(env.API_CURSOR_SIGNING_KEY),error=>report(error,{phase:'queue'}))
+      await csv.consume(batch);return
+    }
     if(env.MIGRATION_QUEUE_NAME !== undefined && batch.queue === env.MIGRATION_QUEUE_NAME) {
       await consumeMigrationBatch(batch,env)
       return
@@ -257,6 +264,8 @@ export const createWorker = (options: WorkerOptions = {}): ExportedHandler<Worke
     // Exhaustion propagates to withSentry once and marks this tick failed;
     // readiness is cached only on success, so the next tick can recover.
     const services = await createRuntimeServices(env, { retryReadiness: true, reportError: report })
+    if(controller.cron==='*/5 * * * *'){if(moduleAvailability(env).invoices)await services.bankFeeds?.processDue();return}
+    if(!demoDeployment(env)&&csvWorkerConfigured(env)){for(const phase of ['purge','publish'] as const){try{await env.CSV_IMPORT_QUEUE!.send({kind:'csv-maintenance',phase})}catch{report(new Error('CSV maintenance publication deferred.'),{phase:'scheduled'})}}}
     // The operator's invoices switch (issue 1254): where it is off none of the
     // invoice sweeps run, and what they would have touched stays as it is.
     const invoices = moduleAvailability(env).invoices
@@ -328,6 +337,14 @@ export const createWorker = (options: WorkerOptions = {}): ExportedHandler<Worke
         report(error, { phase: 'scheduled', operation: 'scheduled job proposal sweep' })
       }
     }
+    if (controller.cron === '* * * * *' && invoices && services.stripeAlertReconciliation !== undefined) {
+      try { await services.stripeAlertReconciliation.processDue(new Date().toISOString()) }
+      catch (error) { console.error('[worker] Stripe report reconciliation failed', error); report(error, {phase:'scheduled',operation:'Stripe alert notice'}) }
+    }
+    if (controller.cron === '* * * * *' && invoices && services.stripeAlertNotices !== undefined) {
+      try { await services.stripeAlertNotices.processDue(new Date().toISOString()) }
+      catch (error) { console.error('[worker] Stripe alert notice failed', error); report(error, { phase: 'scheduled', operation: 'Stripe alert notice' }) }
+    }
     if (controller.cron === '* * * * *' && invoices && services.scheduledRunNotices !== undefined) {
       try {
         await services.scheduledRunNotices.processDue(new Date().toISOString())
@@ -358,6 +375,9 @@ export const createWorker = (options: WorkerOptions = {}): ExportedHandler<Worke
         console.error('[worker] scheduled run expiry failed', error)
         report(error, { phase: 'scheduled', operation: 'scheduled run expiry' })
       }))
+    }
+    if (controller.cron === '* * * * *' && env.ATTACHMENTS !== undefined && !demoDeployment(env)) {
+      await isolate('temporary backup cleanup', () => cleanupAbandonedWorkerBackups(env.DB, env.ATTACHMENTS!))
     }
     // Not on the demo (#931): its database is thrown away at this hour, and an
     // export would copy whatever visitors typed into it into the bucket, which

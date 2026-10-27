@@ -1,3 +1,4 @@
+export { createCalendarSyncService, type CalendarSyncService } from './calendar-sync.js'
 export { createDeelPaymentStatusRuntime, type DeelPaymentStatusRuntime, type DeelPaymentStatusStore, type DeelPaymentStatusClaim, type DeelPaymentStatusResult } from './deel/payment-status.js'
 export {
   createStripeRuntime,
@@ -316,3 +317,14 @@ export { createWorkerWebhookTransport } from './outbound-webhooks.js'
 
 export * from './deel/staging.js'
 export { wiseConfigured, parseWiseMode } from './wise/runtime.js'
+
+export {
+  createMercuryBankFeed,
+  type MercuryBankFeedOptions,
+  type ObservedBankFeed,
+  type ObservedBankFeedPage,
+} from './bank-feed/mercury.js'
+export { createWiseBankFeed, type WiseBankFeedOptions } from './bank-feed/wise.js'
+export { BankFeedError, type FeedObservation, type FeedObservations } from './bank-feed/shared.js'
+export { createBankFeedRuntime, bankFeedConfiguration, type BankFeedConfiguration, type BankFeedEnvironment, type BankFeedRuntimeStore, type BankFeedStatus } from './bank-feed/runtime.js'
+export { createConfiguredBankFeedRuntime } from './bank-feed/runtime.js'

@@ -1,5 +1,5 @@
 import type { CsvStagingAuthority } from '@ezacto/core'
-import type { CsvBrowserPlan } from './csv-planner.js'
+import type { CsvBrowserPlan, CsvBrowserDestinationSnapshot } from './csv-planner.js'
 import type { CsvBrowserMapping } from './csv-browser-mapping.js'
 
 /** Server-only composition between private admission (#1181) and apply (#1183).
@@ -26,6 +26,8 @@ export interface CsvOwnedStagedPreview {
     excludedLines: readonly number[]
   }
   plan: CsvBrowserPlan
+  /** Server-only, from the same bounded worker result; never serialize. */
+  snapshot: CsvBrowserDestinationSnapshot
   bytes: Uint8Array
 }
 export interface CsvStagingApplyBinding {

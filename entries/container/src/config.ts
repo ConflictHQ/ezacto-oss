@@ -1,3 +1,4 @@
+import type { BankFeedEnvironment } from '@ezacto/integrations'
 import { isAbsolute, normalize, resolve } from 'node:path'
 import { lastSeenIntervalFromSeconds } from '@ezacto/db'
 import { moduleAvailability, OPERATOR_MODULE_FLAGS, OPERATOR_MODULES } from '@ezacto/api'
@@ -39,6 +40,7 @@ export interface ContainerConfig {
    * routes are not mounted, because a connect button that cannot connect is
    * worse than no button. Same rule as the Worker's.
    */
+  bankFeeds?: BankFeedEnvironment
   stripe?: { apiKey: string; webhookSecret?: string }
   bill?: {
     devKey: string
@@ -268,7 +270,14 @@ export const readContainerConfig = (
     ...(brandWordmarkDark === undefined ? {} : { BRAND_WORDMARK_DARK: brandWordmarkDark }),
     ...(brandEmailSenderName === undefined ? {} : { BRAND_EMAIL_SENDER_NAME: brandEmailSenderName }),
   }
+  const bankFeeds: BankFeedEnvironment = Object.fromEntries(
+    ['MERCURY_BANK_FEED_TOKEN', 'MERCURY_BANK_FEED_ACCOUNT_ID', 'MERCURY_BANK_FEED_CURRENCY',
+      'WISE_BANK_FEED_TOKEN', 'WISE_BANK_FEED_PROFILE_ID', 'WISE_BANK_FEED_BALANCE_ID',
+      'WISE_BANK_FEED_CURRENCY', 'BANK_FEED_ENVIRONMENT']
+      .flatMap(key => environment[key] === undefined ? [] : [[key, optional(environment, key, 1000)!]]),
+  )
   return {
+    ...(Object.keys(bankFeeds).length ? { bankFeeds } : {}),
     host: optional(environment, 'HOST', 255) ?? '0.0.0.0',
     port: port(environment.PORT),
     trustedProxyHops: trustedProxyHops(environment.TRUSTED_PROXY_HOPS),

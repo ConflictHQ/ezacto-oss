@@ -1,3 +1,4 @@
+export { createCalendarConnectionStore } from './calendar-connections.js'
 export { createCalendarFeedService } from './calendar-feeds.js'
 export { createDeelPaymentStatusStore } from './deel-payment-status.js'
 export { createManagedBillConnectionStore } from './managed-bill.js'
@@ -472,7 +473,7 @@ export {
   type DemoResetSummary,
   type DemoWipeSummary,
 } from './demo-reset.js'
-export { migrateD1, migrationIds } from './migrate.js'
+export { migrateD1, migrationIds, assertCutoverMigrationLedger } from './migrate.js'
 export { DrizzleCalendarProposalRepository } from './calendar-proposals.js'
 export { DrizzleAllocationRepository } from './allocations.js'
 export { DrizzleTimeOffRepository } from './time-off.js'
@@ -574,3 +575,13 @@ export * from './placeholder-allocations.js'
 export { createResourceCalendarRepository } from './resource-calendar.js'
 
 export { createDeelStageStore } from './deel-staging.js'
+
+export { createCsvBrowserDatasetLedger } from './csv-browser-import.js'
+export { csvStagingSessionFence } from './csv-staging-authority.js'
+export { csvWorkerDatabase, type CsvWorkerExecution } from './csv-worker-database.js'
+export { previewTimesheetLockedDates, type TimesheetLockPreviewWindow } from './timesheet-lock-policy.js'
+export * from './stripe-payment-alerts.js'
+
+export * from './bank-deposit-review.js'
+
+export { expireWorkerSnapshots, discardWorkerSnapshot } from './worker-backup-snapshot.js'

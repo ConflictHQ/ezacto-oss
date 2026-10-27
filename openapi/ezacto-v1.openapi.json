@@ -9306,6 +9306,268 @@
         ]
       }
     },
+    "/api/v1/calendar-cleanup-status": {
+      "get": {
+        "operationId": "getCalendarCleanupStatus",
+        "summary": "Show unresolved calendar cleanup counts across retained incarnations",
+        "tags": [
+          "time-entries"
+        ],
+        "security": [
+          {
+            "cookieSession": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CalendarCleanupEnvelope"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/MalformedRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/AuthenticationRequired"
+          },
+          "403": {
+            "$ref": "#/components/responses/InsufficientPermission"
+          },
+          "404": {
+            "$ref": "#/components/responses/ResourceNotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/StateConflict"
+          },
+          "413": {
+            "$ref": "#/components/responses/PayloadTooLarge"
+          },
+          "422": {
+            "$ref": "#/components/responses/ValidationFailed"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "503": {
+            "$ref": "#/components/responses/ServiceUnavailable"
+          }
+        },
+        "x-ezacto-runtime-path": "/api/v1/calendar-cleanup-status",
+        "x-ezacto-generate-client": true
+      }
+    },
+    "/api/v1/calendar-connections": {
+      "get": {
+        "operationId": "listCalendarConnections",
+        "summary": "List the acting user’s private calendar connection status",
+        "tags": [
+          "time-entries"
+        ],
+        "security": [
+          {
+            "cookieSession": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CalendarConnectionList"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/MalformedRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/AuthenticationRequired"
+          },
+          "403": {
+            "$ref": "#/components/responses/InsufficientPermission"
+          },
+          "404": {
+            "$ref": "#/components/responses/ResourceNotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/StateConflict"
+          },
+          "413": {
+            "$ref": "#/components/responses/PayloadTooLarge"
+          },
+          "422": {
+            "$ref": "#/components/responses/ValidationFailed"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "503": {
+            "$ref": "#/components/responses/ServiceUnavailable"
+          }
+        },
+        "x-ezacto-runtime-path": "/api/v1/calendar-connections",
+        "x-ezacto-generate-client": true
+      }
+    },
+    "/api/v1/calendar-connections/{provider}": {
+      "delete": {
+        "operationId": "disconnectCalendarConnection",
+        "summary": "Disconnect the acting user’s calendar and cancel open proposals",
+        "tags": [
+          "time-entries"
+        ],
+        "security": [
+          {
+            "cookieSession": []
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "No content"
+          },
+          "400": {
+            "$ref": "#/components/responses/MalformedRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/AuthenticationRequired"
+          },
+          "403": {
+            "$ref": "#/components/responses/InsufficientPermission"
+          },
+          "404": {
+            "$ref": "#/components/responses/ResourceNotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/StateConflict"
+          },
+          "413": {
+            "$ref": "#/components/responses/PayloadTooLarge"
+          },
+          "422": {
+            "$ref": "#/components/responses/ValidationFailed"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "503": {
+            "$ref": "#/components/responses/ServiceUnavailable"
+          }
+        },
+        "x-ezacto-runtime-path": "/api/v1/calendar-connections/:provider",
+        "x-ezacto-generate-client": true,
+        "parameters": [
+          {
+            "name": "provider",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "enum": [
+                "google",
+                "microsoft"
+              ]
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CalendarDisconnectInput"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/calendar-connections/{provider}/refresh": {
+      "post": {
+        "operationId": "refreshCalendarConnection",
+        "summary": "Refresh proposals from an available calendar provider",
+        "description": "No time entry is created or changed. Returns unavailable until an approved provider adapter is configured. No token may be supplied.",
+        "tags": [
+          "time-entries"
+        ],
+        "security": [
+          {
+            "cookieSession": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CalendarRefreshResult"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/MalformedRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/AuthenticationRequired"
+          },
+          "403": {
+            "$ref": "#/components/responses/InsufficientPermission"
+          },
+          "404": {
+            "$ref": "#/components/responses/ResourceNotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/StateConflict"
+          },
+          "413": {
+            "$ref": "#/components/responses/PayloadTooLarge"
+          },
+          "422": {
+            "$ref": "#/components/responses/ValidationFailed"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "503": {
+            "$ref": "#/components/responses/ServiceUnavailable"
+          }
+        },
+        "x-ezacto-runtime-path": "/api/v1/calendar-connections/:provider/refresh",
+        "x-ezacto-generate-client": true,
+        "parameters": [
+          {
+            "name": "provider",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "enum": [
+                "google",
+                "microsoft"
+              ]
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CalendarRefreshInput"
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/allocations": {
       "get": {
         "operationId": "listAllocations",
@@ -19901,6 +20163,917 @@
             }
           }
         ]
+      }
+    },
+    "/api/v1/invoices/{id}/provider-alerts": {
+      "get": {
+        "operationId": "listInvoiceProviderAlerts",
+        "summary": "List verified Stripe refund and dispute reports without changing receipts",
+        "tags": [
+          "invoices"
+        ],
+        "security": [
+          {
+            "cookieSession": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/InvoiceProviderAlertListEnvelope"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/MalformedRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/AuthenticationRequired"
+          },
+          "403": {
+            "$ref": "#/components/responses/InsufficientPermissionOrModuleDisabled"
+          },
+          "404": {
+            "$ref": "#/components/responses/ResourceNotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/StateConflict"
+          },
+          "413": {
+            "$ref": "#/components/responses/PayloadTooLarge"
+          },
+          "422": {
+            "$ref": "#/components/responses/ValidationFailed"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "503": {
+            "$ref": "#/components/responses/ServiceUnavailable"
+          }
+        },
+        "x-ezacto-runtime-path": "/api/v1/invoices/:id/provider-alerts",
+        "x-ezacto-generate-client": true,
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "minimum": 1
+            }
+          }
+        ]
+      }
+    },
+    "/api/v1/invoices/{id}/provider-alerts/{alertId}/review": {
+      "post": {
+        "operationId": "reviewInvoiceProviderAlert",
+        "summary": "Mark a provider report reviewed without an accounting mutation",
+        "tags": [
+          "invoices"
+        ],
+        "security": [
+          {
+            "cookieSession": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/InvoiceProviderAlertEnvelope"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/MalformedRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/AuthenticationRequired"
+          },
+          "403": {
+            "$ref": "#/components/responses/InsufficientPermissionOrModuleDisabled"
+          },
+          "404": {
+            "$ref": "#/components/responses/ResourceNotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/StateConflict"
+          },
+          "413": {
+            "$ref": "#/components/responses/PayloadTooLarge"
+          },
+          "422": {
+            "$ref": "#/components/responses/ValidationFailed"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "503": {
+            "$ref": "#/components/responses/ServiceUnavailable"
+          }
+        },
+        "x-ezacto-runtime-path": "/api/v1/invoices/:id/provider-alerts/:alertId/review",
+        "x-ezacto-generate-client": true,
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "minimum": 1
+            }
+          },
+          {
+            "name": "alertId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ReviewInvoiceProviderAlertInput"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/bank-feed-status": {
+      "get": {
+        "operationId": "getBankFeedStatus",
+        "summary": "Read configured bank feed health without exposing credentials",
+        "tags": [
+          "invoices"
+        ],
+        "security": [
+          {
+            "cookieSession": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BankFeedStatusEnvelope"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/MalformedRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/AuthenticationRequired"
+          },
+          "403": {
+            "$ref": "#/components/responses/InsufficientPermissionOrModuleDisabled"
+          },
+          "404": {
+            "$ref": "#/components/responses/ResourceNotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/StateConflict"
+          },
+          "413": {
+            "$ref": "#/components/responses/PayloadTooLarge"
+          },
+          "422": {
+            "$ref": "#/components/responses/ValidationFailed"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "503": {
+            "$ref": "#/components/responses/ServiceUnavailable"
+          }
+        },
+        "x-ezacto-runtime-path": "/api/v1/bank-feed-status",
+        "x-ezacto-generate-client": true
+      }
+    },
+    "/api/v1/bank-feeds/sync": {
+      "post": {
+        "operationId": "syncBankFeeds",
+        "summary": "Read due bank feed pages without creating invoice payments",
+        "tags": [
+          "invoices"
+        ],
+        "security": [
+          {
+            "cookieSession": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BankFeedSyncEnvelope"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/MalformedRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/AuthenticationRequired"
+          },
+          "403": {
+            "$ref": "#/components/responses/InsufficientPermissionOrModuleDisabled"
+          },
+          "404": {
+            "$ref": "#/components/responses/ResourceNotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/StateConflict"
+          },
+          "413": {
+            "$ref": "#/components/responses/PayloadTooLarge"
+          },
+          "422": {
+            "$ref": "#/components/responses/ValidationFailed"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "503": {
+            "$ref": "#/components/responses/ServiceUnavailable"
+          }
+        },
+        "x-ezacto-runtime-path": "/api/v1/bank-feeds/sync",
+        "x-ezacto-generate-client": true,
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/BankFeedSyncInput"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/bank-deposit-accounts": {
+      "get": {
+        "operationId": "listBankDepositAccounts",
+        "summary": "List bank feed accounts visible to the review queue",
+        "tags": [
+          "invoices"
+        ],
+        "security": [
+          {
+            "cookieSession": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BankDepositAccountsEnvelope"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/MalformedRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/AuthenticationRequired"
+          },
+          "403": {
+            "$ref": "#/components/responses/InsufficientPermissionOrModuleDisabled"
+          },
+          "404": {
+            "$ref": "#/components/responses/ResourceNotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/StateConflict"
+          },
+          "413": {
+            "$ref": "#/components/responses/PayloadTooLarge"
+          },
+          "422": {
+            "$ref": "#/components/responses/ValidationFailed"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "503": {
+            "$ref": "#/components/responses/ServiceUnavailable"
+          }
+        },
+        "x-ezacto-runtime-path": "/api/v1/bank-deposit-accounts",
+        "x-ezacto-generate-client": true
+      }
+    },
+    "/api/v1/bank-deposits": {
+      "get": {
+        "operationId": "listBankDeposits",
+        "summary": "Review staged credits without creating receipts",
+        "tags": [
+          "invoices"
+        ],
+        "security": [
+          {
+            "cookieSession": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BankDepositListEnvelope"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/MalformedRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/AuthenticationRequired"
+          },
+          "403": {
+            "$ref": "#/components/responses/InsufficientPermissionOrModuleDisabled"
+          },
+          "404": {
+            "$ref": "#/components/responses/ResourceNotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/StateConflict"
+          },
+          "413": {
+            "$ref": "#/components/responses/PayloadTooLarge"
+          },
+          "422": {
+            "$ref": "#/components/responses/ValidationFailed"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "503": {
+            "$ref": "#/components/responses/ServiceUnavailable"
+          }
+        },
+        "x-ezacto-runtime-path": "/api/v1/bank-deposits",
+        "x-ezacto-generate-client": true,
+        "parameters": [
+          {
+            "name": "state",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "enum": [
+                "unmatched",
+                "suggested",
+                "confirmed",
+                "rejected"
+              ]
+            }
+          },
+          {
+            "name": "page",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer"
+            }
+          },
+          {
+            "name": "per_page",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer"
+            }
+          }
+        ]
+      }
+    },
+    "/api/v1/bank-deposits/{id}/invoices": {
+      "get": {
+        "operationId": "listBankDepositInvoices",
+        "summary": "Find same-currency invoices for an explicit assignment",
+        "tags": [
+          "invoices"
+        ],
+        "security": [
+          {
+            "cookieSession": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BankDepositInvoicesEnvelope"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/MalformedRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/AuthenticationRequired"
+          },
+          "403": {
+            "$ref": "#/components/responses/InsufficientPermissionOrModuleDisabled"
+          },
+          "404": {
+            "$ref": "#/components/responses/ResourceNotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/StateConflict"
+          },
+          "413": {
+            "$ref": "#/components/responses/PayloadTooLarge"
+          },
+          "422": {
+            "$ref": "#/components/responses/ValidationFailed"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "503": {
+            "$ref": "#/components/responses/ServiceUnavailable"
+          }
+        },
+        "x-ezacto-runtime-path": "/api/v1/bank-deposits/:id/invoices",
+        "x-ezacto-generate-client": true,
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "minimum": 1
+            }
+          },
+          {
+            "name": "query",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ]
+      }
+    },
+    "/api/v1/bank-deposits/{id}/assign": {
+      "post": {
+        "operationId": "assignBankDeposit",
+        "summary": "Choose the invoice to review for this credit",
+        "tags": [
+          "invoices"
+        ],
+        "security": [
+          {
+            "cookieSession": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BankDepositEnvelope"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/MalformedRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/AuthenticationRequired"
+          },
+          "403": {
+            "$ref": "#/components/responses/InsufficientPermissionOrModuleDisabled"
+          },
+          "404": {
+            "$ref": "#/components/responses/ResourceNotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/StateConflict"
+          },
+          "413": {
+            "$ref": "#/components/responses/PayloadTooLarge"
+          },
+          "422": {
+            "$ref": "#/components/responses/ValidationFailed"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "503": {
+            "$ref": "#/components/responses/ServiceUnavailable"
+          }
+        },
+        "x-ezacto-runtime-path": "/api/v1/bank-deposits/:id/assign",
+        "x-ezacto-generate-client": true,
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "minimum": 1
+            }
+          },
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "maxLength": 128
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/BankDepositAssignInput"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/bank-deposits/{id}/reject": {
+      "post": {
+        "operationId": "rejectBankDeposit",
+        "summary": "Reject this credit without altering an invoice",
+        "tags": [
+          "invoices"
+        ],
+        "security": [
+          {
+            "cookieSession": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BankDepositEnvelope"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/MalformedRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/AuthenticationRequired"
+          },
+          "403": {
+            "$ref": "#/components/responses/InsufficientPermissionOrModuleDisabled"
+          },
+          "404": {
+            "$ref": "#/components/responses/ResourceNotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/StateConflict"
+          },
+          "413": {
+            "$ref": "#/components/responses/PayloadTooLarge"
+          },
+          "422": {
+            "$ref": "#/components/responses/ValidationFailed"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "503": {
+            "$ref": "#/components/responses/ServiceUnavailable"
+          }
+        },
+        "x-ezacto-runtime-path": "/api/v1/bank-deposits/:id/reject",
+        "x-ezacto-generate-client": true,
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "minimum": 1
+            }
+          },
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "maxLength": 128
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/BankDepositDecisionInput"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/bank-deposits/{id}/reopen": {
+      "post": {
+        "operationId": "reopenBankDeposit",
+        "summary": "Reopen a rejected credit for review",
+        "tags": [
+          "invoices"
+        ],
+        "security": [
+          {
+            "cookieSession": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BankDepositEnvelope"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/MalformedRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/AuthenticationRequired"
+          },
+          "403": {
+            "$ref": "#/components/responses/InsufficientPermissionOrModuleDisabled"
+          },
+          "404": {
+            "$ref": "#/components/responses/ResourceNotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/StateConflict"
+          },
+          "413": {
+            "$ref": "#/components/responses/PayloadTooLarge"
+          },
+          "422": {
+            "$ref": "#/components/responses/ValidationFailed"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "503": {
+            "$ref": "#/components/responses/ServiceUnavailable"
+          }
+        },
+        "x-ezacto-runtime-path": "/api/v1/bank-deposits/:id/reopen",
+        "x-ezacto-generate-client": true,
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "minimum": 1
+            }
+          },
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "maxLength": 128
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/BankDepositDecisionInput"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/bank-deposits/{id}/confirm": {
+      "post": {
+        "operationId": "confirmBankDeposit",
+        "summary": "Explicitly confirm one credit against one invoice",
+        "tags": [
+          "invoices"
+        ],
+        "security": [
+          {
+            "cookieSession": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BankDepositEnvelope"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/MalformedRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/AuthenticationRequired"
+          },
+          "403": {
+            "$ref": "#/components/responses/InsufficientPermissionOrModuleDisabled"
+          },
+          "404": {
+            "$ref": "#/components/responses/ResourceNotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/StateConflict"
+          },
+          "413": {
+            "$ref": "#/components/responses/PayloadTooLarge"
+          },
+          "422": {
+            "$ref": "#/components/responses/ValidationFailed"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "503": {
+            "$ref": "#/components/responses/ServiceUnavailable"
+          }
+        },
+        "x-ezacto-runtime-path": "/api/v1/bank-deposits/:id/confirm",
+        "x-ezacto-generate-client": true,
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "minimum": 1
+            }
+          },
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "maxLength": 128
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/BankDepositConfirmInput"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/bank-deposits/{id}/verify-source": {
+      "post": {
+        "operationId": "verifyBankDepositSource",
+        "summary": "Record an administrator verification of an uncertain external credit",
+        "tags": [
+          "invoices"
+        ],
+        "security": [
+          {
+            "cookieSession": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BankDepositEnvelope"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/MalformedRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/AuthenticationRequired"
+          },
+          "403": {
+            "$ref": "#/components/responses/InsufficientPermissionOrModuleDisabled"
+          },
+          "404": {
+            "$ref": "#/components/responses/ResourceNotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/StateConflict"
+          },
+          "413": {
+            "$ref": "#/components/responses/PayloadTooLarge"
+          },
+          "422": {
+            "$ref": "#/components/responses/ValidationFailed"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "503": {
+            "$ref": "#/components/responses/ServiceUnavailable"
+          }
+        },
+        "x-ezacto-runtime-path": "/api/v1/bank-deposits/:id/verify-source",
+        "x-ezacto-generate-client": true,
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "minimum": 1
+            }
+          },
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "maxLength": 128
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/BankDepositVerifyInput"
+              }
+            }
+          }
+        }
       }
     },
     "/api/v1/deel-sync": {
@@ -35096,6 +36269,346 @@
           }
         ]
       }
+    },
+    "/api/v1/csv-imports/{runId}/apply": {
+      "post": {
+        "operationId": "applyCsvImport",
+        "summary": "Confirm and queue the immutable reviewed CSV selection",
+        "description": "Container-only administrator session operation. Current native session, owned stage and target incarnation are checked before content. No source values or credentials are returned. Cancel stops future writes and retains committed time and setup.",
+        "tags": [
+          "csv-imports"
+        ],
+        "security": [
+          {
+            "bearerAuth": []
+          },
+          {
+            "cookieSession": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CsvImportApplyEnvelope"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/MalformedRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/AuthenticationRequired"
+          },
+          "403": {
+            "$ref": "#/components/responses/InsufficientPermission"
+          },
+          "404": {
+            "$ref": "#/components/responses/ResourceNotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/StateConflict"
+          },
+          "413": {
+            "$ref": "#/components/responses/PayloadTooLarge"
+          },
+          "422": {
+            "$ref": "#/components/responses/ValidationFailed"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "503": {
+            "$ref": "#/components/responses/ServiceUnavailable"
+          }
+        },
+        "x-ezacto-runtime-path": "/api/v1/csv-imports/:runId/apply",
+        "x-ezacto-generate-client": true,
+        "parameters": [
+          {
+            "name": "runId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CsvImportApplyCommand"
+              }
+            }
+          }
+        }
+      },
+      "get": {
+        "operationId": "getCsvImportApply",
+        "summary": "Recover authoritative CSV progress and a pending command receipt",
+        "description": "Container-only administrator session operation. Current native session, owned stage and target incarnation are checked before content. No source values or credentials are returned. Cancel stops future writes and retains committed time and setup.",
+        "tags": [
+          "csv-imports"
+        ],
+        "security": [
+          {
+            "bearerAuth": []
+          },
+          {
+            "cookieSession": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CsvImportApplyEnvelope"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/MalformedRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/AuthenticationRequired"
+          },
+          "403": {
+            "$ref": "#/components/responses/InsufficientPermission"
+          },
+          "404": {
+            "$ref": "#/components/responses/ResourceNotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/StateConflict"
+          },
+          "413": {
+            "$ref": "#/components/responses/PayloadTooLarge"
+          },
+          "422": {
+            "$ref": "#/components/responses/ValidationFailed"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "503": {
+            "$ref": "#/components/responses/ServiceUnavailable"
+          }
+        },
+        "x-ezacto-runtime-path": "/api/v1/csv-imports/:runId/apply",
+        "x-ezacto-generate-client": true,
+        "parameters": [
+          {
+            "name": "runId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "command_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ]
+      }
+    },
+    "/api/v1/csv-imports/{runId}/resume": {
+      "post": {
+        "operationId": "resumeCsvImport",
+        "summary": "Explicitly resume the same sealed selection under a current session",
+        "description": "Container-only administrator session operation. Current native session, owned stage and target incarnation are checked before content. No source values or credentials are returned. Cancel stops future writes and retains committed time and setup.",
+        "tags": [
+          "csv-imports"
+        ],
+        "security": [
+          {
+            "bearerAuth": []
+          },
+          {
+            "cookieSession": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CsvImportApplyEnvelope"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/MalformedRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/AuthenticationRequired"
+          },
+          "403": {
+            "$ref": "#/components/responses/InsufficientPermission"
+          },
+          "404": {
+            "$ref": "#/components/responses/ResourceNotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/StateConflict"
+          },
+          "413": {
+            "$ref": "#/components/responses/PayloadTooLarge"
+          },
+          "422": {
+            "$ref": "#/components/responses/ValidationFailed"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "503": {
+            "$ref": "#/components/responses/ServiceUnavailable"
+          }
+        },
+        "x-ezacto-runtime-path": "/api/v1/csv-imports/:runId/resume",
+        "x-ezacto-generate-client": true,
+        "parameters": [
+          {
+            "name": "runId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CsvImportApplyCommand"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/csv-imports/{runId}/cancel": {
+      "post": {
+        "operationId": "cancelCsvImport",
+        "summary": "Stop future CSV writes without rolling back committed rows",
+        "description": "Container-only administrator session operation. Current native session, owned stage and target incarnation are checked before content. No source values or credentials are returned. Cancel stops future writes and retains committed time and setup.",
+        "tags": [
+          "csv-imports"
+        ],
+        "security": [
+          {
+            "bearerAuth": []
+          },
+          {
+            "cookieSession": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CsvImportApplyEnvelope"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/MalformedRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/AuthenticationRequired"
+          },
+          "403": {
+            "$ref": "#/components/responses/InsufficientPermission"
+          },
+          "404": {
+            "$ref": "#/components/responses/ResourceNotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/StateConflict"
+          },
+          "413": {
+            "$ref": "#/components/responses/PayloadTooLarge"
+          },
+          "422": {
+            "$ref": "#/components/responses/ValidationFailed"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "503": {
+            "$ref": "#/components/responses/ServiceUnavailable"
+          }
+        },
+        "x-ezacto-runtime-path": "/api/v1/csv-imports/:runId/cancel",
+        "x-ezacto-generate-client": true,
+        "parameters": [
+          {
+            "name": "runId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CsvImportCancelCommand"
+              }
+            }
+          }
+        }
+      }
     }
   },
   "components": {
@@ -37223,6 +38736,156 @@
         ],
         "additionalProperties": false
       },
+      "CalendarCleanupEnvelope": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "data"
+        ],
+        "properties": {
+          "data": {
+            "$ref": "#/components/schemas/CalendarCleanupStatus"
+          }
+        }
+      },
+      "CalendarConnectionList": {
+        "type": "object",
+        "required": [
+          "data"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "data": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "provider",
+                "status",
+                "generation",
+                "last_synced_at",
+                "last_error",
+                "syncing",
+                "cleanup_pending",
+                "available"
+              ],
+              "properties": {
+                "provider": {
+                  "type": "string",
+                  "enum": [
+                    "google",
+                    "microsoft"
+                  ]
+                },
+                "status": {
+                  "type": "string",
+                  "enum": [
+                    "connected",
+                    "needs_reauth",
+                    "disconnected"
+                  ]
+                },
+                "generation": {
+                  "type": "integer",
+                  "minimum": 1
+                },
+                "last_synced_at": {
+                  "type": [
+                    "string",
+                    "null"
+                  ],
+                  "format": "date-time"
+                },
+                "last_error": {
+                  "type": [
+                    "string",
+                    "null"
+                  ],
+                  "enum": [
+                    "credential_unavailable",
+                    "authorization",
+                    "unavailable",
+                    "invalid_source",
+                    "limit",
+                    "changed",
+                    null
+                  ]
+                },
+                "syncing": {
+                  "type": "boolean"
+                },
+                "cleanup_pending": {
+                  "type": "boolean"
+                },
+                "available": {
+                  "type": "boolean"
+                }
+              }
+            }
+          }
+        }
+      },
+      "CalendarRefreshInput": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "past_days": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 90
+          },
+          "future_days": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 90
+          }
+        }
+      },
+      "CalendarDisconnectInput": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "generation"
+        ],
+        "properties": {
+          "generation": {
+            "type": "integer",
+            "minimum": 1
+          }
+        }
+      },
+      "CalendarRefreshResult": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "data"
+        ],
+        "properties": {
+          "data": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "state",
+              "applied"
+            ],
+            "properties": {
+              "state": {
+                "type": "string",
+                "enum": [
+                  "connected",
+                  "needs_reauth"
+                ]
+              },
+              "applied": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 90
+              }
+            }
+          }
+        }
+      },
       "CalendarFeedInput": {
         "type": "object",
         "properties": {
@@ -39245,6 +40908,607 @@
             "$ref": "#/components/schemas/MyPayments"
           }
         }
+      },
+      "InvoiceProviderAlert": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "event_type": {
+            "type": "string"
+          },
+          "kind": {
+            "type": "string",
+            "enum": [
+              "refund",
+              "dispute"
+            ]
+          },
+          "amount_cents": {
+            "type": "integer"
+          },
+          "currency": {
+            "type": "string"
+          },
+          "provider_status": {
+            "type": "string"
+          },
+          "occurred_at": {
+            "type": "string"
+          },
+          "reviewed_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "reviewed_by": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "required": [
+          "id",
+          "event_type",
+          "kind",
+          "amount_cents",
+          "currency",
+          "provider_status",
+          "occurred_at",
+          "reviewed_at",
+          "reviewed_by"
+        ],
+        "additionalProperties": false
+      },
+      "InvoiceProviderAlertEnvelope": {
+        "type": "object",
+        "properties": {
+          "data": {
+            "$ref": "#/components/schemas/InvoiceProviderAlert"
+          }
+        },
+        "required": [
+          "data"
+        ],
+        "additionalProperties": false
+      },
+      "InvoiceProviderAlertListEnvelope": {
+        "type": "object",
+        "properties": {
+          "data": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/InvoiceProviderAlert"
+            }
+          }
+        },
+        "required": [
+          "data"
+        ],
+        "additionalProperties": false
+      },
+      "ReviewInvoiceProviderAlertInput": {
+        "type": "object",
+        "properties": {},
+        "required": [],
+        "additionalProperties": false
+      },
+      "BankFeedStatusEnvelope": {
+        "type": "object",
+        "required": [
+          "data"
+        ],
+        "properties": {
+          "data": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": [
+                "provider",
+                "configured",
+                "account_name",
+                "last_synced_at",
+                "last_error",
+                "next_poll_at"
+              ],
+              "properties": {
+                "provider": {
+                  "type": "string",
+                  "enum": [
+                    "mercury",
+                    "wise"
+                  ]
+                },
+                "configured": {
+                  "type": "boolean"
+                },
+                "account_name": {
+                  "anyOf": [
+                    {
+                      "type": "string"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "last_synced_at": {
+                  "anyOf": [
+                    {
+                      "type": "string"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "last_error": {
+                  "anyOf": [
+                    {
+                      "type": "string"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "next_poll_at": {
+                  "anyOf": [
+                    {
+                      "type": "string"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                }
+              },
+              "additionalProperties": false
+            }
+          }
+        },
+        "additionalProperties": false
+      },
+      "BankFeedSyncInput": {
+        "type": "object",
+        "required": [],
+        "properties": {},
+        "additionalProperties": false
+      },
+      "BankFeedSyncEnvelope": {
+        "type": "object",
+        "required": [
+          "data"
+        ],
+        "properties": {
+          "data": {
+            "type": "object",
+            "required": [
+              "checked",
+              "failed"
+            ],
+            "properties": {
+              "checked": {
+                "type": "integer"
+              },
+              "failed": {
+                "type": "integer"
+              }
+            },
+            "additionalProperties": false
+          }
+        },
+        "additionalProperties": false
+      },
+      "BankReviewInvoice": {
+        "type": "object",
+        "required": [
+          "id",
+          "number",
+          "currency",
+          "due_amount_cents",
+          "version",
+          "state"
+        ],
+        "properties": {
+          "id": {
+            "type": "integer"
+          },
+          "number": {
+            "type": "string"
+          },
+          "currency": {
+            "type": "string"
+          },
+          "due_amount_cents": {
+            "type": "integer"
+          },
+          "version": {
+            "type": "integer"
+          },
+          "state": {
+            "type": "string"
+          }
+        },
+        "additionalProperties": false
+      },
+      "BankFeedAccount": {
+        "type": "object",
+        "required": [
+          "id",
+          "provider",
+          "name"
+        ],
+        "properties": {
+          "id": {
+            "type": "integer"
+          },
+          "provider": {
+            "type": "string",
+            "enum": [
+              "mercury",
+              "wise"
+            ]
+          },
+          "name": {
+            "type": "string"
+          }
+        },
+        "additionalProperties": false
+      },
+      "BankDeposit": {
+        "type": "object",
+        "required": [
+          "id",
+          "account_id",
+          "account_name",
+          "provider",
+          "provider_transaction_id",
+          "currency",
+          "posted_at",
+          "amount_cents",
+          "memo",
+          "counterparty",
+          "state",
+          "version",
+          "suggested_invoice",
+          "source_status",
+          "classification",
+          "source_reason",
+          "verified_at",
+          "verified_by_user_id",
+          "verification_reference",
+          "confirmation_basis",
+          "confirmation_ready",
+          "payment_id",
+          "confirmed_invoice_id"
+        ],
+        "properties": {
+          "id": {
+            "type": "integer"
+          },
+          "account_id": {
+            "type": "integer"
+          },
+          "account_name": {
+            "type": "string"
+          },
+          "provider": {
+            "type": "string",
+            "enum": [
+              "mercury",
+              "wise"
+            ]
+          },
+          "provider_transaction_id": {
+            "type": "string"
+          },
+          "currency": {
+            "type": "string"
+          },
+          "posted_at": {
+            "type": "string"
+          },
+          "amount_cents": {
+            "type": "integer"
+          },
+          "memo": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "counterparty": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "state": {
+            "type": "string",
+            "enum": [
+              "unmatched",
+              "suggested",
+              "confirmed",
+              "rejected"
+            ]
+          },
+          "version": {
+            "type": "integer"
+          },
+          "suggested_invoice": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/BankReviewInvoice"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "source_status": {
+            "type": "string",
+            "enum": [
+              "final",
+              "pending",
+              "reversed",
+              "ineligible",
+              "unknown"
+            ]
+          },
+          "classification": {
+            "type": "string",
+            "enum": [
+              "external_credit",
+              "internal_transfer",
+              "ambiguous_credit"
+            ]
+          },
+          "source_reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "verified_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "verified_by_user_id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "verification_reference": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "confirmation_basis": {
+            "anyOf": [
+              {
+                "type": "string",
+                "enum": [
+                  "provider",
+                  "operator"
+                ]
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "confirmation_ready": {
+            "type": "boolean"
+          },
+          "payment_id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "confirmed_invoice_id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "additionalProperties": false
+      },
+      "BankDepositAccountsEnvelope": {
+        "type": "object",
+        "required": [
+          "data"
+        ],
+        "properties": {
+          "data": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/BankFeedAccount"
+            }
+          }
+        },
+        "additionalProperties": false
+      },
+      "BankDepositListEnvelope": {
+        "type": "object",
+        "required": [
+          "data",
+          "page",
+          "per_page",
+          "total"
+        ],
+        "properties": {
+          "data": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/BankDeposit"
+            }
+          },
+          "page": {
+            "type": "integer"
+          },
+          "per_page": {
+            "type": "integer"
+          },
+          "total": {
+            "type": "integer"
+          }
+        },
+        "additionalProperties": false
+      },
+      "BankDepositInvoicesEnvelope": {
+        "type": "object",
+        "required": [
+          "data"
+        ],
+        "properties": {
+          "data": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/BankReviewInvoice"
+            }
+          }
+        },
+        "additionalProperties": false
+      },
+      "BankDepositEnvelope": {
+        "type": "object",
+        "required": [
+          "data"
+        ],
+        "properties": {
+          "data": {
+            "$ref": "#/components/schemas/BankDeposit"
+          }
+        },
+        "additionalProperties": false
+      },
+      "BankDepositAssignInput": {
+        "type": "object",
+        "required": [
+          "expected_version",
+          "invoice_id"
+        ],
+        "properties": {
+          "expected_version": {
+            "type": "integer"
+          },
+          "invoice_id": {
+            "type": "integer"
+          }
+        },
+        "additionalProperties": false
+      },
+      "BankDepositDecisionInput": {
+        "type": "object",
+        "required": [
+          "expected_version"
+        ],
+        "properties": {
+          "expected_version": {
+            "type": "integer"
+          }
+        },
+        "additionalProperties": false
+      },
+      "BankDepositConfirmInput": {
+        "type": "object",
+        "required": [
+          "expected_version",
+          "invoice_id",
+          "expected_invoice_version",
+          "confirm_overpayment"
+        ],
+        "properties": {
+          "expected_version": {
+            "type": "integer"
+          },
+          "invoice_id": {
+            "type": "integer"
+          },
+          "expected_invoice_version": {
+            "type": "integer"
+          },
+          "confirm_overpayment": {
+            "type": "boolean"
+          }
+        },
+        "additionalProperties": false
+      },
+      "BankDepositVerifyInput": {
+        "type": "object",
+        "required": [
+          "expected_version",
+          "verification_reference",
+          "confirm_posted_funds",
+          "confirm_external_credit"
+        ],
+        "properties": {
+          "expected_version": {
+            "type": "integer"
+          },
+          "verification_reference": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 200
+          },
+          "confirm_posted_funds": {
+            "const": true
+          },
+          "confirm_external_credit": {
+            "const": true
+          }
+        },
+        "additionalProperties": false
       },
       "DeelSyncSettingsCommand": {
         "type": "object",
@@ -48118,6 +50382,29 @@
         },
         "additionalProperties": false
       },
+      "CalendarCleanupStatus": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "pending",
+          "manual_required",
+          "revoked"
+        ],
+        "properties": {
+          "pending": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "manual_required": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "revoked": {
+            "type": "integer",
+            "minimum": 0
+          }
+        }
+      },
       "CalendarProposal": {
         "type": "object",
         "required": [
@@ -48190,6 +50477,28 @@
             "description": "The entry an accepted proposal became; null until then."
           },
           "decided_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "source_changed_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "source_cancelled_at": {
             "anyOf": [
               {
                 "type": "string",
@@ -49732,6 +52041,9 @@
           "retained_identity": {
             "type": "boolean"
           },
+          "calendar_cleanup": {
+            "$ref": "#/components/schemas/CalendarCleanupStatus"
+          },
           "apple_cleanup": {
             "$ref": "#/components/schemas/AppleCleanupStatus"
           }
@@ -50257,6 +52569,9 @@
           "expires_at"
         ],
         "properties": {
+          "calendar_cleanup": {
+            "$ref": "#/components/schemas/CalendarCleanupStatus"
+          },
           "apple_cleanup": {
             "$ref": "#/components/schemas/AppleCleanupStatus"
           },
@@ -50464,6 +52779,9 @@
           "updated_at"
         ],
         "properties": {
+          "calendar_cleanup": {
+            "$ref": "#/components/schemas/CalendarCleanupStatus"
+          },
           "apple_cleanup": {
             "$ref": "#/components/schemas/AppleCleanupStatus"
           },
@@ -64564,10 +66882,10 @@
             "type": "boolean"
           },
           "browser_ready": {
-            "const": false
+            "type": "boolean"
           },
           "apply_supported": {
-            "const": false
+            "type": "boolean"
           },
           "max_csv_bytes": {
             "type": "integer"
@@ -65415,6 +67733,282 @@
             "$ref": "#/components/schemas/CsvImportCatalogPage"
           }
         }
+      },
+      "CsvImportApplyCommand": {
+        "type": "object",
+        "properties": {
+          "preview_id": {
+            "type": "string",
+            "pattern": "^preview_[a-f0-9]{64}$"
+          },
+          "command_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "version": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "expected_selected_rows": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 50000
+          },
+          "expected_source_seconds": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 4320000000
+          },
+          "expected_destination_seconds": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 9007199254740991
+          },
+          "acknowledge_exclusions": {
+            "type": "boolean"
+          },
+          "acknowledge_destination_difference": {
+            "type": "boolean"
+          },
+          "acknowledge_new_people": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "preview_id",
+          "command_id",
+          "version",
+          "expected_selected_rows",
+          "expected_source_seconds",
+          "expected_destination_seconds",
+          "acknowledge_exclusions",
+          "acknowledge_destination_difference",
+          "acknowledge_new_people"
+        ],
+        "additionalProperties": false
+      },
+      "CsvImportCancelCommand": {
+        "type": "object",
+        "properties": {
+          "command_id": {
+            "type": "string",
+            "format": "uuid"
+          }
+        },
+        "required": [
+          "command_id"
+        ],
+        "additionalProperties": false
+      },
+      "CsvImportApplyRun": {
+        "type": "object",
+        "properties": {
+          "stage_id": {
+            "type": "string"
+          },
+          "preview_id": {
+            "anyOf": [
+              {
+                "type": "string",
+                "pattern": "^preview_[a-f0-9]{64}$"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "state": {
+            "type": "string",
+            "enum": [
+              "not_confirmed",
+              "queued",
+              "running",
+              "paused",
+              "partial",
+              "completed",
+              "cancelled",
+              "failed",
+              "superseded"
+            ]
+          },
+          "code": {
+            "anyOf": [
+              {
+                "type": "string",
+                "enum": [
+                  "processing_budget_exceeded",
+                  "authority_expired",
+                  "authority_revoked",
+                  "input_expired",
+                  "input_unavailable",
+                  "policy_changed",
+                  "parse_rejected",
+                  "storage_unavailable",
+                  "cancelled_by_administrator"
+                ]
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "command_id": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "uuid"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "command_known": {
+            "type": "boolean"
+          },
+          "pending_command": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/CsvImportApplyCommand"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "file_rows": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 9007199254740991
+          },
+          "selected_rows": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 9007199254740991
+          },
+          "excluded_rows": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 9007199254740991
+          },
+          "committed_rows": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 9007199254740991
+          },
+          "inserted_rows": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 9007199254740991
+          },
+          "already_imported_rows": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 9007199254740991
+          },
+          "created_setup": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 9007199254740991
+          },
+          "source_seconds_total": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 9007199254740991
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "source_seconds_committed": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 9007199254740991
+          },
+          "destination_seconds": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 9007199254740991
+          },
+          "destination_delta_seconds": {
+            "type": "integer",
+            "minimum": -9007199254740991,
+            "maximum": 9007199254740991
+          },
+          "deleted_imported_rows": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 9007199254740991
+          },
+          "retention_deadline": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "retryable": {
+            "type": "boolean"
+          },
+          "allowed_actions": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "enum": [
+                "apply",
+                "resume",
+                "cancel",
+                "inspect",
+                "purge",
+                "reconcile"
+              ]
+            }
+          }
+        },
+        "required": [
+          "stage_id",
+          "preview_id",
+          "state",
+          "code",
+          "command_id",
+          "command_known",
+          "pending_command",
+          "file_rows",
+          "selected_rows",
+          "excluded_rows",
+          "committed_rows",
+          "inserted_rows",
+          "already_imported_rows",
+          "created_setup",
+          "source_seconds_total",
+          "source_seconds_committed",
+          "destination_seconds",
+          "destination_delta_seconds",
+          "deleted_imported_rows",
+          "retention_deadline",
+          "retryable",
+          "allowed_actions"
+        ],
+        "additionalProperties": false
+      },
+      "CsvImportApplyEnvelope": {
+        "type": "object",
+        "properties": {
+          "data": {
+            "$ref": "#/components/schemas/CsvImportApplyRun"
+          }
+        },
+        "required": [
+          "data"
+        ],
+        "additionalProperties": false
       }
     }
   }

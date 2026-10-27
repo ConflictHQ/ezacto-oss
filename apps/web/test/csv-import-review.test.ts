@@ -1,140 +1,70 @@
-import { describe, expect, it } from "vitest";
-import {
-  cancelNotice,
-  type ImportChoices,
-  type RowError,
-} from "../src/csv-import/contract.js";
-import {
-  afterSessionChange,
-  applyCommand,
-  blockers,
-  startReview,
-} from "../src/csv-import/review.js";
-import { FakeImportApi } from "./support/fake-import-api.js";
+import { describe, expect, it } from 'vitest'
+import { csvPreview as preview } from './support/csv-ui-fixture.js'
+import { afterSessionChange, applyCommand, blockers, physicalLines, startReview } from '../src/csv-import/review.js'
+import { cancelNotice } from '../src/csv-import/contract.js'
 
-const choices: ImportChoices = {
-  source_id: "workspace-1",
-  date_format: "YYYY-MM-DD",
-  export_zone: "UTC",
-  destination_interpretation: "wall_clock_as_written",
-  new_client_currency: "USD",
-  mapping: { people: {}, clients: {}, projects: {}, tasks: {} },
-};
 
-const errorLines = (count: number): RowError[] =>
-  Array.from({ length: count }, (_, i) => ({
-    line: i + 2,
-    category: i % 2 === 0 ? ("invalid" as const) : ("unsupported" as const),
-    code: i % 2 === 0 ? "bad_date" : "unsupported_tag",
-    message: "Row cannot be imported.",
-  }));
+const actor = 'administrator:2:session-generation-1'
+const commandId = '00000000-0000-4000-8000-000000000001'
 
-describe("import preview contract (fake provider)", () => {
-  it("writes nothing for upload, preview or error paging", async () => {
-    const api = new FakeImportApi({ errors: errorLines(3) });
-    const upload = await api.upload(new Uint8Array(8));
-    const preview = await api.preview(upload.upload_id, choices);
-    await api.errors(preview.preview_id, null);
-    expect(api.writes).toBe(0);
-  });
-
-  it("pages every error and keeps full totals on each page", async () => {
-    const api = new FakeImportApi({ errors: errorLines(5) });
-    const preview = await api.preview("up", choices);
-    const seen: number[] = [];
-    let cursor: string | null = null;
-    do {
-      const page = await api.errors(preview.preview_id, cursor);
-      expect(page.total).toEqual({ invalid: 3, unsupported: 2 });
-      seen.push(...page.items.map((e) => e.line));
-      cursor = page.next_cursor;
-    } while (cursor !== null);
-    expect(seen).toEqual([2, 3, 4, 5, 6]);
-  });
-
-  it("refuses rejected rows by default and applies only the reviewed exclusion", async () => {
-    const api = new FakeImportApi({ errors: errorLines(2) });
-    const preview = await api.preview("up", choices);
-    const review = startReview(preview, "admin:1:administrator");
-    expect(blockers(review)).toHaveLength(2);
-    expect(() => applyCommand(review)).toThrow();
-
-    const refused = await api.apply({
-      preview_id: preview.preview_id,
-      acknowledgements: { rounding: false, partial: false, excluded_count: 0 },
-    });
-    expect(refused).toEqual({ status: "refused", reason: "rejected_rows" });
-    expect(api.writes).toBe(0);
-
-    const reviewed = { ...review, partial: true, excludedCount: 2 };
-    expect(blockers(reviewed)).toEqual([]);
-    expect((await api.apply(applyCommand(reviewed))).status).toBe("accepted");
-    expect(api.writes).toBe(8);
-  });
-
-  it("requires acknowledging rounded seconds that differ from the source", async () => {
-    const api = new FakeImportApi({
-      sourceSeconds: 3601,
-      roundedSeconds: 3600,
-    });
-    const preview = await api.preview("up", choices);
-    const review = startReview(preview, "admin:1:administrator");
-    expect(blockers(review)).toHaveLength(1);
-    expect(
-      await api.apply({
-        preview_id: preview.preview_id,
-        acknowledgements: applyAck(false),
-      }),
-    ).toEqual({
-      status: "refused",
-      reason: "acknowledgement_missing",
-    });
-    expect(api.writes).toBe(0);
-    expect(
-      applyCommand({ ...review, rounding: true }).acknowledgements.rounding,
-    ).toBe(true);
-  });
-
-  it("treats a replaced preview as stale and writes nothing from it", async () => {
-    const api = new FakeImportApi();
-    const first = await api.preview("up", choices);
-    await api.preview("up", { ...choices, export_zone: "America/Denver" });
-    const outcome = await api.apply(
-      applyCommand(startReview(first, "admin:1:administrator")),
-    );
-    expect(outcome).toEqual({ status: "stale", reason: "preview_replaced" });
-    expect(api.writes).toBe(0);
-  });
-
-  it("discards a review when the session identity or role changes", async () => {
-    const api = new FakeImportApi();
-    const review = startReview(
-      await api.preview("up", choices),
-      "admin:1:administrator",
-    );
-    expect(afterSessionChange(review, "admin:1:administrator")).toBe(review);
-    expect(afterSessionChange(review, "admin:1:member")).toBeNull();
-    expect(afterSessionChange(review, "admin:2:administrator")).toBeNull();
-    expect(afterSessionChange(review, null)).toBeNull();
-  });
-
-  it("reports capability truthfully before any call", async () => {
-    const api = new FakeImportApi({
-      capability: {
-        state: "unsupported_runtime",
-        guidance: "Use the import-csv command.",
-      },
-    });
-    expect((await api.capability()).state).toBe("unsupported_runtime");
-  });
-
-  it("never claims a rollback on cancel", () => {
-    expect(cancelNotice(120, 3)).toContain("Nothing was rolled back");
-  });
-});
-
-const applyAck = (rounding: boolean) => ({
-  rounding,
-  partial: false,
-  excluded_count: 0,
-});
+describe('actual CSV preview review binding', () => {
+  it('requires review, destination difference and inactive-person acknowledgements', () => {
+    const review = startReview(preview(), actor)
+    expect(blockers(review)).toHaveLength(3)
+    expect(() => applyCommand(review, commandId)).toThrow()
+    review.reviewed = review.destinationDifference = review.newPeople = true
+    expect(blockers(review)).toEqual([])
+    expect(applyCommand(review, commandId)).toEqual({ preview_id: review.preview.preview_id, command_id: commandId, version: 2,
+      expected_selected_rows: 2, expected_source_seconds: 7201, expected_destination_seconds: 7200,
+      acknowledge_exclusions: false, acknowledge_destination_difference: true, acknowledge_new_people: true })
+  })
+  it('never turns remaining rejected rows into an implicit partial import', () => {
+    const data = preview(); data.tallies.rejected_row_count = 1
+    const review = startReview(data, actor); review.reviewed = review.exclusions = review.destinationDifference = review.newPeople = true
+    expect(blockers(review).join(' ')).toContain('Resolve or explicitly exclude all 1 rejected rows')
+    expect(() => applyCommand(review, commandId)).toThrow()
+  })
+  it('requires exact reviewed exclusions on the replacement preview and resets all acknowledgements', () => {
+    const data = preview(); data.choices.excluded_lines = [3]; data.tallies.file_rows = 3
+    const review = startReview(data, actor); review.reviewed = review.destinationDifference = review.newPeople = true
+    expect(blockers(review).join(' ')).toContain('1 excluded physical lines')
+    review.exclusions = true
+    expect(applyCommand(review, commandId).acknowledge_exclusions).toBe(true)
+    expect(startReview(data, actor)).toMatchObject({ reviewed: false, exclusions: false, destinationDifference: false, newPeople: false })
+  })
+  it('binds a private immutable copy rather than the caller’s mutable payload', () => {
+    const data = preview(), review = startReview(data, actor)
+    data.tallies.selected_rows = 999; data.choices.excluded_lines.push(7)
+    expect(review.preview.tallies.selected_rows).toBe(2)
+    expect(review.preview.choices.excluded_lines).toEqual([])
+    expect(Object.isFrozen(review.preview.tallies)).toBe(true)
+  })
+  it('uses a fresh version only for an explicitly new resume command', () => {
+    const review = startReview(preview(), actor); review.reviewed = review.destinationDifference = review.newPeople = true
+    const original = applyCommand(review, commandId)
+    const resumed = applyCommand(review, '00000000-0000-4000-8000-000000000002', 9)
+    expect(resumed.version).toBe(9)
+    expect(original.version).toBe(2)
+    expect(resumed.preview_id).toBe(original.preview_id)
+    expect(resumed.expected_source_seconds).toBe(original.expected_source_seconds)
+  })
+  it('discards review on changed user, role or session generation', () => {
+    const review = startReview(preview(), actor)
+    expect(afterSessionChange(review, actor)).toBe(review)
+    for (const changed of [null, 'member:2:session-generation-1', 'administrator:2:session-generation-2', 'administrator:3:session-generation-1']) expect(afterSessionChange(review, changed)).toBeNull()
+  })
+  it('keeps file errors and an empty selection blocked despite acknowledgements', () => {
+    const data = preview(); data.tallies.file_error_count = 1; data.tallies.selected_rows = 0
+    const review = startReview(data, actor); review.reviewed = review.exclusions = review.destinationDifference = review.newPeople = true
+    expect(blockers(review)).toHaveLength(2)
+  })
+  it('parses explicit physical data lines without accepting headers, ranges or lossy numbers', () => {
+    expect(physicalLines('7, 2, 7, 12')).toEqual([2, 7, 12])
+    expect(physicalLines('')).toEqual([])
+    for (const invalid of ['1', '0', '2-7', '2,,3', '2.5', '9007199254740992']) expect(() => physicalLines(invalid)).toThrow()
+  })
+  it('never labels a committed stop as rollback', () => {
+    expect(cancelNotice(7, 3)).toContain('7 committed time rows and 3 created setup records remain')
+    expect(cancelNotice(7, 3)).toContain('Nothing was rolled back')
+  })
+})

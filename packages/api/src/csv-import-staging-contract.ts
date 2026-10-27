@@ -16,9 +16,10 @@ export const CSV_STAGING_LIMITS = {
 export const CSV_RAW_RETENTION_MS = 24 * 60 * 60 * 1000;
 
 export type CsvImportRuntime = "container" | "worker";
-/** Container/SQLite only. A worker runtime reports unsupported and every route answers 404. */
+/** Worker availability additionally requires its explicit D1/R2/Queue capability. */
 export const CSV_IMPORT_SUPPORTED_RUNTIMES: readonly CsvImportRuntime[] = [
   "container",
+  "worker",
 ];
 
 export const csvRunStatuses = [
@@ -75,6 +76,8 @@ export const rawRetentionDeadline = (
     : null;
 
 export type CsvStagingErrorCode =
+  | "worker_policy_changed"
+  | "worker_budget_exceeded"
   | "session_required"
   | "token_denied"
   | "administrator_required"
@@ -102,6 +105,8 @@ export type CsvStagingErrorCode =
 export const csvStagingErrorStatus: Readonly<
   Record<CsvStagingErrorCode, number>
 > = {
+  worker_budget_exceeded: 413,
+  worker_policy_changed: 409,
   session_required: 401,
   token_denied: 403,
   administrator_required: 403,
@@ -154,8 +159,9 @@ export const authorizeCsvStaging = (
   mutating: boolean,
   target: string,
   loadRun: (() => CsvStagingRunRef | null) | null,
+  workerConfigured = false,
 ): CsvStagingErrorCode | null => {
-  if (!CSV_IMPORT_SUPPORTED_RUNTIMES.includes(runtime))
+  if (!CSV_IMPORT_SUPPORTED_RUNTIMES.includes(runtime) || (runtime === "worker" && !workerConfigured))
     return "capability_unsupported";
   if (caller.kind === "anonymous") return "session_required";
   if (caller.kind === "token") return "token_denied";
@@ -332,8 +338,8 @@ const stagingSchemas = {
   CsvImportCapabilities: object({
     runtime: { type: "string", enum: ["container", "worker"] },
     staging_supported: boolean,
-    browser_ready: { const: false },
-    apply_supported: { const: false },
+    browser_ready: { type: "boolean" },
+    apply_supported: { type: "boolean" },
     max_csv_bytes: integer,
     max_mapping_bytes: integer,
     raw_retention_hours: { const: 24 },

@@ -420,6 +420,39 @@ export type ResourceCalendarEnvelope = {
 };
 };
 
+export type CalendarCleanupEnvelope = {
+  "data": CalendarCleanupStatus;
+};
+
+export type CalendarConnectionList = {
+  "data": Array<{
+  "provider": "google" | "microsoft";
+  "status": "connected" | "needs_reauth" | "disconnected";
+  "generation": number;
+  "last_synced_at": unknown;
+  "last_error": "credential_unavailable" | "authorization" | "unavailable" | "invalid_source" | "limit" | "changed" | null;
+  "syncing": boolean;
+  "cleanup_pending": boolean;
+  "available": boolean;
+}>;
+};
+
+export type CalendarRefreshInput = {
+  "past_days"?: number;
+  "future_days"?: number;
+};
+
+export type CalendarDisconnectInput = {
+  "generation": number;
+};
+
+export type CalendarRefreshResult = {
+  "data": {
+  "state": "connected" | "needs_reauth";
+  "applied": number;
+};
+};
+
 export type CalendarFeedInput = {
   "scope": "self" | "project" | "team";
   "project_id": number | null;
@@ -813,6 +846,131 @@ export type MyPayments = {
 
 export type MyPaymentsEnvelope = {
   "data": MyPayments;
+};
+
+export type InvoiceProviderAlert = {
+  "id": string;
+  "event_type": string;
+  "kind": "refund" | "dispute";
+  "amount_cents": number;
+  "currency": string;
+  "provider_status": string;
+  "occurred_at": string;
+  "reviewed_at": string | null;
+  "reviewed_by": number | null;
+};
+
+export type InvoiceProviderAlertEnvelope = {
+  "data": InvoiceProviderAlert;
+};
+
+export type InvoiceProviderAlertListEnvelope = {
+  "data": Array<InvoiceProviderAlert>;
+};
+
+export type ReviewInvoiceProviderAlertInput = Record<string, unknown>;
+
+export type BankFeedStatusEnvelope = {
+  "data": Array<{
+  "provider": "mercury" | "wise";
+  "configured": boolean;
+  "account_name": string | null;
+  "last_synced_at": string | null;
+  "last_error": string | null;
+  "next_poll_at": string | null;
+}>;
+};
+
+export type BankFeedSyncInput = Record<string, unknown>;
+
+export type BankFeedSyncEnvelope = {
+  "data": {
+  "checked": number;
+  "failed": number;
+};
+};
+
+export type BankReviewInvoice = {
+  "id": number;
+  "number": string;
+  "currency": string;
+  "due_amount_cents": number;
+  "version": number;
+  "state": string;
+};
+
+export type BankFeedAccount = {
+  "id": number;
+  "provider": "mercury" | "wise";
+  "name": string;
+};
+
+export type BankDeposit = {
+  "id": number;
+  "account_id": number;
+  "account_name": string;
+  "provider": "mercury" | "wise";
+  "provider_transaction_id": string;
+  "currency": string;
+  "posted_at": string;
+  "amount_cents": number;
+  "memo": string | null;
+  "counterparty": string | null;
+  "state": "unmatched" | "suggested" | "confirmed" | "rejected";
+  "version": number;
+  "suggested_invoice": BankReviewInvoice | null;
+  "source_status": "final" | "pending" | "reversed" | "ineligible" | "unknown";
+  "classification": "external_credit" | "internal_transfer" | "ambiguous_credit";
+  "source_reason": string | null;
+  "verified_at": string | null;
+  "verified_by_user_id": number | null;
+  "verification_reference": string | null;
+  "confirmation_basis": "provider" | "operator" | null;
+  "confirmation_ready": boolean;
+  "payment_id": number | null;
+  "confirmed_invoice_id": number | null;
+};
+
+export type BankDepositAccountsEnvelope = {
+  "data": Array<BankFeedAccount>;
+};
+
+export type BankDepositListEnvelope = {
+  "data": Array<BankDeposit>;
+  "page": number;
+  "per_page": number;
+  "total": number;
+};
+
+export type BankDepositInvoicesEnvelope = {
+  "data": Array<BankReviewInvoice>;
+};
+
+export type BankDepositEnvelope = {
+  "data": BankDeposit;
+};
+
+export type BankDepositAssignInput = {
+  "expected_version": number;
+  "invoice_id": number;
+};
+
+export type BankDepositDecisionInput = {
+  "expected_version": number;
+};
+
+export type BankDepositConfirmInput = {
+  "expected_version": number;
+  "invoice_id": number;
+  "expected_invoice_version": number;
+  "confirm_overpayment": boolean;
+};
+
+export type BankDepositVerifyInput = {
+  "expected_version": number;
+  "verification_reference": string;
+  "confirm_posted_funds": true;
+  "confirm_external_credit": true;
 };
 
 export type DeelSyncSettingsCommand = {
@@ -2679,6 +2837,12 @@ export type TimeEntryPage = {
   "page": PageMetadata;
 };
 
+export type CalendarCleanupStatus = {
+  "pending": number;
+  "manual_required": number;
+  "revoked": number;
+};
+
 export type CalendarProposal = {
   "id": number;
   "provider": "google" | "microsoft";
@@ -2691,6 +2855,8 @@ export type CalendarProposal = {
   "status": "proposed" | "accepted" | "discarded" | "cancelled";
   "time_entry_id": number | null;
   "decided_at": string | null;
+  "source_changed_at"?: string | null;
+  "source_cancelled_at"?: string | null;
   "created_at": string;
   "updated_at": string;
 };
@@ -3044,6 +3210,7 @@ export type AccountClosureRecord = {
   "policy_snapshot": AccountRetentionPolicy;
   "inventory": Array<AccountClosureInventoryItem>;
   "retained_identity": boolean;
+  "calendar_cleanup"?: CalendarCleanupStatus;
   "apple_cleanup": AppleCleanupStatus;
 };
 
@@ -3162,6 +3329,7 @@ export type AccountDeletionClosureDisclosure = {
 };
 
 export type AccountDeletionTrackingStatus = {
+  "calendar_cleanup"?: CalendarCleanupStatus;
   "apple_cleanup"?: AppleCleanupStatus;
   "request_id": string;
   "status": "pending" | "in_progress" | "action_required" | "completed";
@@ -3195,6 +3363,7 @@ export type AccountDeletionUpdate = {
 };
 
 export type AccountDeletionRecord = {
+  "calendar_cleanup"?: CalendarCleanupStatus;
   "apple_cleanup"?: AppleCleanupStatus;
   "id": string;
   "user_id": number;
@@ -5909,8 +6078,8 @@ export type CsvImportUploadBytes = Blob | Uint8Array;
 export type CsvImportCapabilities = {
   "runtime": "container" | "worker";
   "staging_supported": boolean;
-  "browser_ready": false;
-  "apply_supported": false;
+  "browser_ready": boolean;
+  "apply_supported": boolean;
   "max_csv_bytes": number;
   "max_mapping_bytes": number;
   "raw_retention_hours": 24;
@@ -6094,6 +6263,51 @@ export type CsvImportErrorPageEnvelope = {
 
 export type CsvImportCatalogPageEnvelope = {
   "data": CsvImportCatalogPage;
+};
+
+export type CsvImportApplyCommand = {
+  "preview_id": string;
+  "command_id": string;
+  "version": number;
+  "expected_selected_rows": number;
+  "expected_source_seconds": number;
+  "expected_destination_seconds": number;
+  "acknowledge_exclusions": boolean;
+  "acknowledge_destination_difference": boolean;
+  "acknowledge_new_people": boolean;
+};
+
+export type CsvImportCancelCommand = {
+  "command_id": string;
+};
+
+export type CsvImportApplyRun = {
+  "stage_id": string;
+  "preview_id": string | null;
+  "state": "not_confirmed" | "queued" | "running" | "paused" | "partial" | "completed" | "cancelled" | "failed" | "superseded";
+  "code": "processing_budget_exceeded" | "authority_expired" | "authority_revoked" | "input_expired" | "input_unavailable" | "policy_changed" | "parse_rejected" | "storage_unavailable" | "cancelled_by_administrator" | null;
+  "command_id": string | null;
+  "command_known": boolean;
+  "pending_command": CsvImportApplyCommand | null;
+  "file_rows": number;
+  "selected_rows": number;
+  "excluded_rows": number;
+  "committed_rows": number;
+  "inserted_rows": number;
+  "already_imported_rows": number;
+  "created_setup": number;
+  "source_seconds_total": number | null;
+  "source_seconds_committed": number;
+  "destination_seconds": number;
+  "destination_delta_seconds": number;
+  "deleted_imported_rows": number;
+  "retention_deadline": string | null;
+  "retryable": boolean;
+  "allowed_actions": Array<"apply" | "resume" | "cancel" | "inspect" | "purge" | "reconcile">;
+};
+
+export type CsvImportApplyEnvelope = {
+  "data": CsvImportApplyRun;
 };
 
 export interface EzactoClientOptions {
@@ -7293,6 +7507,44 @@ export class EzactoClient {
     const headers = new Headers(args.headers);
 
     return this.request<CalendarProposalEnvelope>("POST", "/api/v1/calendar-proposals/:id/discard".replace(":id", encodeURIComponent(String(args["id"]))), {
+      signal: args.signal,
+      headers,
+    });
+  }
+
+  async getCalendarCleanupStatus(args: { signal?: AbortSignal; headers?: HeadersInit } = {}): Promise<CalendarCleanupEnvelope> {
+    const headers = new Headers(args.headers);
+
+    return this.request<CalendarCleanupEnvelope>("GET", "/api/v1/calendar-cleanup-status", {
+      signal: args.signal,
+      headers,
+    });
+  }
+
+  async listCalendarConnections(args: { signal?: AbortSignal; headers?: HeadersInit } = {}): Promise<CalendarConnectionList> {
+    const headers = new Headers(args.headers);
+
+    return this.request<CalendarConnectionList>("GET", "/api/v1/calendar-connections", {
+      signal: args.signal,
+      headers,
+    });
+  }
+
+  async disconnectCalendarConnection(args: { "provider": "google" | "microsoft"; body: CalendarDisconnectInput; signal?: AbortSignal; headers?: HeadersInit }): Promise<void> {
+    const headers = new Headers(args.headers);
+
+    return this.request<void>("DELETE", "/api/v1/calendar-connections/:provider".replace(":provider", encodeURIComponent(String(args["provider"]))), {
+      body: args.body,
+      signal: args.signal,
+      headers,
+    });
+  }
+
+  async refreshCalendarConnection(args: { "provider": "google" | "microsoft"; body: CalendarRefreshInput; signal?: AbortSignal; headers?: HeadersInit }): Promise<CalendarRefreshResult> {
+    const headers = new Headers(args.headers);
+
+    return this.request<CalendarRefreshResult>("POST", "/api/v1/calendar-connections/:provider/refresh".replace(":provider", encodeURIComponent(String(args["provider"]))), {
+      body: args.body,
       signal: args.signal,
       headers,
     });
@@ -8594,6 +8846,123 @@ export class EzactoClient {
 
     return this.request<MyPaymentsEnvelope>("GET", "/api/v1/me/payments", {
       query: args.query,
+      signal: args.signal,
+      headers,
+    });
+  }
+
+  async listInvoiceProviderAlerts(args: { "id": number; signal?: AbortSignal; headers?: HeadersInit }): Promise<InvoiceProviderAlertListEnvelope> {
+    const headers = new Headers(args.headers);
+
+    return this.request<InvoiceProviderAlertListEnvelope>("GET", "/api/v1/invoices/:id/provider-alerts".replace(":id", encodeURIComponent(String(args["id"]))), {
+      signal: args.signal,
+      headers,
+    });
+  }
+
+  async reviewInvoiceProviderAlert(args: { "id": number; "alertId": string; body: ReviewInvoiceProviderAlertInput; signal?: AbortSignal; headers?: HeadersInit }): Promise<InvoiceProviderAlertEnvelope> {
+    const headers = new Headers(args.headers);
+
+    return this.request<InvoiceProviderAlertEnvelope>("POST", "/api/v1/invoices/:id/provider-alerts/:alertId/review".replace(":id", encodeURIComponent(String(args["id"]))).replace(":alertId", encodeURIComponent(String(args["alertId"]))), {
+      body: args.body,
+      signal: args.signal,
+      headers,
+    });
+  }
+
+  async getBankFeedStatus(args: { signal?: AbortSignal; headers?: HeadersInit } = {}): Promise<BankFeedStatusEnvelope> {
+    const headers = new Headers(args.headers);
+
+    return this.request<BankFeedStatusEnvelope>("GET", "/api/v1/bank-feed-status", {
+      signal: args.signal,
+      headers,
+    });
+  }
+
+  async syncBankFeeds(args: { body: BankFeedSyncInput; signal?: AbortSignal; headers?: HeadersInit }): Promise<BankFeedSyncEnvelope> {
+    const headers = new Headers(args.headers);
+
+    return this.request<BankFeedSyncEnvelope>("POST", "/api/v1/bank-feeds/sync", {
+      body: args.body,
+      signal: args.signal,
+      headers,
+    });
+  }
+
+  async listBankDepositAccounts(args: { signal?: AbortSignal; headers?: HeadersInit } = {}): Promise<BankDepositAccountsEnvelope> {
+    const headers = new Headers(args.headers);
+
+    return this.request<BankDepositAccountsEnvelope>("GET", "/api/v1/bank-deposit-accounts", {
+      signal: args.signal,
+      headers,
+    });
+  }
+
+  async listBankDeposits(args: { query?: { "state"?: "unmatched" | "suggested" | "confirmed" | "rejected"; "page"?: number; "per_page"?: number }; signal?: AbortSignal; headers?: HeadersInit } = {}): Promise<BankDepositListEnvelope> {
+    const headers = new Headers(args.headers);
+
+    return this.request<BankDepositListEnvelope>("GET", "/api/v1/bank-deposits", {
+      query: args.query,
+      signal: args.signal,
+      headers,
+    });
+  }
+
+  async listBankDepositInvoices(args: { "id": number; query?: { "query"?: string }; signal?: AbortSignal; headers?: HeadersInit }): Promise<BankDepositInvoicesEnvelope> {
+    const headers = new Headers(args.headers);
+
+    return this.request<BankDepositInvoicesEnvelope>("GET", "/api/v1/bank-deposits/:id/invoices".replace(":id", encodeURIComponent(String(args["id"]))), {
+      query: args.query,
+      signal: args.signal,
+      headers,
+    });
+  }
+
+  async assignBankDeposit(args: { "id": number; "Idempotency-Key": string; body: BankDepositAssignInput; signal?: AbortSignal; headers?: HeadersInit }): Promise<BankDepositEnvelope> {
+    const headers = new Headers(args.headers);
+    if (args["Idempotency-Key"] !== undefined) headers.set("Idempotency-Key", String(args["Idempotency-Key"]));
+    return this.request<BankDepositEnvelope>("POST", "/api/v1/bank-deposits/:id/assign".replace(":id", encodeURIComponent(String(args["id"]))), {
+      body: args.body,
+      signal: args.signal,
+      headers,
+    });
+  }
+
+  async rejectBankDeposit(args: { "id": number; "Idempotency-Key": string; body: BankDepositDecisionInput; signal?: AbortSignal; headers?: HeadersInit }): Promise<BankDepositEnvelope> {
+    const headers = new Headers(args.headers);
+    if (args["Idempotency-Key"] !== undefined) headers.set("Idempotency-Key", String(args["Idempotency-Key"]));
+    return this.request<BankDepositEnvelope>("POST", "/api/v1/bank-deposits/:id/reject".replace(":id", encodeURIComponent(String(args["id"]))), {
+      body: args.body,
+      signal: args.signal,
+      headers,
+    });
+  }
+
+  async reopenBankDeposit(args: { "id": number; "Idempotency-Key": string; body: BankDepositDecisionInput; signal?: AbortSignal; headers?: HeadersInit }): Promise<BankDepositEnvelope> {
+    const headers = new Headers(args.headers);
+    if (args["Idempotency-Key"] !== undefined) headers.set("Idempotency-Key", String(args["Idempotency-Key"]));
+    return this.request<BankDepositEnvelope>("POST", "/api/v1/bank-deposits/:id/reopen".replace(":id", encodeURIComponent(String(args["id"]))), {
+      body: args.body,
+      signal: args.signal,
+      headers,
+    });
+  }
+
+  async confirmBankDeposit(args: { "id": number; "Idempotency-Key": string; body: BankDepositConfirmInput; signal?: AbortSignal; headers?: HeadersInit }): Promise<BankDepositEnvelope> {
+    const headers = new Headers(args.headers);
+    if (args["Idempotency-Key"] !== undefined) headers.set("Idempotency-Key", String(args["Idempotency-Key"]));
+    return this.request<BankDepositEnvelope>("POST", "/api/v1/bank-deposits/:id/confirm".replace(":id", encodeURIComponent(String(args["id"]))), {
+      body: args.body,
+      signal: args.signal,
+      headers,
+    });
+  }
+
+  async verifyBankDepositSource(args: { "id": number; "Idempotency-Key": string; body: BankDepositVerifyInput; signal?: AbortSignal; headers?: HeadersInit }): Promise<BankDepositEnvelope> {
+    const headers = new Headers(args.headers);
+    if (args["Idempotency-Key"] !== undefined) headers.set("Idempotency-Key", String(args["Idempotency-Key"]));
+    return this.request<BankDepositEnvelope>("POST", "/api/v1/bank-deposits/:id/verify-source".replace(":id", encodeURIComponent(String(args["id"]))), {
+      body: args.body,
       signal: args.signal,
       headers,
     });
@@ -10636,6 +11005,46 @@ export class EzactoClient {
     const headers = new Headers(args.headers);
 
     return this.request<void>("DELETE", "/api/v1/csv-imports/:runId/input".replace(":runId", encodeURIComponent(String(args["runId"]))), {
+      signal: args.signal,
+      headers,
+    });
+  }
+
+  async applyCsvImport(args: { "runId": string; "Idempotency-Key": string; body: CsvImportApplyCommand; signal?: AbortSignal; headers?: HeadersInit }): Promise<CsvImportApplyEnvelope> {
+    const headers = new Headers(args.headers);
+    if (args["Idempotency-Key"] !== undefined) headers.set("Idempotency-Key", String(args["Idempotency-Key"]));
+    return this.request<CsvImportApplyEnvelope>("POST", "/api/v1/csv-imports/:runId/apply".replace(":runId", encodeURIComponent(String(args["runId"]))), {
+      body: args.body,
+      signal: args.signal,
+      headers,
+    });
+  }
+
+  async resumeCsvImport(args: { "runId": string; "Idempotency-Key": string; body: CsvImportApplyCommand; signal?: AbortSignal; headers?: HeadersInit }): Promise<CsvImportApplyEnvelope> {
+    const headers = new Headers(args.headers);
+    if (args["Idempotency-Key"] !== undefined) headers.set("Idempotency-Key", String(args["Idempotency-Key"]));
+    return this.request<CsvImportApplyEnvelope>("POST", "/api/v1/csv-imports/:runId/resume".replace(":runId", encodeURIComponent(String(args["runId"]))), {
+      body: args.body,
+      signal: args.signal,
+      headers,
+    });
+  }
+
+  async cancelCsvImport(args: { "runId": string; "Idempotency-Key": string; body: CsvImportCancelCommand; signal?: AbortSignal; headers?: HeadersInit }): Promise<CsvImportApplyEnvelope> {
+    const headers = new Headers(args.headers);
+    if (args["Idempotency-Key"] !== undefined) headers.set("Idempotency-Key", String(args["Idempotency-Key"]));
+    return this.request<CsvImportApplyEnvelope>("POST", "/api/v1/csv-imports/:runId/cancel".replace(":runId", encodeURIComponent(String(args["runId"]))), {
+      body: args.body,
+      signal: args.signal,
+      headers,
+    });
+  }
+
+  async getCsvImportApply(args: { "runId": string; query?: { "command_id"?: string }; signal?: AbortSignal; headers?: HeadersInit }): Promise<CsvImportApplyEnvelope> {
+    const headers = new Headers(args.headers);
+
+    return this.request<CsvImportApplyEnvelope>("GET", "/api/v1/csv-imports/:runId/apply".replace(":runId", encodeURIComponent(String(args["runId"]))), {
+      query: args.query,
       signal: args.signal,
       headers,
     });

@@ -70,7 +70,13 @@ export interface AuthenticatedSession {
   rotatedToken?: string
 }
 
+export interface AccessAuthenticatedSession extends AuthenticatedSession {
+  issuedToken?: string
+}
+
 export interface SessionStore {
+  /** Trusted verified Access assertion selector; never a bearer credential. */
+  authenticateAccess(userId: number, selector: string): Promise<AccessAuthenticatedSession | null>
   issue(userId: number, credentialVersion?: number): Promise<IssuedSession>
   authenticate(token: string): Promise<AuthenticatedSession | null>
   list(userId: number): Promise<SessionMetadata[]>
@@ -181,8 +187,7 @@ const sha256Hex = async (value: string): Promise<string> => {
   return [...digest].map((byte) => byte.toString(16).padStart(2, '0')).join('')
 }
 
-const issueToken = async (): Promise<TokenMaterial> => {
-  const selector = randomBase64Url(12)
+const issueToken = async (selector = randomBase64Url(12)): Promise<TokenMaterial> => {
   const secret = randomBase64Url(32)
   const token = `ezacto_session_${selector}_${secret}`
   return { selector, secretHash: await sha256Hex(token), token }
@@ -265,10 +270,7 @@ const createSessionStore = (
   positiveTtl(absoluteTtlMs, 'absoluteTtlMs')
   assertLastSeenInterval(touchIntervalMs, idleTtlMs)
 
-  const issue = async (
-    userId: number,
-    credentialVersion?: number,
-  ): Promise<IssuedSession> => {
+  const issue = async (userId: number, credentialVersion?: number): Promise<IssuedSession> => {
     if (!Number.isSafeInteger(userId) || userId < 1) {
       throw new RangeError('session user id must be a positive safe integer')
     }
@@ -337,9 +339,10 @@ const createSessionStore = (
     throw new Error('session token selector collision retry exhausted')
   }
 
-  const authenticate = async (token: string): Promise<AuthenticatedSession | null> => {
-    const prepared = await prepareToken(token)
-    if (prepared === null) return null
+  const authenticatePrepared = async (prepared: {
+    selector: string
+    secretHash: string
+  }): Promise<AuthenticatedSession | null> => {
     const timestamp = now()
     assertCanonicalTimestamp(timestamp)
     const requestedIdleExpiry = futureTimestamp(timestamp, idleTtlMs)
@@ -514,11 +517,61 @@ const createSessionStore = (
     }
   }
 
+  const authenticateAccess = async (
+    userId: number,
+    selector: string,
+  ): Promise<AccessAuthenticatedSession | null> => {
+    if (!Number.isSafeInteger(userId) || userId < 1 || !/^[A-Za-z0-9_-]{16}$/.test(selector))
+      return null
+    const timestamp = now()
+    assertCanonicalTimestamp(timestamp)
+    const absoluteExpiresAt = futureTimestamp(timestamp, absoluteTtlMs)
+    const idleExpiresAt = futureTimestamp(timestamp, Math.min(idleTtlMs, absoluteTtlMs))
+    const material = await issueToken(selector)
+    // NOT EXISTS is evaluated inside the native transaction. Existing rows,
+    // including revoked/expired ones, are never replaced by the same assertion.
+    const rows = await database.atomic([
+      {
+        query: `INSERT INTO sessions(user_id,selector,secret_hash,profile_snapshot,manager_grants_snapshot,created_at,last_seen_at,idle_expires_at,absolute_expires_at,revoked_at,revocation_reason,rotation_nonce,updated_at)
+          SELECT user.id,?,?,user.profile,user.manager_grants,?,?,?,?,NULL,NULL,NULL,?
+          FROM users user WHERE user.id=? AND user.is_active=1
+            AND NOT EXISTS(SELECT 1 FROM account_closures WHERE user_id=user.id)
+            AND NOT EXISTS(SELECT 1 FROM sessions WHERE selector=?) RETURNING ${rowColumns()}`,
+        bindings: [
+          selector,
+          material.secretHash,
+          timestamp,
+          timestamp,
+          idleExpiresAt,
+          absoluteExpiresAt,
+          timestamp,
+          userId,
+          selector,
+        ],
+      },
+      {
+        query: 'SELECT user_id AS userId,secret_hash AS secretHash FROM sessions WHERE selector=?',
+        bindings: [selector],
+      },
+    ])
+    const candidate = rows[1]?.[0] as { userId: number; secretHash: string } | undefined
+    if (!candidate || candidate.userId !== userId) return null
+    const authenticated = await authenticatePrepared({ selector, secretHash: candidate.secretHash })
+    if (!authenticated || authenticated.principal.userId !== userId) return null
+    return { ...authenticated, ...(rows[0]?.length === 1 ? { issuedToken: material.token } : {}) }
+  }
+
   return {
     issue,
     // A session's last-seen write is authentication's, not the request's own
     // work: it must not claim an Idempotency-Key (#952).
-    authenticate: (token: string) => outsideClaim(() => authenticate(token)),
+    authenticate: (token: string) =>
+      outsideClaim(async () => {
+        const prepared = await prepareToken(token)
+        return prepared === null ? null : authenticatePrepared(prepared)
+      }),
+    authenticateAccess: (userId, selector) =>
+      outsideClaim(() => authenticateAccess(userId, selector)),
     list: async (userId) => {
       if (!Number.isSafeInteger(userId) || userId < 1) return []
       const rows = await database.atomic([

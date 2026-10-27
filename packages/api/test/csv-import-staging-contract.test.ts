@@ -185,10 +185,11 @@ describe("authorization order", () => {
       authorizeCsvStaging("container", admin, false, "org", () => null),
     ).toBe("run_not_found");
   });
-  it("reports the worker runtime unsupported to everyone", () => {
+  it("requires explicit Worker capability before applying the same authority checks", () => {
     expect(authorizeCsvStaging("worker", admin, false, "org", null)).toBe(
       "capability_unsupported",
     );
+    expect(authorizeCsvStaging("worker", admin, false, "org", null, true)).toBeNull();
   });
 });
 

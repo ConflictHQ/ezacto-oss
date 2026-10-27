@@ -1,3 +1,4 @@
+import { serializeHarvestInvoice, type HarvestInvoiceRecord } from '../src/harvest-v2/invoices.js'
 import { readdirSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import type { GeneralResourceRecord } from '@ezacto/core'
@@ -24,6 +25,7 @@ import { ApiError as NativeApiError } from '../src/errors.js'
 const corpusRoot = join(import.meta.dirname, 'fixtures', 'harvest-v2')
 
 const render = (resource: string, input: unknown): unknown => {
+  if (resource === 'invoices') return serializeHarvestInvoice(input as HarvestInvoiceRecord)
   if (resource === 'clients') return serializeHarvestClient(input as GeneralResourceRecord)
   if (resource === 'tasks') return serializeHarvestTask(input as GeneralResourceRecord)
   if (resource === 'time_entries') {
@@ -54,7 +56,7 @@ const render = (resource: string, input: unknown): unknown => {
   return serializeHarvestUser(user, context)
 }
 
-const resources = ['clients', 'projects', 'tasks', 'users', 'time_entries', 'project_assignments', 'expenses']
+const resources = ['clients', 'projects', 'tasks', 'users', 'time_entries', 'project_assignments', 'expenses', 'invoices']
 const cases = resources.flatMap((resource) =>
   readdirSync(join(corpusRoot, resource))
     .filter((file) => file.endsWith('.input.json'))
@@ -64,6 +66,17 @@ const read = (resource: string, name: string, kind: 'input' | 'golden'): string 
   readFileSync(join(corpusRoot, resource, `${name}.${kind}.json`), 'utf8')
 
 describe('harvest v2 golden corpus', () => {
+  it('retains at least 200 snapshot-derived objects with explicit recorded-subset provenance', () => {
+    const provenance = JSON.parse(readFileSync(join(import.meta.dirname, '../../../docs/evidence/16-harvest-corpus-provenance.json'), 'utf8')) as { kind: string; counts: Record<string, number> }
+    const recorded = cases.filter(({ name }) => name.startsWith('snapshot-'))
+    expect(provenance.kind).toBe('redacted-recorded-subset')
+    expect(recorded.length).toBeGreaterThanOrEqual(200)
+    for (const [resource, count] of Object.entries(provenance.counts)) {
+      expect(recorded.filter((entry) => entry.resource === resource)).toHaveLength(count)
+    }
+    expect(recorded.some(({ resource }) => resource === 'project_assignments')).toBe(false)
+  })
+
   it('covers every resource in this slice', () => {
     for (const resource of resources)
       expect(cases.filter((entry) => entry.resource === resource).length).toBeGreaterThanOrEqual(3)
@@ -84,9 +97,9 @@ const structural = [
   /^(Etc\/UTC|America\/Costa_Rica)$/,
   /^\d{2}:\d{2}$/,
   /^\d{1,2}:\d{2}(am|pm)$/,
-  /^(12h|24h|unsubmitted|submitted|approved|invoiced|Invoiced|This record is locked\.)$/,
+  /^(12h|24h|unsubmitted|submitted|approved|invoiced|Invoiced|draft|open|paid|closed|upon_receipt|net_15|net_30|net_45|net_60|custom|upon receipt|net 15|net 30|net 45|net 60|stripe_checkout|paypal_checkout|credit_card|paypal|ach|This record is locked\.)$/,
   /^\d+$/,
-  /^(net_30|time_materials|fixed_fee|non_billable|project|tasks|people|none|project_cost|managers|member|administrator|project_manager|manager|project_creator|estimates_manager|Project|Tasks|People)$/,
+  /^(net_30|time_materials|fixed_fee|non_billable|project|tasks|people|person|none|project_cost|managers|member|administrator|project_manager|manager|project_creator|estimates_manager|Project|Tasks|People)$/,
 ]
 // Values the corpus may hold that are invented text. Anything else fails.
 const invented = [
@@ -97,6 +110,7 @@ const invented = [
   /^https:\/\/example\.test\/avatars\/\d+\.png$/,
   /^\+1 555 01\d\d$/,
   /^SMP-\d+$/,
+  /^https:\/\/example\.test\/reference$/,
   /^$/,
 ]
 

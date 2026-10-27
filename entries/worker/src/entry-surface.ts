@@ -136,8 +136,12 @@ export const WORKER_ONLY_ROUTES: readonly string[] = [
   'post /api/v1/deel-sync/runs',
 ]
 
-/** Mounted by the container and not by the Worker. */
-export const CONTAINER_ONLY_ROUTES: readonly string[] = [
+/** CSV routes require the optional native Worker D1/R2/Queue adapter. */
+export const CSV_IMPORT_ROUTES: readonly string[] = [
+  'post /api/v1/csv-imports/:runId/apply',
+  'post /api/v1/csv-imports/:runId/resume',
+  'post /api/v1/csv-imports/:runId/cancel',
+  'get /api/v1/csv-imports/:runId/apply',
   'post /api/v1/csv-imports',
   'get /api/v1/csv-imports/:runId',
   'get /api/v1/csv-imports/:runId/mapping',
@@ -148,6 +152,9 @@ export const CONTAINER_ONLY_ROUTES: readonly string[] = [
   'get /api/v1/csv-imports/:runId/diagnostics',
   'delete /api/v1/csv-imports/:runId/input',
 ]
+
+/** Unconfigured Workers keep the Container-only CSV surface absent. */
+export const CONTAINER_ONLY_ROUTES = CSV_IMPORT_ROUTES
 
 /**
  * Contact sign-in for the in-app portal, mounted only where
@@ -226,13 +233,14 @@ export const expectedApiRoutes = (
     readonly portal: boolean
     readonly quickBooks?: boolean
     readonly wise?: boolean
+    readonly csvImport?: boolean
   },
 ): ReadonlySet<string> => {
   const gatedOff = new Set([
     ...(options.portal ? [] : [...PORTAL_ROUTES, ...STAFF_MAGIC_LINK_ROUTES]),
     ...(options.quickBooks === true ? [] : QUICKBOOKS_ROUTES),
     ...(options.wise === true ? [] : WISE_ROUTES),
-    ...(entry === 'worker' ? CONTAINER_ONLY_ROUTES : WORKER_ONLY_ROUTES),
+    ...(entry === 'worker' ? options.csvImport ? [] : CONTAINER_ONLY_ROUTES : WORKER_ONLY_ROUTES),
   ])
   return new Set(
     [...documented, ...UNDOCUMENTED_ROUTES].filter((route) => !gatedOff.has(route)),

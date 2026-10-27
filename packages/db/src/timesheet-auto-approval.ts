@@ -47,9 +47,14 @@ interface SettingsRow {
   actorProfile: 'executive_manager' | 'administrator' | null
 }
 
-const readRow = async (database: InvoiceStateDatabase): Promise<SettingsRow> => {
-  const [row] = await database.all<SettingsRow>(
-    sql`SELECT organization.auto_approval_enabled AS enabled,
+const readOptionalRow = async (database: InvoiceStateDatabase): Promise<SettingsRow | null> => {
+  const [row] = await database.all<SettingsRow & { settingsPresent: number; initialized: number }>(
+    sql`SELECT organization.id IS NOT NULL AS settingsPresent,
+               CASE WHEN organization.id IS NULL THEN
+                 EXISTS(SELECT 1 FROM organizations) OR EXISTS(SELECT 1 FROM users)
+                 OR EXISTS(SELECT 1 FROM auth_first_run)
+               ELSE 1 END AS initialized,
+               organization.auto_approval_enabled AS enabled,
                organization.auto_approval_window_days AS windowDays,
                organization.auto_approval_effective_from AS effectiveFrom,
                organization.auto_approval_actor_user_id AS actorUserId,
@@ -58,9 +63,19 @@ const readRow = async (database: InvoiceStateDatabase): Promise<SettingsRow> => 
                  WHERE actor.id = organization.auto_approval_actor_user_id
                    AND actor.is_active = 1
                    AND actor.profile IN ('administrator', 'executive_manager')) AS actorProfile
-        FROM organizations organization WHERE organization.id = 1`,
+        FROM (SELECT 1) instance LEFT JOIN organizations organization ON organization.id = 1`,
   )
-  if (row === undefined) throw new Error('Organization settings do not exist.')
+  // Absence is normal only before any organization or identity has been
+  // initialized. Read the marker and settings in one snapshot so concurrent
+  // first-run setup cannot be mistaken for a damaged configured instance.
+  if (row?.settingsPresent === 0 && row.initialized === 0) return null
+  if (row === undefined || row.settingsPresent !== 1) throw new Error('Organization settings do not exist.')
+  return row
+}
+
+const readRow = async (database: InvoiceStateDatabase): Promise<SettingsRow> => {
+  const row = await readOptionalRow(database)
+  if (row === null) throw new Error('Organization settings do not exist.')
   return row
 }
 
@@ -159,13 +174,14 @@ export const runTimesheetAutoApproval = async (
   options: { readonly batchSize?: number } = {},
 ): Promise<TimesheetAutoApprovalRun> => {
   const batchSize = options.batchSize ?? DEFAULT_BATCH
-  const start = await readRow(database)
   const idle = (stopped?: TimesheetAutoApprovalRun['stopped']): TimesheetAutoApprovalRun => ({
     approved: [],
     skipped: 0,
     failed: [],
     ...(stopped === undefined ? {} : { stopped }),
   })
+  const start = await readOptionalRow(database)
+  if (start === null) return idle()
   if (start.enabled !== 1 || start.windowDays === null || start.effectiveFrom === null) {
     return idle()
   }

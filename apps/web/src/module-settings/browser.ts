@@ -1,5 +1,6 @@
 import { setRequestBusy } from '../request-feedback.js'
 import { accountingProviderAvailable } from '../accounting-providers.js'
+import type { createCsvImportController } from '../csv-import/browser.js'
 import {
   moduleAvailable,
   SETTINGS_SECTION_MODULES,
@@ -532,6 +533,7 @@ export const createModuleSettingsController = (
   // back into the page would otherwise leave two listeners on it and send the
   // policy twice.
   let session: ActiveSession | null = null
+  let csvImports: ReturnType<typeof createCsvImportController> | null = null
 
   // Which sections this session has read, by the promise that read them. A
   // section loads the first time it is shown and not again (issue 809): the
@@ -1319,6 +1321,7 @@ export const createModuleSettingsController = (
     noteForm.hidden = true
     timeRounding.clear()
     dataTools.clear()
+    csvImports?.clear()
     // The result line sits outside the form, so hiding the form leaves the
     // previous session's "Saved." or its 403 on screen under the next
     // person's notice.
@@ -2712,8 +2715,20 @@ export const createModuleSettingsController = (
     modules: loadModules,
     webhooks: active => webhookController.load(active),
     'import-export': async active=>{
-      try { await dataTools.loadExports(active) }
-      catch(error){active.presentFailure(error,()=>sectionFailed('import-export',required<HTMLElement>('[data-settings-data-status]'),error,'Only administrators can use company import and export.','Available exports could not be loaded.'))}
+      const loadImport = async () => {
+        const root = document.querySelector<HTMLElement>('[data-csv-import]')
+        if (!root || currentSession() !== active || active.signal.aborted) return
+        if (!api.csvImports) { root.querySelector<HTMLElement>('[data-csv-status]')!.textContent = 'Browser import is unavailable. Use the operator CSV migration tool.'; return }
+        const module = await import('../csv-import/browser.js')
+        if (currentSession() !== active || active.signal.aborted) return
+        csvImports ??= module.createCsvImportController(root, api.csvImports)
+        await csvImports.activate({ actor: `${active.identity.user_id}:${active.identity.profile}:${crypto.randomUUID()}`, administrator: active.identity.profile === 'administrator', signal: active.signal })
+      }
+      await Promise.all([
+        (async () => { try { await dataTools.loadExports(active) }
+          catch(error){active.presentFailure(error,()=>sectionFailed('import-export',required<HTMLElement>('[data-settings-data-status]'),error,'Only administrators can use company import and export.','Available exports could not be loaded.'))} })(),
+        loadImport(),
+      ])
     },
     'bulk-actions': async active=>{
       try { await dataTools.loadBulk(active) }

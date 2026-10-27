@@ -1,3 +1,7 @@
+import { installCalendarConnectionRoutes, type CalendarConnectionPort } from '@ezacto/api'
+import { installInvoiceProviderAlertRoutes, type InvoiceProviderAlertService } from '@ezacto/api'
+import type { BankFeedEnvironment } from '@ezacto/integrations'
+import { installBankDepositRoutes, type BankDepositReviewApi } from '@ezacto/api'
 import { installCalendarFeedRoutes, installCalendarSubscriptionRoute } from '@ezacto/api'
 import type { CalendarFeedService } from '@ezacto/core'
 import { installDeelPaymentStatusRoutes } from '@ezacto/api'
@@ -71,6 +75,7 @@ import {
   installGeneralResourceRoutes,
   installHarvestV2Routes,
   type HarvestExpenseSource,
+  type HarvestInvoiceSource,
   type HarvestTimeEntrySource,
   installMagicLinkRoutes,
   installModuleSettingsRoutes,
@@ -296,7 +301,7 @@ export type AppEnv = Env & {
   BACKUPS_ENABLED?: string
 }
 
-export type WorkerEnv = AppEnv & OffsiteBackupEnvironment & {
+export type WorkerEnv = AppEnv & OffsiteBackupEnvironment & BankFeedEnvironment & {
   DB: D1Database
   SCHEDULED_RUN_WORKFLOW?: Workflow<{runId: number; proposedAt: string}>
   /** Sentry DSN. Absent means error reporting is off (a no-op wrapper). */
@@ -331,6 +336,9 @@ export type WorkerEnv = AppEnv & OffsiteBackupEnvironment & {
   EMAIL_QUEUE?: Queue<QueuedEmailJob>
   MIGRATION_QUEUE?: Queue<{kind:'migration-load-v1';runId:string;sequence:number}>
   MIGRATION_QUEUE_NAME?: string
+  /** Optional dedicated CSV queue; absent keeps Worker browser imports off. */
+  CSV_IMPORT_QUEUE?: Queue<import('./csv-queue.js').CsvWorkerMessage | import('./csv-runtime.js').CsvMaintenanceMessage>
+  CSV_IMPORT_QUEUE_NAME?: string
   /** Optional Cloudflare Access provider; both values are required together. */
   ACCESS_TEAM_DOMAIN?: string
   ACCESS_POLICY_AUD?: string
@@ -424,6 +432,7 @@ export type WorkerEnv = AppEnv & OffsiteBackupEnvironment & {
 
 export interface RuntimeServices {
   csvImportStaging?: import('@ezacto/api').CsvImportStagingPort
+  csvImportApply?: import('@ezacto/api').CsvImportApplyPort
   appleWebLifecycle?: AppleWebLifecyclePort
   bootstrap(input: InstanceBootstrapInput): Promise<InstanceBootstrapResult>
   enrollOwnerPassword(
@@ -437,6 +446,7 @@ export interface RuntimeServices {
   team: TeamRouteOptions['repository']
   trackedResources: TrackedResourceRepository & HarvestTimeEntrySource & HarvestExpenseSource
   /** Calendar events offered as time, accepted through `trackedResources` (issue 428). */
+  calendarConnections?: CalendarConnectionPort
   calendarProposals: CalendarProposalRepository
   /** Planned hours per week and the capacity view (issue 1007). */
   organizationHolidays?: OrganizationHolidayRepository
@@ -482,7 +492,10 @@ export interface RuntimeServices {
   isOwnMoneyVisible(): Promise<boolean>
   timesheetApprovals: TimesheetApprovalService
   timesheetLockPolicy: TimesheetLockPolicyService
+  bankFeeds?: {status():Promise<import('@ezacto/integrations').BankFeedStatus[]>;processDue():Promise<{checked:number;failed:number}>}
+  bankDeposits?: BankDepositReviewApi
   moneyResources: MoneyResourceRouteOptions['service']
+  harvestInvoices?: HarvestInvoiceSource
   invoiceGeneration: NonNullable<MoneyResourceRouteOptions['generation']>
   /**
    * Issues the invoice a recurring definition is due for. The whole engine
@@ -567,6 +580,9 @@ export interface RuntimeServices {
    * an endpoint answering. Unverifiable deliveries are still refused.
    */
   wiseWebhook?: NonNullable<WiseRuntime["webhook"]>
+  invoiceProviderAlerts?: InvoiceProviderAlertService
+  stripeAlertReconciliation?: { processDue(now: string): Promise<{ checked: number }> }
+  stripeAlertNotices?: { processDue(now: string): Promise<{ queued: number }> }
   stripe?: StripeService
   /** Mailgun's bounce, complaint and delivery events; see the route. */
   emailSuppressions?: EmailSuppressionStore
@@ -854,6 +870,7 @@ export const createApp = (
 
   return createApiApp<AppEnv>({
     ...(services?.csvImportStaging ? {csvImportStaging:services.csvImportStaging}:{}),
+    ...(services?.csvImportApply ? {csvImportApply:services.csvImportApply}:{}),
     // Every 5xx the API answers goes to Sentry with the request id the client
     // was handed (issue 807). A no-op until SENTRY_DSN is set, like the wrapper
     // in index.ts, and never given a request or response body.
@@ -968,6 +985,7 @@ export const createApp = (
               cursorSigningKey: services.cursorSigningKey,
               now: () => new Date(systemClock.now().instant),
             })
+            if(services.calendarConnections) installCalendarConnectionRoutes(api,services.calendarConnections)
             installCalendarProposalRoutes(api, {
               repository: services.calendarProposals,
               clock: systemClock,
@@ -1073,8 +1091,10 @@ export const createApp = (
             // Mounted whether or not BILL is reachable: there is nothing to
             // connect, so the honest answer to "is this configured?" is a
             // route that says so rather than a route that is missing.
+            if(services.bankDeposits) installBankDepositRoutes(api,services.bankDeposits,services.bankFeeds)
             if (services.stripe !== undefined) {
               installStripeRoutes(api, services.stripe)
+              if (services.invoiceProviderAlerts) installInvoiceProviderAlertRoutes(api, services.invoiceProviderAlerts)
             }
             if (services.invoiceTimeClaims !== undefined) {
               installInvoiceTimeClaimRoutes(api, services.invoiceTimeClaims)
@@ -1214,9 +1234,11 @@ export const createApp = (
           },
           installHarvestV2: (harvest) =>
             installHarvestV2Routes(harvest, {
+              ...(services.harvestInvoices ? {invoices:services.harvestInvoices} : {}),
               repository: services.generalResources,
               timeEntries: services.trackedResources,
               expenses: services.trackedResources,
+              mutationClock: systemClock,
               isExpensesModuleEnabled: services.isExpensesModuleEnabled,
               isTeamModuleEnabled: services.isTeamModuleEnabled,
               clock: () => systemClock.now().instant,
@@ -1863,6 +1885,32 @@ export const createApp = (
         )
       })
 
+      app.get('/invoices/bank-deposits', async (context) =>
+        context.html(
+          renderAppShell({
+            environment: context.env.ENVIRONMENT,
+            release: context.env.RELEASE,
+            ...(await shellChrome(context.env, context.req.raw)),
+            activeSection: 'Invoices',
+            view: 'invoice-bank-deposits',
+            tabs: invoiceTabs('invoice-bank-deposits'),
+            demoAccounts: publishedDemoAccounts(context.env),
+            sessionCookiePresent: hasSessionCookie(context.req.raw),
+          }),
+          200,
+          {
+            'cache-control': 'no-store',
+            'content-security-policy': shellContentSecurityPolicy,
+            'permissions-policy': 'camera=(), microphone=(), geolocation=()',
+            'referrer-policy': 'same-origin',
+            'x-content-type-options': 'nosniff',
+          },
+        ),
+      )
+
+      // Moved to Settings (issue 546). A bookmark and every link that shipped
+      // still work: 301, the same way /settings/modules kept working when it
+      // folded into /settings/company.
       app.get('/invoices/retainers', async (context) =>
         context.html(
           renderAppShell({

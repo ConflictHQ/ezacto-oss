@@ -1,3 +1,4 @@
+import { IdempotencyClaimConflict } from '@ezacto/core'
 import { AsyncLocalStorage } from 'node:async_hooks'
 import type BetterSqlite3 from 'better-sqlite3'
 import { retryTransientD1Read } from './d1-read-retry.js'
@@ -171,6 +172,14 @@ const claimParameters = (claim: IdempotencyClaim): unknown[] => [
 
 const ownerSql = 'SELECT attempt FROM idempotency_keys WHERE id = ?'
 
+// D1 exposes constraint identity as a message rather than a driver code. Match
+// only the claim table's exact primary-key failure, never generic constraints
+// or transport errors. A different durable owner must also be read separately.
+const d1ClaimConstraints = new Set([
+  'D1_ERROR: UNIQUE constraint failed: idempotency_keys.id: SQLITE_CONSTRAINT',
+  'D1_ERROR: UNIQUE constraint failed: idempotency_keys.id: SQLITE_CONSTRAINT (extended: SQLITE_CONSTRAINT_PRIMARYKEY)',
+])
+
 /**
  * After a write failed: did it fail because another attempt holds the key, or
  * did an earlier write of this attempt (or this one, its answer lost) commit
@@ -320,14 +329,19 @@ class RidingD1Database {
       state.wrote = true
       return results.slice(0, -1)
     } catch (error) {
+      let competingOwner = false
       try {
         const row = await this.inner
           .prepare(ownerSql)
           .bind(state.claim.id)
           .first<{ attempt: string }>()
         settle(state, row?.attempt)
+        competingOwner = row !== null && row.attempt !== state.claim.attempt
       } catch {
-        // The write's own failure is the one worth reporting.
+        // Ambiguous outcomes and classification failures remain reportable.
+      }
+      if (competingOwner && error instanceof Error && d1ClaimConstraints.has(error.message)) {
+        throw new IdempotencyClaimConflict()
       }
       throw error
     }
@@ -370,7 +384,23 @@ export const createIdempotentSqlite = (database: BetterSqlite3.Database): Better
   let claimed = false
 
   const claimNow = (state: ClaimState): void => {
-    database.prepare(claimSql).run(...claimParameters(state.claim))
+    try {
+      database.prepare(claimSql).run(...claimParameters(state.claim))
+    } catch (error) {
+      // This catch surrounds only our claim INSERT, not the business writes.
+      // Verify ownership independently even for a primary-key driver failure.
+      if (error instanceof Error && 'code' in error && error.code === 'SQLITE_CONSTRAINT_PRIMARYKEY') {
+        let competingOwner = false
+        try {
+          const row = database.prepare(ownerSql).get(state.claim.id) as { attempt: string } | undefined
+          competingOwner = row !== undefined && row.attempt !== state.claim.attempt
+        } catch {
+          // Preserve the original failure when ownership cannot be established.
+        }
+        if (competingOwner) throw new IdempotencyClaimConflict()
+      }
+      throw error
+    }
   }
 
   const settleSqlite = (state: ClaimState): void => {

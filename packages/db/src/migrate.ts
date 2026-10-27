@@ -1,8 +1,15 @@
+import { workerBackupCaptureMigration } from './migrations/0176_worker_backup_capture.js'
+import { staffCodeRequesterMigration } from './migrations/0175_staff_code_requester.js'
+import { calendarConnectionsMigration } from './migrations/0172_calendar_connections.js'
+import { stripePaymentAlertsMigration } from './migrations/0173_stripe_payment_alerts.js'
+import { bankDepositReviewMigration } from './migrations/0174_bank_deposit_review.js'
 import { deelStatusThrottleMigration } from './migrations/0167_deel_status_throttle.js'
+import { csvWorkerStagingMigration } from './migrations/0171_csv_worker_staging.js'
 import { planningCalendarFeedsMigration } from './migrations/0168_planning_calendar_feeds.js'
 import { deelPaymentStatusMigration } from './migrations/0166_deel_payment_status.js'
 import { isOrdinaryD1SchemaStatement } from './internal/d1-cold-migrations.js'
 import { csvStagingInstanceMigration } from './migrations/0169_csv_staging_instance.js'
+import { csvApplyRuntimeMigration } from './migrations/0170_csv_apply_runtime.js'
 import { csvBrowserDatasetMigration } from './migrations/0164_csv_browser_dataset.js'
 import { nonzeroStoppedTimeMigration } from './migrations/0165_nonzero_stopped_time.js'
 import { placeholderPlanningMigration } from './migrations/0163_placeholder_planning.js'
@@ -1697,6 +1704,13 @@ const migrations = [
   { id: '0167_deel_status_throttle', statements: deelStatusThrottleMigration },
   { id: '0168_planning_calendar_feeds', statements: planningCalendarFeedsMigration },
   { id: '0169_csv_staging_instance', statements: csvStagingInstanceMigration },
+  { id: '0170_csv_apply_runtime', statements: csvApplyRuntimeMigration },
+  { id: '0171_csv_worker_staging', statements: csvWorkerStagingMigration },
+  { id: '0172_calendar_connections', statements: calendarConnectionsMigration },
+  { id: '0173_stripe_payment_alerts', statements: stripePaymentAlertsMigration },
+  { id: '0174_bank_deposit_review', statements: bankDepositReviewMigration },
+  { id: '0175_staff_code_requester', statements: staffCodeRequesterMigration },
+  { id: '0176_worker_backup_capture', statements: workerBackupCaptureMigration },
 ] as const
 
 // Fixtures assert against this rather than re-listing ids: a hand-copied ledger merges

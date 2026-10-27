@@ -118,12 +118,16 @@ const harness = (user: { userId: number } | null = { userId: 7 }) => {
   return { app, magicLinks, appCodes, mailed, sessions, users }
 }
 
-const request = (app: ReturnType<typeof harness>['app'], body: unknown) =>
-  app.request('https://ezacto.io/auth/magic-link', {
+const requesterCookies = new WeakMap<object, string>()
+const request = async (app: ReturnType<typeof harness>['app'], body: unknown) => {
+  const result = await app.request('https://ezacto.io/auth/magic-link', {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify(body),
   })
+  requesterCookies.set(app, result.headers.get('set-cookie')?.split(';')[0] ?? '')
+  return result
+}
 
 describe('staff magic-link request', () => {
   it('emails a link and a code for a known user (app flow marks the link)', async () => {
@@ -289,7 +293,7 @@ describe('staff magic-link exchange (code)', () => {
   const exchange = (app: ReturnType<typeof harness>['app'], body: unknown) =>
     app.request('https://ezacto.io/auth/magic-link/exchange', {
       method: 'POST',
-      headers: { 'content-type': 'application/json' },
+      headers: { 'content-type': 'application/json', cookie: requesterCookies.get(app) ?? '' },
       body: JSON.stringify(body),
     })
 

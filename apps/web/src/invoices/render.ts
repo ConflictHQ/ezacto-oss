@@ -1,5 +1,6 @@
 import { DEMO_MAIL_NOTE, demoUnavailable } from '../demo.js'
 import { invoiceOverflowTransitions } from './model.js'
+import { renderInvoiceProviderAlerts } from './provider-alerts-model.js'
 
 export const renderInvoicePaymentSection = (): string => `
       <section class="invoice-history invoice-payment-history" aria-labelledby="invoice-payment-heading">
@@ -10,7 +11,7 @@ export const renderInvoicePaymentSection = (): string => `
         <p class="hint" data-invoice-payment-readonly hidden>You have read-only invoice access. Payment changes require the invoices:write scope.</p>
         <p class="form-result" data-invoice-payment-status role="status" aria-live="polite"></p>
         <ul data-invoice-detail-payments></ul>
-      </section>`
+      </section>${renderInvoiceProviderAlerts()}`
 
 /**
  * The line items' heading on the detail page. Lines are changed on the edit
