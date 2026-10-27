@@ -708,7 +708,7 @@
             "$ref": "#/components/responses/ServiceUnavailable"
           }
         },
-        "x-ezacto-runtime-path": "/api/v1/work-items/github/publication/preview/{id}",
+        "x-ezacto-runtime-path": "/api/v1/work-items/github/publication/preview/:id",
         "x-ezacto-generate-client": true,
         "parameters": [
           {
@@ -883,7 +883,7 @@
             "$ref": "#/components/responses/ServiceUnavailable"
           }
         },
-        "x-ezacto-runtime-path": "/api/v1/work-items/github/publication/{id}/actions",
+        "x-ezacto-runtime-path": "/api/v1/work-items/github/publication/:id/actions",
         "x-ezacto-generate-client": true,
         "parameters": [
           {
