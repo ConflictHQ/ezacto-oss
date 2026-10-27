@@ -99,7 +99,9 @@ describe('worker entry', () => {
     expect(page).toMatch(
       /<a class="crumbs-bell" href="\/notifications" aria-label="Notifications" aria-current="page" data-notifications-bell>/u,
     )
-    expect(page).not.toMatch(/<a href="\/" aria-current="page"><svg/u)
+    expect(page).not.toMatch(
+      /<a href="\/" aria-current="page"><svg[^>]*>(?:(?!<\/a>)[^])*<span class="nav-label">Time<\/span><\/a>/u,
+    )
   })
 
   it('[unit] keeps the URL settings shipped under', async () => {
@@ -218,9 +220,12 @@ describe('worker entry', () => {
     // were on.
     const html = await (await app.request('/settings/company', {}, env)).text()
     expect(html).toContain('data-app-view="settings-company"')
-    // The Week/Day strip marks itself; what must not be marked is a primary
-    // section, and Time is the one the default would have claimed.
-    expect(html).not.toMatch(/<a href="\/" aria-current="page"><svg/u)
+    // Time's own switches mark themselves (Week, and Timesheet with its icon);
+    // what must not be marked is a primary section, and Time is the one the
+    // default would have claimed.
+    expect(html).not.toMatch(
+      /<a href="\/" aria-current="page"><svg[^>]*>(?:(?!<\/a>)[^])*<span class="nav-label">Time<\/span><\/a>/u,
+    )
     const nav = /<nav class="primary-nav"[^>]*>(.*?)<\/nav>/su.exec(html)?.[1] ?? ''
     expect(nav).not.toContain('aria-current')
   })

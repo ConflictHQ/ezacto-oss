@@ -420,7 +420,7 @@ describe('week-grid browser behavior', () => {
     expect(toolbar.querySelectorAll('.period-step')).toHaveLength(2)
     const summary = toolbar.querySelector<HTMLElement>('[data-period-summary]')!
     // 2026-08-28 is a Friday; the organisation's week starts on Monday.
-    await vi.waitFor(() => expect(summary.textContent).toBe('24 – 30 Aug 2026'))
+    await vi.waitFor(() => expect(summary.textContent).toBe('Mon 24 Aug – Sun 30 Aug 2026'))
     // No kind menu, because there is no month-shaped grid to put one on.
     expect(toolbar.querySelectorAll('[data-period-kind]')).toHaveLength(0)
 
@@ -428,11 +428,11 @@ describe('week-grid browser behavior', () => {
     toolbar.querySelector<HTMLButtonElement>('[data-period-previous]')!.click()
     await vi.waitFor(() => expect(week()).toBe('2026-08-17'))
     // The label follows the week that loaded, not the one that was asked for.
-    expect(summary.textContent).toBe('17 – 23 Aug 2026')
+    expect(summary.textContent).toBe('Mon 17 Aug – Sun 23 Aug 2026')
 
     toolbar.querySelector<HTMLButtonElement>('[data-period-next]')!.click()
     await vi.waitFor(() => expect(week()).toBe('2026-08-24'))
-    expect(summary.textContent).toBe('24 – 30 Aug 2026')
+    expect(summary.textContent).toBe('Mon 24 Aug – Sun 30 Aug 2026')
   })
 
   it('[browser] keeps the timesheet period on the organisation week, not on Monday', async () => {
@@ -454,13 +454,13 @@ describe('week-grid browser behavior', () => {
     expect(toolbar.querySelectorAll('.period-step')).toHaveLength(2)
     const summary = toolbar.querySelector<HTMLElement>('[data-period-summary]')!
     // 2026-08-28 is a Friday, so a Saturday week holds it from the 22nd.
-    await vi.waitFor(() => expect(summary.textContent).toBe('22 – 28 Aug 2026'))
+    await vi.waitFor(() => expect(summary.textContent).toBe('Sat 22 Aug – Fri 28 Aug 2026'))
 
     toolbar.querySelector<HTMLButtonElement>('[data-period-previous]')!.click()
     await vi.waitFor(() =>
       expect(new URL(globalThis.location.href).searchParams.get('week')).toBe('2026-08-15'),
     )
-    expect(summary.textContent).toBe('15 – 21 Aug 2026')
+    expect(summary.textContent).toBe('Sat 15 Aug – Fri 21 Aug 2026')
   })
 
   it('[browser] opens the add-row dialog on Enter with a modifier, from inside a cell', async () => {

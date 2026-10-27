@@ -264,9 +264,11 @@ describe('S-1 through S-5 application shell', () => {
     expect(notifications).toContain('<span class="crumbs-current">Notifications</span>')
     expect(notifications).toContain('data-notifications-page>')
     expect(notifications).toContain('aria-current="page" data-notifications-bell')
-    // No nav item is the page you are on. (Time's hidden view switch still
-    // marks Week, which is a link in the page, not in the nav.)
-    expect(notifications).not.toMatch(/<a href="\/" aria-current="page"><svg/u)
+    // No nav item is the page you are on. (Time's hidden switches still mark
+    // Week and Timesheet, which are links in the page, not in the nav.)
+    expect(notifications).not.toMatch(
+      /<a href="\/" aria-current="page"><svg[^>]*>(?:(?!<\/a>)[^])*<span class="nav-label">Time<\/span><\/a>/u,
+    )
 
     const invoices = renderAppShell({
       environment: 'test',

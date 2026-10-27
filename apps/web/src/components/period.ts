@@ -234,6 +234,23 @@ export const formatDayRange = (range: PeriodRange): string => {
   return `${from.getUTCDate()} – ${full(to)}`
 }
 
+const WEEKDAY_NAMES = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'] as const
+
+/**
+ * "Mon 14 Apr – Sun 20 Apr 2025": a week said by its days, the way the
+ * ezacto-ui timesheet toolbar says it, with the year on both ends only when
+ * the week straddles one.
+ */
+export const dayNamedRange = (range: PeriodRange): string => {
+  if (!isCalendarDay(range.from) || !isCalendarDay(range.to)) return 'Choose a range'
+  const from = day(range.from)
+  const to = day(range.to)
+  const named = (date: Date): string =>
+    `${WEEKDAY_NAMES[date.getUTCDay()] ?? ''} ${date.getUTCDate()} ${MONTH_NAMES[date.getUTCMonth()]!.slice(0, 3)}`
+  const sameYear = from.getUTCFullYear() === to.getUTCFullYear()
+  return `${named(from)}${sameYear ? '' : ` ${from.getUTCFullYear()}`} – ${named(to)} ${to.getUTCFullYear()}`
+}
+
 const namedDetail = (kind: Exclude<NamedPeriodKind, 'week'>, from: string): string => {
   const start = day(from)
   if (kind === 'semimonth') return formatDayRange(periodRange('semimonth', from))
@@ -301,6 +318,20 @@ export interface PeriodControlOptions {
    * and "this week" has to mean the week it is when the arrow is pressed.
    */
   readonly today: () => string
+  /**
+   * How the summary names a week. 'named' (the default) says "This week:
+   * 14 – 20 Apr 2025" while you stand in it and the dates alone once you have
+   * stepped away; 'days' says the week by its days, "Mon 14 Apr – Sun 20 Apr
+   * 2025", the way the ezacto-ui timesheet toolbar does, and leaves "today"
+   * to the link beside the control.
+   */
+  readonly summary?: 'named' | 'days'
+  /**
+   * Whether the summary is also the way to any other period: a button with a
+   * calendar mark and a chevron that opens the browser's own date picker, and
+   * the period holding the chosen day becomes the range.
+   */
+  readonly jump?: boolean
   readonly weekStartDay?: WeekStartDay
   /**
    * A deliberate move to another period: an arrow, or a named kind. Editing a
@@ -388,11 +419,33 @@ export const createPeriodControl = (options: PeriodControlOptions): PeriodContro
   fieldLabel.htmlFor = kindSelect?.id ?? summary.id
   fieldLabel.textContent = options.label
 
+  // The summary as the way to any other period (the ezacto-ui period button):
+  // a calendar mark, the dates, a chevron, and behind them the browser's own
+  // date picker. The dates stay the button's name; the mark and the chevron
+  // say it opens.
+  const jump = options.jump === true ? document.createElement('button') : null
+  const jumpInput = jump === null ? null : document.createElement('input')
+  if (jump !== null && jumpInput !== null) {
+    jump.type = 'button'
+    jump.className = 'period-jump'
+    jump.dataset.periodJump = ''
+    jump.title = 'Choose a date'
+    jump.appendChild(icon('calendar'))
+    jump.appendChild(summary)
+    jump.appendChild(icon('chevron', { direction: 'down' }))
+    jumpInput.type = 'date'
+    jumpInput.className = 'period-jump-date'
+    jumpInput.dataset.periodJumpDate = ''
+    jumpInput.setAttribute('aria-label', 'Jump to date')
+    jumpInput.tabIndex = -1
+  }
+
   const row = document.createElement('div')
   row.className = 'period-row'
   row.appendChild(previous)
   if (kindSelect !== null) row.appendChild(kindSelect)
-  row.appendChild(summary)
+  row.appendChild(jump ?? summary)
+  if (jumpInput !== null) row.appendChild(jumpInput)
   row.appendChild(next)
 
   const dateInput = (marker: 'periodFrom' | 'periodTo', label: string): HTMLInputElement => {
@@ -428,7 +481,10 @@ export const createPeriodControl = (options: PeriodControlOptions): PeriodContro
     custom.hidden = kind !== 'custom'
     previous.hidden = kind === 'all'
     next.hidden = kind === 'all'
-    summary.textContent = periodLabel(kind, readRange(), options.today())
+    summary.textContent =
+      options.summary === 'days' && kind === 'week'
+        ? dayNamedRange(readRange())
+        : periodLabel(kind, readRange(), options.today())
   }
 
   const apply = (range: PeriodRange): void => {
@@ -462,6 +518,28 @@ export const createPeriodControl = (options: PeriodControlOptions): PeriodContro
   }
   previous.addEventListener('click', stepOnClick(-1))
   next.addEventListener('click', stepOnClick(1))
+
+  if (jump !== null && jumpInput !== null) {
+    jump.addEventListener('click', () => {
+      jumpInput.value = readRange().from
+      // showPicker is the browser's own calendar, and it may refuse (an
+      // older engine, a cross-origin frame); focusing the input is the way in
+      // that always exists.
+      const picker = jumpInput as HTMLInputElement & { showPicker?: () => void }
+      try {
+        if (typeof picker.showPicker === 'function') picker.showPicker()
+        else jumpInput.focus()
+      } catch {
+        jumpInput.focus()
+      }
+    })
+    jumpInput.addEventListener('change', () => {
+      const chosen = jumpInput.value
+      const current = kind
+      if (!isCalendarDay(chosen) || current === 'custom' || current === 'all') return
+      apply(periodRange(current, chosen, weekStartDay))
+    })
+  }
 
   kindSelect?.addEventListener('change', () => {
     const chosen = clamp(
@@ -510,6 +588,8 @@ export const createPeriodControl = (options: PeriodControlOptions): PeriodContro
     setDisabled(disabled) {
       previous.disabled = disabled
       next.disabled = disabled
+      if (jump !== null) jump.disabled = disabled
+      if (jumpInput !== null) jumpInput.disabled = disabled
       if (kindSelect !== null) kindSelect.disabled = disabled
       fromInput.disabled = disabled
       toInput.disabled = disabled

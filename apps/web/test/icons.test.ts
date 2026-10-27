@@ -39,6 +39,8 @@ describe('icon set', () => {
       'paperclip',
       'people',
       'person',
+      'plus',
+      'send',
       'sidebar',
       'sign-out',
       'sliders',

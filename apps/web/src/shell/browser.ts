@@ -1243,10 +1243,18 @@ const focusCell = (target: FocusTarget | undefined): boolean => {
  * every tab in every other strip on load.
  */
 const markTimeViewTab = (): void => {
+  const current = document.documentElement.dataset.timeView
   for (const link of document.querySelectorAll<HTMLAnchorElement>('[data-time-views] a')) {
     const linkView = new URL(link.href).searchParams.get('view') ?? 'week'
-    if (linkView === document.documentElement.dataset.timeView)
-      link.setAttribute('aria-current', 'page')
+    if (linkView === current) link.setAttribute('aria-current', 'page')
+    else link.removeAttribute('aria-current')
+  }
+  // The title row's pair: Timesheet is the week and the day alike, Calendar
+  // the month. Week and Day choose between the two timesheets in the toolbar.
+  for (const link of document.querySelectorAll<HTMLAnchorElement>('[data-time-modes] a')) {
+    const linkView = new URL(link.href).searchParams.get('view') ?? 'week'
+    const isCurrent = linkView === 'calendar' ? current === 'calendar' : current !== 'calendar'
+    if (isCurrent) link.setAttribute('aria-current', 'page')
     else link.removeAttribute('aria-current')
   }
 }
@@ -1569,6 +1577,40 @@ export const mountShell = async (
   const timesheetRejectionReason = required<HTMLElement>('[data-timesheet-rejection-reason]')
   const timesheetResult = required<HTMLElement>('[data-timesheet-result]')
   const submitTimesheet = required<HTMLButtonElement>('[data-submit-timesheet]')
+  const submitTimesheetLabel = required<HTMLElement>('[data-submit-timesheet-label]')
+  // The split button's caret and the menu it opens (the ezacto-ui "Send to
+  // approval"): a disclosure holding the week's second action, taking a
+  // submitted week back or reopening an approved one, drawn only while there
+  // is one. It closes on a choice, on Escape and on any click outside it.
+  const approvalMore = required<HTMLButtonElement>('[data-approval-more]')
+  const approvalMenu = required<HTMLElement>('[data-approval-menu]')
+  const setApprovalMenu = (open: boolean): void => {
+    approvalMore.setAttribute('aria-expanded', String(open))
+    approvalMenu.hidden = !open
+  }
+  approvalMore.addEventListener('click', () => {
+    setApprovalMenu(approvalMenu.hidden)
+  })
+  document.addEventListener('click', (event) => {
+    if (approvalMenu.hidden) return
+    const split = approvalMore.closest('[data-approval-split]')
+    if (!(event.target instanceof Node) || split === null || !split.contains(event.target)) {
+      setApprovalMenu(false)
+      return
+    }
+    if (
+      event.target instanceof Element &&
+      event.target.closest('[data-approval-menu] button') !== null
+    ) {
+      setApprovalMenu(false)
+    }
+  })
+  approvalMenu.addEventListener('keydown', (event) => {
+    if (event.key !== 'Escape') return
+    event.preventDefault()
+    setApprovalMenu(false)
+    approvalMore.focus()
+  })
   const withdrawTimesheet = required<HTMLButtonElement>('[data-withdraw-timesheet]')
   const unsubmitTimesheet = required<HTMLButtonElement>('[data-unsubmit-timesheet]')
   const approvalsPageElement = required<HTMLElement>('[data-timesheet-approvals-page]')
@@ -1647,6 +1689,10 @@ export const mountShell = async (
   const weekPeriod = createPeriodControl({
     label: 'Week',
     kinds: ['week'],
+    // The ezacto-ui toolbar: the week by its days, "Today" as the link beside
+    // it, and the dates themselves the way to any other week.
+    summary: 'days',
+    jump: true,
     today: localDate,
     onChange: (range) => {
       moveWeekTo(range.from)
@@ -1954,6 +2000,8 @@ export const mountShell = async (
     timesheetLockList.replaceChildren()
     withdrawTimesheet.hidden = true
     unsubmitTimesheet.hidden = true
+    approvalMore.hidden = true
+    setApprovalMenu(false)
     approvalModuleAvailable = false
     lockPolicyAvailable = false
     currentSubmission = null
@@ -2974,7 +3022,12 @@ export const mountShell = async (
     // submission loaded beside it is the signed-in person's: on a teammate's
     // week (issue 917) none of it applies.
     timesheetStatus.hidden = !approvalModuleAvailable || viewedPerson !== null
-    if (timesheetStatus.hidden) return
+    submitTimesheet.hidden = timesheetStatus.hidden
+    if (timesheetStatus.hidden) {
+      approvalMore.hidden = true
+      setApprovalMenu(false)
+      return
+    }
     const status = currentSubmission?.status ?? 'unsubmitted'
     timesheetStatus.dataset.status = status
     // A week the person took back themselves carries the same three columns a
@@ -2996,7 +3049,7 @@ export const mountShell = async (
       : currentSubmission?.rejection_reason?.trim() ?? ''
     timesheetRejectionReason.hidden = reason === ''
     timesheetRejectionReason.textContent = reason === '' ? '' : `Needs changes: ${reason}`
-    submitTimesheet.textContent =
+    submitTimesheetLabel.textContent =
       status === 'approved'
         ? 'Approved'
         : status === 'submitted'
@@ -3004,8 +3057,8 @@ export const mountShell = async (
           : selfWithdrawn ||
               currentSubmission?.rejection_reason === null ||
               currentSubmission?.rejection_reason === undefined
-            ? 'Submit week'
-            : 'Resubmit week'
+            ? 'Send to approval'
+            : 'Resend to approval'
     submitTimesheet.disabled =
       timesheetTransitionPending ||
       status !== 'unsubmitted' ||
@@ -3020,6 +3073,9 @@ export const mountShell = async (
     unsubmitTimesheet.hidden =
       status !== 'submitted' || api.unsubmitTimesheetSubmission === undefined
     unsubmitTimesheet.disabled = timesheetTransitionPending || unsubmitTimesheet.hidden
+    // The caret, only while the menu behind it has something in it.
+    approvalMore.hidden = unsubmitTimesheet.hidden && withdrawTimesheet.hidden
+    if (approvalMore.hidden) setApprovalMenu(false)
   }
 
   const renderLockPolicy = (): void => {

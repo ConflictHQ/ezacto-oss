@@ -244,26 +244,39 @@ const renderTabStrip = (options: AppShellOptions): string => {
 }
 
 /**
- * Time's view switch, beside the title's primary action (the ezacto-ui header
- * toggle). Its links are marked data-time-views because the browser rewrites
- * aria-current on them from the ?view= parameter (see renderTabStrip), and it
- * carries view-switch because Week and Day are two ways of looking at one
- * screen rather than two sections of the app; the level-2 underline now says
- * "you are in this part of ezacto" for Invoices and Reports, and a signal that
- * means two things means neither. Only on a page that declares no tabs: a
- * section with its own strip must not carry Time's, hidden or not, or the
- * ?view= rewrite would reach it.
+ * Time's two switches, as the ezacto-ui Timesheet screen splits them: in the
+ * title row, Timesheet or Calendar (the week and the day are both the
+ * timesheet; the month is the calendar); in the week toolbar, Week or Day.
+ *
+ * Their links are marked data-time-views and data-time-modes because the
+ * browser rewrites aria-current on them from the ?view= parameter (see
+ * renderTabStrip), and both carry view-switch because these are ways of
+ * looking at one screen rather than sections of the app; the level-2 underline
+ * now says "you are in this part of ezacto" for Invoices and Reports, and a
+ * signal that means two things means neither. Only on a page that declares no
+ * tabs: a section with its own strip must not carry Time's, hidden or not, or
+ * the ?view= rewrite would reach it.
  */
 const renderTimeViews = (options: AppShellOptions): string => {
   if (options.tabs !== undefined) return ''
   const view = options.view ?? 'time'
   return (
     `<nav class="tabstrip view-switch" aria-label="Time views" data-time-views${view === 'time' ? '' : ' hidden'}>` +
-    `<a href="/" aria-current="page">Week</a><a href="/?view=day">Day</a>` +
-    // Restored now that it leads somewhere. It was deleted in issue 296's first
-    // stage precisely because a tab that does nothing is worse than a missing
-    // feature, and putting it back without the panel would repeat that.
-    `<a href="/?view=calendar">Calendar</a>` +
+    `<a href="/?view=day">Day</a><a href="/" aria-current="page">Week</a>` +
+    `</nav>`
+  )
+}
+
+const renderTimeModes = (options: AppShellOptions): string => {
+  if (options.tabs !== undefined) return ''
+  const view = options.view ?? 'time'
+  return (
+    `<nav class="tabstrip view-switch" aria-label="Time modes" data-time-modes${view === 'time' ? '' : ' hidden'}>` +
+    `<a href="/" aria-current="page">${iconMarkup('list')}Timesheet</a>` +
+    // Calendar was restored once it led somewhere. It was deleted in issue
+    // 296's first stage precisely because a tab that does nothing is worse than
+    // a missing feature, and putting it back without the panel would repeat that.
+    `<a href="/?view=calendar">${iconMarkup('calendar')}Calendar</a>` +
     `</nav>`
   )
 }
@@ -779,8 +792,20 @@ ${instancePalette ? `  <link rel="stylesheet" href="${INSTANCE_THEME_STYLESHEET_
         </select>
       </label>
       <div class="context-actions">
-        ${renderTimeViews(options)}
-        <button class="primary-action" type="button" data-command-trigger data-auth-action data-time-log-time disabled>Log time</button>
+        ${renderTimeModes(options)}
+        <!--
+          Sending the week for approval, as the ezacto-ui split button. The
+          caret is drawn only while there is a second action to offer: taking
+          a submitted week back, or reopening an approved one.
+        -->
+        <div class="approval-split" data-approval-split>
+          <button class="primary-action" type="button" data-submit-timesheet data-auth-action disabled>${iconMarkup('send')}<span data-submit-timesheet-label>Send to approval</span></button>
+          <button class="approval-more" type="button" data-approval-more aria-expanded="false" aria-controls="ez-approval-menu" aria-label="More approval actions" hidden>${iconMarkup('chevron', { direction: 'down' })}</button>
+          <div class="approval-menu" id="ez-approval-menu" data-approval-menu hidden>
+            <button type="button" data-unsubmit-timesheet data-auth-action hidden disabled>Unsubmit week</button>
+            <button type="button" data-withdraw-timesheet data-auth-action hidden disabled>Reopen week</button>
+          </div>
+        </div>
       </div>
     </header>
     <aside class="time-person-banner" data-time-person-banner role="status" aria-live="polite" hidden>
@@ -810,9 +835,9 @@ ${instancePalette ? `  <link rel="stylesheet" href="${INSTANCE_THEME_STYLESHEET_
           <h2 class="visually-hidden" id="week-heading">Timesheet week</h2>
         </div>
         <div class="week-actions">
-          <button type="button" data-week-current data-auth-action disabled>${iconMarkup('calendar')}This week</button>
-          <button type="button" data-copy-last-week data-auth-action disabled>Copy last week</button>
-          <button type="button" data-add-row-trigger data-auth-action disabled>Add row</button>
+          <button type="button" data-week-current data-auth-action disabled>${iconMarkup('calendar')}Today</button>
+          ${renderTimeViews(options)}
+          <button class="primary-action" type="button" data-command-trigger data-auth-action data-time-log-time aria-label="Log time" title="Log time" disabled>${iconMarkup('plus')}</button>
           <strong data-week-total>—</strong>
         </div>
       </header>
@@ -824,11 +849,6 @@ ${instancePalette ? `  <link rel="stylesheet" href="${INSTANCE_THEME_STYLESHEET_
           <strong data-timesheet-status-label>Not submitted</strong>
           <p data-timesheet-rejection-reason hidden></p>
           <p class="form-result" data-timesheet-result role="status"></p>
-        </div>
-        <div class="timesheet-status-actions">
-          <button type="button" data-unsubmit-timesheet data-auth-action hidden disabled>Unsubmit week</button>
-          <button type="button" data-withdraw-timesheet data-auth-action hidden disabled>Reopen week</button>
-          <button class="primary-action" type="button" data-submit-timesheet data-auth-action disabled>Submit week</button>
         </div>
       </aside>
       <ol class="day-totals" data-day-totals aria-label="Hours by day"></ol>
@@ -850,6 +870,14 @@ ${instancePalette ? `  <link rel="stylesheet" href="${INSTANCE_THEME_STYLESHEET_
           <button type="button" data-day-next data-auth-action disabled aria-label="Next day">${iconMarkup('chevron')}</button>
         </header>
         <div data-day-rows><p class="day-empty">Loading time entries…</p></div>
+      </div>
+      <!--
+        The grid's own line for growing it (the ezacto-ui add-row line under
+        its grid): a row for a project and task, or last week's rows again.
+      -->
+      <div class="week-grid-foot" data-week-grid-foot>
+        <button type="button" data-add-row-trigger data-auth-action disabled>${iconMarkup('plus')}Add row</button>
+        <button type="button" data-copy-last-week data-auth-action disabled>Copy last week</button>
       </div>
     </section>
   </main>

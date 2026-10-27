@@ -3200,7 +3200,7 @@ for (const corrected of ['1', '2.5', '2:30']) {
 
     const input = page.locator('[data-week-grid-rows] input[data-cell-key="1:1:2026-08-19"]')
     const cell = page.locator('[data-week-grid-rows] .week-cell[data-cell-key="1:1:2026-08-19"]')
-    const submit = page.getByRole('button', { name: 'Submit week' })
+    const submit = page.getByRole('button', { name: 'Send to approval' })
     await expect(input).toHaveValue('1')
     await expect(submit).toBeEnabled()
     const writes: string[] = []
@@ -3282,7 +3282,7 @@ test('[e2e:timesheet-approval] [e2e:lock-policy] rejects, approves, reopens, pol
       new URL(response.url()).pathname === '/api/v1/timesheet-submissions' &&
       response.request().method() === 'POST',
   )
-  await page.getByRole('button', { name: 'Submit week' }).click()
+  await page.getByRole('button', { name: 'Send to approval' }).click()
   expect((await submitted).status()).toBe(201)
   await expect(page.locator('[data-timesheet-status-label]')).toHaveText('Submitted for approval')
   await expect(page.locator('[data-day-rows] input[data-cell-key]')).toBeEnabled()
@@ -3359,7 +3359,7 @@ test('[e2e:timesheet-approval] [e2e:lock-policy] rejects, approves, reopens, pol
       new URL(response.url()).pathname === '/api/v1/timesheet-submissions' &&
       response.request().method() === 'POST',
   )
-  await page.getByRole('button', { name: 'Resubmit week' }).click()
+  await page.getByRole('button', { name: 'Resend to approval' }).click()
   expect((await resubmitted).ok()).toBe(true)
   await expect(page.locator('[data-timesheet-rejection-reason]')).toBeHidden()
 
@@ -3667,14 +3667,14 @@ test('[e2e:timesheet-approval] submits and approves an expense-only week', async
   })
   expect(periodTime.status).toBe(200)
   expect(periodTime.body).toMatchObject({ data: [] })
-  await expect(page.getByRole('button', { name: 'Submit week' })).toBeEnabled()
+  await expect(page.getByRole('button', { name: 'Send to approval' })).toBeEnabled()
 
   const submitted = page.waitForResponse(
     (response) =>
       new URL(response.url()).pathname === '/api/v1/timesheet-submissions' &&
       response.request().method() === 'POST',
   )
-  await page.getByRole('button', { name: 'Submit week' }).click()
+  await page.getByRole('button', { name: 'Send to approval' }).click()
   const submittedResponse = await submitted
   expect(submittedResponse.status()).toBe(201)
   expect(await submittedResponse.json()).toMatchObject({

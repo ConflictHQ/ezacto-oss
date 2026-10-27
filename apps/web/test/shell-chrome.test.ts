@@ -90,7 +90,8 @@ describe('level-2 signal', () => {
       sessionCookiePresent: true,
     })
     const strip = document.querySelector<HTMLElement>('[data-time-views]')!
-    const [week, day] = [...strip.querySelectorAll<HTMLAnchorElement>('a')]
+    // Day before Week, as the ezacto-ui toolbar orders them.
+    const [day, week] = [...strip.querySelectorAll<HTMLAnchorElement>('a')]
 
     // Still a tab strip, not a widget: a nav of real links, keyboard reachable,
     // with aria-current on the view you are looking at.

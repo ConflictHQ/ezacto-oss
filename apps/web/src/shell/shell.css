@@ -3376,10 +3376,6 @@
 .timesheet-lock-card button {
   min-height: 44px;
 }
-.timesheet-status-actions {
-  display: flex;
-  gap: 8px;
-}
 
 @media (max-width: 720px) {
   .invoice-facts {
@@ -3499,8 +3495,7 @@
     flex-direction: column;
     gap: 4px;
   }
-  .timesheet-lock-policy > header,
-  .timesheet-status-actions {
+  .timesheet-lock-policy > header {
     align-items: stretch;
     flex-direction: column;
   }
@@ -3824,12 +3819,25 @@ a {
   overflow: visible;
 }
 .tabstrip.view-switch a {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
   height: 30px;
   padding: 0 14px;
   border: 0;
   border-radius: 6px;
   font-size: 14px;
   font-weight: 600;
+}
+.tabstrip.view-switch a .ez-icon {
+  width: 13px;
+  height: 13px;
+  stroke-width: 2;
+}
+/* Week and Day choose between the two timesheets; on the calendar there is
+   nothing for them to choose, so the toolbar does not offer them there. */
+html[data-time-view='calendar'] [data-time-views] {
+  display: none;
 }
 .tabstrip.view-switch a:hover:not([aria-current="page"]),
 .tabstrip.view-switch a:focus-visible:not([aria-current="page"]) {
@@ -4096,6 +4104,95 @@ a {
   min-height: 40px;
   padding: 0 14px;
   font-size: 14px;
+}
+/* Sending the week for approval: the ezacto-ui split button. One blue box
+   carrying the shadow; inside it the main part and, while there is a second
+   action to offer, the caret that opens it. */
+.approval-split {
+  position: relative;
+  display: inline-flex;
+  align-items: stretch;
+  border-radius: 8px;
+  box-shadow: var(--ez-shadow-primary);
+}
+.approval-split .primary-action {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  box-shadow: none;
+}
+.approval-split .primary-action[hidden] {
+  display: none;
+}
+.approval-split .primary-action .ez-icon {
+  width: 15px;
+  height: 15px;
+  stroke-width: 1.75;
+}
+.approval-split:has(.approval-more:not([hidden])) .primary-action {
+  border-right: 0;
+  border-radius: 8px 0 0 8px;
+}
+.approval-more {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0 10px;
+  border: 1px solid var(--ez-action-edge);
+  border-left: 1px solid color-mix(in srgb, var(--ez-action-fg) 55%, transparent);
+  border-radius: 0 8px 8px 0;
+  background: var(--ez-action);
+  color: var(--ez-action-fg);
+  cursor: pointer;
+}
+.approval-more[hidden] {
+  display: none;
+}
+.approval-more .ez-icon {
+  width: 14px;
+  height: 14px;
+  stroke-width: 2.25;
+}
+.approval-split .primary-action:hover:not(:disabled),
+.approval-more:hover,
+.approval-more:focus-visible {
+  background: color-mix(in srgb, var(--ez-action-fg) 16%, var(--ez-action));
+}
+.approval-menu {
+  position: absolute;
+  top: calc(100% + 6px);
+  right: 0;
+  z-index: 5;
+  display: flex;
+  flex-direction: column;
+  min-width: 200px;
+  padding: 6px;
+  border: 1px solid var(--ez-border);
+  border-radius: 10px;
+  background: var(--ez-ground);
+  box-shadow: var(--ez-shadow-menu);
+}
+.approval-menu[hidden] {
+  display: none;
+}
+.approval-menu button {
+  min-height: 36px;
+  padding: 0 10px;
+  border: 0;
+  border-radius: 6px;
+  background: none;
+  color: var(--ez-ink);
+  font-size: 13px;
+  font-weight: 500;
+  text-align: left;
+  cursor: pointer;
+}
+.approval-menu button:hover:not(:disabled),
+.approval-menu button:focus-visible {
+  background: var(--ez-surface-2);
+}
+.approval-menu button[hidden] {
+  display: none;
 }
 .app-content {
   padding: 28px clamp(24px, 3vw, 56px) 48px;
@@ -5786,20 +5883,34 @@ button[data-auth-action]:disabled {
   background: var(--ez-ground);
   border-bottom: 1px solid var(--ez-border);
 }
+/* The week's approval state, one thin line under the toolbar now that the
+   action itself stands in the title row. */
 .timesheet-status {
   display: flex;
   align-items: center;
-  justify-content: space-between;
   gap: 20px;
-  padding: 10px 24px;
+  padding: 8px 24px;
   border-bottom: 1px solid var(--ez-border);
   background: var(--ez-ground);
+  color: var(--ez-muted);
+  font-size: 12px;
 }
 .timesheet-status[hidden] {
   display: none;
 }
+.timesheet-status > div {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 2px 10px;
+}
+.timesheet-status .eyebrow,
 .timesheet-status p {
-  margin: 4px 0 0;
+  margin: 0;
+}
+.timesheet-status strong {
+  color: var(--ez-ink);
+  font-weight: 600;
 }
 /* The reason an approver typed is prose about a refusal, and it sits on the
    status band's tint. It is written in red, which the gate holds to the 4.5:1
@@ -5807,10 +5918,6 @@ button[data-auth-action]:disabled {
 .timesheet-status [data-timesheet-rejection-reason] {
   color: var(--ez-red);
   white-space: pre-wrap;
-}
-.timesheet-status button {
-  min-height: 32px;
-  flex: 0 0 auto;
 }
 .week-surface h2 {
   font-size: 18px;
@@ -5859,12 +5966,64 @@ button[data-auth-action]:disabled {
   border-radius: 6px;
   color: var(--ez-muted);
 }
+.week-period .period-row {
+  position: relative;
+}
 .week-period .period-summary {
   flex: 0 1 auto;
-  padding: 0 6px;
-  color: var(--ez-data);
+  padding: 0;
+  color: var(--ez-ink);
   font-size: 16px;
   font-weight: 600;
+}
+/* The dates as the way to any other week (the ezacto-ui period button): a
+   calendar mark, the dates, a chevron, the browser's picker behind them. */
+.period-jump {
+  display: inline-flex;
+  flex: 0 1 auto;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  min-width: 240px;
+  padding: 3px 6px;
+  border: 0;
+  border-radius: 6px;
+  background: none;
+  color: inherit;
+  font: inherit;
+  white-space: nowrap;
+  cursor: pointer;
+}
+.period-jump:hover:not(:disabled),
+.period-jump:focus-visible {
+  background: var(--ez-surface);
+}
+.period-jump .ez-icon {
+  color: var(--ez-muted);
+}
+.period-jump > .ez-icon:first-child {
+  width: 13px;
+  height: 13px;
+  stroke-width: 2;
+}
+.period-jump > .ez-icon:last-child {
+  width: 12px;
+  height: 12px;
+  stroke-width: 2.25;
+}
+/* Rendered, so the picker can open from it, but out of sight: the button is
+   what people see and press. */
+.period-jump-date {
+  position: absolute;
+  bottom: 0;
+  left: 50%;
+  width: 1px;
+  height: 1px;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  opacity: 0;
+  pointer-events: none;
 }
 .week-surface [data-week-total] {
   font-family: var(--ez-font-body), sans-serif;
@@ -5898,11 +6057,6 @@ button[data-auth-action]:disabled {
 .week-actions [data-week-current] .ez-icon {
   display: none;
 }
-.week-actions [data-copy-last-week] {
-  min-height: 32px;
-  border-radius: 8px;
-  font-size: 13px;
-}
 .week-actions button,
 .day-switcher button {
   min-height: 36px;
@@ -5912,16 +6066,67 @@ button[data-auth-action]:disabled {
   background: var(--ez-ground);
   color: var(--ez-ink);
 }
-.week-actions [data-add-row-trigger] {
+/* The line under the grid that grows it (the ezacto-ui add-row line): two
+   blue text actions, as the reference draws its "Add time entry". */
+.week-grid-foot {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 20px;
+  padding: 10px 24px;
+  border-bottom: 1px solid var(--ez-border);
+}
+.week-grid-foot button {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 28px;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--ez-action);
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+}
+.week-grid-foot button:hover:not(:disabled),
+.week-grid-foot button:focus-visible {
+  text-decoration: underline;
+}
+.week-grid-foot button:disabled {
+  color: var(--ez-muted);
+  cursor: default;
+}
+.week-grid-foot .ez-icon {
+  width: 14px;
+  height: 14px;
+  stroke-width: 2;
+}
+html[data-time-view='calendar'] .week-grid-foot {
+  display: none;
+}
+/* Log time as the toolbar's square "+" (the ezacto-ui add button); the
+   control keeps its name for the reader and the tooltip. */
+.week-actions [data-time-log-time] {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
   min-height: 32px;
-  padding: 0 12px;
+  padding: 0;
   border-color: var(--ez-action-edge);
   border-radius: 8px;
   background: var(--ez-action);
   box-shadow: var(--ez-shadow-primary);
   color: var(--ez-action-fg);
-  font-size: 13px;
-  font-weight: 600;
+}
+.week-actions [data-time-log-time][hidden] {
+  display: none;
+}
+.week-actions [data-time-log-time] .ez-icon {
+  width: 16px;
+  height: 16px;
+  stroke-width: 2.25;
 }
 /* The week's total reads in the blue the reference gives its grand total,
    at the toolbar's own size: the footer below carries it large. */
@@ -6399,6 +6604,12 @@ button[data-auth-action]:disabled {
   .notifications-page .notif-list {
     padding: 24px;
   }
+  /* On the week grid the footer row carries the week's total, so the toolbar
+     does not say it twice (the reference toolbar has no total). The day view
+     has no footer, and keeps it. */
+  html:not([data-time-view='day']) .week-actions [data-week-total] {
+    display: none;
+  }
   /* The keyboard route into a cell is in the cell's own tooltip and the
      command bar; a sentence over the grid was the one line the reference
      does without. */
@@ -6626,7 +6837,17 @@ button[data-auth-action]:disabled {
   box-shadow: inset 3px 0 var(--ez-live);
 }
 .day-row-label {
+  position: relative;
   min-width: 0;
+}
+/* The project mark sits inside its own row on every width. Without a
+   positioned label the absolute tile climbs to the section's corner and
+   lands on the toolbar's first arrow. */
+.day-row-label[data-mark] {
+  padding-left: 38px;
+}
+.day-row-label[data-mark]::before {
+  left: 0;
 }
 .day-entry-note {
   margin: 8px 0 0;
@@ -7651,13 +7872,29 @@ dialog textarea {
   .week-period {
     flex-basis: 100%;
   }
+  /* The title row's cluster -- the mode switch and Send to approval -- is
+     wider than a phone leaves beside the title, so it takes a row of its
+     own under it rather than pushing the page sideways. */
+  [data-app-content] .context-row {
+    flex-wrap: wrap;
+  }
+  [data-app-content] .context-actions {
+    flex: 1 1 100%;
+  }
   .timesheet-status {
     align-items: stretch;
     flex-direction: column;
     padding: 14px 16px;
   }
+  /* Its own row under the period: Today at the left, the Day/Week switch and
+     the "+" at the right, as one line rather than a 220px column of three. */
   .week-actions {
-    max-width: 220px;
+    flex: 1 1 100%;
+    max-width: none;
+  }
+  .week-actions [data-time-log-time] {
+    width: 44px;
+    min-height: 44px;
   }
   .week-actions button,
   .day-switcher button {

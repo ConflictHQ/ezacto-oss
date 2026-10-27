@@ -52,6 +52,8 @@ export type IconName =
   | 'paperclip'
   | 'people'
   | 'person'
+  | 'plus'
+  | 'send'
   | 'sidebar'
   | 'sign-out'
   | 'sliders'
@@ -183,6 +185,13 @@ const iconGeometry: Readonly<Record<IconName, readonly IconShape[]>> = {
         d: 'M17.87 9.21l-7.66 7.66a5 5 0 0 1-7.08-7.08l7.66-7.66a3.33 3.33 0 0 1 4.72 4.72l-7.67 7.66a1.67 1.67 0 0 1-2.36-2.36l7.08-7.07',
       },
     },
+  ],
+  // Log time, as the toolbar's square "+" (the ezacto-ui add button).
+  plus: [{ element: 'path', attributes: { d: 'M10 4.25v11.5M4.25 10h11.5' } }],
+  // Send to approval: the paper plane the reference puts on that button.
+  send: [
+    { element: 'path', attributes: { d: 'M18.33 1.67 9.17 10.83' } },
+    { element: 'path', attributes: { d: 'M18.33 1.67 12.5 18.33l-3.33-7.5-7.5-3.33 16.67-5.83z' } },
   ],
   sidebar: [
     { element: 'rect', attributes: { x: '2.75', y: '3.75', width: '14.5', height: '12.5', rx: '2' } },
