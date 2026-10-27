@@ -100,6 +100,22 @@ describe('GitHub issue comment HTTP boundary', () => {
       ),
     ).toBe(true)
   })
+  it('[security] does not prove absence from an App marker with missing author metadata', async () => {
+    const { options } = fixture(() =>
+      Response.json([
+        {
+          id: 1,
+          body: '<!-- ezacto-time:owned-marker:1 -->\nTime logged: 1h on 2026-10-01',
+          user: { id: 100, type: 'Bot' },
+          performed_via_github_app: null,
+        },
+      ]),
+    )
+    const api = await createGithubCommentSurface(options)
+    await expect(api.listComments('5')).rejects.toThrow(
+      'GitHub read request could not be completed.',
+    )
+  })
   it('[unit] honors the primary GitHub reset when the quota is exhausted without Retry-After', async () => {
     const { options } = fixture(
       () =>

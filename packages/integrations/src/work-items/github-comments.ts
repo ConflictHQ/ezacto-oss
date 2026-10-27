@@ -178,6 +178,16 @@ export async function createGithubCommentSurface(
       app = object(row.performed_via_github_app)
     if (!decimal(String(row.id)) || typeof row.body !== 'string' || row.body.length > 65536)
       throw new GithubReadError('invalid_response')
+    // A missing author/App projection is uncertainty, not proof that our
+    // earlier POST is absent. Stop reconciliation before another create.
+    if (
+      row.body.startsWith('<!-- ezacto-time:') &&
+      !(
+        (user.type === 'User' && decimal(String(user.id))) ||
+        (user.type === 'Bot' && decimal(String(user.id)) && decimal(String(app.id)))
+      )
+    )
+      throw new GithubReadError('invalid_response')
     // GitHub's official issue-comment schema identifies the performing App. A
     // lookalike marker or a human comment is never sufficient proof of custody.
     return {
