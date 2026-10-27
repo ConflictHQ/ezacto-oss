@@ -34,7 +34,9 @@ records on `ezacto.io`, never real production employees' prices. Record the
 deployed revision, status codes and absent field names; keep credentials,
 identities and financial payloads out of the evidence. Local synthetic tests
 establish code behavior, while production aggregates establish the current
-configuration; preserve that distinction in the acceptance record.
+configuration; preserve that distinction in the acceptance record. The
+[deployed verification procedure](financial-access-verification.md) includes the
+read-only probe and the browser checklist.
 
 ## Which sign-in methods are live
 
