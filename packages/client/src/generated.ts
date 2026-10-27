@@ -114,6 +114,67 @@ export type GithubReaderMetadataEnvelope = {
 };
 };
 
+export type GithubPublicationsEnvelope = {
+  "data": {
+  "policies": Array<{
+  "connection_id": string;
+  "enabled": boolean;
+  "generation": number;
+}>;
+  "publications": Array<{
+  "id": number;
+  "connection_id": string;
+  "entry_id": number;
+  "destination": string;
+  "spent_date": string | null;
+  "seconds": number | null;
+  "status": string;
+  "source_version": number;
+  "version": number;
+  "remote_id": string | null;
+  "failure_code": string | null;
+  "next_retry_at": number | null;
+}>;
+  "candidates": Array<{
+  "link_id": number;
+  "entry_id": number;
+}>;
+};
+};
+
+export type GithubPublicationPreviewEnvelope = {
+  "data": {
+  "link_id": number;
+  "connection_id": string;
+  "destination": string;
+  "spent_date": string;
+  "seconds": number;
+  "source_version": string;
+  "policy_enabled": boolean;
+};
+};
+
+export type GithubPublicationPolicyRequest = {
+  "connection_id": string;
+  "expected_generation": number;
+  "enabled": boolean;
+  "confirm_permission": boolean;
+  "command_id": string;
+};
+
+export type GithubPublicationConsentRequest = {
+  "link_id": number;
+  "source_version": string;
+  "command_id": string;
+};
+
+export type GithubPublicationActionRequest = {
+  "expected_version": number;
+  "action": "retry" | "adopt" | "restore" | "unlink";
+  "confirm": boolean;
+  "command_id": string;
+};
+
 export type WebhookSubscription = {
   "id": string;
   "url": string;
@@ -6678,6 +6739,54 @@ export class EzactoClient {
     const headers = new Headers(args.headers);
 
     return this.request<GithubReaderMetadataEnvelope>("GET", "/api/v1/work-item-links/:id/github".replace(":id", encodeURIComponent(String(args["id"]))), {
+      signal: args.signal,
+      headers,
+    });
+  }
+
+  async getGithubPublications(args: { signal?: AbortSignal; headers?: HeadersInit } = {}): Promise<GithubPublicationsEnvelope> {
+    const headers = new Headers(args.headers);
+
+    return this.request<GithubPublicationsEnvelope>("GET", "/api/v1/work-items/github/publication", {
+      signal: args.signal,
+      headers,
+    });
+  }
+
+  async previewGithubPublication(args: { "id": number; signal?: AbortSignal; headers?: HeadersInit }): Promise<GithubPublicationPreviewEnvelope> {
+    const headers = new Headers(args.headers);
+
+    return this.request<GithubPublicationPreviewEnvelope>("GET", "/api/v1/work-items/github/publication/preview/{id}".replace(":id", encodeURIComponent(String(args["id"]))), {
+      signal: args.signal,
+      headers,
+    });
+  }
+
+  async setGithubPublicationPolicy(args: { body: GithubPublicationPolicyRequest; signal?: AbortSignal; headers?: HeadersInit }): Promise<void> {
+    const headers = new Headers(args.headers);
+
+    return this.request<void>("POST", "/api/v1/work-items/github/publication/policy", {
+      body: args.body,
+      signal: args.signal,
+      headers,
+    });
+  }
+
+  async consentGithubPublication(args: { body: GithubPublicationConsentRequest; signal?: AbortSignal; headers?: HeadersInit }): Promise<void> {
+    const headers = new Headers(args.headers);
+
+    return this.request<void>("POST", "/api/v1/work-items/github/publication/consent", {
+      body: args.body,
+      signal: args.signal,
+      headers,
+    });
+  }
+
+  async actGithubPublication(args: { "id": number; body: GithubPublicationActionRequest; signal?: AbortSignal; headers?: HeadersInit }): Promise<void> {
+    const headers = new Headers(args.headers);
+
+    return this.request<void>("POST", "/api/v1/work-items/github/publication/{id}/actions".replace(":id", encodeURIComponent(String(args["id"]))), {
+      body: args.body,
       signal: args.signal,
       headers,
     });

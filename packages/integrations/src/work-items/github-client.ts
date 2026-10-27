@@ -6,7 +6,7 @@ const maximumResponseBytes = 2_097_152
 export class GithubReadError extends Error {
   constructor(
     readonly code:
-      'invalid_configuration' | 'invalid_response' | 'transport_unavailable' | 'response_too_large',
+      'invalid_configuration' | 'invalid_response' | 'transport_unavailable' | 'response_too_large' | 'lost_scope',
     readonly decision?: GithubRetryDecision,
   ) {
     super('GitHub read request could not be completed.')
@@ -212,7 +212,7 @@ export class GithubReadClient {
           typeof account.login !== 'string' ||
           !/^[A-Za-z0-9-]{1,100}$/.test(account.login) ||
           !['all', 'selected'].includes(String(row.repository_selection)) ||
-          permissions.issues !== 'read'
+          !['read', 'write'].includes(String(permissions.issues))
         )
           throw new GithubReadError('invalid_response')
         return {
@@ -300,7 +300,7 @@ export class GithubReadClient {
       String(result.id) !== installationId ||
       !decimalId(String(account.id)) ||
       result.suspended_at !== null ||
-      permissions.issues !== 'read' ||
+      !['read', 'write'].includes(String(permissions.issues)) ||
       (result.repository_selection !== 'all' && result.repository_selection !== 'selected')
     )
       throw new GithubReadError('invalid_response')

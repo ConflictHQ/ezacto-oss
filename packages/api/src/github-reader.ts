@@ -1,3 +1,5 @@
+import { installGithubPublicationRoutes } from './github-publication.js'
+import type { GithubPublicationPort } from '@ezacto/integrations'
 import type { Context, Hono } from 'hono'
 import type { ApiContext } from './context.js'
 import { GithubReaderCommandError } from '@ezacto/integrations'
@@ -59,6 +61,7 @@ export interface GithubReaderDisconnectCommand {
 /** Native runtime surface. App private key, webhook secret and short-lived token
  * are never members of this API port or any serialized result. */
 export interface GithubReaderApiPort {
+  publication?: GithubPublicationPort
   installations(
     authority: GithubReaderAdminAuthority,
     page: number,
@@ -150,6 +153,7 @@ export const installGithubReaderRoutes = <Bindings extends object>(
   api: Hono<ApiContext<Bindings>>,
   port: GithubReaderApiPort,
 ): void => {
+  if (port.publication) installGithubPublicationRoutes(api,port.publication)
   api.get('/work-item-links/:id/github', async (context) => {
     requireApiScope(context, 'time_entries:read')
     const result = await port.linkedItem(

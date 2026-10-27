@@ -334,3 +334,7 @@ export * from './calendar/runtime.js'
 export * from './work-items/github-client.js'
 export * from './work-items/github-runtime.js'
 export * from './work-items/github-reader-errors.js'
+export { createGithubCommentSurface, type GithubCommentOptions } from './work-items/github-comments.js'
+export { GithubPublicationError, type GithubPublicationAuthority, type GithubPublicationPort, type GithubPublicationPreview, type GithubPublicationRow } from './work-items/github-publication-model.js'
+
+export * from './work-items/publication.js'

@@ -76,6 +76,29 @@ describe('opt-in time publication contract (fake)', () => {
     expect((await reconcilePublication(ctx, key, 1, day)).outcome).toBe('created')
   })
 
+  it('[unit] permits only one automatic retry after complete settled absence', async () => {
+    const {surface,ctx,advance}=setup()
+    surface.timeoutBeforeWrite=true
+    await reconcilePublication(ctx,key,1,day)
+    advance(60000)
+    surface.timeoutBeforeWrite=true
+    await reconcilePublication(ctx,key,1,day)
+    advance(60000)
+    expect((await reconcilePublication(ctx,key,1,day)).outcome).toBe('failed')
+    expect((await reconcilePublication(ctx,key,1,day)).outcome).toBe('failed')
+    expect(surface.creates).toBe(0)
+  })
+  it('[unit] human edits after an unknown create remain a conflict', async () => {
+    const {surface,ctx}=setup()
+    surface.timeoutAfterWrite=true
+    await reconcilePublication(ctx,key,1,day)
+    const [id,comment]=[...surface.comments.entries()][0]!
+    surface.comments.set(id,{...comment,body:comment.body+'\nHuman edit'})
+    expect((await reconcilePublication(ctx,key,1,day)).outcome).toBe('conflicted')
+    expect(surface.comments.get(id)?.body).toContain('Human edit')
+    expect(surface.creates).toBe(1)
+  })
+
   it('[unit] two matching comments hold for an operator', async () => {
     const { surface, ctx, advance } = setup()
     for (const id of ['x', 'y'])

@@ -915,6 +915,7 @@ export const createContainerRuntime = async (
       try { await calendar.maintenance.processDue() } catch(error) { reportWorkerError(options.reportError,error,{phase:'scheduled',operation:'calendar sync',traceId:runtimeTraceId()}) }
       try {
         await githubReader.tick()
+        await githubReader.publication.tick()
       } catch {
         console.error('[container] GitHub issue reconciliation failed')
       }

@@ -8,6 +8,7 @@ import {
   reconcileGithubPage,
   verifyGithubDelivery,
 } from '@ezacto/integrations'
+import { createGithubPublicationService } from './github-publication-service.js'
 import { createGithubAppSetup } from './github-app-setup.js'
 import { NativeGithubReadStore } from './github-read.js'
 import { NativeGithubReaderAdmin, type GithubReaderAuthority } from './github-reader-admin.js'
@@ -52,6 +53,7 @@ export const createGithubReaderService = (
     return value
   }
   return {
+    publication: createGithubPublicationService(database, { ...options, credentials: credentialsFor }),
     async installations(authority: GithubReaderAuthority, page: number) {
       await admin.status(authority, clock())
       try {

@@ -458,7 +458,7 @@ export const createWorker = (options: WorkerOptions = {}): ExportedHandler<Worke
       }
         }
         if (controller.cron === '* * * * *' && services.githubReader !== undefined) {
-          await isolate('GitHub issue reconciliation', () => services.githubReader!.tick())
+          await isolate('GitHub issue reconciliation', async () => { await services.githubReader!.tick(); await services.githubReader!.publication.tick() })
         }
     if (controller.cron === '* * * * *' && invoices && services.deelPaymentStatus !== undefined) {
       try { await services.deelPaymentStatus.refresh(null) }
