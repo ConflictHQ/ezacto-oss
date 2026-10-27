@@ -141,7 +141,9 @@ describe('calendar consent controls', () => {
     const { controller, signal } = setup()
     controller.activate(signal.signal, 'admin_consent_required', 'microsoft')
     await flush()
-    expect(status().textContent).toBe('Your Microsoft tenant requires administrator approval. Contact your tenant administrator, then try connecting again.')
+    expect(status().textContent).toBe(
+      'Your Microsoft tenant requires administrator approval. Contact your tenant administrator, then try connecting again.',
+    )
   })
   it('does not overwrite load failure with successful callback wording', async () => {
     const { controller, signal } = setup({
@@ -153,6 +155,16 @@ describe('calendar consent controls', () => {
     await flush()
     expect(status().textContent).toContain('could not be loaded')
     expect(status().textContent).not.toContain('consent completed')
+  })
+  it('directs unresolved restore cleanup to the administrator without offering confirmation', async () => {
+    setup({
+      list: async () => ({ data: [row({ provider: 'microsoft', cleanup_pending: true })] }),
+      manualCleanup: async () => [],
+    })
+    await flush()
+    expect(document.body.textContent).toContain('requires the instance administrator')
+    expect(button('Connect').disabled).toBe(true)
+    expect(button('Record permission removal')).toBeUndefined()
   })
   it('requires deliberate Microsoft permission-removal confirmation and labels it as operator evidence', async () => {
     const item = {

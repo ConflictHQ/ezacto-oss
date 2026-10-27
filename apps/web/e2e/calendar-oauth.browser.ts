@@ -82,7 +82,7 @@ test('native calendar consent, sync and disconnect preserve provider cleanup and
   ).json()
   expect(receipt.calls.token).toBeGreaterThan(0)
   expect(receipt.calls.events).toBeGreaterThan(0)
-  expect(receipt.proposals).toEqual([{ status: 'proposed' }])
+  expect(receipt.proposals).toEqual([{ status: 'proposed', starts_at: receipt.eventStart }])
   expect(receipt.entries).toEqual([{ count: 0 }])
   await page.screenshot({ path: testInfo.outputPath('calendar-connected.png') })
   await google.getByRole('button', { name: 'Disconnect', exact: true }).click()

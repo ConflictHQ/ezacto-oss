@@ -82,6 +82,8 @@ const bundle = await build({
 })
 
 const calendarFixture = process.env.EZACTO_BROWSER_CALENDAR_FIXTURE === '1'
+const calendarFixtureEventStart = new Date(Math.floor((Date.now()-7200000)/1000)*1000).toISOString()
+const calendarFixtureLocal = instant => new Date(Date.parse(instant)-6*3600000).toISOString().slice(0,19)
 const calendarCalls = { outbound: 0, tokenAttempt: 0, token: 0, events: 0, revoke: 0 }
 const deelStagingFixture = process.env.EZACTO_BROWSER_DEEL_STAGING_FIXTURE === '1'
 const deelStagingPosts = []
@@ -130,7 +132,7 @@ const workerOptions = {
     }
     if (url.origin === 'https://www.googleapis.com' && url.pathname === '/calendar/v3/calendars/primary/events' && request.method === 'GET') {
       calendarCalls.events++
-      return globalThis.Response.json({items:[{id:'owned-calendar-event-428',etag:'owned-calendar-version-1',organizer:{self:true},status:'confirmed',summary:'Owned calendar fixture',start:{dateTime:new Date(Date.now()-7200000).toISOString()},end:{dateTime:new Date(Date.now()-3600000).toISOString()}}],nextSyncToken:'owned-sync-token'})
+      return globalThis.Response.json({items:[{id:'owned-calendar-event-428',etag:'owned-calendar-version-1',organizer:{self:true},status:'confirmed',summary:'Owned calendar fixture',start:{dateTime:calendarFixtureLocal(calendarFixtureEventStart),timeZone:'America/Costa_Rica'},end:{dateTime:calendarFixtureLocal(new Date(Date.parse(calendarFixtureEventStart)+3600000).toISOString()),timeZone:'America/Costa_Rica'}}],nextSyncToken:'owned-sync-token'})
     }
     if (url.origin === 'https://oauth2.googleapis.com' && url.pathname === '/revoke' && request.method === 'POST') { calendarCalls.revoke++; return new globalThis.Response(null,{status:200}) }
     throw new Error('Unexpected calendar fixture outbound operation')
@@ -642,7 +644,7 @@ const fixtureControl = async (request, response) => {
   }
   if (action === 'calendar-oauth-receipt' && calendarFixture) {
     response.writeHead(200, { 'content-type': 'application/json', 'cache-control': 'no-store' })
-    response.end(JSON.stringify({calls:calendarCalls,attempts:await rows("SELECT consumed_at IS NOT NULL AS consumed FROM calendar_oauth_attempts"),proposals:await rows("SELECT status FROM calendar_proposals WHERE event_id='owned-calendar-event-428'"),entries:await rows("SELECT count(*) AS count FROM time_entries WHERE calendar_event_ref LIKE '%owned-calendar-event-428%'"),connections:await rows("SELECT status FROM calendar_connections WHERE user_id=1")}))
+    response.end(JSON.stringify({calls:calendarCalls,eventStart:calendarFixtureEventStart,attempts:await rows("SELECT consumed_at IS NOT NULL AS consumed FROM calendar_oauth_attempts"),proposals:await rows("SELECT status,starts_at FROM calendar_proposals WHERE event_id='owned-calendar-event-428'"),entries:await rows("SELECT count(*) AS count FROM time_entries WHERE calendar_event_ref LIKE '%owned-calendar-event-428%'"),connections:await rows("SELECT status FROM calendar_connections WHERE user_id=1")}))
     return
   } else if (action === 'bank-deposit-seed') {
     const db = createD1Database(database), ingestion = createBankDepositIngestionService(db)

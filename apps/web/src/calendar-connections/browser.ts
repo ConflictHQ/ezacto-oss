@@ -65,15 +65,21 @@ export const createCalendarConnectionController = (
       const heading = document.createElement('h3')
       heading.textContent = providerName(row.provider)
       const detail = document.createElement('p')
-      detail.textContent = row.cleanup_pending
-        ? 'Disconnected here. Provider cleanup is pending; review access in your provider account settings. Reconnect is unavailable until cleanup finishes.'
-        : row.status === 'needs_reauth'
-          ? 'Reconnect to restore calendar access.'
-          : row.status === 'connected'
-            ? row.syncing
-              ? 'Connected. Calendar sync is in progress.'
-              : 'Connected.'
-            : 'Not connected.'
+      detail.textContent =
+        row.cleanup_pending &&
+        row.provider === 'microsoft' &&
+        api?.manualCleanup &&
+        cleanup.length === 0
+          ? 'This cleanup requires the instance administrator; reconnect is unavailable until it is resolved.'
+          : row.cleanup_pending
+            ? 'Disconnected here. Provider cleanup is pending; review access in your provider account settings. Reconnect is unavailable until cleanup finishes.'
+            : row.status === 'needs_reauth'
+              ? 'Reconnect to restore calendar access.'
+              : row.status === 'connected'
+                ? row.syncing
+                  ? 'Connected. Calendar sync is in progress.'
+                  : 'Connected.'
+                : 'Not connected.'
       section.append(heading, detail)
       if (row.last_synced_at && typeof row.last_synced_at === 'string') {
         const synced = document.createElement('p')
@@ -256,12 +262,15 @@ export const createCalendarConnectionController = (
       void run('load').then((loaded) => {
         if (!loaded || controller !== owned || owned.signal.aborted || signal.aborted) return
         if (callbackResult === 'admin_consent_required')
-          status.textContent = 'Your Microsoft tenant requires administrator approval. Contact your tenant administrator, then try connecting again.'
+          status.textContent =
+            'Your Microsoft tenant requires administrator approval. Contact your tenant administrator, then try connecting again.'
         if (callbackResult === 'failed')
           status.textContent =
             'Calendar connection was not completed. Refresh the connection status before trying Connect again.'
         if (callbackResult === 'connected')
-          status.textContent = rows.some((row) => row.status === 'connected' && row.provider === callbackProvider)
+          status.textContent = rows.some(
+            (row) => row.status === 'connected' && row.provider === callbackProvider,
+          )
             ? 'Calendar consent completed. Review the connection status below.'
             : 'Calendar setup returned. Review the connection status below.'
       })
