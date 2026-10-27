@@ -130,6 +130,8 @@ test('Microsoft disconnect requires explicit permission-removal confirmation bef
   const microsoft = section.locator('[data-calendar-provider=microsoft]')
   await microsoft.getByRole('button', { name: 'Connect', exact: true }).click()
   await expect(microsoft.getByRole('button', { name: 'Disconnect', exact: true })).toBeVisible()
+  await microsoft.getByRole('button', { name: 'Sync calendar', exact: true }).click()
+  await expect(section.locator('[data-calendar-connections-status]')).toContainText('Calendar check finished')
   await microsoft.getByRole('button', { name: 'Disconnect', exact: true }).click()
   await expect(section.locator('[data-calendar-connections-status]')).toContainText(
     'Disconnected here',
