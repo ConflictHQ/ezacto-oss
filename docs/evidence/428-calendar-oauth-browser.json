@@ -21,5 +21,23 @@
     "Local synthetic provider transport is not proof of real Google or Microsoft App registration or provider grant acceptance",
     "No production deployment or production provider account was changed"
   ],
-  "privacy": "Only fictional fixture events and temporary sessions/grants were used. No token, cookie value, OAuth code or state is included in this evidence. Disposable Miniflare is stopped by Playwright."
+  "privacy": "Only fictional fixture events and temporary sessions/grants were used. No token, cookie value, OAuth code or state is included in this evidence. Disposable Miniflare is stopped by Playwright.",
+  "integrated_verification": {
+    "source_revision": "6085f19a",
+    "native_browser": {
+      "tests_passed": 2,
+      "duration_seconds": 13.3,
+      "command": "EZACTO_BROWSER_PORT=47828 npm run test:browser:calendar --workspace @ezacto/web",
+      "google_datetime_fixture": "offsetless dateTime with explicit America/Costa_Rica zone; exact stored UTC asserted"
+    },
+    "native_sqlite_d1": {
+      "oauth_custody_cases_passed": 16,
+      "lost_response_cases_passed": 4,
+      "scope": "Rejected issued grants, native authority/state, late closure, restored-instance fence, manual confirmation, and accepted-envelope response loss."
+    },
+    "worker_backup_roundtrip": {
+      "passed": true,
+      "scope": "Current D1 schema through migration177 exported and restored to SQLite; pending OAuth attempts and sessions cleared, no foreign-key violations, old grant retained as manual cleanup, owner attestation retained, instance rotated."
+    }
+  }
 }
