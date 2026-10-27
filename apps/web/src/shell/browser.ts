@@ -69,6 +69,7 @@ import { createPeriodControl, isCalendarDay } from '../components/period.js'
 import { createClientDirectoryController } from '../clients/browser.js'
 import { createProjectDirectoryController } from '../projects/browser.js'
 import { createActivityController } from '../activity/browser.js'
+import { createNotificationsController } from '../notifications/browser.js'
 import { createDeliveriesController } from '../deliveries/browser.js'
 import { createCalendarController } from '../calendar/browser.js'
 import { createDashboardController } from '../dashboard/browser.js'
@@ -796,6 +797,26 @@ const rowStopButton = (entryId: number, label: string, className: string, handle
  * same place: marked from one clock and started from another, the highlighted
  * column would stay empty while the timer landed a day over.
  */
+/**
+ * The mark beside a project's name (the ezacto-ui grid): its initials on a
+ * tile whose hue follows the project, so one project wears one colour on
+ * every row and every day. The stylesheet draws it from the attribute rather
+ * than the cell holding the letters, so the label's text stays the name.
+ */
+const projectMarkHues = [222, 262, 18, 158, 332, 194, 282, 10] as const
+const markProject = (element: HTMLElement, label: string, projectId: unknown): void => {
+  const initials = label
+    .split(/[\s/]+/u)
+    .filter((part) => part !== '')
+    .slice(0, 2)
+    .map((part) => part[0]!.toLocaleUpperCase('en-US'))
+    .join('')
+  element.dataset.mark = initials
+  const id = Number(projectId)
+  const hue = projectMarkHues[(Number.isFinite(id) ? Math.abs(id) : 0) % projectMarkHues.length]!
+  element.style.setProperty('--mark-hue', String(hue))
+}
+
 const renderDesktopGrid = (grid: WeekGrid, handlers: GridHandlers, today: string): void => {
   const head = required<HTMLTableSectionElement>('[data-week-grid-head]')
   const heading = document.createElement('tr')
@@ -842,6 +863,7 @@ const renderDesktopGrid = (grid: WeekGrid, handlers: GridHandlers, today: string
         if (row.isRunning) tr.dataset.running = 'true'
         const label = document.createElement('th')
         label.scope = 'row'
+        markProject(label, row.projectLabel, row.projectId)
         const project = document.createElement('strong')
         project.textContent = row.projectLabel
         const task = document.createElement('span')
@@ -1041,6 +1063,7 @@ const renderPhoneDay = (grid: WeekGrid, selectedDay: number, handlers: GridHandl
       if (cell.isRunning) item.dataset.running = 'true'
       const label = document.createElement('div')
       label.className = 'day-row-label'
+      markProject(label, row.projectLabel, row.projectId)
       const project = document.createElement('strong')
       project.textContent = row.projectLabel
       const task = document.createElement('span')
@@ -1315,6 +1338,7 @@ export const mountShell = async (
   const teamListPage = document.documentElement.dataset.appView === 'team-list'
   const teamPersonPage = document.documentElement.dataset.appView === 'team-person'
   const dashboardPage = document.documentElement.dataset.appView === 'dashboard'
+  const notificationsPage = document.documentElement.dataset.appView === 'notifications'
   const reportsPage = document.documentElement.dataset.appView === 'reports'
   const expenseListPage = document.documentElement.dataset.appView === 'expense-list'
   const expenseDetailPage = document.documentElement.dataset.appView === 'expense-detail'
@@ -1503,6 +1527,9 @@ export const mountShell = async (
         ? { data: [] }
         : api.listActivityLog(query, signal),
   })
+  // Reads only the sources the signed-in person may read, which it decides by
+  // profile; an install missing an endpoint simply has that source absent.
+  const notifications = createNotificationsController(api)
   // Same shape as the activity controller above: an install whose api does not
   // offer these still serves the page and says it cannot load, rather than the
   // shell failing to construct.
@@ -4144,6 +4171,11 @@ export const mountShell = async (
         })
     }
     void loadTeamNavigation(identity, authenticated)
+    // The bell's count, on every page that carries the breadcrumb row. The
+    // Notifications page loads the same list below and is not asked twice.
+    if (!notificationsPage && document.querySelector('[data-notifications-bell]') !== null) {
+      void notifications.activate(identity, authenticated.signal)
+    }
     if (invoiceGenerationPage) {
       openInvoiceDialog(authenticated)
       await Promise.all([loadInvoiceList(authenticated), loadWeek(authenticated)])
@@ -4221,6 +4253,11 @@ export const mountShell = async (
           authenticated.signal,
           (error) => handleSessionFailure(error, authenticated),
         ),
+        loadWeek(authenticated),
+      ])
+    } else if (notificationsPage) {
+      await Promise.all([
+        notifications.activate(identity, authenticated.signal),
         loadWeek(authenticated),
       ])
     } else if (document.querySelector('[data-activity-log-page]:not([hidden])') !== null) {

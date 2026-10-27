@@ -33,6 +33,7 @@
 
 export type IconName =
   | 'banknote'
+  | 'bell'
   | 'calendar'
   | 'card'
   | 'chart'
@@ -79,6 +80,11 @@ const iconGeometry: Readonly<Record<IconName, readonly IconShape[]>> = {
     { element: 'rect', attributes: { x: '2.25', y: '5.25', width: '15.5', height: '9.5', rx: '1.5' } },
     { element: 'circle', attributes: { cx: '10', cy: '10', r: '2.25' } },
     { element: 'path', attributes: { d: 'M5 8v4M15 8v4' } },
+  ],
+  // The breadcrumb row's way to Notifications (the ezacto-ui bc-notif bell).
+  bell: [
+    { element: 'path', attributes: { d: 'M15 6.75a5 5 0 0 0-10 0c0 5.75-2.5 7.5-2.5 7.5h15s-2.5-1.75-2.5-7.5' } },
+    { element: 'path', attributes: { d: 'M11.42 17.5a1.67 1.67 0 0 1-2.83 0' } },
   ],
   calendar: [
     { element: 'rect', attributes: { x: '2.75', y: '4.25', width: '14.5', height: '13', rx: '2' } },

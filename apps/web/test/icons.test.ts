@@ -20,6 +20,7 @@ describe('icon set', () => {
     // a collapsed sidebar reads by its icons, and the sidebar's own controls.
     expect(iconNames).toEqual([
       'banknote',
+      'bell',
       'calendar',
       'card',
       'chart',

@@ -101,13 +101,20 @@ describe('level-2 signal', () => {
     expect(week!.getAttribute('aria-current')).toBe('page')
     expect(day!.hasAttribute('aria-current')).toBe(false)
 
+    // The mode you are in is a white pill raised on the grey track (the
+    // ezacto-ui view toggle); the others sit flat on it, and the track, not
+    // the segments, carries the border. Neither wears the level-2 underline.
     const activeMode = window.getComputedStyle(week!)
     const idleMode = window.getComputedStyle(day!)
-    expect(activeMode.backgroundColor).toBe('#EFF3FF')
-    expect(activeMode.borderTopColor).toBe('#254FE8')
-    expect(activeMode.boxShadow).toBe('none')
-    expect(idleMode.backgroundColor).not.toBe('#EFF3FF')
-    expect(idleMode.borderTopColor).toBe('#E5E7EB')
+    expect(activeMode.backgroundColor).toBe('#FFFFFF')
+    expect(activeMode.color).toBe('#254FE8')
+    expect(activeMode.boxShadow).not.toBe('none')
+    expect(activeMode.boxShadow).not.toContain('inset')
+    expect(idleMode.backgroundColor).not.toBe('#FFFFFF')
+    // Nothing declares a shadow on an idle segment, which the resolver reports
+    // as the empty string rather than `none`.
+    expect(['', 'none']).toContain(idleMode.boxShadow)
+    expect(window.getComputedStyle(strip).borderTopColor).toBe('#E5E7EB')
 
     // And the underline it gave up is still the mark of a level-2 tab.
     renderStyled({

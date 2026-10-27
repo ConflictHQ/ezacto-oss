@@ -61,6 +61,7 @@ describe('worker entry', () => {
       '/settings/company',
       '/settings/templates',
       '/settings/deliveries',
+      '/notifications',
     ]
     for (const path of paths) {
       const res = await app.request(path, {}, branded)
@@ -86,6 +87,19 @@ describe('worker entry', () => {
     expect(time).toMatch(
       /<a href="\/" aria-current="page"><svg[^>]*>(?:(?!<\/a>)[^])*<span class="nav-label">Time<\/span><\/a>/u,
     )
+  })
+
+  it('[acceptance] serves Notifications under the bell, outside the primary nav', async () => {
+    // Reached from the bell at the end of the breadcrumb row, not from a nav
+    // item, so no section is marked as the page you are on.
+    const page = await (await app.request('/notifications', {}, env)).text()
+    expect(page).toContain('data-app-view="notifications"')
+    expect(page).toContain('data-notifications-page>')
+    expect(page).toContain('<span class="crumbs-current">Notifications</span>')
+    expect(page).toMatch(
+      /<a class="crumbs-bell" href="\/notifications" aria-label="Notifications" aria-current="page" data-notifications-bell>/u,
+    )
+    expect(page).not.toMatch(/<a href="\/" aria-current="page"><svg/u)
   })
 
   it('[unit] keeps the URL settings shipped under', async () => {

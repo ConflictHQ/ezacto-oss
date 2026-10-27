@@ -40,6 +40,7 @@ import {
   renderInvoiceOverflowMenu,
   renderInvoiceTransitionDialog,
 } from '../invoices/render.js'
+import { renderNotificationsPage } from '../notifications/render.js'
 
 export interface ShellTab {
   readonly label: string
@@ -77,6 +78,9 @@ export interface AppShellOptions {
     // on; naming a section outside the primary nav marks nothing, which is the
     // truth.
     | 'Settings'
+    // Reached from the bell on the breadcrumb row, not from the nav, so it too
+    // marks nothing.
+    | 'Notifications'
     | 'Home'
     | 'Time'
     | 'Approvals'
@@ -118,6 +122,7 @@ export interface AppShellOptions {
     | 'settings-roles'
     | 'team-list'
     | 'team-person'
+    | 'notifications'
     | 'not-found'
   /**
    * The level-2 strip under the header. Time supplies its own Week/Day pair
@@ -198,27 +203,33 @@ export const renderDataQualityBanner = (options: DataQualityBannerOptions): stri
  * data-time-views because the browser rewrites aria-current on them from the
  * ?view= parameter -- a rule that is right for Time and wrong for every other
  * section, which does not navigate by that parameter and would have its current
- * tab stripped on load.
+ * tab stripped on load. That strip is rendered by renderTimeViews, in the Time
+ * page's own title row.
  *
- * It also carries view-switch, because Week and Day are two ways of looking at
- * one screen rather than two sections of the app; the level-2 underline now
- * says "you are in this part of ezacto" for Invoices and Reports, and a signal
- * that means two things means neither.
+ * Above whichever strip a section has stands the breadcrumb row (the ezacto-ui
+ * bc-bar), on every page: where you are, and at its end the bell that leads to
+ * Notifications and carries the count of what you have not seen.
  */
 const renderTabStrip = (options: AppShellOptions): string => {
   const view = options.view ?? 'time'
-  if (options.tabs === undefined) {
-    return (
-      `<nav class="tabstrip view-switch" aria-label="Time views" data-time-views${view === 'time' ? '' : ' hidden'}>` +
-      `<a href="/" aria-current="page">Week</a><a href="/?view=day">Day</a>` +
-      // Restored now that it leads somewhere. It was deleted in issue 296's first
-      // stage precisely because a tab that does nothing is worse than a missing
-      // feature, and putting it back without the panel would repeat that.
-      `<a href="/?view=calendar">Calendar</a>` +
-      `</nav>`
-    )
-  }
-  if (options.tabs.length === 0) return ''
+  const b = resolveDeploymentBrand(options.brand)
+  const here = view === 'notifications' ? 'Notifications' : (options.activeSection ?? 'Time')
+  const crumbs =
+    `<div class="crumb-bar">` +
+    `<nav class="crumbs" aria-label="Breadcrumb">` +
+    `<span class="crumbs-mark" aria-hidden="true"></span>` +
+    `<span class="crumbs-sep" aria-hidden="true">›</span>` +
+    `<a href="/dashboard">${escapeHtml(b.name)}</a>` +
+    `<span class="crumbs-sep" aria-hidden="true">›</span>` +
+    `<span class="crumbs-current">${escapeHtml(here)}</span>` +
+    `</nav>` +
+    `<a class="crumbs-bell" href="/notifications" aria-label="Notifications"${view === 'notifications' ? ' aria-current="page"' : ''} data-notifications-bell>` +
+    `${iconMarkup('bell')}` +
+    `<span class="crumbs-bell-count" data-notifications-count hidden></span>` +
+    `</a>` +
+    `</div>`
+  // A section that declares no tabs gets no strip, rather than an empty bar.
+  if (options.tabs === undefined || options.tabs.length === 0) return crumbs
   const links = options.tabs
     .map(
       (tab) =>
@@ -226,7 +237,35 @@ const renderTabStrip = (options: AppShellOptions): string => {
         `${escapeHtml(tab.label)}</a>`,
     )
     .join('')
-  return `<nav class="tabstrip" aria-label="${escapeHtml(options.activeSection ?? 'Section')} views">${links}</nav>`
+  return (
+    crumbs +
+    `<nav class="tabstrip" aria-label="${escapeHtml(options.activeSection ?? 'Section')} views">${links}</nav>`
+  )
+}
+
+/**
+ * Time's view switch, beside the title's primary action (the ezacto-ui header
+ * toggle). Its links are marked data-time-views because the browser rewrites
+ * aria-current on them from the ?view= parameter (see renderTabStrip), and it
+ * carries view-switch because Week and Day are two ways of looking at one
+ * screen rather than two sections of the app; the level-2 underline now says
+ * "you are in this part of ezacto" for Invoices and Reports, and a signal that
+ * means two things means neither. Only on a page that declares no tabs: a
+ * section with its own strip must not carry Time's, hidden or not, or the
+ * ?view= rewrite would reach it.
+ */
+const renderTimeViews = (options: AppShellOptions): string => {
+  if (options.tabs !== undefined) return ''
+  const view = options.view ?? 'time'
+  return (
+    `<nav class="tabstrip view-switch" aria-label="Time views" data-time-views${view === 'time' ? '' : ' hidden'}>` +
+    `<a href="/" aria-current="page">Week</a><a href="/?view=day">Day</a>` +
+    // Restored now that it leads somewhere. It was deleted in issue 296's first
+    // stage precisely because a tab that does nothing is worse than a missing
+    // feature, and putting it back without the panel would repeat that.
+    `<a href="/?view=calendar">Calendar</a>` +
+    `</nav>`
+  )
 }
 
 /**
@@ -739,7 +778,10 @@ ${instancePalette ? `  <link rel="stylesheet" href="${INSTANCE_THEME_STYLESHEET_
           <option value="">Yours</option>
         </select>
       </label>
-      <button class="primary-action" type="button" data-command-trigger data-auth-action data-time-log-time disabled>Log time</button>
+      <div class="context-actions">
+        ${renderTimeViews(options)}
+        <button class="primary-action" type="button" data-command-trigger data-auth-action data-time-log-time disabled>Log time</button>
+      </div>
     </header>
     <aside class="time-person-banner" data-time-person-banner role="status" aria-live="polite" hidden>
       <strong data-time-person-banner-text></strong>
@@ -1114,6 +1156,7 @@ ${instancePalette ? `  <link rel="stylesheet" href="${INSTANCE_THEME_STYLESHEET_
   ${renderExpenseCategoriesPage(view)}
   ${renderModuleSettingsPage(view)}
   ${renderActivityLogPage(view)}
+  ${renderNotificationsPage(view)}
   ${renderDeliveriesPage(view)}
   ${renderRoleAdminPage(view)}
   ${renderNotFoundPage(view)}

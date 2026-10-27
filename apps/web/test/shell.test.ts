@@ -243,6 +243,52 @@ describe('S-1 through S-5 application shell', () => {
     expect(details.some((detail) => detail.id === 7)).toBe(false)
   })
 
+  it('[unit] hangs the bell on every page\'s breadcrumb row and keeps Notifications behind it', () => {
+    // The breadcrumb row ends in the bell (the ezacto-ui bc-bar), which leads
+    // to Notifications and carries the count the browser fills in. Every page
+    // stands under the row, named in it; a section's own strip hangs below.
+    const time = renderAppShell({ environment: 'test', release: 'abcdef012345' })
+    expect(time).toMatch(
+      /<a class="crumbs-bell" href="\/notifications" aria-label="Notifications" data-notifications-bell>/u,
+    )
+    expect(time).toContain('<span class="crumbs-bell-count" data-notifications-count hidden></span>')
+    expect(time).toContain('<span class="crumbs-current">Time</span>')
+    expect(time).toContain('data-notifications-page hidden')
+
+    const notifications = renderAppShell({
+      environment: 'test',
+      release: 'abcdef012345',
+      activeSection: 'Notifications',
+      view: 'notifications',
+    })
+    expect(notifications).toContain('<span class="crumbs-current">Notifications</span>')
+    expect(notifications).toContain('data-notifications-page>')
+    expect(notifications).toContain('aria-current="page" data-notifications-bell')
+    // No nav item is the page you are on. (Time's hidden view switch still
+    // marks Week, which is a link in the page, not in the nav.)
+    expect(notifications).not.toMatch(/<a href="\/" aria-current="page"><svg/u)
+
+    const invoices = renderAppShell({
+      environment: 'test',
+      release: 'abcdef012345',
+      activeSection: 'Invoices',
+      view: 'invoice-list',
+      tabs: invoiceTabs('invoice-list'),
+    })
+    expect(invoices).toContain('<span class="crumbs-current">Invoices</span>')
+    expect(invoices).toMatch(
+      /data-notifications-bell>(?:(?!<\/div>)[^])*<\/div><nav class="tabstrip" aria-label="Invoices views">/u,
+    )
+    const settings = renderAppShell({
+      environment: 'test',
+      release: 'abcdef012345',
+      activeSection: 'Settings',
+      view: 'settings-activity',
+    })
+    expect(settings).toContain('<span class="crumbs-current">Settings</span>')
+    expect(settings).toContain('data-notifications-bell')
+  })
+
   it('[unit] lets a section supply its own tab strip, and leaves Time its own', () => {
     // The strip was hardcoded into the shell, so exactly one section could have
     // sub-navigation and no other could have any.
