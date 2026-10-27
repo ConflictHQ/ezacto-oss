@@ -6,7 +6,7 @@ export const githubPublicationMigration = [
     UPDATE github_publication_instance SET nonce=lower(hex(randomblob(32))) WHERE singleton=1;
     UPDATE github_publication_policy SET enabled=0,generation=generation+1;
   END`,
-  `CREATE TABLE github_publication_dispatch (id INTEGER PRIMARY KEY CHECK(id=1), token TEXT, expires_at INTEGER NOT NULL DEFAULT 0) STRICT`,
+  `CREATE TABLE github_publication_dispatch (id INTEGER PRIMARY KEY CHECK(id=1), token TEXT, expires_at INTEGER NOT NULL DEFAULT 0, cooldown_until INTEGER NOT NULL DEFAULT 0) STRICT`,
   `INSERT INTO github_publication_dispatch(id) VALUES(1)`,
   `CREATE TABLE github_publication_assertions (token TEXT PRIMARY KEY, ok INTEGER NOT NULL CHECK(ok=1)) STRICT`,
   `CREATE TABLE github_publication_policy (
@@ -42,7 +42,7 @@ export const githubPublicationMigration = [
   `CREATE TRIGGER github_publication_authority BEFORE INSERT ON github_publication_guards BEGIN
     SELECT CASE WHEN NOT EXISTS(SELECT 1 FROM users u JOIN sessions s ON s.user_id=u.id
       WHERE u.id=NEW.actor AND u.is_active=1 AND s.id=NEW.session_id AND s.revoked_at IS NULL
-        AND s.profile_snapshot=u.profile AND (NEW.administrator=0 OR u.profile='administrator')
+        AND s.profile_snapshot=u.profile AND s.manager_grants_snapshot=u.manager_grants AND (NEW.administrator=0 OR u.profile='administrator')
         AND julianday(s.idle_expires_at)>julianday(NEW.now) AND julianday(s.absolute_expires_at)>julianday(NEW.now)
         AND NOT EXISTS(SELECT 1 FROM account_closures WHERE user_id=u.id))
       OR EXISTS(SELECT 1 FROM account_restore_quarantine WHERE id=1 AND quarantined=1)

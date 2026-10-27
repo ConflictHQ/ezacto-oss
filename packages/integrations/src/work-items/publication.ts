@@ -257,7 +257,11 @@ async function run(
         const same =
           values !== null && found.body === renderTimeComment(ctx.marker, record.entryId, values)
         if (same) {
-          const done = await save(ctx, record, { lastPublished: values })
+          const done = await save(ctx, record, {
+            lastPublished: values,
+            createAttempts: 0,
+            attemptedAt: null,
+          })
           return done === null ? fenced : { outcome: 'adopted', code: null }
         }
       } else {
@@ -291,6 +295,7 @@ async function run(
         lastBody: body,
         lastPublished: values,
         attemptedAt: null,
+        createAttempts: 0,
       })
       return saved === null ? fenced : { outcome: 'created', code: null }
     }

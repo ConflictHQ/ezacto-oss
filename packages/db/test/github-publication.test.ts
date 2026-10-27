@@ -123,6 +123,21 @@ for (const runtime of ['SQLite', 'D1'] as const)
         (await query('SELECT remote_id FROM github_publications WHERE id=?', id))[0]!.remote_id,
       ).toBe('900')
     })
+    it('[native] fences in-flight completion and fresh claims after restore incarnation rotation', async () => {
+      const { id, key, journal } = await setup(),
+        held = (await journal.claim(key, 1))!
+      await query(
+        'UPDATE github_publication_instance SET nonce=lower(hex(randomblob(32))) WHERE singleton=1',
+      )
+      expect(await journal.permit(held.fence, 1, 1, 1)).toBe(false)
+      expect(await journal.save({ ...held, status: 'published', remoteId: '999' })).toBe(false)
+      await journal.release(key, held.fence)
+      expect(await journal.claim(key, 1)).toBeNull()
+      expect(
+        (await query('SELECT remote_id FROM github_publications WHERE id=?', id))[0]!.remote_id,
+      ).toBeNull()
+    })
+
     it('[native] bounded create retries survive process replacement and stop after second unknown attempt', async () => {
       const { id, key, ctx, surface, advance } = await setup()
       surface.timeoutBeforeWrite = true

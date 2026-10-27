@@ -41,7 +41,7 @@ export class NativeGithubPublicationJournal implements PublicationJournal {
         `UPDATE github_publications SET fence=fence+1,lease_until=?
       WHERE id=? AND connection_id=? AND entry_id=? AND issue_number=? AND source_version=?
         AND status NOT IN ('unlinked','adopted') AND (lease_until IS NULL OR lease_until<=?)
-        AND NOT EXISTS(SELECT 1 FROM github_publications other WHERE other.entry_id=github_publications.entry_id AND other.id<>github_publications.id AND other.lease_until>?)
+        AND NOT EXISTS(SELECT 1 FROM github_publications other WHERE other.entry_id=github_publications.entry_id AND other.id<>github_publications.id AND (other.lease_until>? OR (github_publications.desired_date IS NOT NULL AND other.status NOT IN ('retired','unlinked') AND (other.remote_id IS NOT NULL OR other.attempted_at IS NOT NULL))))
         AND EXISTS(SELECT 1 FROM github_publication_policy p JOIN github_read_connections c ON c.id=p.connection_id
           WHERE p.connection_id=github_publications.connection_id AND p.enabled=1 AND p.instance_nonce=(SELECT nonce FROM github_publication_instance WHERE singleton=1) AND c.state='active')
       RETURNING *, (SELECT nonce FROM github_publication_instance WHERE singleton=1) incarnation`,

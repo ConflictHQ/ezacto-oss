@@ -19,6 +19,8 @@ export interface GithubCommentOptions {
   installationId: string
   repositoryId: string
   accountId: string
+  /** Immutable issue identity for a publication; omitted during permission verification only. */
+  issueId?: string
   fetch(request: Request): Promise<Response>
   now(): number
   /** Recheck native connection, policy, source and lease immediately before a write. */
@@ -187,7 +189,13 @@ export async function createGithubCommentSurface(
     if (!decimal(id)) throw new GithubReadError('invalid_configuration')
     return `/repos/${name}/issues/comments/${id}`
   }
-  const write = async (path: string, method: string, body?: string) => {
+  const write = async (currentItemId: string, path: string, method: string, body?: string) => {
+    if (!options.issueId || !decimal(options.issueId))
+      throw new GithubReadError('invalid_configuration')
+    const target = object(
+      (await request(issuePath(currentItemId).replace(/\/comments$/, ''), token)).value,
+    )
+    if (String(target.id) !== options.issueId) throw new GithubReadError('lost_scope')
     if (expires <= options.now() || !(await options.beforeWrite()))
       throw new GithubReadError('lost_scope')
     const result = await request(path, token, method, body === undefined ? undefined : { body })
@@ -217,18 +225,23 @@ export async function createGithubCommentSurface(
     async getComment(itemId, id) {
       issuePath(itemId)
       const response = await request(commentPath(id), token)
-      return response.value === null ? null : comment(response.value)
+      if (response.value === null) return null
+      if (
+        object(response.value).issue_url !== `https://api.github.com/repos/${name}/issues/${itemId}`
+      )
+        throw new GithubReadError('invalid_response')
+      return comment(response.value)
     },
     async createComment(itemId, body) {
-      return (await write(issuePath(itemId), 'POST', body))!
+      return (await write(itemId, issuePath(itemId), 'POST', body))!
     },
     async updateComment(itemId, id, body) {
       issuePath(itemId)
-      return (await write(commentPath(id), 'PATCH', body))!
+      return (await write(itemId, commentPath(id), 'PATCH', body))!
     },
     async deleteComment(itemId, id) {
       issuePath(itemId)
-      await write(commentPath(id), 'DELETE')
+      await write(itemId, commentPath(id), 'DELETE')
     },
   }
 }

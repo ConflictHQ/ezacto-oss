@@ -1,5 +1,7 @@
 import {
   createGithubCommentSurface,
+  CooldownError,
+  AmbiguousWriteError,
   GithubPublicationError,
   GithubReadError,
   GithubHttpError,
@@ -130,6 +132,7 @@ export function createGithubPublicationService(
     connection: Record<string, unknown>,
     repository: string,
     beforeWrite: () => Promise<boolean>,
+    issueId?: string,
   ) {
     const credentials = await options.credentials()
     if (!credentials || !String(connection.id).startsWith(`${credentials.appId}:`))
@@ -142,6 +145,7 @@ export function createGithubPublicationService(
       fetch: options.fetch,
       now,
       beforeWrite,
+      ...(issueId ? { issueId } : {}),
     })
   }
   async function readPreview(
@@ -151,7 +155,7 @@ export function createGithubPublicationService(
     if (!validId(linkId)) throw new GithubPublicationError('invalid')
     const [rows] = await transaction(authority, [
       sql(
-        `SELECT l.id link_id,l.provider_item_id,l.url,l.updated_at link_updated,t.id entry_id,t.spent_date,t.seconds,t.updated_at entry_updated,t.project_id,c.id connection_id,CASE WHEN p.instance_nonce=(SELECT nonce FROM github_publication_instance WHERE singleton=1) THEN p.enabled ELSE 0 END policy_enabled
+        `SELECT l.id link_id,l.provider_item_id,l.url,l.updated_at link_updated,t.id entry_id,t.spent_date,t.seconds,t.updated_at entry_updated,t.project_id,c.id connection_id,c.generation connection_generation,p.generation policy_generation,CASE WHEN p.instance_nonce=(SELECT nonce FROM github_publication_instance WHERE singleton=1) THEN p.enabled ELSE 0 END policy_enabled
       FROM work_item_links l JOIN time_entries t ON t.id=l.time_entry_id JOIN github_read_connections c ON c.work_item_connection_id=l.connection_id AND c.state='active'
       LEFT JOIN github_publication_policy p ON p.connection_id=c.id WHERE l.id=? AND t.seconds>0`,
         linkId,
@@ -165,7 +169,7 @@ export function createGithubPublicationService(
     if (!reference) throw new GithubPublicationError('conflict')
     const [items] = await transaction(authority, [
       sql(
-        `SELECT i.metadata FROM github_read_aliases a JOIN github_read_items i ON i.connection_id=a.connection_id AND i.issue_id=a.issue_id JOIN github_read_resources r ON r.connection_id=i.connection_id AND r.repository_id=i.repository_id
+        `SELECT i.metadata,i.repository_id,i.issue_id,r.project_id resource_project,r.state resource_state FROM github_read_aliases a JOIN github_read_items i ON i.connection_id=a.connection_id AND i.issue_id=a.issue_id JOIN github_read_resources r ON r.connection_id=i.connection_id AND r.repository_id=i.repository_id
       WHERE a.connection_id=? AND a.alias=? AND r.project_id=? AND r.state IN ('active','renamed') AND json_extract(i.metadata,'$.status')='visible'`,
         row.connection_id,
         reference.alias,
@@ -180,9 +184,15 @@ export function createGithubPublicationService(
       destination: item.canonicalUrl,
       spent_date: String(row.spent_date),
       seconds: Number(row.seconds),
-      source_version: await hash(row),
+      source_version: await hash({
+        ...row,
+        repository_id: items[0]!.repository_id,
+        issue_id: items[0]!.issue_id,
+        destination: item.canonicalUrl,
+        resource_state: items[0]!.resource_state,
+      }),
       policy_enabled: row.policy_enabled === 1,
-      snapshot: row,
+      snapshot: { ...row, ...items[0]! },
     }
   }
   const port: GithubPublicationPort & { tick(): Promise<void> } = {
@@ -209,8 +219,16 @@ export function createGithubPublicationService(
       }
     },
     async preview(authority, linkId) {
-      const { snapshot: _snapshot, ...result } = await readPreview(authority, linkId)
-      return result
+      const result = await readPreview(authority, linkId)
+      return {
+        link_id: result.link_id,
+        connection_id: result.connection_id,
+        destination: result.destination,
+        spent_date: result.spent_date,
+        seconds: result.seconds,
+        source_version: result.source_version,
+        policy_enabled: result.policy_enabled,
+      }
     },
     async policy(authority, input) {
       await authorized(authority)
@@ -265,8 +283,9 @@ export function createGithubPublicationService(
         SELECT c.id,t.id,l.id,i.repository_id,i.issue_id,json_extract(i.metadata,'$.number'),json_extract(i.metadata,'$.canonicalUrl'),t.spent_date,t.seconds
         FROM work_item_links l JOIN time_entries t ON t.id=l.time_entry_id JOIN github_read_connections c ON c.work_item_connection_id=l.connection_id
         JOIN github_read_aliases a ON a.connection_id=c.id AND a.alias=? JOIN github_read_items i ON i.connection_id=a.connection_id AND i.issue_id=a.issue_id
+        JOIN github_read_resources r ON r.connection_id=c.id AND r.repository_id=i.repository_id
         JOIN github_publication_policy p ON p.connection_id=c.id AND p.enabled=1 AND p.instance_nonce=(SELECT nonce FROM github_publication_instance WHERE singleton=1)
-        WHERE l.id=? AND c.id=? AND c.state='active' AND t.spent_date=? AND t.seconds=? AND t.updated_at=? AND l.updated_at=? AND t.project_id=?
+        WHERE l.id=? AND c.id=? AND c.state='active' AND t.spent_date=? AND t.seconds=? AND t.updated_at=? AND l.updated_at=? AND t.project_id=? AND c.generation=? AND p.generation=? AND i.repository_id=? AND i.issue_id=? AND json_extract(i.metadata,'$.canonicalUrl')=? AND json_extract(i.metadata,'$.status')='visible' AND r.project_id=t.project_id AND r.state=?
         ON CONFLICT(connection_id,entry_id,issue_id) DO UPDATE SET link_id=excluded.link_id,desired_date=excluded.desired_date,desired_seconds=excluded.desired_seconds,source_version=github_publications.source_version+1,status=CASE WHEN github_publications.status='unlinked' THEN 'pending' ELSE github_publications.status END,next_due=0`,
           reference.alias,
           input.link_id,
@@ -276,6 +295,12 @@ export function createGithubPublicationService(
           proposed.snapshot.entry_updated,
           proposed.snapshot.link_updated,
           proposed.snapshot.project_id,
+          proposed.snapshot.connection_generation,
+          proposed.snapshot.policy_generation,
+          proposed.snapshot.repository_id,
+          proposed.snapshot.issue_id,
+          proposed.destination,
+          proposed.snapshot.resource_state,
         ),
         assertion('changes()=1'),
         audit(authority, input.command_id, checked.digest, 'consent', proposed.connection_id),
@@ -324,7 +349,12 @@ export function createGithubPublicationService(
       if (input.action === 'adopt' || input.action === 'restore') {
         if (row.status !== 'conflicted' || row.remote_id === null)
           throw new GithubPublicationError('conflict')
-        const api = await surface(connection, String(row.repository_id), async () => false)
+        const api = await surface(
+          connection,
+          String(row.repository_id),
+          async () => false,
+          String(row.issue_id),
+        )
         const remote = await api.getComment(String(row.issue_number), String(row.remote_id))
         if (!remote && input.action === 'restore') restoreRemoved = true
         else if (
@@ -363,15 +393,16 @@ export function createGithubPublicationService(
       const dispatch = crypto.randomUUID()
       const [claimed] = await atomicStatements(database, [
         sql(
-          'UPDATE github_publication_dispatch SET token=?,expires_at=? WHERE id=1 AND expires_at<=? RETURNING id',
+          'UPDATE github_publication_dispatch SET token=?,expires_at=? WHERE id=1 AND expires_at<=? AND cooldown_until<=? RETURNING id',
           dispatch,
           now() + 120000,
+          now(),
           now(),
         ),
       ])
       if (!claimed?.length) return
       try {
-        await runTick()
+        await runTick(dispatch)
       } finally {
         await atomicStatements(database, [
           sql(
@@ -382,12 +413,13 @@ export function createGithubPublicationService(
       }
     },
   }
-  async function runTick() {
+  async function runTick(dispatch: string) {
     const [rows] = await atomicStatements(database, [
       sql(
         `SELECT p.*,policy.marker,policy.generation policy_generation,c.generation connection_generation FROM github_publications p
         JOIN github_publication_policy policy ON policy.connection_id=p.connection_id AND policy.enabled=1 AND policy.instance_nonce=(SELECT nonce FROM github_publication_instance WHERE singleton=1) JOIN github_read_connections c ON c.id=p.connection_id AND c.state='active'
         WHERE p.status NOT IN ('failed','conflicted','adopted','unlinked') AND p.next_due<=? AND (p.lease_until IS NULL OR p.lease_until<=?)
+        AND NOT EXISTS(SELECT 1 FROM github_publications old WHERE old.entry_id=p.entry_id AND old.id<>p.id AND p.desired_date IS NOT NULL AND old.status NOT IN ('retired','unlinked') AND (old.remote_id IS NOT NULL OR old.attempted_at IS NOT NULL))
         AND (p.retry_at IS NULL OR p.retry_at<=?) AND NOT (p.status='retired' AND p.desired_date IS NULL)
         ORDER BY CASE WHEN p.desired_date IS NULL THEN 0 ELSE 1 END,p.next_due,p.id LIMIT 1`,
         now(),
@@ -410,13 +442,28 @@ export function createGithubPublicationService(
     }
     try {
       const connection = await binding(String(row.connection_id))
-      const api = await surface(connection, String(row.repository_id), () =>
-        journal.permit(
-          fence,
-          Number(row.source_version),
-          Number(row.connection_generation),
-          Number(row.policy_generation),
-        ),
+      const api = await surface(
+        connection,
+        String(row.repository_id),
+        async () => {
+          const [lease] = await atomicStatements(database, [
+            sql(
+              'SELECT id FROM github_publication_dispatch WHERE id=1 AND token=? AND expires_at>?',
+              dispatch,
+              now() + 10000,
+            ),
+          ])
+          return (
+            lease?.length === 1 &&
+            journal.permit(
+              fence,
+              Number(row.source_version),
+              Number(row.connection_generation),
+              Number(row.policy_generation),
+            )
+          )
+        },
+        String(row.issue_id),
       )
       const result = await reconcilePublication(
         { surface: api, journal: wrapped, marker: String(row.marker), now, settleMs: 60000 },
@@ -440,8 +487,24 @@ export function createGithubPublicationService(
         ),
       ])
     } catch (error) {
+      if (error instanceof CooldownError) {
+        const until = now() + Math.min(Math.max(error.retryAfterMs, 1000), 86400000)
+        await atomicStatements(database, [
+          sql(
+            'UPDATE github_publication_dispatch SET cooldown_until=max(cooldown_until,?) WHERE id=1',
+            until,
+          ),
+          sql(
+            "UPDATE github_publications SET status='deferred',retry_at=?,next_due=?,failure_code='cooldown' WHERE id=?",
+            until,
+            until,
+            Number(row.id),
+          ),
+        ])
+        return
+      }
       const code =
-        error instanceof GithubReadError
+        error instanceof GithubReadError || error instanceof AmbiguousWriteError
           ? 'provider_unavailable'
           : error instanceof GithubHttpError
             ? 'provider_unavailable'

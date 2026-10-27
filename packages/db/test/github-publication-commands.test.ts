@@ -4,11 +4,8 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import { createContainerDatabase, createD1Database } from '../src/adapters.js'
 import { migrateContainer, migrateD1 } from '../src/migrate.js'
 import { NativeGithubReaderAdmin } from '../src/github-reader-admin.js'
-import { NativeGithubReadStore } from '../src/github-read.js'
-import { NativeGithubReaderWork } from '../src/github-reader-work.js'
 import { atomicStatements } from '../src/atomic-statements.js'
 import { createGithubPublicationService } from '../src/github-publication-service.js'
-import { createGithubReaderService } from '../src/github-reader-service.js'
 import type { InvoiceStateDatabase } from '../src/invoice-state.js'
 const now = '2026-10-25T12:00:00.000Z'
 const authority = { userId: 2, sessionId: 102 }
@@ -140,6 +137,19 @@ for (const runtime of ['SQLite', 'D1'] as const)
       await expect(
         service().consent(authority, { link_id: 1, source_version: 'b'.repeat(64), command_id }),
       ).rejects.toThrow('conflict')
+      await run(
+        `UPDATE github_read_items SET metadata=json_set(metadata,'$.canonicalUrl','https://github.com/owned/disposable/issues/6') WHERE issue_id='900'`,
+      )
+      await expect(
+        service().consent(authority, {
+          link_id: 1,
+          source_version: preview.source_version,
+          command_id,
+        }),
+      ).rejects.toThrow('conflict')
+      await run(
+        `UPDATE github_read_items SET metadata=json_set(metadata,'$.canonicalUrl','https://github.com/owned/disposable/issues/5') WHERE issue_id='900'`,
+      )
       const input = { link_id: 1, source_version: preview.source_version, command_id }
       await service().consent(authority, input)
       await service().consent(authority, input)
