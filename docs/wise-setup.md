@@ -84,6 +84,22 @@ required atomic `process` method. The older split DB-store methods remain for
 existing internal callers, but webhook dispatch does not use them or fall back
 to them; a custom port missing the atomic method fails type checking.
 
+## Returned transfers and review
+
+Wise's `bounced_back` status means the recipient bank returned the transfer;
+it can still be delivered again or become a refund. `charged_back` reports a
+payer funding reversal or request for funds back. Neither is treated as proof
+that a recorded payment has been refunded. See [Wise transfer statuses](https://docs.wise.com/guides/product/send-money/tracking/transfer-statuses).
+
+Payments show **Needs review in Wise** with an explanation for these exceptions.
+An earlier sent payment stays in the ledger until Wise confirms `funds_refunded`;
+no replacement transfer or funding retry is started. A transfer not yet sent
+keeps its reservation and requires attention. Read-only reconciliation continues
+for unresolved paid exceptions beyond the normal 90-day polling period, and a
+later confirmed send clears the warning. The legacy planned-payout path also
+retains its claim and records the exception in signed delivery history, rather
+than releasing the period before a confirmed refund or cancellation.
+
 ## Troubleshooting, rotation and stopping
 
 | Symptom | Check |

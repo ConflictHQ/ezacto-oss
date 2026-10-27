@@ -1,3 +1,4 @@
+import { wiseTransferException } from '@ezacto/core';
 import { paymentFinancialSections, type PaymentFinancialSources } from './report-financials.js';
 import { hasPaymentActivity } from './model.js';
 import type {
@@ -26,6 +27,23 @@ export const paymentStateLabel = (state: PaymentItem["state"]): string =>
     attention: "Needs attention",
     cancelled: "Cancelled",
   })[state];
+export const paymentItemNeedsReview = (
+  item: Pick<PaymentItem, "state" | "provider_status" | "failure">,
+): boolean =>
+  item.state === "attention" ||
+  wiseTransferException(item.provider_status) !== null ||
+  (item.state === "paid" && item.failure !== null);
+export const paymentItemStatusLabel = (
+  item: Pick<PaymentItem, "state" | "provider_status" | "failure">,
+): string =>
+  wiseTransferException(item.provider_status) !== null ||
+  (item.state === "paid" && item.failure !== null)
+    ? "Needs review in Wise"
+    : paymentStateLabel(item.state);
+export const paymentItemDetails = (
+  item: Pick<PaymentItem, "provider_status" | "failure">,
+): string => item.failure ?? wiseTransferException(item.provider_status) ?? "";
+
 export interface PaymentReportFilters {
   person: string;
   currency: string;
@@ -56,7 +74,7 @@ export const filteredPaymentReport = (
         matches(item.name, item.currency) &&
         (filters.status === "all" ||
           (filters.status === "outstanding" &&
-            !["paid", "cancelled", "failed", "draft"].includes(item.state)) ||
+            (paymentItemNeedsReview(item) || !["paid", "cancelled", "failed", "draft"].includes(item.state))) ||
           (filters.status === "processing" &&
             ["creating", "funding", "processing"].includes(item.state)) ||
           item.state === filters.status),
@@ -217,7 +235,7 @@ export const paymentRunCsv = (
       q.fee_cents,
       i.execution_quote ? "Execution quote" : "Review estimate",
       i.max_source_cents,
-      i.failure,
+      paymentItemDetails(i),
     ]);
   }
   for (const r of receipts)

@@ -7,6 +7,7 @@ import { createWiseRuntime } from '@ezacto/integrations'
 import { createContainerDatabase, createD1Database } from '../src/adapters.js'
 import { migrateContainer, migrateD1 } from '../src/migrate.js'
 import { createWiseDeliveryStore } from '../src/wise-deliveries.js'
+import { createPayoutTransferStore } from '../src/payout-transfers.js'
 
 const received = '2026-10-23T00:00:00.000Z'
 const now = '2026-10-24T00:00:00.000Z'
@@ -207,19 +208,49 @@ for (const runtime of ['sqlite', 'd1'] as const) {
         processedAt: clock,
         skippedReason: 'payment run reconciliation scheduled',
       })
-      expect(await rows("SELECT state,next_attempt_at FROM payment_run_items WHERE id='callback-item'")).toEqual([
-        { state: 'processing', next_attempt_at: clock },
-      ])
+      expect(
+        await rows("SELECT state,next_attempt_at FROM payment_run_items WHERE id='callback-item'"),
+      ).toEqual([{ state: 'processing', next_attempt_at: clock }])
       expect(await rows('SELECT * FROM staff_payment_events')).toEqual(beforeRun)
       const runHistory = await store.historyForTransfer('49984000')
       await deliver(callback)
       expect(await store.historyForTransfer('49984000')).toEqual(runHistory)
       expect(await rows('SELECT * FROM staff_payment_events')).toEqual(beforeRun)
-      await deliver(event(49983983, 'cancelled'))
+      const payouts = createPayoutTransferStore(db)
+      const period = { start: '2026-03-01', end: '2026-03-15' }
+      for (const state of ['bounced_back', 'charged_back']) {
+        await deliver(event(49983983, state))
+        expect(
+          await rows('SELECT state,external_transfer_id FROM payout_transfers WHERE id=3'),
+        ).toEqual([{ state: 'planned', external_transfer_id: '49983983' }])
+        expect(
+          (await payouts.plan(period, [{ userId: 2, amountCents: 250000, currency: 'USD' }]))[0],
+        ).toMatchObject({ status: 'already_transferred', transferId: 3 })
+        expect(
+          await payouts.claim({
+            userId: 2,
+            period,
+            payoutAccountId: 1,
+            amountCents: 250000,
+            currency: 'USD',
+            now: clock,
+          }),
+        ).toMatchObject({
+          outcome: 'already_claimed',
+          transfer: { id: 3, externalTransferId: '49983983' },
+        })
+        expect(
+          (await store.historyForTransfer('49983983')).find((row) => row.currentState === state),
+        ).toMatchObject({ skippedReason: expect.stringContaining('Review') })
+      }
+      await deliver(event(49983983, 'funds_refunded'))
       expect(await rows('SELECT state,failure_reason FROM payout_transfers WHERE id=3')).toEqual([
-        { state: 'failed', failure_reason: 'wise reported cancelled' },
+        { state: 'failed', failure_reason: 'wise reported funds_refunded' },
       ])
       expect(await rows('SELECT * FROM wise_transition_audit WHERE payout_id=3')).toHaveLength(1)
+      expect(
+        (await payouts.plan(period, [{ userId: 2, amountCents: 250000, currency: 'USD' }]))[0],
+      ).toMatchObject({ status: 'payable' })
       const unsupported = JSON.stringify({
         data: { amount: 100, currency: 'USD', occurred_at: received },
         subscription_id: 'fixture',
