@@ -125,7 +125,8 @@ for (const runtime of ['SQLite', 'D1'] as const)
       const disabled = createGithubReaderService(database, options)
       expect(disabled.publication).toBeUndefined()
       expect((await disabled.status(authority)).publication_enabled).toBe(false)
-      await disabled.publishTimeNotes()
+      expect(disabled.publishTimeNotes).toBeUndefined()
+      await disabled.publishTimeNotes?.()
       expect(fetches).toBe(0)
       await expect(
         createGithubPublicationService(database, options).list(authority),

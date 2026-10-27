@@ -61,10 +61,7 @@ export const createGithubReaderService = (
         })
       : undefined
   return {
-    ...(publication ? { publication } : {}),
-    publishTimeNotes: async () => {
-      await publication?.tick()
-    },
+    ...(publication ? { publication, publishTimeNotes: () => publication.tick() } : {}),
     async installations(authority: GithubReaderAuthority, page: number) {
       await admin.status(authority, clock())
       try {
