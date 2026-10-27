@@ -99,6 +99,50 @@ beforeEach(() => {
   document.body.innerHTML = renderStaffPayments("staff-payments");
 });
 describe("payment run review", () => {
+  it.each(["bounced_back", "charged_back"])(
+    "shows %s as needing review without changing the paid ledger",
+    async (provider_status) => {
+      const exception: PaymentRun = {
+        ...run,
+        state: "approved",
+        items: [
+          { ...run.items[0]!, state: "paid", provider_status, failure: null },
+        ],
+      };
+      const data = { ...report, runs: [exception] };
+      const controller = createPaymentRunsController(
+        { getPaymentRunReport: async () => data },
+        async () => {},
+      );
+      const active = new AbortController();
+      await controller.activate(active.signal);
+      controller.ledger(ledger);
+      await vi.waitFor(() =>
+        expect(
+          document.querySelector("[data-run-history]")?.textContent,
+        ).toContain("Needs review in Wise"),
+      );
+      expect(
+        document.querySelector("[data-run-history]")?.textContent,
+      ).toContain("Review");
+      expect(
+        document.querySelector("[data-run-history]")?.textContent,
+      ).not.toContain("Paid (Wise sent)");
+      expect(
+        filteredPaymentReport(data, {
+          person: "",
+          currency: "",
+          status: "outstanding",
+        }).items,
+      ).toHaveLength(1);
+      expect(
+        paymentRunCsv(data, { person: "", currency: "", status: "all" }),
+      ).toContain("no new payment will be sent automatically");
+      active.abort();
+    },
+  );
+
+
   it('keeps a new session busy when an old preview finishes', async () => {
     let finishOld!: (value: PaymentRun) => void
     let finishNew!: (value: PaymentRun) => void

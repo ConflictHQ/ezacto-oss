@@ -153,7 +153,7 @@ describe("reading a delivery (#543)", () => {
 describe("what a state means for a payout (#543)", () => {
   it("[money] settles only on the two that are final at Wise", () => {
     expect(payoutOutcomeFor("outgoing_payment_sent")).toBe("sent");
-    for (const state of ["cancelled", "funds_refunded", "charged_back", "bounced_back"] as const) {
+    for (const state of ["cancelled", "funds_refunded"] as const) {
       expect(payoutOutcomeFor(state), state).toBe("failed");
     }
   });
@@ -162,6 +162,8 @@ describe("what a state means for a payout (#543)", () => {
     // Writing 'sent' here would mark money as moved while it is still
     // reversible, and the log's sent rows are immutable afterwards.
     for (const state of [
+      "bounced_back",
+      "charged_back",
       "incoming_payment_waiting",
       "incoming_payment_initiated",
       "processing",

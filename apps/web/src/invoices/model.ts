@@ -480,6 +480,7 @@ export const invoiceIdentityCanWrite = (identity: Readonly<Whoami>): boolean =>
  * list to its route table.
  */
 const reservedInvoiceSegments: ReadonlySet<string> = new Set([
+  'bank-deposits',
   'by-id',
   'configure',
   'estimates',

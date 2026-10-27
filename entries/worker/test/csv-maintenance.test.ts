@@ -12,6 +12,7 @@ vi.mock('../src/demo.js', async (original) => ({
   ...(await original<object>()),
   runDemoMaintenance: vi.fn(),
 }))
+vi.mock('../src/nightly-export.js', () => ({ cleanupAbandonedWorkerBackups: vi.fn(), runNightlyExport: vi.fn() }))
 vi.mock('@sentry/cloudflare', async (original) => ({
   ...(await original<object>()),
   captureException: vi.fn(),

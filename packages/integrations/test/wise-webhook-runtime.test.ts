@@ -237,8 +237,6 @@ describe('processing a verified event atomically (#1202)', () => {
     ['outgoing_payment_sent', 'sent'],
     ['cancelled', 'failed'],
     ['funds_refunded', 'failed'],
-    ['charged_back', 'failed'],
-    ['bounced_back', 'failed'],
   ])('passes %s as the local %s outcome in one operation', async (state, outcome) => {
     const body = transferBody(state)
     const { pem, signature } = await signedWith(body)
@@ -254,6 +252,14 @@ describe('processing a verified event atomically (#1202)', () => {
         skippedReason: null,
       }),
     )
+  })
+  it.each(['bounced_back', 'charged_back'])('retains legacy reservations and review evidence for %s', async state => {
+    const body = transferBody(state), { pem, signature } = await signedWith(body)
+    const { wise, deliveries } = runtime({ publicKey: pem })
+    await deliver(wise, { payload: body, signature })
+    expect(deliveries.process).toHaveBeenCalledWith(expect.objectContaining({
+      outcome: null, currentState: state, skippedReason: expect.stringContaining('Review'),
+    }))
   })
   it('records in-flight and unsupported events without a settlement outcome', async () => {
     for (const [body, reason] of [

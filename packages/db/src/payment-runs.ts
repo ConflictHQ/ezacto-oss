@@ -8,6 +8,7 @@ import {
   StaffPaymentError,
   PaymentProviderError,
   validPaymentMonth,
+  wiseTransferException,
   type PaymentDestination,
   type PaymentItem,
   type PaymentQuote,
@@ -150,8 +151,10 @@ export const createPaymentRunsService = (
               item,
               {
                 state: 'paid',
-                failure: 'Wise status changed after payment; reconciliation required.',
-                next: later(now, 3600),
+                provider_status: transfer.status,
+                failure:
+                  'Wise cancelled this transfer after it was sent. Review it in Wise; the earlier payment remains recorded until a refund is confirmed.',
+                next: later(now, 300),
               },
               now,
             )
@@ -168,13 +171,36 @@ export const createPaymentRunsService = (
           )
           return
         }
+        const providerException = wiseTransferException(transfer.status)
+        if (providerException !== null) {
+          await update(
+            item,
+            {
+              state: item.state === 'paid' ? 'paid' : 'attention',
+              provider_status: transfer.status,
+              failure: providerException,
+              next: later(now, 300),
+            },
+            now,
+          )
+          return
+        }
         if (transfer.status !== 'incoming_payment_waiting') {
           await update(
             item,
             {
-              state: item.state === 'paid' ? 'paid' : 'processing',
+              state:
+                item.state === 'paid'
+                  ? 'paid'
+                  : item.state === 'attention' && item.failure !== null
+                    ? 'attention'
+                    : 'processing',
               provider_status: transfer.status,
-              next: later(now, item.state === 'paid' ? 3600 : 60),
+              failure:
+                (item.state === 'paid' || item.state === 'attention') && item.failure !== null
+                  ? "Wise has not confirmed this transfer's resolution after an earlier issue. Review its status in Wise; no new payment will be sent automatically."
+                  : null,
+              next: later(now, item.failure !== null ? 300 : item.state === 'paid' ? 3600 : 60),
             },
             now,
           )
@@ -504,7 +530,7 @@ export const createPaymentRunsService = (
         id: string
       }>(sql`SELECT i.id FROM payment_run_items i JOIN payment_runs r ON r.id=i.run_id
         WHERE r.state='approved' AND r.scheduled_at<=${now} AND i.next_attempt_at<=${now} AND (i.lease_until IS NULL OR i.lease_until<${now})
-        AND (i.state IN ('queued','creating','funding','processing') OR (i.state='attention' AND i.transfer_id IS NOT NULL) OR (i.state='paid' AND (r.approved_at>=${later(now, -90 * 86400)} OR EXISTS(SELECT 1 FROM wise_all_webhook_deliveries w WHERE w.transfer_id=i.transfer_id AND w.received_at>i.updated_at)))) ORDER BY i.next_attempt_at,i.id LIMIT 10`)
+        AND (i.state IN ('queued','creating','funding','processing') OR (i.state='attention' AND i.transfer_id IS NOT NULL) OR (i.state='paid' AND (i.failure IS NOT NULL OR i.provider_status IN ('bounced_back','charged_back') OR r.approved_at>=${later(now, -90 * 86400)} OR EXISTS(SELECT 1 FROM wise_all_webhook_deliveries w WHERE w.transfer_id=i.transfer_id AND w.received_at>i.updated_at)))) ORDER BY i.next_attempt_at,i.id LIMIT 10`)
       let examined = 0
       for (const { id } of due) {
         // Advance up to three durable stages per tick; each reacquires a lease.

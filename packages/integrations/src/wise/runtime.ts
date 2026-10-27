@@ -1,3 +1,4 @@
+import { wiseTransferException } from '@ezacto/core';
 /**
  * The Wise connection, assembled (issue 543).
  *
@@ -448,7 +449,7 @@ export const createWiseRuntime = (options: Readonly<WiseRuntimeOptions>): WiseRu
         event.kind !== "transfer_state"
           ? `event type ${event.eventType} is not acted on`
           : outcome === null
-            ? `state ${event.currentState} is not final`
+            ? wiseTransferException(event.currentState) ?? `state ${event.currentState} is not final`
             : null,
     });
     return { accepted: true };

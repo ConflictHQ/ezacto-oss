@@ -1,4 +1,4 @@
-import { WORKER_BACKUP_CLEAR_TABLES } from '@ezacto/core'
+import { WORKER_BACKUP_CLEAR_TABLES, WORKER_BACKUP_REAUTHORIZE_TABLES } from '@ezacto/core'
 import { captureWorkerSnapshot, discardWorkerSnapshot, type WorkerBackupFile } from './worker-backup-snapshot.js'
 /**
  * D18 L1: nightly logical export. Produces the D18 bundle format as a set of
@@ -65,6 +65,7 @@ export interface BackupManifest {
    * version of ezacto that wrote it.
    */
   restore_skips: readonly string[]
+  restore_reauthorizations?: readonly string[]
   files?: Record<string, WorkerBackupFile>
   capture_id?: string
 }
@@ -126,6 +127,8 @@ the migration ledger so schema migrations are not replayed into an existing sche
 
 \`restore_skips\` is the historical safety inventory, not an instruction to
 blindly import CSV or discard migration history. Use the typed snapshot reader.
+\`restore_reauthorizations\` names connections whose live grant becomes encrypted
+cleanup custody and which require fresh consent in the restored instance.
 
 ## Files
 
@@ -181,6 +184,7 @@ export const exportBundle = async (
     // Carried in the manifest rather than left to a reader of the source: the
     // bundle outlives the version of ezacto that wrote it.
     restore_skips: EPHEMERAL_TABLES.filter((table) => backedUp.includes(table)),
+    restore_reauthorizations: WORKER_BACKUP_REAUTHORIZE_TABLES.filter((table) => backedUp.includes(table)),
     total_rows: snapshot.totalRows,
     files: snapshot.files,
     capture_id: snapshot.captureId,
