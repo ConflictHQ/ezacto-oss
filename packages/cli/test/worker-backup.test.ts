@@ -155,12 +155,10 @@ describe("actual Worker bundle restore", () => {
         ).toEqual({ quarantined: 1 });
         expect(manifest.table_count).toBeGreaterThanOrEqual(250);
         expect(
-          restored
-            .prepare(
-              "SELECT id FROM _ezacto_migrations ORDER BY id DESC LIMIT 1",
-            )
-            .get(),
-        ).toEqual({ id: "0177_calendar_oauth" });
+          restored.prepare("SELECT * FROM _ezacto_migrations ORDER BY id").all(),
+        ).toEqual(
+          (await database.prepare("SELECT * FROM _ezacto_migrations ORDER BY id").all()).results,
+        );
         for (const table of [
           "worker_backup_rows",
           "worker_backup_snapshots",

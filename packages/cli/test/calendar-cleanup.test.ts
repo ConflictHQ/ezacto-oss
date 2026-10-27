@@ -117,6 +117,8 @@ it('rejects insecure origins and arbitrary credential properties', async () => {
     ).rejects.toThrow()
 })
 
+// Includes a full schema setup and three fresh CLI processes over real TLS.
+// The two-worker CI package shard exceeded 20s; use the restore tests' 60s budget.
 it('runs the built operator CLI over trusted local TLS and leaves offline inspection byte-identical', async () => {
   const f = await calendarOperatorFixture('sqlite')
   close.push(f.close)
@@ -231,7 +233,7 @@ it('runs the built operator CLI over trusted local TLS and leaves offline inspec
   expect(await f.rows('SELECT count(*) AS n FROM calendar_operator_cleanup_receipts')).toEqual([
     { n: 1 },
   ])
-}, 20000)
+}, 60000)
 
 it('recovers an actual restored grant after offline inspection and the existing privacy release', async () => {
   const f = await calendarOperatorFixture('sqlite')
