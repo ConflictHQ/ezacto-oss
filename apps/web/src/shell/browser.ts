@@ -2061,6 +2061,15 @@ export const mountShell = async (
     const name = fullName !== '' ? fullName : (profile?.email ?? '')
     nameElement.textContent = name
     nameElement.hidden = name === ''
+    // Initials only from a real name: an address's first letters are not a
+    // monogram, so without one the outline avatar stays.
+    const initialsElement = required<HTMLElement>('[data-current-initials]')
+    const initials = [profile?.first_name, profile?.last_name]
+      .map((part) => (typeof part === 'string' ? (part.trim()[0] ?? '') : ''))
+      .join('')
+      .toLocaleUpperCase()
+    initialsElement.textContent = initials
+    initialsElement.hidden = initials === ''
     const card = nameElement.closest<HTMLElement>('[data-current-identity]')
     if (card !== null) {
       if (typeof profile?.email === 'string' && profile.email !== '') card.title = profile.email
@@ -6597,6 +6606,37 @@ export const mountShell = async (
     syncSidebarToggle(
       sidebarState.set(sidebarState.current() === 'collapsed' ? 'expanded' : 'collapsed'),
     )
+  })
+  // The expanded sidebar's account menu: a disclosure, not an ARIA menu, so
+  // Tab walks its links as it walks every other link. It closes on a choice,
+  // on Escape and on any click outside it. Where the toggle is not drawn the
+  // attribute changes nothing, because the menu is not a box there.
+  const accountMenuToggle = document.querySelector<HTMLButtonElement>(
+    '[data-account-menu-toggle]',
+  )
+  const accountPanel = accountMenuToggle?.closest<HTMLElement>('[data-current-identity]') ?? null
+  const setAccountMenu = (open: boolean): void => {
+    accountMenuToggle?.setAttribute('aria-expanded', String(open))
+    accountPanel?.toggleAttribute('data-account-menu-open', open)
+  }
+  accountMenuToggle?.addEventListener('click', () => {
+    setAccountMenu(accountMenuToggle.getAttribute('aria-expanded') !== 'true')
+  })
+  document.addEventListener('click', (event) => {
+    if (accountPanel === null || !accountPanel.hasAttribute('data-account-menu-open')) return
+    if (!(event.target instanceof Node) || !accountPanel.contains(event.target)) {
+      setAccountMenu(false)
+      return
+    }
+    if (event.target instanceof Element && event.target.closest('[data-account-menu] a, [data-account-menu] button') !== null) {
+      setAccountMenu(false)
+    }
+  })
+  accountPanel?.addEventListener('keydown', (event) => {
+    if (event.key !== 'Escape' || !accountPanel.hasAttribute('data-account-menu-open')) return
+    event.preventDefault()
+    setAccountMenu(false)
+    accountMenuToggle?.focus()
   })
   for (const button of document.querySelectorAll<HTMLButtonElement>('[data-density-choice]')) {
     button.addEventListener('click', () => {

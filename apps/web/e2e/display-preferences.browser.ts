@@ -470,9 +470,9 @@ test('[e2e:nav] gives search a row of its own in the sidebar, ring and all', asy
       menu: rect('[data-menu-trigger]'),
     }
   })
-  // The column's whole width, less its 10px padding each side, and $ and Menu
-  // together on the row under it.
-  expect(searchBox.width).toBeCloseTo(248 - 1 - 20, 0)
+  // The column's whole width, less the 10px gutter and the card's own 10px
+  // padding on each side, and $ and Menu together on the row under it.
+  expect(searchBox.width).toBeCloseTo(248 - 1 - 40, 0)
   expect(money.y).toBeGreaterThan(searchBox.y + searchBox.height - 1)
   expect(Math.abs(money.y - menu.y)).toBeLessThan(1)
   // The chip says which key: the command key on a Mac, Ctrl elsewhere.

@@ -344,11 +344,25 @@ const sections = [
   'Approvals',
   'Expenses',
   'Projects',
+  'Reports',
   'Clients',
   'Invoices',
   'Payments',
-  'Reports',
 ] as const
+
+/**
+ * The sidebar's headings (the ezacto-ui sidebar). The same links in the same
+ * order as `sections`, under a label each; the top bar has no room for a
+ * heading, so there the groups dissolve and the links sit in one row as before.
+ */
+const navGroups = [
+  { label: 'Main', sections: ['Time', 'Approvals', 'Expenses', 'Projects'] },
+  { label: 'Insights', sections: ['Reports'] },
+  { label: 'Other', sections: ['Clients', 'Invoices', 'Payments'] },
+] as const satisfies readonly {
+  readonly label: string
+  readonly sections: readonly (typeof sections)[number][]
+}[]
 
 /**
  * The sections that browse the firm's directories rather than the reader's own
@@ -535,7 +549,15 @@ export const renderAppShell = (options: AppShellOptions): string => {
   const sidebar = resolveSidebarState(options.sidebar)
   const navLink = (section: (typeof sections)[number] | (typeof foldedSections)[number]): string =>
     `<a href="${hrefFor(section)}"${section === 'Approvals' ? ' data-approvals-nav hidden' : ''}${section === 'Team' ? ' data-team-nav hidden' : ''}${section === 'Payments' ? ' data-staff-payments-nav hidden' : ''}${section === 'Expenses' ? ' data-expenses-nav' : ''}${section === 'Invoices' ? ' data-money-nav hidden' : ''}${directorySections.has(section) ? ' data-directory-nav hidden' : ''}${section === active ? ' aria-current="page"' : ''}>${iconMarkup(sectionIcons[section])}<span class="nav-label">${section}</span></a>`
-  const navigation = sections.map(navLink).join('')
+  const navigation = navGroups
+    .map(
+      (group) =>
+        `<div class="nav-group" role="group" aria-labelledby="nav-group-${group.label.toLowerCase()}">` +
+        `<span class="nav-group-label" id="nav-group-${group.label.toLowerCase()}">${group.label}</span>` +
+        group.sections.map(navLink).join('') +
+        `</div>`,
+    )
+    .join('')
   // The Menu's cards are their own component: the sidebar's links shrink to
   // marks when it is collapsed, and the Menu must never inherit that. Same
   // gates and same current-page mark as the links, so permissions and the
@@ -682,15 +704,24 @@ ${instancePalette ? `  <link rel="stylesheet" href="${INSTANCE_THEME_STYLESHEET_
     <button class="menu-trigger" type="button" data-menu-trigger aria-label="Open navigation" aria-haspopup="dialog">Menu</button>
     <div class="account" data-auth-shell data-state="loading">
       <div class="account-identity" data-current-identity hidden>
+        <span class="identity-initials" data-current-initials aria-hidden="true" hidden></span>
         <svg class="identity-avatar" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><circle cx="12" cy="8.5" r="3.25"/><path d="M5.75 19a6.25 6.25 0 0 1 12.5 0"/></svg>
         <span class="identity-text">
           <span class="visually-hidden">Signed in as </span><span class="identity-name" data-current-name hidden></span>
           <span class="identity-meta identity-role" data-current-profile>—</span>
           <span class="visually-hidden">User <span data-current-user-id>—</span></span>
         </span>
-        <a class="identity-settings" href="/settings/user" data-settings-link>${iconMarkup('sliders')}<span class="identity-action-label">Settings</span></a>
-        ${(options.signInProviders ?? []).includes('apple') ? '<a class="identity-settings" href="/auth/apple/disconnect">Disconnect Apple</a>' : ''}
-        <button type="button" class="identity-signout" data-logout>${iconMarkup('sign-out')}<span class="identity-action-label">Sign out</span></button>
+        <!--
+          The expanded sidebar folds the account's controls under this toggle,
+          the way the ezacto-ui sidebar does. Everywhere else the toggle is not
+          drawn and the menu dissolves, so the controls sit in the row as before.
+        -->
+        <button type="button" class="account-menu-toggle" data-account-menu-toggle aria-expanded="false" aria-controls="ez-account-menu" aria-label="Account menu">${iconMarkup('chevron', { direction: 'up' })}</button>
+        <div class="account-menu" id="ez-account-menu" data-account-menu>
+          <a class="identity-settings" href="/settings/user" data-settings-link>${iconMarkup('sliders')}<span class="identity-action-label">Settings</span></a>
+          ${(options.signInProviders ?? []).includes('apple') ? '<a class="identity-settings" href="/auth/apple/disconnect">Disconnect Apple</a>' : ''}
+          <button type="button" class="identity-signout" data-logout>${iconMarkup('sign-out')}<span class="identity-action-label">Sign out</span></button>
+        </div>
         <p class="auth-result visually-hidden" data-logout-result role="status" aria-live="polite"></p>
       </div>
     </div>

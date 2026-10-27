@@ -4926,13 +4926,27 @@ dialog h2,
 .nav-collapse,
 .primary-nav .ez-icon,
 .identity-settings .ez-icon,
-.identity-signout .ez-icon {
+.identity-signout .ez-icon,
+.nav-group-label,
+.identity-initials,
+.account-menu-toggle {
   display: none;
+}
+/* The sidebar's groups and account menu are boxes only in the expanded
+   sidebar. Everywhere else they are not boxes at all, so the links and the
+   account's controls lay out in their rows exactly as they did without them. */
+.nav-group,
+.account-menu {
+  display: contents;
 }
 @media (min-width: 900px) {
   [data-ez-nav='sidebar'] .authenticated-shell {
     padding-left: var(--ez-sidebar-width);
   }
+  /* The column is a card standing in a gutter (the ezacto-ui sidebar). The
+     header is still the whole sidebar -- its width is what the shell pads for
+     and what the tests measure -- so the gutter is the header's own ground and
+     the card is drawn inside it, with the links laid over both. */
   [data-ez-nav='sidebar'] .topbar {
     position: fixed;
     z-index: 30;
@@ -4944,28 +4958,116 @@ dialog h2,
     grid-template-rows: auto auto auto auto auto 1fr;
     align-items: start;
     gap: 8px;
-    padding: 12px 10px;
+    padding: 20px;
     overflow-y: auto;
     border-right: 1px solid var(--ez-border);
-    background: var(--ez-surface);
+    background: var(--ez-surface-2);
     color: var(--ez-ink);
   }
-  /* The brand keeps its band. The mark an operator uploads for a dark ground
-     is drawn on it, and on the light sidebar that mark would disappear. */
+  [data-ez-nav='sidebar'] .topbar::before,
+  [data-ez-nav='sidebar'] .topbar::after {
+    content: '';
+    position: absolute;
+    z-index: -1;
+    pointer-events: none;
+  }
+  /* The card, with its foot washed in the action blue: the theme's own blue,
+     so a dark scheme gets its own rather than ours. */
+  [data-ez-nav='sidebar'] .topbar::before {
+    inset: 10px;
+    border: 1px solid var(--ez-border);
+    border-radius: 12px;
+    background:
+      linear-gradient(
+          to top,
+          color-mix(in srgb, var(--ez-action) 15%, transparent),
+          transparent
+        )
+        bottom / 100% 280px no-repeat,
+      var(--ez-ground);
+  }
+  /* A dot grid over the wash, fading out from the card's bottom-left corner.
+     A third of the action blue at the strongest: the dots are texture under
+     the account, not a pattern beside it. The grid starts on the card's own
+     left and bottom edges, a half-dot showing at each, as the drawn grid it
+     follows does. */
+  [data-ez-nav='sidebar'] .topbar::after {
+    inset: auto 11px 11px;
+    height: 280px;
+    border-radius: 0 0 11px 11px;
+    background: radial-gradient(
+        circle,
+        color-mix(in srgb, var(--ez-action) 35%, transparent) 1.1px,
+        transparent 1.5px
+      )
+      -10px -10px / 20px 20px;
+    mask-image: radial-gradient(farthest-corner at 0 100%, black, transparent 67%);
+  }
+  /* The brand is a card of its own, with the mark on a tile of the band. An
+     operator's uploaded mark is drawn for that dark ground and would vanish on
+     the white card, so a brand that has one keeps the whole band instead. */
   [data-ez-nav='sidebar'] .brand {
     grid-column: 1 / -1;
-    min-height: 52px;
+    grid-template-columns: auto minmax(0, 1fr);
+    gap: 10px;
+    min-height: 56px;
     margin: 0 0 4px;
-    padding: 0 52px 0 16px;
+    padding: 0 52px 0 10px;
     place-items: center start;
-    border-radius: calc(var(--ez-radius) * 1.5);
+    border: 1px solid var(--ez-border);
+    border-radius: 12px;
+    background: var(--ez-ground);
+    color: var(--ez-ink);
+    font:
+      700 15px/1.2 var(--ez-font-body),
+      sans-serif;
+    letter-spacing: -0.02em;
+  }
+  [data-ez-nav='sidebar'] .brand-glyph {
+    grid-area: 1 / 1;
+    display: grid;
+    width: 34px;
+    height: 34px;
+    place-items: center;
+    border-radius: 9px;
     background: var(--ez-band);
     color: var(--ez-band-ink);
   }
+  [data-ez-nav='sidebar'] .brand-glyph .brand-logo {
+    width: 20px;
+    height: 20px;
+  }
+  [data-ez-nav='sidebar'] .brand-glyph .ez-icon {
+    width: 18px;
+    height: 18px;
+  }
+  [data-ez-nav='sidebar'] .brand-wordmark {
+    grid-area: 1 / 2;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  /* The tile carries the product's glyph; the lockup's own copy would be a
+     second one beside it. */
+  [data-ez-nav='sidebar'] .brand-wordmark .brand-logo {
+    display: none;
+  }
+  [data-ez-nav='sidebar'] .brand:has(.brand-mark) {
+    border-color: transparent;
+    background: var(--ez-band);
+    color: var(--ez-band-ink);
+  }
+  [data-ez-nav='sidebar'][data-ez-sidebar='expanded'] .brand:has(.brand-mark) .brand-glyph {
+    display: none;
+  }
+  [data-ez-nav='sidebar'][data-ez-sidebar='expanded'] .brand:has(.brand-mark) .brand-wordmark {
+    grid-column: 1 / -1;
+  }
   [data-ez-nav='sidebar'] .nav-collapse {
     position: absolute;
-    top: 22px;
-    right: 20px;
+    top: 32px;
+    right: 32px;
     display: grid;
     width: 32px;
     height: 32px;
@@ -4974,22 +5076,57 @@ dialog h2,
     border: 0;
     border-radius: var(--ez-radius);
     background: transparent;
+    color: var(--ez-muted);
+  }
+  [data-ez-nav='sidebar'] .nav-collapse:hover,
+  [data-ez-nav='sidebar'] .nav-collapse:focus-visible {
+    background: var(--ez-surface-2);
+    color: var(--ez-ink);
+  }
+  [data-ez-nav='sidebar'] .nav-collapse .ez-icon {
+    width: 14px;
+    height: 14px;
+  }
+  [data-ez-nav='sidebar'] .brand:has(.brand-mark) + .nav-collapse {
     color: var(--ez-band-ink);
   }
   [data-ez-nav='sidebar'] .primary-nav {
     grid-column: 1 / -1;
     display: grid;
-    gap: 2px;
+    gap: 8px;
+  }
+  [data-ez-nav='sidebar'] .nav-group {
+    display: grid;
+    gap: 1px;
+  }
+  /* A heading over nothing is worse than no heading: a profile that may open
+     none of a group's sections does not see the group. */
+  [data-ez-nav='sidebar'] .nav-group:not(:has(a:not([hidden]))) {
+    display: none;
+  }
+  [data-ez-nav='sidebar'] .nav-group-label {
+    display: block;
+    padding: 8px 12px 4px;
+    /* A heading, not a label to read: lighter than the muted ink, mixed
+       toward the ground so a dark scheme dims it the same way. */
+    color: color-mix(in srgb, var(--ez-muted) 60%, var(--ez-ground));
+    font:
+      700 10px/1.4 var(--ez-font-body),
+      sans-serif;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
   }
   [data-ez-nav='sidebar'] .primary-nav a {
     grid-template-columns: auto minmax(0, 1fr);
     place-items: center start;
     gap: 12px;
-    min-height: 44px;
-    padding: 0 6px;
-    border-radius: calc(var(--ez-radius) + 2px);
-    color: var(--ez-ink);
+    min-height: 50px;
+    padding: 0 12px;
+    border-radius: 10px;
+    color: var(--ez-ink-2);
+    font-size: 14px;
     font-weight: 600;
+    letter-spacing: -0.1px;
   }
   [data-ez-nav='sidebar'] .primary-nav .ez-icon {
     display: block;
@@ -5002,7 +5139,7 @@ dialog h2,
   }
   [data-ez-nav='sidebar'] .primary-nav a:hover,
   [data-ez-nav='sidebar'] .primary-nav a:focus-visible {
-    background: var(--ez-surface-2);
+    background: var(--ez-surface);
   }
   /* The section you are in: its row on the nested grey and its mark on a tile
      of the action blue. aria-current is what draws it, so what the eye sees
@@ -5016,12 +5153,14 @@ dialog h2,
     box-shadow: inset 0 0 0 1px var(--ez-action-edge);
     color: var(--ez-action-fg);
   }
+  /* These sit inside the glow at the card's foot. On the ground they read as
+     ground; over the wash they let it through, so the glow is one field
+     behind them rather than a field with four white holes in it. */
   [data-ez-nav='sidebar'] .timer-chip,
   [data-ez-nav='sidebar'] .money-toggle,
   [data-ez-nav='sidebar'] .command-trigger,
-  [data-ez-nav='sidebar'] .menu-trigger,
-  [data-ez-nav='sidebar'] .account-identity {
-    background: var(--ez-ground);
+  [data-ez-nav='sidebar'] .menu-trigger {
+    background: color-mix(in srgb, var(--ez-ground) 70%, transparent);
   }
   [data-ez-nav='sidebar'] .timer-chip {
     grid-column: 1 / -1;
@@ -5060,22 +5199,151 @@ dialog h2,
   [data-ez-nav='sidebar'] .account {
     grid-column: 1 / -1;
     align-self: end;
+    padding-top: 8px;
+    border-top: 1px solid var(--ez-border);
   }
+  /* The account is one row -- monogram, name, role -- and its controls fold
+     into a menu over it (the ezacto-ui sidebar), so the name has the whole
+     column rather than sharing it with two buttons. */
   [data-ez-nav='sidebar'] .account-identity {
-    flex-wrap: wrap;
-    padding: 8px;
+    position: relative;
+    padding: 10px 12px;
+    border-color: transparent;
+    border-radius: 10px;
+    background: transparent;
   }
-  /* The name takes the first row beside the avatar, and the two account
-     controls share the second, so neither the name nor a control is squeezed
-     to an ellipsis in a column this narrow. */
+  [data-ez-nav='sidebar'] .account-identity:hover,
+  [data-ez-nav='sidebar'] .account-identity[data-account-menu-open] {
+    background: var(--ez-surface);
+  }
+  [data-ez-nav='sidebar'] .identity-initials {
+    display: grid;
+    flex: none;
+    width: 32px;
+    height: 32px;
+    place-items: center;
+    border-radius: 50%;
+    background: var(--ez-action);
+    color: var(--ez-action-fg);
+    font:
+      700 12px/1 var(--ez-font-body),
+      sans-serif;
+  }
+  [data-ez-nav='sidebar'] .identity-initials:not([hidden]) + .identity-avatar {
+    display: none;
+  }
   [data-ez-nav='sidebar'] .identity-text {
     display: grid;
-    flex: 1 1 calc(100% - 48px);
+    flex: 1;
+    font-size: 13px;
   }
-  [data-ez-nav='sidebar'] .identity-settings,
-  [data-ez-nav='sidebar'] .identity-signout {
-    flex: 1 1 40%;
-    text-align: center;
+  [data-ez-nav='sidebar'] .identity-meta {
+    font-size: 11px;
+    font-weight: 400;
+  }
+  [data-ez-nav='sidebar'][data-ez-sidebar='expanded'] .account-menu-toggle {
+    display: grid;
+    flex: none;
+    width: 24px;
+    height: 24px;
+    place-items: center;
+    padding: 0;
+    border: 0;
+    border-radius: 6px;
+    background: transparent;
+    color: var(--ez-muted);
+  }
+  /* The whole row opens it, as in ezacto-ui, while the toggle stays the one
+     control a keyboard and a screen reader meet. */
+  [data-ez-nav='sidebar'][data-ez-sidebar='expanded'] .account-menu-toggle::after {
+    content: '';
+    position: absolute;
+    inset: 0;
+  }
+  [data-ez-nav='sidebar'][data-ez-sidebar='expanded'] .account-menu-toggle .ez-icon {
+    width: 14px;
+    height: 14px;
+    transition: transform 0.18s ease;
+  }
+  [data-ez-nav='sidebar'][data-ez-sidebar='expanded'] [data-account-menu-open] .account-menu-toggle .ez-icon {
+    transform: rotate(90deg);
+  }
+  /* Hidden by visibility rather than display, so it can ease in, and so a
+     closed menu's links are out of the tab order and the reading order. */
+  [data-ez-nav='sidebar'][data-ez-sidebar='expanded'] .account-menu {
+    position: absolute;
+    z-index: 2;
+    inset: auto 0 calc(100% + 8px);
+    display: grid;
+    gap: 2px;
+    padding: 6px;
+    border: 1px solid var(--ez-border);
+    border-radius: 12px;
+    background: var(--ez-ground);
+    box-shadow:
+      0 12px 32px color-mix(in srgb, var(--ez-shadow) 14%, transparent),
+      0 2px 8px color-mix(in srgb, var(--ez-shadow) 6%, transparent);
+    visibility: hidden;
+    opacity: 0;
+    transform: translateY(6px);
+    transition:
+      opacity 0.16s ease,
+      transform 0.16s ease,
+      visibility 0.16s;
+  }
+  [data-ez-nav='sidebar'][data-ez-sidebar='expanded'] [data-account-menu-open] .account-menu {
+    visibility: visible;
+    opacity: 1;
+    transform: none;
+  }
+  [data-ez-nav='sidebar'][data-ez-sidebar='expanded'] .account-menu .identity-settings,
+  [data-ez-nav='sidebar'][data-ez-sidebar='expanded'] .account-menu .identity-signout {
+    position: relative;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    width: 100%;
+    min-height: 36px;
+    padding: 0 10px;
+    border: 0;
+    border-radius: 8px;
+    background: transparent;
+    color: var(--ez-ink);
+    font:
+      400 13px/1.2 var(--ez-font-body),
+      sans-serif;
+    text-align: left;
+  }
+  [data-ez-nav='sidebar'][data-ez-sidebar='expanded'] .account-menu .identity-settings:hover,
+  [data-ez-nav='sidebar'][data-ez-sidebar='expanded'] .account-menu .identity-settings:focus-visible {
+    background: var(--ez-surface);
+  }
+  [data-ez-nav='sidebar'][data-ez-sidebar='expanded'] .account-menu .ez-icon {
+    display: block;
+    flex: none;
+    width: 16px;
+    height: 16px;
+    color: var(--ez-muted);
+  }
+  /* Sign out is the one control here that ends something, so it is set apart
+     by a rule and drawn in the theme's red. */
+  [data-ez-nav='sidebar'][data-ez-sidebar='expanded'] .account-menu .identity-signout {
+    margin-top: 9px;
+    color: var(--ez-red);
+  }
+  [data-ez-nav='sidebar'][data-ez-sidebar='expanded'] .account-menu .identity-signout .ez-icon {
+    color: currentColor;
+  }
+  [data-ez-nav='sidebar'][data-ez-sidebar='expanded'] .account-menu .identity-signout::before {
+    content: '';
+    position: absolute;
+    inset: -6px 4px auto;
+    height: 1px;
+    background: var(--ez-border);
+  }
+  [data-ez-nav='sidebar'][data-ez-sidebar='expanded'] .account-menu .identity-signout:hover,
+  [data-ez-nav='sidebar'][data-ez-sidebar='expanded'] .account-menu .identity-signout:focus-visible {
+    background: color-mix(in srgb, var(--ez-red) 8%, transparent);
   }
 
   /* Narrowed to its icons. Every label stays in the document and out of
@@ -5083,18 +5351,30 @@ dialog h2,
   [data-ez-nav='sidebar'][data-ez-sidebar='collapsed'] .authenticated-shell {
     padding-left: var(--ez-sidebar-width-collapsed);
   }
+  /* A narrower gutter, so the 48px controls still fit inside the card. */
   [data-ez-nav='sidebar'][data-ez-sidebar='collapsed'] .topbar {
     width: var(--ez-sidebar-width-collapsed);
     grid-template-columns: minmax(0, 1fr);
     grid-template-rows: repeat(7, auto) 1fr;
     justify-items: center;
-    padding: 12px;
+    padding: 14px 10px;
+  }
+  [data-ez-nav='sidebar'][data-ez-sidebar='collapsed'] .topbar::before {
+    inset: 6px;
+  }
+  [data-ez-nav='sidebar'][data-ez-sidebar='collapsed'] .topbar::after {
+    inset: auto 7px 7px;
   }
   [data-ez-nav='sidebar'][data-ez-sidebar='collapsed'] .brand {
     width: 48px;
     min-height: 48px;
+    grid-template-columns: auto;
+    gap: 0;
     padding: 0;
     place-items: center;
+  }
+  [data-ez-nav='sidebar'][data-ez-sidebar='collapsed'] .nav-group-label {
+    display: none;
   }
   [data-ez-nav='sidebar'][data-ez-sidebar='collapsed'] .brand-wordmark {
     display: none;
@@ -5117,8 +5397,10 @@ dialog h2,
     padding: 0 6px;
   }
   [data-ez-nav='sidebar'][data-ez-sidebar='collapsed'] .timer-chip {
-    width: auto;
-    padding: 0 10px;
+    width: 48px;
+    gap: 4px;
+    justify-content: center;
+    padding: 0;
   }
   [data-ez-nav='sidebar'][data-ez-sidebar='collapsed'] .money-toggle,
   [data-ez-nav='sidebar'][data-ez-sidebar='collapsed'] .command-trigger,
