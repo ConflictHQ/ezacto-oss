@@ -43,12 +43,17 @@ export const githubPublicationMigration = [
     SELECT CASE WHEN NOT EXISTS(SELECT 1 FROM users u JOIN sessions s ON s.user_id=u.id
       WHERE u.id=NEW.actor AND u.is_active=1 AND s.id=NEW.session_id AND s.revoked_at IS NULL
         AND s.profile_snapshot=u.profile AND s.manager_grants_snapshot=u.manager_grants AND (NEW.administrator=0 OR u.profile='administrator')
-        AND julianday(s.idle_expires_at)>julianday(NEW.now) AND julianday(s.absolute_expires_at)>julianday(NEW.now)
+        AND julianday(s.idle_expires_at)>julianday('now') AND julianday(s.absolute_expires_at)>julianday('now')
         AND NOT EXISTS(SELECT 1 FROM account_closures WHERE user_id=u.id))
       OR EXISTS(SELECT 1 FROM account_restore_quarantine WHERE id=1 AND quarantined=1)
       OR EXISTS(SELECT 1 FROM migration_loads WHERE status<>'completed' AND (status<>'cancelled' OR started_at IS NOT NULL))
       THEN RAISE(ABORT,'github_publication_forbidden') END;
   END`,
+  `CREATE TRIGGER github_publication_subject_closed AFTER UPDATE OF is_active ON users
+    WHEN NEW.is_active=0 AND OLD.is_active<>0 BEGIN
+      UPDATE github_publications SET status='failed',failure_code='source_unavailable',source_version=source_version+1
+      WHERE entry_id IN (SELECT id FROM time_entries WHERE user_id=NEW.id) AND desired_date IS NOT NULL AND status<>'unlinked';
+    END`,
   `CREATE TRIGGER github_publication_entry_change AFTER UPDATE OF spent_date,seconds,project_id ON time_entries
     WHEN NEW.spent_date IS NOT OLD.spent_date OR NEW.seconds IS NOT OLD.seconds OR NEW.project_id IS NOT OLD.project_id BEGIN
     UPDATE github_publications SET desired_date=CASE WHEN NEW.project_id=OLD.project_id AND NEW.seconds>0 THEN NEW.spent_date END,

@@ -33,6 +33,24 @@ for (const runtime of ['SQLite', 'D1'] as const)
         db = createD1Database(d1) as InvoiceStateDatabase
         dispose = () => mf.dispose()
       }
+      await query(
+        "INSERT INTO users(id,first_name,last_name,profile,manager_grants,timezone,created_at,updated_at) VALUES(1,'Owned','Administrator','administrator','[]','UTC','2026-10-26T00:00:00.000Z','2026-10-26T00:00:00.000Z'),(2,'Owned','Member','member','[]','UTC','2026-10-26T00:00:00.000Z','2026-10-26T00:00:00.000Z')",
+      )
+      await query(
+        "INSERT INTO clients(id,name,currency,created_at,updated_at) VALUES(1,'Owned','USD','2026-10-26T00:00:00.000Z','2026-10-26T00:00:00.000Z')",
+      )
+      await query(
+        "INSERT INTO projects(id,client_id,name,bill_by,created_at,updated_at) VALUES(1,1,'Owned','tasks','2026-10-26T00:00:00.000Z','2026-10-26T00:00:00.000Z')",
+      )
+      await query(
+        "INSERT INTO tasks(id,name,created_at,updated_at) VALUES(1,'Owned','2026-10-26T00:00:00.000Z','2026-10-26T00:00:00.000Z')",
+      )
+      await query(
+        "INSERT INTO task_assignments(id,project_id,task_id,billable,created_at,updated_at) VALUES(1,1,1,0,'2026-10-26T00:00:00.000Z','2026-10-26T00:00:00.000Z')",
+      )
+      await query(
+        "INSERT INTO user_assignments(id,project_id,user_id,created_at,updated_at) VALUES(1,1,2,'2026-10-26T00:00:00.000Z','2026-10-26T00:00:00.000Z')",
+      )
     }, 60000)
     afterAll(async () => dispose?.())
     const query = async (text: string, ...params: unknown[]) =>
@@ -52,6 +70,10 @@ for (const runtime of ['SQLite', 'D1'] as const)
         connection = `11:${id}:33`,
         key = { connectionId: connection, entryId: String(id), itemId: '5' }
       let clock = 100000
+      await query(
+        "INSERT INTO time_entries(id,user_id,project_id,task_id,user_assignment_id,task_assignment_id,spent_date,seconds,seconds_without_timer,rounded_seconds,billable,created_at,updated_at) VALUES(?,2,1,1,1,1,'2026-10-01',3600,3600,3600,0,'2026-10-26T00:00:00.000Z','2026-10-26T00:00:00.000Z')",
+        id,
+      )
       await query(
         'INSERT INTO github_read_connections(id,installation_id,account_id) VALUES(?,?,?)',
         connection,

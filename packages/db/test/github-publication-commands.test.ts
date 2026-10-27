@@ -50,7 +50,7 @@ for (const runtime of ['SQLite', 'D1'] as const)
         `INSERT INTO organization_owner(id,user_id,updated_at) VALUES(1,1,'${now}') ON CONFLICT(id) DO UPDATE SET user_id=excluded.user_id`,
       )
       await run(
-        `INSERT INTO sessions(id,user_id,selector,secret_hash,profile_snapshot,manager_grants_snapshot,created_at,last_seen_at,idle_expires_at,absolute_expires_at,updated_at) VALUES(102,2,'AAAAAAAAAAAAAAAB','${'a'.repeat(64)}','administrator','[]','${now}','${now}','2026-10-25T13:00:00.000Z','2026-10-26T12:00:00.000Z','${now}'),(103,3,'AAAAAAAAAAAAAAAC','${'b'.repeat(64)}','member','[]','${now}','${now}','2026-10-25T13:00:00.000Z','2026-10-26T12:00:00.000Z','${now}')`,
+        `INSERT INTO sessions(id,user_id,selector,secret_hash,profile_snapshot,manager_grants_snapshot,created_at,last_seen_at,idle_expires_at,absolute_expires_at,updated_at) VALUES(102,2,'AAAAAAAAAAAAAAAB','${'a'.repeat(64)}','administrator','[]','${now}','${now}','2099-10-25T13:00:00.000Z','2099-10-26T12:00:00.000Z','${now}'),(103,3,'AAAAAAAAAAAAAAAC','${'b'.repeat(64)}','member','[]','${now}','${now}','2099-10-25T13:00:00.000Z','2099-10-26T12:00:00.000Z','${now}')`,
       )
       await run(
         `INSERT INTO clients(id,name,currency,created_at,updated_at) VALUES(1,'Owned client','EUR','${now}','${now}')`,
@@ -187,5 +187,11 @@ for (const runtime of ['SQLite', 'D1'] as const)
       await service().act(authority, action)
       await service().act(authority, action)
       expect((await service().list(authority)).publications[0]!.status).toBe('unlinked')
+    })
+    it('[native] rejects an expired session using database time even when a caller clock is old', async () => {
+      await run(
+        "INSERT INTO sessions(id,user_id,selector,secret_hash,profile_snapshot,manager_grants_snapshot,created_at,last_seen_at,idle_expires_at,absolute_expires_at,updated_at) SELECT 104,user_id,'AAAAAAAAAAAAAAAE',secret_hash,profile_snapshot,manager_grants_snapshot,created_at,last_seen_at,'2026-10-26T00:00:00.000Z','2026-10-26T01:00:00.000Z',updated_at FROM sessions WHERE id=102",
+      )
+      await expect(service().list({ ...authority, sessionId: 104 })).rejects.toThrow('forbidden')
     })
   })

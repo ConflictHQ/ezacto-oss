@@ -157,7 +157,7 @@ export function createGithubPublicationService(
       sql(
         `SELECT l.id link_id,l.provider_item_id,l.url,l.updated_at link_updated,t.id entry_id,t.spent_date,t.seconds,t.updated_at entry_updated,t.project_id,c.id connection_id,c.generation connection_generation,p.generation policy_generation,CASE WHEN p.instance_nonce=(SELECT nonce FROM github_publication_instance WHERE singleton=1) THEN p.enabled ELSE 0 END policy_enabled
       FROM work_item_links l JOIN time_entries t ON t.id=l.time_entry_id JOIN github_read_connections c ON c.work_item_connection_id=l.connection_id AND c.state='active'
-      LEFT JOIN github_publication_policy p ON p.connection_id=c.id WHERE l.id=? AND t.seconds>0`,
+      LEFT JOIN github_publication_policy p ON p.connection_id=c.id WHERE l.id=? AND t.seconds>0 AND EXISTS(SELECT 1 FROM users u WHERE u.id=t.user_id AND u.is_active=1) AND NOT EXISTS(SELECT 1 FROM account_closures a WHERE a.user_id=t.user_id)`,
         linkId,
       ),
     ])
@@ -285,7 +285,7 @@ export function createGithubPublicationService(
         JOIN github_read_aliases a ON a.connection_id=c.id AND a.alias=? JOIN github_read_items i ON i.connection_id=a.connection_id AND i.issue_id=a.issue_id
         JOIN github_read_resources r ON r.connection_id=c.id AND r.repository_id=i.repository_id
         JOIN github_publication_policy p ON p.connection_id=c.id AND p.enabled=1 AND p.instance_nonce=(SELECT nonce FROM github_publication_instance WHERE singleton=1)
-        WHERE l.id=? AND c.id=? AND c.state='active' AND t.spent_date=? AND t.seconds=? AND t.updated_at=? AND l.updated_at=? AND t.project_id=? AND c.generation=? AND p.generation=? AND i.repository_id=? AND i.issue_id=? AND json_extract(i.metadata,'$.canonicalUrl')=? AND json_extract(i.metadata,'$.status')='visible' AND r.project_id=t.project_id AND r.state=?
+        WHERE l.id=? AND c.id=? AND c.state='active' AND EXISTS(SELECT 1 FROM users u WHERE u.id=t.user_id AND u.is_active=1) AND NOT EXISTS(SELECT 1 FROM account_closures a WHERE a.user_id=t.user_id) AND t.spent_date=? AND t.seconds=? AND t.updated_at=? AND l.updated_at=? AND t.project_id=? AND c.generation=? AND p.generation=? AND i.repository_id=? AND i.issue_id=? AND json_extract(i.metadata,'$.canonicalUrl')=? AND json_extract(i.metadata,'$.status')='visible' AND r.project_id=t.project_id AND r.state=?
         ON CONFLICT(connection_id,entry_id,issue_id) DO UPDATE SET link_id=excluded.link_id,desired_date=excluded.desired_date,desired_seconds=excluded.desired_seconds,source_version=github_publications.source_version+1,status=CASE WHEN github_publications.status='unlinked' THEN 'pending' ELSE github_publications.status END,next_due=0`,
           reference.alias,
           input.link_id,
@@ -479,7 +479,13 @@ export function createGithubPublicationService(
       )
       await atomicStatements(database, [
         sql(
-          'UPDATE github_publications SET next_due=?,failure_code=? WHERE id=? AND fence=?',
+          'UPDATE github_publication_dispatch SET cooldown_until=max(cooldown_until,COALESCE((SELECT retry_at FROM github_publications WHERE id=? AND fence=?),0)) WHERE id=1 AND token=?',
+          Number(row.id),
+          fence,
+          dispatch,
+        ),
+        sql(
+          'UPDATE github_publications SET next_due=max(?,COALESCE(retry_at,0)),failure_code=? WHERE id=? AND fence=?',
           now() + 60000,
           result.code,
           Number(row.id),

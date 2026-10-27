@@ -107,6 +107,7 @@ export class NativeGithubPublicationJournal implements PublicationJournal {
         AND c.state='active' AND c.generation=? AND policy.enabled=1 AND policy.generation=? AND policy.instance_nonce=(SELECT nonce FROM github_publication_instance WHERE singleton=1) AND r.state IN ('active','renamed')
         AND NOT EXISTS(SELECT 1 FROM migration_loads WHERE status<>'completed' AND (status<>'cancelled' OR started_at IS NOT NULL))
         AND NOT EXISTS(SELECT 1 FROM account_closures WHERE user_id=c.owner_user_id)
+        AND (p.desired_date IS NULL OR EXISTS(SELECT 1 FROM time_entries t JOIN users u ON u.id=t.user_id WHERE t.id=p.entry_id AND u.is_active=1 AND NOT EXISTS(SELECT 1 FROM account_closures a WHERE a.user_id=t.user_id)))
         AND NOT EXISTS(SELECT 1 FROM account_restore_quarantine WHERE id=1 AND quarantined=1)`,
         this.id,
         fence,
