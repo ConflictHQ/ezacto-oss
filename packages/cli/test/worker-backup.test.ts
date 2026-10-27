@@ -59,6 +59,21 @@ describe("actual Worker bundle restore", () => {
             .get(),
         ).toEqual({ quarantined: 1 });
         expect(manifest.table_count).toBeGreaterThanOrEqual(250);
+        expect(
+          restored
+            .prepare(
+              "SELECT id FROM _ezacto_migrations ORDER BY id DESC LIMIT 1",
+            )
+            .get(),
+        ).toEqual({ id: "0176_worker_backup_capture" });
+        for (const table of [
+          "worker_backup_rows",
+          "worker_backup_snapshots",
+          "worker_backup_cleanup",
+        ])
+          expect(
+            restored.prepare(`SELECT count(*) AS n FROM ${table}`).get(),
+          ).toEqual({ n: 0 });
       } finally {
         restored.close();
       }
@@ -78,12 +93,14 @@ describe("actual Worker bundle restore", () => {
     try {
       const db = await mf.getD1Database("DB"),
         bucket = await mf.getR2Bucket("BUCKET");
-      await db.exec("CREATE TABLE account_closures(id INTEGER); CREATE TABLE account_retention_review_events(decision TEXT); CREATE TABLE organizations(id INTEGER); CREATE TABLE users(id INTEGER);");
+      await db.exec(
+        "CREATE TABLE account_closures(id INTEGER); CREATE TABLE account_retention_review_events(decision TEXT); CREATE TABLE organizations(id INTEGER); CREATE TABLE users(id INTEGER); CREATE TABLE backup_runs(id INTEGER PRIMARY KEY,status TEXT,trigger TEXT,started_at TEXT,completed_at TEXT,r2_prefix TEXT,manifest_json TEXT,table_count INTEGER,total_rows INTEGER,error_message TEXT,created_at TEXT,updated_at TEXT);",
+      );
       await db.batch(
         workerBackupCaptureMigration.map((sql) => db.prepare(sql)),
       );
       await db.exec(
-        `CREATE TABLE sample(id INTEGER PRIMARY KEY AUTOINCREMENT, nullable TEXT, empty TEXT, text_value TEXT, binary BLOB, int_value INTEGER, real_value REAL); CREATE TABLE file_objects(id INTEGER PRIMARY KEY,content_hash TEXT,file_key TEXT,byte_size INTEGER); CREATE TABLE sessions(id TEXT);`,
+        `CREATE TABLE sample(id INTEGER PRIMARY KEY AUTOINCREMENT, nullable TEXT, empty TEXT, text_value TEXT, binary BLOB, int_value INTEGER, real_value REAL); CREATE TABLE file_objects(id INTEGER PRIMARY KEY,content_hash TEXT,file_key TEXT,byte_size INTEGER); CREATE TABLE sessions(id TEXT); CREATE TABLE auth_first_run(id TEXT); INSERT INTO auth_first_run VALUES('spent'); CREATE TABLE api_tokens(id TEXT); INSERT INTO api_tokens VALUES('old-token');`,
       );
       await db
         .prepare(
@@ -171,6 +188,12 @@ describe("actual Worker bundle restore", () => {
         });
         expect(
           restored.prepare("SELECT count(*) AS n FROM sessions").get(),
+        ).toEqual({ n: 0n });
+        expect(
+          restored.prepare("SELECT count(*) AS n FROM auth_first_run").get(),
+        ).toEqual({ n: 0n });
+        expect(
+          restored.prepare("SELECT count(*) AS n FROM api_tokens").get(),
         ).toEqual({ n: 0n });
         expect(
           restored

@@ -78,7 +78,7 @@ describe('Mercury read-only bank feed', () => {
     const [url, request] = fetchImplementation.mock.calls[0]!
     expect(String(url)).toContain('postedStart=')
     expect(String(url)).toContain('limit=100')
-    expect(request).toMatchObject({ method: 'GET', redirect: 'error' })
+    expect(request).toMatchObject({ method: 'GET', redirect: 'manual' })
     expect(result.cursor).toBeNull()
   })
   it('omits own payouts/internal moves/debits but retains ambiguous, pending, reversed and unknown credits', async () => {

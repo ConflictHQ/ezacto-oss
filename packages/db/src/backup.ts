@@ -191,7 +191,7 @@ export const exportBundle = async (
     await store.put(`${prefix}manifest.json`, JSON.stringify(manifest, null, 2))
     return manifest
   } catch (error) {
-    await discardWorkerSnapshot(database,snapshot.captureId)
+    await discardWorkerSnapshot(database,snapshot.captureId,prefix)
     throw error
   }
 }
@@ -221,7 +221,7 @@ export const completeBackupRun = async (
   if (manifest.bundle_version === '0038') {
     if (!manifest.capture_id) throw new Error('Worker backup completion requires its capture receipt.')
     const results = await database.batch([
-      database.prepare(`UPDATE backup_runs SET status='completed',completed_at=?,r2_prefix=?,manifest_json=?,table_count=?,total_rows=?,updated_at=? WHERE id=? AND ((status='running' AND EXISTS(SELECT 1 FROM worker_backup_snapshots WHERE id=? AND prefix=? AND state='ready')) OR (status='completed' AND r2_prefix=? AND manifest_json=?))`)
+      database.prepare(`UPDATE backup_runs SET status='completed',completed_at=CASE WHEN status='completed' THEN completed_at ELSE ? END,r2_prefix=?,manifest_json=?,table_count=?,total_rows=?,updated_at=CASE WHEN status='completed' THEN updated_at ELSE ? END WHERE id=? AND ((status='running' AND EXISTS(SELECT 1 FROM worker_backup_snapshots WHERE id=? AND prefix=? AND state='ready')) OR (status='completed' AND r2_prefix=? AND manifest_json=?))`)
         .bind(now,prefix,JSON.stringify(manifest),manifest.table_count,manifest.total_rows,now,runId,manifest.capture_id,prefix,prefix,JSON.stringify(manifest)),
       database.prepare(`UPDATE worker_backup_snapshots SET state='completed' WHERE id=? AND EXISTS(SELECT 1 FROM backup_runs WHERE id=? AND status='completed' AND manifest_json=?)`).bind(manifest.capture_id,runId,JSON.stringify(manifest)),
       database.prepare(`DELETE FROM worker_backup_snapshots WHERE id=? AND state='completed'`).bind(manifest.capture_id),

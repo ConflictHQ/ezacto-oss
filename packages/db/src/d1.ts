@@ -585,4 +585,4 @@ export * from './stripe-payment-alerts.js'
 export * from './bank-deposit-review.js'
 export * from './calendar-oauth.js'
 
-export { expireWorkerSnapshots } from './worker-backup-snapshot.js'
+export { expireWorkerSnapshots, discardWorkerSnapshot } from './worker-backup-snapshot.js'

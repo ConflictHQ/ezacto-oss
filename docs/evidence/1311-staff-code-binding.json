@@ -50,5 +50,27 @@
     "Existing user-level email throttle is unchanged; this does not prevent every login denial of service.",
     "Single pending sign-in flow per browser; concurrent first cookie-less requests may require a fresh code or use of the unchanged email link.",
     "Already-issued unbound code rows require a new code after migration; their long email links remain valid until normal expiry."
-  ]
+  ],
+  "integration_verification": {
+    "source": "ca570f68dd83c189972c986cec5a8f739542de97",
+    "release_base": "421b6fe98565dc8314c17d4fc98a2f9934abbd95",
+    "native_store_tests": 14,
+    "native_api_and_existing_two_factor_tests": 82,
+    "chromium_native_container_tests": 2,
+    "chromium_run_seconds": 6.9,
+    "owned_fixture_directories_remaining": 0,
+    "checks": [
+      "generated shell assets",
+      "core/integrations/DB/API/client/mailer builds",
+      "API/Worker/Container typechecks",
+      "scoped API/DB/web lint",
+      "OpenAPI and privacy-reference generation checks",
+      "secret scan",
+      "legacy portal source unchanged"
+    ],
+    "fixture_shutdown": "SIGTERM with 15-second bound; owned runtime directory removal verified",
+    "mobile_source_revision": "c148488f356b3e36bf1b9260e0d1d6a0738824db",
+    "mobile_source_sha256": "7ea7c06523ede7357f9ad422216e0b1cd5118959d35f6f912b3ca769e6d862c3",
+    "mobile_runtime_limit": "Existing API functions bundled in Chromium; not device/storage acceptance"
+  }
 }

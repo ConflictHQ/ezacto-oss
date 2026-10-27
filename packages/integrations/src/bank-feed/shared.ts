@@ -92,7 +92,8 @@ export const readJson = async (url: URL, options: Readonly<ReadFeedOptions>): Pr
   try {
     response = await (options.fetchImplementation ?? fetch)(url, {
       method: 'GET',
-      redirect: 'error',
+      // workerd accepts manual/follow, not error; !response.ok below rejects 3xx.
+      redirect: 'manual',
       headers: { authorization: `Bearer ${options.token}`, accept: 'application/json' },
       signal: AbortSignal.timeout(20_000),
     })

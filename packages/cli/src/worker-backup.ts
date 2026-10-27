@@ -231,18 +231,40 @@ export async function restoreWorkerBackup(
         if (count !== table.row_count)
           throw new Error("Worker snapshot row count mismatch.");
       }
-      const attachmentMappings = new Map(schema.attachments.map(item => [item.file_key,item]))
-      if (attachmentMappings.size !== schema.attachments.length) throw new Error('Duplicate Worker attachment mapping.')
-      const referencedKeys = new Set<string>()
-      for (const table of ['file_objects','brand_assets']) if (tableNames.has(table)) {
-        const referenced = database.prepare(`SELECT file_key,content_hash,byte_size FROM ${quote(table)}`).all() as Array<{file_key:string;content_hash:string;byte_size:number}>
-        for (const item of referenced) {
-          const mapped=attachmentMappings.get(item.file_key)
-          if (!mapped || mapped.sha256!==item.content_hash || mapped.byte_size!==item.byte_size) throw new Error('Worker attachment inventory differs from database references.')
-          referencedKeys.add(item.file_key)
+      const attachmentMappings = new Map(
+        schema.attachments.map((item) => [item.file_key, item]),
+      );
+      if (attachmentMappings.size !== schema.attachments.length)
+        throw new Error("Duplicate Worker attachment mapping.");
+      const referencedKeys = new Set<string>();
+      for (const table of ["file_objects", "brand_assets"])
+        if (tableNames.has(table)) {
+          const referenced = database
+            .prepare(
+              `SELECT file_key,content_hash,byte_size FROM ${quote(table)}`,
+            )
+            .all() as Array<{
+            file_key: string;
+            content_hash: string;
+            byte_size: number;
+          }>;
+          for (const item of referenced) {
+            const mapped = attachmentMappings.get(item.file_key);
+            if (
+              !mapped ||
+              mapped.sha256 !== item.content_hash ||
+              mapped.byte_size !== item.byte_size
+            )
+              throw new Error(
+                "Worker attachment inventory differs from database references.",
+              );
+            referencedKeys.add(item.file_key);
+          }
         }
-      }
-      if (referencedKeys.size!==attachmentMappings.size) throw new Error('Worker attachment inventory includes an unreferenced object.')
+      if (referencedKeys.size !== attachmentMappings.size)
+        throw new Error(
+          "Worker attachment inventory includes an unreferenced object.",
+        );
       // Stateful credentials are evidence in the bundle, never reusable restored sessions.
       for (const table of WORKER_BACKUP_CLEAR_TABLES)
         if (tableNames.has(table))
