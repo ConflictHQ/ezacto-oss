@@ -3,7 +3,6 @@ import { Miniflare } from 'miniflare'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import { createContainerDatabase, createD1Database } from '../src/adapters.js'
 import { migrateContainer, migrateD1 } from '../src/migrate.js'
-import { githubReaderMigration } from '../src/migrations/0171_github_reader.js'
 import { NativeGithubReaderAdmin } from '../src/github-reader-admin.js'
 import { NativeGithubReadStore } from '../src/github-read.js'
 import { NativeGithubReaderWork } from '../src/github-reader-work.js'
@@ -44,7 +43,6 @@ for (const runtime of ['SQLite', 'D1'] as const)
         }
         close = () => mf.dispose()
       }
-      for (const statement of githubReaderMigration) await run(statement)
       await run(
         `INSERT INTO organizations(name,modules,time_entry_mode,created_at,updated_at) VALUES('Owned native fixture','{}','duration','${now}','${now}')`,
       )

@@ -11,7 +11,6 @@ import {
   reconcileGithubPage,
 } from '@ezacto/integrations'
 import { NativeGithubReadStore } from '../src/github-read.js'
-import { githubReadSchema } from '../src/github-read-schema.js'
 import type { InvoiceStateDatabase } from '../src/invoice-state.js'
 
 for (const runtime of ['SQLite', 'D1'] as const) {
@@ -44,7 +43,6 @@ for (const runtime of ['SQLite', 'D1'] as const) {
         }
         dispose = () => mf.dispose()
       }
-      for (const sql of githubReadSchema) await run(sql)
     }, 60_000)
     afterAll(async () => {
       await dispose?.()

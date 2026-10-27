@@ -158,7 +158,7 @@ to stored issue metadata remains subject to current local permissions.
 
 ## Remaining rollout gates
 
-- Register migration 0171 after the coordinated 0167–0170 sequence.
+- Migration 0179 registers the native reader after the current coordinated migrations.
 - Verify the native administrator UI and a real owned disposable App/repository.
 - Prove backfill, signed delivery replay, rename, scope removal, and disconnect
   against that owned fixture before enabling production. Retain only IDs,
