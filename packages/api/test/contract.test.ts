@@ -75,6 +75,8 @@ import {
   installAllocationRoutes,
   installCalendarProposalRoutes,
   installCalendarConnectionRoutes,
+  installCalendarAuthorizationRoutes,
+  installCalendarOperatorCleanupRoutes,
   installWorkItemRoutes,
   installTrackedResourceRoutes,
   installTeamRoutes,
@@ -345,6 +347,8 @@ const documentedApp = () =>
         now: () => new Date('2026-10-05T00:30:00.000Z'),
       });
       installCalendarConnectionRoutes(api,{cleanupStatus:async()=>({pending:0,manual_required:0,revoked:0}),connections:async()=>[],disconnect:async()=>{},refresh:async()=>({state:'connected',applied:0})});
+      installCalendarAuthorizationRoutes(api, new Proxy({}, { get: () => unavailable }) as never);
+      installCalendarOperatorCleanupRoutes(api, new Proxy({}, { get: () => unavailable }) as never);
       installCalendarProposalRoutes(api, {
         repository: calendarProposals,
         cursorSigningKey: new Uint8Array(32),
