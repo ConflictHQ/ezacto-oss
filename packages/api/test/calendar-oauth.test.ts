@@ -1,5 +1,8 @@
 import { expect, it, vi } from "vitest";
-import { CalendarAuthorizationError } from "@ezacto/core";
+import {
+  CalendarAuthorizationError,
+  CalendarConnectionError,
+} from "@ezacto/core";
 import { createApiApp } from "../src/app.js";
 import {
   installCalendarAuthorizationRoutes,
@@ -156,5 +159,34 @@ it("requires a native owner and an explicit exact-record manual cleanup confirma
   expect(f.port.confirmManualCleanup).toHaveBeenCalledExactlyOnceWith(
     { userId: 2, sessionId: 10 },
     { id: input.obligation_id, generation: 1, credentialRevision: 2 },
+  );
+});
+it("maps only allowlisted Microsoft administrator consent codes to a fixed outcome", async () => {
+  const f = setup();
+  vi.mocked(f.port.complete).mockImplementation(
+    async (_actor, _provider, input) => {
+      throw new CalendarConnectionError(
+        input.consentRequired ? "consent_required" : "invalid",
+      );
+    },
+  );
+  const admin = await f.request(
+    "/microsoft/callback?state=owned&error=access_denied&error_description=AADSTS90094%3A%20PRIVATE%20PROVIDER%20TEXT",
+  );
+  expect(admin.headers.get("location")).toBe(
+    "/settings/user?calendar=admin_consent_required&provider=microsoft",
+  );
+  expect(await admin.text()).not.toContain("PRIVATE");
+  const ordinary = await f.request(
+    "/microsoft/callback?state=owned&error=access_denied&error_description=AADSTS65001",
+  );
+  expect(ordinary.headers.get("location")).toBe(
+    "/settings/user?calendar=failed&provider=microsoft",
+  );
+  const google = await f.request(
+    "/google/callback?state=owned&error=access_denied&error_codes=90094",
+  );
+  expect(google.headers.get("location")).toBe(
+    "/settings/user?calendar=failed&provider=google",
   );
 });

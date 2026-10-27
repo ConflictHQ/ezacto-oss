@@ -45,6 +45,7 @@ export interface CalendarAuthorizationPort {
       requester: string;
       code?: string;
       denied: boolean;
+      consentRequired?: boolean;
       requestOrigin: string;
     },
   ): Promise<void>;
@@ -61,6 +62,15 @@ const provider = (value: string): CalendarProvider => {
 const cookieName = (kind: CalendarProvider) => `__Host-ezacto_calendar_${kind}`;
 const cookie = (kind: CalendarProvider, value: string, seconds = 600) =>
   `${cookieName(kind)}=${value}; Path=/; Secure; HttpOnly; SameSite=Lax; Max-Age=${seconds}`;
+const requiresTenantAdmin = (url: URL): boolean => {
+  const codes = url.searchParams.get("error_codes") ?? "";
+  const description = url.searchParams.get("error_description") ?? "";
+  if (codes.length > 200 || description.length > 4096) return false;
+  return (
+    /(?:^|[^0-9])(?:90093|90094|900941)(?:[^0-9]|$)/.test(codes) ||
+    /\bAADSTS(?:90093|90094|900941)\b/.test(description)
+  );
+};
 const requester = (request: Request, kind: CalendarProvider) => {
   const values = (request.headers.get("cookie") ?? "")
     .split(";")
@@ -207,18 +217,30 @@ export const installCalendarAuthorizationRoutes = <Bindings extends object>(
         { userId: p.userId, sessionId: Number(p.authentication.sessionId) },
         kind,
         {
-          state: url.searchParams.get("state") ?? "",
+          state:
+            url.searchParams.getAll("state").length === 1
+              ? url.searchParams.get("state")!
+              : "",
           requester: requester(c.req.raw, kind),
           ...(url.searchParams.has("code")
             ? { code: url.searchParams.get("code")! }
             : {}),
           denied: url.searchParams.has("error"),
+          consentRequired:
+            kind === "microsoft" &&
+            url.searchParams.has("error") &&
+            requiresTenantAdmin(url),
           requestOrigin: url.origin,
         },
       );
       result = "connected";
       c.header("set-cookie", cookie(kind, "", 0), { append: true });
     } catch (error) {
+      if (
+        error instanceof CalendarConnectionError &&
+        error.code === "consent_required"
+      )
+        result = "admin_consent_required";
       // Expected refusals produce a fixed UI result; unexpected storage faults
       // still reach the runtime diagnostics without a provider payload.
       if (

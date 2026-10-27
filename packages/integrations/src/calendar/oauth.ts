@@ -16,8 +16,13 @@ export interface CalendarOAuthClient {
     verifier: string
     redirectUri: string
     signal?: AbortSignal
+    retainRejectedGrant(grant: CalendarOAuthGrant): Promise<void>
   }): Promise<CalendarOAuthGrant>
-  refresh(grant: CalendarOAuthGrant, signal?: AbortSignal): Promise<CalendarOAuthGrant>
+  refresh(
+    grant: CalendarOAuthGrant,
+    retainRejectedGrant: (grant: CalendarOAuthGrant) => Promise<void>,
+    signal?: AbortSignal,
+  ): Promise<CalendarOAuthGrant>
   revoke(grant: CalendarOAuthGrant, signal?: AbortSignal): Promise<'revoked' | 'manual_required'>
 }
 export interface CalendarOAuthClientOptions {
@@ -130,6 +135,7 @@ export const createCalendarOAuthClient = (
   }
   const obtain = async (
     body: URLSearchParams,
+    retainRejectedGrant: (grant: CalendarOAuthGrant) => Promise<void>,
     previous?: CalendarOAuthGrant,
     signal?: AbortSignal,
   ) => {
@@ -153,30 +159,43 @@ export const createCalendarOAuthClient = (
     }
     const value = await bodyJson(response)
     const refreshToken = value.refresh_token ?? previous?.refreshToken
-    if (
-      !credential(value.access_token) ||
-      !credential(refreshToken) ||
-      typeof value.token_type !== 'string' ||
-      value.token_type.toLowerCase() !== 'bearer' ||
-      typeof value.expires_in !== 'number' ||
-      !Number.isSafeInteger(value.expires_in) ||
-      value.expires_in < 1 ||
-      value.expires_in > 86400
-    )
-      return invalid()
-    const granted =
-      value.scope === undefined
-        ? (previous?.scopes ?? scopes)
-        : typeof value.scope === 'string' && value.scope.length <= 8192
-          ? value.scope.split(/\s+/).filter(Boolean)
-          : invalid()
-    allowedScopes(provider, granted)
-    return validateCalendarGrant({
-      accessToken: value.access_token,
-      refreshToken,
-      expiresAt: new Date(now().getTime() + value.expires_in * 1000).toISOString(),
-      scopes: granted,
-    })
+    const cleanupToken = credential(refreshToken)
+      ? refreshToken
+      : credential(value.access_token)
+        ? value.access_token
+        : null
+    try {
+      if (
+        !credential(value.access_token) ||
+        !credential(refreshToken) ||
+        typeof value.token_type !== 'string' ||
+        value.token_type.toLowerCase() !== 'bearer' ||
+        typeof value.expires_in !== 'number' ||
+        !Number.isSafeInteger(value.expires_in) ||
+        value.expires_in < 1 ||
+        value.expires_in > 86400
+      )
+        return invalid()
+      const granted =
+        value.scope === undefined
+          ? (previous?.scopes ?? scopes)
+          : typeof value.scope === 'string' && value.scope.length <= 8192
+            ? value.scope.split(/\s+/).filter(Boolean)
+            : invalid()
+      allowedScopes(provider, granted)
+      return validateCalendarGrant({
+        accessToken: value.access_token,
+        refreshToken,
+        expiresAt: new Date(now().getTime() + value.expires_in * 1000).toISOString(),
+        scopes: granted,
+      })
+    } catch (error) {
+      if (cleanupToken) {
+        await retainRejectedGrant({ refreshToken: cleanupToken, scopes: [] })
+        throw new CalendarAuthorizationError()
+      }
+      throw error
+    }
   }
   return {
     provider,
@@ -204,10 +223,11 @@ export const createCalendarOAuthClient = (
           code_verifier: input.verifier,
           redirect_uri: input.redirectUri,
         }),
+        input.retainRejectedGrant,
         undefined,
         input.signal,
       ),
-    refresh: (grant, signal) => {
+    refresh: (grant, retainRejectedGrant, signal) => {
       allowedScopes(provider, grant.scopes)
       return obtain(
         new URLSearchParams({
@@ -215,6 +235,7 @@ export const createCalendarOAuthClient = (
           refresh_token: grant.refreshToken,
           ...(provider === 'microsoft' ? { scope: scopes.join(' ') } : {}),
         }),
+        retainRejectedGrant,
         grant,
         signal,
       )
@@ -260,7 +281,8 @@ export const createCalendarOAuthSourceFactory =
         )
           return grant.accessToken
         refreshing ??= (async () => {
-          const next = await client.refresh(grant, signal)
+          if (!context.retainRejectedGrant) throw new CalendarConnectionError('unavailable')
+          const next = await client.refresh(grant, context.retainRejectedGrant, signal)
           await context.rotateGrant(next)
           grant = next
           return next.accessToken!

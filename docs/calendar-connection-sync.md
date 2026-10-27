@@ -57,8 +57,11 @@ explicit owner attestation for their current-instance disconnect or reauthorizat
 record; this is recorded separately from provider verification. Closure and restore
 records cannot use that confirmation path. Unresolved obligations block new OAuth
 admission. The administrator endpoint `GET /api/v1/calendar-cleanup-status` reports aggregate pending and manual
-counts across old incarnations, without revealing tokens or old users. Provider
-adapters must later complete revocation with evidence and an atomic receipt.
+counts across old incarnations, without revealing tokens or old users. There is currently no operator API or CLI to complete closure or old-instance
+manual obligations. Those records remain unresolved and block affected restored
+connections before token exchange; a dedicated operator evidence-and-receipt
+workflow is still required. Current-instance Google cleanup is completed by the
+provider adapter with evidence and an atomic receipt.
 
 Logical backups retain encrypted evidence but mark live connection rows as
 non-restorable. Physical CLI restore and demo reset rotate the instance nonce,

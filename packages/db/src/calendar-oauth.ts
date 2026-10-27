@@ -97,7 +97,7 @@ export const createCalendarOAuthStore = (database: InvoiceStateDatabase): Calend
           `${authority} AND ?=(SELECT nonce FROM calendar_sync_instance WHERE singleton=1)
        AND coalesce((SELECT generation FROM calendar_connections WHERE user_id=? AND provider=?),0)=?
        AND NOT EXISTS(SELECT 1 FROM calendar_connections WHERE user_id=? AND provider=? AND status='connected')
-       AND NOT EXISTS(SELECT 1 FROM calendar_cleanup_obligations WHERE user_id=? AND provider=? AND instance_nonce=? AND status<>'revoked')`,
+       AND NOT EXISTS(SELECT 1 FROM calendar_cleanup_obligations WHERE user_id=? AND provider=? AND instance_nonce=coalesce((SELECT instance_nonce FROM calendar_connections WHERE user_id=? AND provider=?),(SELECT nonce FROM calendar_sync_instance WHERE singleton=1)) AND status<>'revoked')`,
           [
             a.authority.sessionId,
             a.authority.userId,
@@ -109,7 +109,8 @@ export const createCalendarOAuthStore = (database: InvoiceStateDatabase): Calend
             a.provider,
             a.authority.userId,
             a.provider,
-            a.instance,
+            a.authority.userId,
+            a.provider,
           ],
         ),
         {
@@ -175,10 +176,10 @@ export const createCalendarOAuthStore = (database: InvoiceStateDatabase): Calend
         }
       : null
   },
-  async orphan(a, c, now) {
-    await database.run(sql`INSERT OR IGNORE INTO calendar_cleanup_obligations(id,user_id,provider,instance_nonce,generation,credential_revision,key_id,sealed_grant,reason,status,created_at)
-    VALUES(${a.stateHash},${a.authority.userId},${a.provider},${c.instance},${c.generation},${c.credentialRevision},${c.keyId},${c.sealedGrant},'reauth',
-    CASE WHEN ${a.provider}='microsoft' OR ${c.instance}<>(SELECT nonce FROM calendar_sync_instance WHERE singleton=1) THEN 'manual_required' ELSE 'pending' END,${now})`)
+  async orphan(id, c, now) {
+    await database.run(sql`INSERT OR IGNORE INTO calendar_cleanup_obligations(id,user_id,provider,instance_nonce,generation,credential_revision,key_id,sealed_grant,request_id,reason,status,created_at)
+    VALUES(${id},${c.userId},${c.provider},${c.instance},${c.generation},${c.credentialRevision},${c.keyId},${c.sealedGrant},(SELECT request_id FROM account_closures WHERE user_id=${c.userId}),CASE WHEN EXISTS(SELECT 1 FROM account_closures WHERE user_id=${c.userId}) THEN 'closure' ELSE 'reauth' END,
+    CASE WHEN ${c.provider}='microsoft' OR ${c.instance}<>(SELECT nonce FROM calendar_sync_instance WHERE singleton=1) THEN 'manual_required' ELSE 'pending' END,${now})`)
   },
   async claimCleanup(keyId, holder, now) {
     // A changed deployment key or incarnation must never revoke another installation's grant.

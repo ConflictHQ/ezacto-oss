@@ -1,4 +1,5 @@
 import { expect, it, vi } from 'vitest'
+import { createConfiguredCalendarServices } from '../src/calendar/runtime.js'
 import { CalendarAuthorizationError, CalendarConnectionError } from '@ezacto/core'
 import {
   createCalendarOAuthClient,
@@ -15,6 +16,24 @@ const token = (extra = {}) =>
     scope,
     ...extra,
   })
+it('keeps unconfigured private HTTP deployments inert while requiring HTTPS for configured consent', async () => {
+  const input = {
+    store: {} as never,
+    oauthStore: {} as never,
+    deploymentKey: new Uint8Array(32).fill(7),
+    appOrigin: 'http://private-host.local',
+    environment: {},
+  }
+  const inert = await createConfiguredCalendarServices(input)
+  expect(inert.sync.available()).toEqual([])
+  await inert.maintenance.processDue()
+  await expect(
+    createConfiguredCalendarServices({
+      ...input,
+      environment: { GOOGLE_CALENDAR_CLIENT_ID: 'owned', GOOGLE_CALENDAR_CLIENT_SECRET: 'private' },
+    }),
+  ).rejects.toMatchObject({ code: 'invalid' })
+})
 it('requests separate least-privilege consent with state, S256 and offline access', () => {
   const google = createCalendarOAuthClient('google', { clientId: 'owned', clientSecret: 'private' })
   const url = new URL(
@@ -53,6 +72,7 @@ it('exchanges only at the fixed token endpoint and carries PKCE without URL cred
     fetch,
   })
   const grant = await client.exchange({
+    retainRejectedGrant: async () => {},
     code: 'owned-code',
     verifier: 'owned-verifier',
     redirectUri: 'https://owned.example/callback',
@@ -84,6 +104,7 @@ it('persists one rotated grant before returning any refreshed access token', asy
     }
   })
   await factory({
+    retainRejectedGrant: async () => {},
     grant: { refreshToken: 'old', scopes: [scope] },
     rotateGrant: async (g) => {
       expect(g.refreshToken).toBe('rotated')
@@ -109,6 +130,7 @@ it('does not use a refreshed token if durable rotation is refused', async () => 
       listEvents: async () => ({ events: [], nextPage: null, nextCursor: null }),
     }
   })({
+    retainRejectedGrant: async () => {},
     grant: { refreshToken: 'old', scopes: [scope] },
     rotateGrant: async () => {
       throw new CalendarConnectionError('changed')
@@ -123,10 +145,19 @@ it('refuses wider scopes, invalid grants, bad tenant paths and oversized respons
       clientSecret: 'private',
       fetch: async () => response,
     })
-  const input = { code: 'owned', verifier: 'owned', redirectUri: 'https://owned.example/callback' }
+  const rejected: Array<{ refreshToken: string }> = []
+  const input = {
+    code: 'owned',
+    verifier: 'owned',
+    redirectUri: 'https://owned.example/callback',
+    retainRejectedGrant: async (grant: { refreshToken: string }) => {
+      rejected.push(grant)
+    },
+  }
   await expect(
     make(token({ scope: scope + ' https://www.googleapis.com/auth/calendar' })).exchange(input),
   ).rejects.toBeInstanceOf(CalendarAuthorizationError)
+  expect(rejected).toEqual([{ refreshToken: 'owned-refresh', scopes: [] }])
   await expect(
     make(
       Response.json(
@@ -178,6 +209,7 @@ it('rejects redirects without forwarding OAuth credentials to another destinatio
   })
   await expect(
     client.exchange({
+      retainRejectedGrant: async () => {},
       code: 'owned',
       verifier: 'owned',
       redirectUri: 'https://owned.example/callback',

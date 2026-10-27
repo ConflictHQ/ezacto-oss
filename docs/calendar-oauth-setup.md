@@ -66,6 +66,14 @@ allows a new consent flow. It cannot resolve another person's record, an
 account-closure obligation or a restored instance's cleanup. Administrator
 cleanup counts distinguish these attestations from provider revocations.
 
+Restored or closed-account obligations cannot currently be completed through an
+operator API or CLI. The administrator status endpoint reports them, but is
+read-only. Keep the retained custody and resolve the provider permission outside
+eZacto; recording that evidence and safely releasing the matching old-instance
+obligation is tracked in [#1316](https://github.com/ConflictHQ/ezacto-pvt/issues/1316). Until that workflow
+exists, affected restored connections remain blocked before a new token exchange.
+Do not edit the database to claim revocation or use the owner confirmation path.
+
 ## Verification limits
 
 The repository tests real SQLite/D1 custody, runtime routes and browser cookie

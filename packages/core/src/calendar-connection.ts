@@ -35,7 +35,8 @@ export class CalendarConnectionError extends Error {
       | "invalid"
       | "busy"
       | "not_configured"
-      | "not_connected",
+      | "not_connected"
+      | "consent_required",
   ) {
     super(`Calendar connection ${code}.`);
     this.name = "CalendarConnectionError";
@@ -160,6 +161,7 @@ export interface CalendarGrantVault {
 export type CalendarSourceFactory = (context: {
   readonly grant: CalendarOAuthGrant;
   readonly rotateGrant: (grant: CalendarOAuthGrant) => Promise<void>;
+  readonly retainRejectedGrant?: (grant: CalendarOAuthGrant) => Promise<void>;
 }) => Promise<CalendarSource>;
 
 const encode = (bytes: Uint8Array) =>

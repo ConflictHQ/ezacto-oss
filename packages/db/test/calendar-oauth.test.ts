@@ -8,6 +8,7 @@ import { createContainerSessionStore, createD1SessionStore } from '../src/sessio
 import { createCalendarConnectionStore } from '../src/calendar-connections.js'
 import { createCalendarOAuthStore } from '../src/calendar-oauth.js'
 import { createConfiguredCalendarServices } from '../../integrations/src/calendar/runtime.js'
+import { createCalendarGrantVault } from '@ezacto/core'
 
 const closers: Array<() => unknown> = []
 afterEach(async () => {
@@ -58,6 +59,8 @@ const fixture = async (kind: 'sqlite' | 'd1') => {
   const other = { userId: 2, sessionId: (await sessions.issue(2)).session.id }
   const calls: Array<{ url: string; method: string; body: URLSearchParams }> = []
   let beforeToken: undefined | (() => Promise<void>)
+  let tokenExpiry = 3600
+  let tokenScope: string | undefined
   const connections = createCalendarConnectionStore(db)
   const service = await createConfiguredCalendarServices({
     store: connections,
@@ -78,12 +81,15 @@ const fixture = async (kind: 'sqlite' | 'd1') => {
         await beforeToken?.()
         return Response.json({
           access_token: 'PRIVATE_ACCESS',
-          refresh_token: 'PRIVATE_REFRESH',
-          expires_in: 3600,
+          refresh_token:
+            body.get('grant_type') === 'refresh_token' ? 'PRIVATE_ROTATED' : 'PRIVATE_REFRESH',
+          expires_in: tokenExpiry,
           token_type: 'Bearer',
-          scope: url.includes('microsoft')
-            ? 'https://graph.microsoft.com/Calendars.Read offline_access'
-            : 'https://www.googleapis.com/auth/calendar.readonly',
+          scope:
+            tokenScope ??
+            (url.includes('microsoft')
+              ? 'https://graph.microsoft.com/Calendars.Read offline_access'
+              : 'https://www.googleapis.com/auth/calendar.readonly'),
         })
       }
       if (url === 'https://oauth2.googleapis.com/revoke') return new Response('')
@@ -120,10 +126,178 @@ const fixture = async (kind: 'sqlite' | 'd1') => {
     setBeforeToken: (callback: () => Promise<void>) => {
       beforeToken = callback
     },
+    setTokenScope: (scope: string) => {
+      tokenScope = scope
+    },
+    setTokenExpiry: (seconds: number) => {
+      tokenExpiry = seconds
+    },
   }
 }
 for (const kind of ['sqlite', 'd1'] as const)
   describe(kind + ' calendar OAuth custody', () => {
+    it('blocks restored old-instance cleanup before a new token exchange', async () => {
+      const f = await fixture(kind),
+        start = await f.start('microsoft')
+      await f.service.authorization.complete(f.authority, 'microsoft', {
+        state: start.state,
+        requester: start.requester,
+        code: 'owned',
+        denied: false,
+        requestOrigin: 'https://owned.example',
+      })
+      await f.service.sync.disconnect(f.authority, 'microsoft', 1)
+      await f.run('UPDATE calendar_sync_instance SET nonce=? WHERE singleton=1', 'f'.repeat(64))
+      const before = f.calls.length
+      const connection = await f.connections.read(1, 'microsoft')
+      await expect(
+        f.service.authorization.begin(
+          f.authority,
+          'microsoft',
+          connection!.generation,
+          'https://owned.example',
+        ),
+      ).rejects.toThrow()
+      expect(f.calls).toHaveLength(before)
+      expect(await f.service.authorization.manualCleanup(f.authority)).toEqual([])
+      expect(await f.rows('SELECT * FROM calendar_manual_cleanup_receipts')).toHaveLength(0)
+    })
+    it('links a late issued grant to the account closure custody record', async () => {
+      const f = await fixture(kind),
+        start = await f.start()
+      let closureFailure: unknown
+      f.setBeforeToken(async () => {
+        try {
+          const stamp = new Date().toISOString()
+          await f.run(
+            "INSERT INTO users(id,first_name,last_name,profile,manager_grants,created_at,updated_at) VALUES(3,'Owned','Administrator','administrator','[]',?,?)",
+            stamp,
+            stamp,
+          )
+          await f.run('UPDATE organization_owner SET user_id=3,updated_at=? WHERE id=1', stamp)
+          await f.run(
+            "INSERT INTO account_deletion_requests(id,user_id,requested_at,notification_updated_at,updated_at) VALUES('owned-closure',1,?,?,?)",
+            stamp,
+            stamp,
+            stamp,
+          )
+          await f.run(
+            'INSERT INTO account_retention_policies(version,policy_json,published_by_user_id,published_at) VALUES(1,?,3,?)',
+            JSON.stringify({
+              acknowledged: true,
+              frameworks: [],
+              retained_records: [],
+              response_target_days: 14,
+              operator_contact: 'privacy@example.test',
+              user_notice: 'Fixture closure',
+              backup_handling: 'Replay closure before access.',
+            }),
+            stamp,
+          )
+          await f.run(
+            "INSERT INTO account_closures(request_id,user_id,actor_user_id,closed_at,policy_version,policy_snapshot,inventory_json,replay_keys,retained_identity,apple_cleanup) SELECT 'owned-closure',1,3,?,version,policy_json,'[]','[]',1,'not_linked' FROM account_retention_policies ORDER BY version DESC LIMIT 1",
+            stamp,
+          )
+        } catch (error) {
+          closureFailure = error
+          throw error
+        }
+      })
+      await expect(
+        f.service.authorization.complete(f.authority, 'google', {
+          state: start.state,
+          requester: start.requester,
+          code: 'owned',
+          denied: false,
+          requestOrigin: 'https://owned.example',
+        }),
+      ).rejects.toThrow()
+      expect(closureFailure).toBeUndefined()
+      expect(
+        await f.rows(
+          "SELECT request_id,reason,status FROM calendar_cleanup_obligations WHERE request_id='owned-closure'",
+        ),
+      ).toEqual([{ request_id: 'owned-closure', reason: 'closure', status: 'pending' }])
+      expect(await f.connections.read(1, 'google')).toBeNull()
+    })
+    it('retains usable grants rejected by initial or refresh scope validation', async () => {
+      for (const phase of ['initial', 'refresh']) {
+        const f = await fixture(kind),
+          start = await f.start()
+        f.setTokenExpiry(1)
+        const input = {
+          state: start.state,
+          requester: start.requester,
+          code: 'owned',
+          denied: false,
+          requestOrigin: 'https://owned.example',
+        }
+        if (phase === 'refresh')
+          await f.service.authorization.complete(f.authority, 'google', input)
+        f.setTokenScope(
+          'https://www.googleapis.com/auth/calendar.readonly https://www.googleapis.com/auth/calendar',
+        )
+        if (phase === 'initial')
+          await expect(
+            f.service.authorization.complete(f.authority, 'google', input),
+          ).rejects.toThrow()
+        else
+          await expect(f.service.sync.refresh(f.authority, 'google')).resolves.toEqual({
+            state: 'needs_reauth',
+            applied: 0,
+          })
+        const rows = await f.rows('SELECT * FROM calendar_cleanup_obligations')
+        expect(rows).toHaveLength(phase === 'initial' ? 1 : 2)
+        expect(
+          (await f.service.sync.connections(f.authority)).find((row) => row.provider === 'google')
+            ?.cleanupPending,
+        ).toBe(true)
+        expect(JSON.stringify(rows)).not.toContain('PRIVATE_REFRESH')
+        expect(JSON.stringify(rows)).not.toContain('PRIVATE_ROTATED')
+        expect((await f.connections.read(1, 'google'))?.state ?? 'missing').toBe(
+          phase === 'initial' ? 'missing' : 'needs_reauth',
+        )
+        await f.service.authorization.processDue()
+        expect(f.calls.filter((call) => call.url.endsWith('/revoke'))).toHaveLength(rows.length)
+      }
+    })
+    it('retains a rotated grant if disconnect wins its refresh race', async () => {
+      const f = await fixture(kind),
+        start = await f.start()
+      f.setTokenExpiry(1)
+      await f.service.authorization.complete(f.authority, 'google', {
+        state: start.state,
+        requester: start.requester,
+        code: 'owned',
+        denied: false,
+        requestOrigin: 'https://owned.example',
+      })
+      f.setBeforeToken(async () => {
+        await f.service.sync.disconnect(f.authority, 'google', 1)
+      })
+      await expect(f.service.sync.refresh(f.authority, 'google')).rejects.toThrow()
+      expect((await f.connections.read(1, 'google'))?.state).toBe('disconnected')
+      const records = await f.rows('SELECT * FROM calendar_cleanup_obligations')
+      expect(records).toHaveLength(2)
+      const vault = await createCalendarGrantVault(new Uint8Array(32).fill(7))
+      const tokens = await Promise.all(
+        records.map(async (raw) => {
+          const r = raw as Record<string, unknown>
+          return (
+            await vault.openGrant(String(r.sealed_grant), {
+              userId: Number(r.user_id),
+              provider: 'google',
+              instance: String(r.instance_nonce),
+              generation: Number(r.generation),
+              credentialRevision: Number(r.credential_revision),
+            })
+          ).refreshToken
+        }),
+      )
+      expect(tokens.sort()).toEqual(['PRIVATE_REFRESH', 'PRIVATE_ROTATED'])
+      await f.service.authorization.processDue()
+      expect(f.calls.filter((call) => call.url.endsWith('/revoke'))).toHaveLength(2)
+    })
     it('binds native session, requester, state and generation; stores only encrypted grants; revokes Google on disconnect', async () => {
       const f = await fixture(kind),
         start = await f.start()
@@ -207,6 +381,17 @@ for (const kind of ['sqlite', 'd1'] as const)
           requestOrigin: 'https://owned.example',
         }),
       ).rejects.toThrow()
+      expect(f.calls).toHaveLength(0)
+      const adminConsent = await f.start('microsoft')
+      await expect(
+        f.service.authorization.complete(f.authority, 'microsoft', {
+          state: adminConsent.state,
+          requester: adminConsent.requester,
+          denied: true,
+          consentRequired: true,
+          requestOrigin: 'https://owned.example',
+        }),
+      ).rejects.toMatchObject({ code: 'consent_required' })
       expect(f.calls).toHaveLength(0)
       const ms = await f.start('microsoft')
       await f.service.authorization.complete(f.authority, 'microsoft', {

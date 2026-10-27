@@ -19,9 +19,7 @@ export interface CalendarCleanupClaim extends CalendarCredentialIdentity {
   holder: string;
 }
 export interface CalendarOAuthStore {
-  manualCleanup(
-    authority: CalendarConnectionAuthority,
-  ): Promise<
+  manualCleanup(authority: CalendarConnectionAuthority): Promise<
     readonly {
       id: string;
       generation: number;
@@ -43,7 +41,7 @@ export interface CalendarOAuthStore {
     requesterHash: string,
   ): Promise<CalendarOAuthAttempt | null>;
   orphan(
-    attempt: CalendarOAuthAttempt,
+    id: string,
     credential: CalendarCredentialIdentity & {
       keyId: string;
       sealedGrant: string;

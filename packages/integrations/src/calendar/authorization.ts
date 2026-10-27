@@ -4,6 +4,7 @@ import {
   type CalendarConnectionAuthority,
   type CalendarConnectionStore,
   type CalendarOAuthStore,
+  type CalendarOAuthGrant,
   type CalendarProvider,
 } from '@ezacto/core'
 import type { CalendarOAuthClient } from './oauth.js'
@@ -104,6 +105,7 @@ export const createCalendarAuthorizationService = async (options: {
         requester: string
         code?: string
         denied: boolean
+        consentRequired?: boolean
         requestOrigin: string
       },
     ) {
@@ -117,39 +119,39 @@ export const createCalendarAuthorizationService = async (options: {
         hex(await digest(input.state)),
         hex(await digest(input.requester)),
       )
-      if (
-        !attempt ||
-        input.denied ||
-        !input.code ||
-        input.code.length > 4096 ||
-        /\p{Cc}/u.test(input.code)
-      )
+      if (!attempt) throw new CalendarConnectionError('invalid')
+      if (input.denied)
+        throw new CalendarConnectionError(
+          provider === 'microsoft' && input.consentRequired ? 'consent_required' : 'invalid',
+        )
+      if (!input.code || input.code.length > 4096 || /\p{Cc}/u.test(input.code))
         throw new CalendarConnectionError('invalid')
       await options.connections.authorize(authority, now().toISOString())
-      const grant = await providerClient.exchange({
-        code: input.code,
-        verifier: input.requester,
-        redirectUri: redirectUri(provider),
-      })
-      try {
-        // Native session, account, generation and cleanup fences are rechecked at commit.
-        await options.sync.completeOAuth(authority, provider, attempt.generation, grant)
-      } catch (error) {
-        // A provider may have issued a grant before logout/closure/disconnect won.
-        // Keep that credential encrypted for revocation instead of abandoning it.
-        const random = crypto.getRandomValues(new Uint32Array(1))[0]!
+      const retainRejectedGrant = async (grant: CalendarOAuthGrant) => {
+        const random = crypto.getRandomValues(new Uint32Array(2))
         const identity = {
           instance: attempt.instance,
           userId: authority.userId,
           provider,
           generation: attempt.generation + 1,
-          credentialRevision: random + 2,
+          credentialRevision: 4294967296 + (random[0]! % 65535) * 4294967296 + random[1]!,
         }
         await options.store.orphan(
-          attempt,
+          attempt.stateHash,
           { ...identity, keyId: vault.keyId, sealedGrant: await vault.sealGrant(grant, identity) },
           now().toISOString(),
         )
+      }
+      const grant = await providerClient.exchange({
+        code: input.code,
+        verifier: input.requester,
+        redirectUri: redirectUri(provider),
+        retainRejectedGrant,
+      })
+      try {
+        await options.sync.completeOAuth(authority, provider, attempt.generation, grant)
+      } catch (error) {
+        await retainRejectedGrant(grant)
         throw error
       }
     },

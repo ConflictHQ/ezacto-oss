@@ -1,5 +1,6 @@
 import {
   CalendarConnectionError,
+  createCalendarGrantVault,
   type CalendarConnectionStore,
   type CalendarOAuthStore,
   type CalendarProvider,
@@ -64,10 +65,21 @@ export const createConfiguredCalendarServices = async (options: {
       options.now,
     )
   }
+  const vault = await createCalendarGrantVault(options.deploymentKey)
   const sync = await createCalendarSyncService({
     store: options.store,
     deploymentKey: options.deploymentKey,
     sources: { ...sources, ...options.sourceOverrides },
+    retainRejectedGrant: async (grant, identity) => {
+      const id = [...crypto.getRandomValues(new Uint8Array(32))]
+        .map((byte) => byte.toString(16).padStart(2, '0'))
+        .join('')
+      await options.oauthStore.orphan(
+        id,
+        { ...identity, keyId: vault.keyId, sealedGrant: await vault.sealGrant(grant, identity) },
+        (options.now?.() ?? new Date()).toISOString(),
+      )
+    },
     ...(options.now ? { now: options.now } : {}),
   })
   const authorization = await createCalendarAuthorizationService({
