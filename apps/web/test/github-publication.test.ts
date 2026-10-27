@@ -6,7 +6,7 @@ import { sessionPresenter } from '../src/session.js'
 import type { GithubPublicationsEnvelope, GithubReaderStatusEnvelope } from '@conflict-hq/ezacto-client'
 
 const reader: GithubReaderStatusEnvelope['data'] = {
-  configured: true, setup_supported: true, available: true, owned_acceptance_required: true,
+  publication_enabled: true, configured: true, setup_supported: true, available: true, owned_acceptance_required: true,
   app: null,
   connections: [{ id: 'connection', generation: 1, installation_id: '55', state: 'active', deferred_until: null, failure_codes: [], resources: [{ repository_id: '77', full_name: 'owned/project', project_id: 10, task_id: 100, state: 'active', checkpoint_status: 'complete', attempts: 0, next_retry_at: 0, failure_code: null, items_visible: 1, items_unavailable: 0 }] }],
 }
@@ -95,6 +95,16 @@ describe('GitHub publication settings', () => {
     finish({ data: { link_id: 12, connection_id: 'connection', destination: 'private/project#8', spent_date: '2026-09-17', seconds: 60, source_version: 'old', policy_enabled: true } })
     await vi.waitFor(() => expect(el('status').getAttribute('aria-busy')).toBe('false'))
     expect(el<HTMLElement>('content').hidden).toBe(true); expect(document.body.textContent).not.toContain('private/project')
+  })
+  it.each([false, undefined])('does not request publication data unless the deployment explicitly enables it (%s)', async enabled => {
+    const mock = api()
+    const { publication_enabled: ignored, ...oldReader } = reader
+    void ignored
+    mock.getGithubReaderStatus.mockResolvedValue({ data: { ...oldReader, ...(enabled === undefined ? {} : { publication_enabled: enabled }) } })
+    await createGithubPublicationController(mock).load(session().active)
+    expect(mock.getGithubPublications).not.toHaveBeenCalled()
+    expect(el<HTMLElement>('content').hidden).toBe(true)
+    expect(el('status').textContent).toContain('not enabled for this deployment')
   })
   it('does not call the admin endpoints for members', async () => {
     const mock = api(); await createGithubPublicationController(mock).load(session('member').active)

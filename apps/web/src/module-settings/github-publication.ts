@@ -60,7 +60,14 @@ export const createGithubPublicationController = (api: GithubPublicationUiApi | 
     finally { if (current(owner, version)) { busy = false; controls() } }
   }
   const refresh = async (owner: Active, version: number) => {
-    const [result, reader] = await Promise.all([api!.getGithubPublications({ signal: owner.signal }), api!.getGithubReaderStatus({ signal: owner.signal })])
+    const reader = await api!.getGithubReaderStatus({ signal: owner.signal })
+    if (!current(owner, version)) return
+    if (reader.data.publication_enabled !== true) {
+      data = null; clearPreview(); policies.replaceChildren(); rows.replaceChildren(); content.hidden = true
+      status.textContent = 'Time-note publication is not enabled for this deployment.'
+      return
+    }
+    const result = await api!.getGithubPublications({ signal: owner.signal })
     if (!current(owner, version)) return
     data = result.data; clearPreview(); policies.replaceChildren(); rows.replaceChildren()
     candidate.replaceChildren(option('', 'Choose a linked time entry'))
@@ -84,7 +91,7 @@ export const createGithubPublicationController = (api: GithubPublicationUiApi | 
           await api!.setGithubPublicationPolicy({ body: { connection_id: connection.id, expected_generation: policy?.generation ?? 0, enabled: !enabled, confirm_permission: !enabled && reviewed.checked, command_id: command(key) }, signal: owner.signal })
           if (!current(owner, version)) return
           await refresh(owner, version); if (current(owner, version)) commands.delete(key)
-          if (current(owner, version)) status.textContent = enabled ? 'Publication disabled.' : 'Permission verified. Preview a time entry to allow its publication.'
+          if (current(owner, version) && data !== null) status.textContent = enabled ? 'Publication disabled.' : 'Permission verified. Preview a time entry to allow its publication.'
         })
       }); policies.appendChild(form)
     }
@@ -121,7 +128,7 @@ export const createGithubPublicationController = (api: GithubPublicationUiApi | 
             await api!.actGithubPublication({ id: row.id, body: { expected_version: row.version, action, confirm: true, command_id: command(key) }, signal: owner.signal })
             if (!current(owner, version)) return
             await refresh(owner, version); if (current(owner, version)) commands.delete(key)
-            if (current(owner, version)) status.textContent = 'Action recorded. Refresh status to follow synchronization.'
+            if (current(owner, version) && data !== null) status.textContent = 'Action recorded. Refresh status to follow synchronization.'
           })
         })
       }
@@ -148,16 +155,16 @@ export const createGithubPublicationController = (api: GithubPublicationUiApi | 
       await api!.consentGithubPublication({ body: { link_id: selected.link_id, source_version: selected.source_version, command_id: command(key) }, signal: owner.signal })
       if (!current(owner, version)) return
       await refresh(owner, version); if (current(owner, version)) commands.delete(key)
-      if (current(owner, version)) status.textContent = 'Consent recorded. The time note is queued; refresh status to follow publication.'
+      if (current(owner, version) && data !== null) status.textContent = 'Consent recorded. The time note is queued; refresh status to follow publication.'
     })
   })
-  find('refresh').addEventListener('click', () => { void run('Refreshing publication status…', async (owner, version) => { await refresh(owner, version); if (current(owner, version)) status.textContent = 'Publication status refreshed.' }) })
+  find('refresh').addEventListener('click', () => { void run('Refreshing publication status…', async (owner, version) => { await refresh(owner, version); if (current(owner, version) && data !== null) status.textContent = 'Publication status refreshed.' }) })
   return { clear, async load(owner: Active) {
     clear(); active = owner
     owner.signal.addEventListener('abort', () => { if (active === owner) clear() }, { once: true })
     if (owner.signal.aborted) { clear(); return }
     if (owner.identity.profile !== 'administrator') { clear(); status.textContent = 'Only administrators can manage time-note publication.'; return }
     if (!api || isDemoDeployment()) { clear(); status.textContent = 'Time-note publication is unavailable on this instance.'; return }
-    await run('Loading publication status…', async (session, version) => { await refresh(session, version); if (current(session, version)) status.textContent = 'Review connection permissions and individual time entries before publishing.' })
+    await run('Loading publication status…', async (session, version) => { await refresh(session, version); if (current(session, version) && data !== null) status.textContent = 'Review connection permissions and individual time entries before publishing.' })
   } }
 }
