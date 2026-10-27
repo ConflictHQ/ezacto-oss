@@ -1,6 +1,9 @@
+import { cp, mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import BetterSqlite3 from "better-sqlite3";
 import { Miniflare } from "miniflare";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 import {
   createContainerDatabase,
   createD1Database,
@@ -179,84 +182,148 @@ const seedStatements = [
   },
 ] as const;
 
+const d1Worker = {
+  modules: true,
+  script: 'export default { fetch() { return new Response("ok") } }',
+  d1Databases: ["DB"],
+} as const;
+
+// Replay the real D1 ledger once. Every case still gets a separate physical
+// copy and its own Miniflare, rather than sharing mutable database state.
+let migratedD1Snapshot: Promise<string> | null = null;
+const migratedD1Directory = (): Promise<string> => {
+  migratedD1Snapshot ??= (async () => {
+    const directory = await mkdtemp(join(tmpdir(), "ezacto-team-d1-ledger-"));
+    let miniflare: Miniflare | undefined;
+    try {
+      miniflare = new Miniflare({ ...d1Worker, d1Persist: directory });
+      await migrateD1(await miniflare.getD1Database("DB"));
+      // Closing the worker checkpoints its WAL before any case copies files.
+      await miniflare.dispose();
+      miniflare = undefined;
+      return directory;
+    } catch (error) {
+      try {
+        try {
+          await miniflare?.dispose();
+        } finally {
+          await rm(directory, { recursive: true, force: true });
+        }
+      } catch (cleanupError) {
+        throw new AggregateError([error, cleanupError], "D1 snapshot setup and cleanup failed", { cause: cleanupError });
+      }
+      throw error;
+    }
+  })();
+  return migratedD1Snapshot;
+};
+
+afterAll(async () => {
+  const directory = await migratedD1Snapshot?.catch(() => null);
+  if (directory) await rm(directory, { recursive: true, force: true });
+});
+
 const createHarness = async (kind: "SQLite" | "D1"): Promise<Harness> => {
-  let close: () => Promise<void>;
+  let close: (() => Promise<void>) | undefined;
   let run: (sql: string, params: readonly unknown[]) => Promise<void>;
   let rows: <Row>(sql: string, params: readonly unknown[]) => Promise<Row[]>;
   let repository: ReturnType<typeof createTeamRepository>;
   let drizzle: Parameters<typeof backfillCostRates>[0];
-  if (kind === "SQLite") {
-    const sqlite = new BetterSqlite3(":memory:");
-    migrateContainer(sqlite);
-    drizzle = createContainerDatabase(sqlite);
-    repository = createTeamRepository(drizzle);
-    run = async (sql, params) => {
-      sqlite.prepare(sql).run(...params);
-    };
-    rows = async <Row>(sql: string, params: readonly unknown[]) =>
-      sqlite.prepare(sql).all(...params) as Row[];
-    close = async () => {
-      sqlite.close();
-    };
-  } else {
-    const miniflare = new Miniflare({
-      modules: true,
-      script: 'export default { fetch() { return new Response("ok") } }',
-      d1Databases: ["DB"],
-    });
-    const d1 = await miniflare.getD1Database("DB");
-    await migrateD1(d1);
-    drizzle = createD1Database(d1);
-    repository = createTeamRepository(drizzle);
-    run = async (sql, params) => {
-      await d1.prepare(sql).bind(...params).run();
-    };
-    rows = async <Row>(sql: string, params: readonly unknown[]) =>
-      (await d1.prepare(sql).bind(...params).all<Row>()).results;
-    close = async () => miniflare.dispose();
-  }
-  for (const statement of seedStatements) await run(statement.sql, statement.params);
-  const app = createApiApp({
-    authentication,
-    installApi: (api) =>
-      installTeamRoutes(api, {
-        repository,
-        costRateBackfill: { backfill: (input) => backfillCostRates(drizzle, input) },
-        cursorSigningKey: signingKey,
-        isTeamModuleEnabled: async () => {
-          const result = await rows<{ enabled: number | boolean }>(
-            `SELECT COALESCE(json_extract(modules, '$.team'), 0) AS enabled
+  try {
+    if (kind === "SQLite") {
+      const sqlite = new BetterSqlite3(":memory:");
+      close = async () => {
+        sqlite.close();
+      };
+      migrateContainer(sqlite);
+      drizzle = createContainerDatabase(sqlite);
+      repository = createTeamRepository(drizzle);
+      run = async (sql, params) => {
+        sqlite.prepare(sql).run(...params);
+      };
+      rows = async <Row>(sql: string, params: readonly unknown[]) =>
+        sqlite.prepare(sql).all(...params) as Row[];
+    } else {
+      const directory = await mkdtemp(join(tmpdir(), "ezacto-team-d1-case-"));
+      const resource: { miniflare?: Miniflare } = {};
+      close = async () => {
+        try {
+          await resource.miniflare?.dispose();
+        } finally {
+          await rm(directory, { recursive: true, force: true });
+        }
+      };
+      await cp(await migratedD1Directory(), directory, { recursive: true });
+      resource.miniflare = new Miniflare({ ...d1Worker, d1Persist: directory });
+      const d1 = await resource.miniflare.getD1Database("DB");
+      drizzle = createD1Database(d1);
+      repository = createTeamRepository(drizzle);
+      run = async (sql, params) => {
+        await d1
+          .prepare(sql)
+          .bind(...params)
+          .run();
+      };
+      rows = async <Row>(sql: string, params: readonly unknown[]) =>
+        (
+          await d1
+            .prepare(sql)
+            .bind(...params)
+            .all<Row>()
+        ).results;
+    }
+    for (const statement of seedStatements) await run(statement.sql, statement.params);
+    const app = createApiApp({
+      authentication,
+      installApi: (api) =>
+        installTeamRoutes(api, {
+          repository,
+          costRateBackfill: { backfill: (input) => backfillCostRates(drizzle, input) },
+          cursorSigningKey: signingKey,
+          isTeamModuleEnabled: async () => {
+            const result = await rows<{ enabled: number | boolean }>(
+              `SELECT COALESCE(json_extract(modules, '$.team'), 0) AS enabled
              FROM organizations WHERE id = 1`,
-            [],
-          );
-          return result[0]?.enabled === 1 || result[0]?.enabled === true;
-        },
-        clock: () => now,
-      }),
-  });
-  return {
-    request: async (path, options = {}) => {
-      const headers = new Headers({
-        origin: "https://api.test",
-        "x-test-profile": options.profile ?? "administrator",
-        "x-test-user-id": String(options.userId ?? 1),
-        "x-test-manager-grants": (options.managerGrants ?? []).join(","),
-      });
-      if (options.authentication === "token")
-        headers.set("authorization", "Bearer team-test-token");
-      if (options.idempotencyKey !== undefined)
-        headers.set("idempotency-key", options.idempotencyKey);
-      if (options.body !== undefined) headers.set("content-type", "application/json");
-      return app.request(`https://api.test/api/v1${path}`, {
-        method: options.method ?? "GET",
-        headers,
-        ...(options.body === undefined ? {} : { body: JSON.stringify(options.body) }),
-      });
-    },
-    run: (sql, ...params) => run(sql, params),
-    rows: <Row>(sql: string, ...params: unknown[]) => rows<Row>(sql, params),
-    close,
-  };
+              [],
+            );
+            return result[0]?.enabled === 1 || result[0]?.enabled === true;
+          },
+          clock: () => now,
+        }),
+    });
+    return {
+      request: async (path, options = {}) => {
+        const headers = new Headers({
+          origin: "https://api.test",
+          "x-test-profile": options.profile ?? "administrator",
+          "x-test-user-id": String(options.userId ?? 1),
+          "x-test-manager-grants": (options.managerGrants ?? []).join(","),
+        });
+        if (options.authentication === "token")
+          headers.set("authorization", "Bearer team-test-token");
+        if (options.idempotencyKey !== undefined)
+          headers.set("idempotency-key", options.idempotencyKey);
+        if (options.body !== undefined) headers.set("content-type", "application/json");
+        return app.request(`https://api.test/api/v1${path}`, {
+          method: options.method ?? "GET",
+          headers,
+          ...(options.body === undefined ? {} : { body: JSON.stringify(options.body) }),
+        });
+      },
+      run: (sql, ...params) => run(sql, params),
+      rows: <Row>(sql: string, ...params: unknown[]) => rows<Row>(sql, params),
+      close: async () => {
+        await close?.();
+      },
+    };
+  } catch (error) {
+    try {
+      await close?.();
+    } catch (cleanupError) {
+      throw new AggregateError([error, cleanupError], "Team fixture setup and cleanup failed", { cause: cleanupError });
+    }
+    throw error;
+  }
 };
 
 const factories = [
@@ -267,7 +334,16 @@ const factories = [
 for (const [runtime, factory] of factories) {
   describe(`Team API (${runtime})`, () => {
     let harness: Harness | undefined;
-    afterEach(async () => harness?.close());
+    if (runtime === "D1") {
+      // The one-time infrastructure migration has its own setup allowance;
+      // every isolated test keeps the existing 20-second assertion budget.
+      beforeAll(async () => { await migratedD1Directory(); }, 60_000);
+    }
+    afterEach(async () => {
+      const active = harness;
+      harness = undefined;
+      await active?.close();
+    });
 
     it("uses authoritative rounded time and restricts project-manager visibility", async () => {
       harness = await factory();
