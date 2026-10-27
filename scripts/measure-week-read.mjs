@@ -48,35 +48,32 @@ const query = (params) =>
 /**
  * A scenario is phases run one after another; the steps inside a phase run
  * together, as the app's Promise.all does. A step with `paged` follows
- * page.next_cursor until it ends, the way the Chrome client does. Mobile's
- * entriesInRange reads one page only, so its step is not paged.
+ * page.next_cursor until it ends, as both clients now do. Dependent query
+ * parameters are resolved only after the settings phase completes.
  */
 export const SCENARIOS = {
   "mobile-week": {
     describes:
       "mobile Week screen focus: loadWeek -> entriesInRange (src/api/time.ts)",
-    phases: () => {
-      const { from, to } = weekRange(new Date(), "monday");
-      return [
-        [
-          {
-            name: "time-entries (week)",
-            path: "/api/v1/time-entries",
-            params: { from, to, per_page: PER_PAGE },
-          },
-        ],
-      ];
-    },
+    phases: () => [
+      [{ name: "time-entry-settings", path: "/api/v1/time-entry-settings" }],
+      [
+        {
+          name: "time-entries (week)",
+          path: "/api/v1/time-entries",
+          params: (ctx) => ({
+            ...weekRange(new Date(), ctx.weekStart),
+            per_page: PER_PAGE,
+          }),
+          paged: true,
+        },
+      ],
+    ],
   },
   "chrome-popup": {
     describes:
       "Chrome popup open: renderStatus in src/popup/popup.ts, without the active-tab lookup",
-    phases: (ctx) => {
-      const { from, to } = weekRange(new Date(), ctx.weekStart);
-      const earlier = weekRange(
-        new Date(Date.now() - 21 * DAY),
-        ctx.weekStart,
-      ).from;
+    phases: () => {
       return [
         [
           {
@@ -103,13 +100,21 @@ export const SCENARIOS = {
           {
             name: "time-entries (week)",
             path: "/api/v1/time-entries",
-            params: { from, to, per_page: PER_PAGE },
+            params: (ctx) => ({
+              ...weekRange(new Date(), ctx.weekStart),
+              per_page: PER_PAGE,
+            }),
             paged: true,
           },
           {
             name: "time-entries (last 4 weeks)",
             path: "/api/v1/time-entries",
-            params: { from: earlier, to, per_page: PER_PAGE },
+            params: (ctx) => ({
+              from: weekRange(new Date(Date.now() - 21 * DAY), ctx.weekStart)
+                .from,
+              to: weekRange(new Date(), ctx.weekStart).to,
+              per_page: PER_PAGE,
+            }),
             paged: true,
           },
         ],
@@ -141,14 +146,32 @@ export const timedGet = async ({ baseUrl, token, fetchImpl, profile }, url) => {
 const runStep = async (ctx, step) => {
   const requests = [];
   let cursor;
+  const seen = new Set();
+  const baseParams =
+    typeof step.params === "function" ? step.params(ctx) : step.params;
   do {
-    const params = { ...(step.params ?? {}), ...(cursor ? { cursor } : {}) };
+    const params = { ...(baseParams ?? {}), ...(cursor ? { cursor } : {}) };
     const { body, request } = await timedGet(
       ctx,
       step.path + (step.params || cursor ? query(params) : ""),
     );
     requests.push({ step: step.name, ...request });
-    cursor = step.paged ? (body?.page?.next_cursor ?? undefined) : undefined;
+    if (step.path === "/api/v1/time-entry-settings") {
+      const configured = body?.data?.week_start_day;
+      if (!Object.hasOwn(START_INDEX, configured))
+        throw new Error("Invalid instance week start");
+      ctx.weekStart = configured;
+    }
+    if (step.paged) {
+      const next = body?.page?.next_cursor;
+      if (
+        next !== null &&
+        (typeof next !== "string" || next.length === 0 || seen.has(next))
+      )
+        throw new Error("Invalid or repeated cursor");
+      cursor = next ?? undefined;
+      if (cursor) seen.add(cursor);
+    }
   } while (cursor);
   return requests;
 };
@@ -162,19 +185,21 @@ export const runScenario = async (
   scenario,
   { sequential = false } = {},
 ) => {
-  const phases = scenario.phases(ctx);
+  const sample = { ...ctx, weekStart: undefined };
+  const phases = scenario.phases(sample);
   const started = performance.now();
   const requests = [];
   for (const phase of phases) {
     if (sequential)
-      for (const step of phase) requests.push(...(await runStep(ctx, step)));
+      for (const step of phase) requests.push(...(await runStep(sample, step)));
     else
       requests.push(
-        ...(await Promise.all(phase.map((s) => runStep(ctx, s)))).flat(),
+        ...(await Promise.all(phase.map((s) => runStep(sample, s)))).flat(),
       );
   }
   return {
     ms: performance.now() - started,
+    weekStart: sample.weekStart,
     count: requests.length,
     bytes: requests.reduce((n, r) => n + r.bytes, 0),
     requests,
@@ -201,22 +226,20 @@ export const measure = async ({
     token,
     fetchImpl,
     profile,
-    weekStart: "monday",
   };
-  // The popup asks the instance where weeks start; so does this, once, unshaped.
-  const settings = await timedGet(
-    { ...ctx, profile: PROFILES.none },
-    "/api/v1/time-entry-settings",
-  );
-  const configured = settings.body?.data?.week_start_day;
-  if (configured in START_INDEX) ctx.weekStart = configured;
+  let weekStart;
 
   const results = [];
   for (const [name, scenario] of Object.entries(SCENARIOS)) {
     for (const sequential of [false, true]) {
       const samples = [];
-      for (let i = 0; i < runs; i += 1)
-        samples.push(await runScenario(ctx, scenario, { sequential }));
+      for (let i = 0; i < runs; i += 1) {
+        const sample = await runScenario(ctx, scenario, { sequential });
+        if (weekStart !== undefined && sample.weekStart !== weekStart)
+          throw new Error("Instance week start changed during measurement");
+        weekStart = sample.weekStart;
+        samples.push(sample);
+      }
       const ms = samples.map((s) => s.ms);
       results.push({
         scenario: name,
@@ -235,7 +258,7 @@ export const measure = async ({
       });
     }
   }
-  return { weekStart: ctx.weekStart, results };
+  return { weekStart, results };
 };
 
 export const parseArgs = (argv, env = process.env) => {
