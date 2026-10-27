@@ -1,9 +1,10 @@
-import { EzactoApiError, type EzactoClient, type GithubPublicationsEnvelope, type GithubPublicationPreviewEnvelope } from '@conflict-hq/ezacto-client'
+import { EzactoApiError, type GithubPublicationsEnvelope, type GithubPublicationPreviewEnvelope } from '@conflict-hq/ezacto-client'
 import type { SessionPresenter } from '../session.js'
 import { isDemoDeployment } from '../demo.js'
 import { setRequestBusy } from '../request-feedback.js'
 
-export type GithubPublicationUiApi = Pick<EzactoClient, 'getGithubPublications' | 'getGithubReaderStatus' | 'previewGithubPublication' | 'setGithubPublicationPolicy' | 'consentGithubPublication' | 'actGithubPublication'>
+import type { GithubPublicationUiApi } from './github-publication-model.js'
+export type { GithubPublicationUiApi } from './github-publication-model.js'
 interface Active extends SessionPresenter { signal: AbortSignal; identity: { profile: string } }
 type Data = GithubPublicationsEnvelope['data']
 type Preview = GithubPublicationPreviewEnvelope['data']

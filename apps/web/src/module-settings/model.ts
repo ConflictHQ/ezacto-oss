@@ -1,4 +1,4 @@
-import type { GithubPublicationUiApi } from './github-publication.js'
+import type { GithubPublicationUiApi } from './github-publication-model.js'
 import type { PayoutProviderSwitchesApi } from './payout-provider-switches.js'
 import type { ImportApi } from '../csv-import/contract.js'
 import type { GithubReaderUiApi } from './github-reader.js'
