@@ -56,8 +56,13 @@ fixed to documented production/sandbox hosts; redirects are refused.
 against the documented schemas. It proves exclusion/classification, pagination,
 replay, account/currency/date checks, exact cents, bounded responses and sanitized
 failures. No fixture claims captured Mercury/Wise provenance. No production or
-sandbox credential was used, no provider resource was created, and #101 remains
-open pending real provider acceptance and integrated review/confirmation proof.
+sandbox credential was used and no provider resource was created.
+[Native review acceptance](evidence/101-bank-review-native.json) separately proves
+review and confirmation through the application with synthetic inputs. #101
+remains open for operator-approved provider account, currency and read-scope
+verification, fixtures captured from those accounts, and Wise settlement evidence
+or an explicit audited operator verification. Outgoing Wise transfer callbacks
+do not prove inbound customer receipts.
 
 Official sources inspected 2026-10-26:
 
