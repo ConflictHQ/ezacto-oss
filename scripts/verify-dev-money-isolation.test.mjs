@@ -1,6 +1,7 @@
+import { readFile } from 'node:fs/promises'
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { runProbe, validateConfig } from './verify-dev-money-isolation.mjs'
+import { financialFieldNames, runProbe, validateConfig } from './verify-dev-money-isolation.mjs'
 const config = () => ({
   origin: 'https://ezacto.io',
   expected_release: 'a'.repeat(40),
@@ -65,7 +66,7 @@ test('verifies actual member session identity before fixture reads', async () =>
   assert.deepEqual(paths, ['/healthz', '/api/v1/whoami'])
 })
 const fixtureFetch =
-  (calls, leak = false) =>
+  (calls, leak = false, key = 'cost_rate_cents') =>
   async (url, options) => {
     calls.push({ url, options })
     assert.equal(options.method, 'GET')
@@ -88,7 +89,7 @@ const fixtureFetch =
           id: actor + 1,
           user_id: actor,
           seconds: 3600,
-          ...(leak ? { cost_rate_cents: 'PRIVATE_SENTINEL' } : {}),
+          ...(leak ? { [key]: 'PRIVATE_SENTINEL' } : {}),
         },
       })
     if (path === '/api/v1/time-entries/31') return response({ error: { code: 'not_found' } }, 404)
@@ -115,4 +116,25 @@ test('a forbidden money field fails without leaking its value into evidence', as
   assert.equal(result.passed, false)
   assert.deepEqual(result.actors[0].checks[0].money_fields_present, ['cost_rate_cents'])
   assert.ok(!JSON.stringify(result).includes('PRIVATE_SENTINEL'))
+})
+
+test('financial registry covers native wire-suite fields and new computed monetary aliases', async () => {
+  const source = await readFile(
+    new URL('../entries/worker/test/money-isolation.e2e.test.ts', import.meta.url),
+    'utf8',
+  )
+  const canonical = [
+    ...source.matchAll(
+      /\b([a-z_]+):\s*(?:BILLABLE|COST|BUDGET|PROJECT_BILLABLE|PROJECT_COST_BUDGET)\b/g,
+    ),
+  ].map((match) => match[1])
+  assert.ok(canonical.length > 15)
+  for (const key of canonical)
+    assert.ok(financialFieldNames.includes(key), `Missing native financial field: ${key}`)
+  for (const key of ['computed_cost_cents', 'billable_amount_cents', 'budget_burn_cents']) {
+    const result = await runProbe(config(), fixtureFetch([], true, key))
+    assert.equal(result.passed, false)
+    assert.deepEqual(result.actors[0].checks[0].money_fields_present, [key])
+    assert.ok(!JSON.stringify(result).includes('PRIVATE_SENTINEL'))
+  }
 })

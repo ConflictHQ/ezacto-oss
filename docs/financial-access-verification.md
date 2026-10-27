@@ -49,7 +49,9 @@ node scripts/verify-dev-money-isolation.mjs \
 The output file must not already exist. Exit zero means every assertion passed;
 nonzero means stop and review the sanitized result. Requests are fixed `GET`s,
 redirects are refused, responses are bounded, and response bodies/cookie values
-are never written to the evidence. No discovery, account creation or financial
+are never written to the evidence. The financial-field registry is checked against
+the native wire-isolation suite in CI; additional cents, rate and amount aliases
+are rejected as well. No discovery, account creation or financial
 mutation is performed. Expired or wrong sessions fail before fixture reads.
 
 For each actor the probe checks own-entry visibility with rate/cost fields

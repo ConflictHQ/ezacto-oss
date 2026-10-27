@@ -5,18 +5,39 @@ import { resolve } from 'node:path'
 import { pathToFileURL } from 'node:url'
 
 const origin = 'https://ezacto.io'
-const fields = new Set([
+// Financial keys exercised by the native money-isolation suite; the guard test
+// requires this registry to stay in sync. Suffixes also catch new monetary aliases.
+export const financialFieldNames = [
+  'amount_cents',
+  'balance_cents',
   'billable_rate',
   'billable_rate_cents',
+  'billable_rates',
+  'budget_burn_cents',
+  'budget_cents',
+  'cost_budget_cents',
+  'cost_cents',
   'cost_rate',
   'cost_rate_cents',
-  'hourly_rate',
-  'hourly_rate_cents',
+  'cost_rates',
   'default_hourly_rate',
   'default_hourly_rate_cents',
-  'cost_budget',
-  'cost_budget_cents',
-])
+  'expense_cents',
+  'fee_cents',
+  'hourly_rate',
+  'hourly_rate_cents',
+  'money_budget_cents',
+  'node_budget_cents',
+  'paid_cents',
+  'remaining_cents',
+  'spent_cents',
+  'time_cents',
+  'total_cents',
+  'uninvoiced_expense_cents',
+  'uninvoiced_time_cents',
+  'uninvoiced_total_cents',
+]
+const fields = new Set(financialFieldNames)
 const fail = (code) => {
   throw new Error(code)
 }
@@ -75,7 +96,7 @@ const moneyKeys = (value) => {
   return [
     ...new Set(
       Object.entries(value).flatMap(([key, item]) => [
-        ...(fields.has(key) ? [key] : []),
+        ...(fields.has(key) || /(?:_cents|_rates?|_amounts?)$/.test(key) ? [key] : []),
         ...moneyKeys(item),
       ]),
     ),
