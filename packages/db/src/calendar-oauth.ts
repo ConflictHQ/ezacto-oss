@@ -1,5 +1,5 @@
 import { sql } from 'drizzle-orm'
-import { type CalendarOAuthStore } from '@ezacto/core'
+import { CalendarConnectionError, type CalendarOAuthStore } from '@ezacto/core'
 import type { InvoiceStateDatabase } from './invoice-state.js'
 import { atomicStatements } from './atomic-statements.js'
 
@@ -16,46 +16,129 @@ const guard = (condition: string, params: readonly unknown[]) => ({
   params,
 })
 export const createCalendarOAuthStore = (database: InvoiceStateDatabase): CalendarOAuthStore => ({
+  async manualCleanup(actor) {
+    const rows = await atomicStatements(database, [
+      {
+        text: `SELECT id,generation,credential_revision,reason,created_at FROM calendar_cleanup_obligations
+        WHERE user_id=? AND provider='microsoft' AND reason IN('disconnect','reauth') AND status<>'revoked'
+        AND instance_nonce=(SELECT nonce FROM calendar_sync_instance WHERE singleton=1) AND ${authority}
+        ORDER BY created_at,id LIMIT 20`,
+        params: [actor.userId, actor.sessionId, actor.userId],
+      },
+    ])
+    return rows[0] as {
+      id: string
+      generation: number
+      credential_revision: number
+      reason: 'disconnect' | 'reauth'
+      created_at: string
+    }[]
+  },
+  async confirmManualCleanup(actor, input, now) {
+    const prior = await database.all(
+      sql`SELECT 1 FROM calendar_manual_cleanup_receipts WHERE obligation_id=${input.id} AND user_id=${actor.userId} AND generation=${input.generation} AND credential_revision=${input.credentialRevision} AND instance_nonce=(SELECT nonce FROM calendar_sync_instance WHERE singleton=1)`,
+    )
+    if (prior.length) {
+      const allowed = await atomicStatements(database, [
+        { text: `SELECT 1 WHERE ${authority}`, params: [actor.sessionId, actor.userId] },
+      ])
+      if (!allowed[0]?.length) throw new CalendarConnectionError('forbidden')
+      return
+    }
+    try {
+      await atomicStatements(database, [
+        guard(
+          `${authority} AND EXISTS(SELECT 1 FROM calendar_cleanup_obligations WHERE id=? AND user_id=? AND provider='microsoft'
+        AND generation=? AND credential_revision=? AND instance_nonce=(SELECT nonce FROM calendar_sync_instance WHERE singleton=1)
+        AND reason IN('disconnect','reauth') AND status<>'revoked')
+        AND NOT EXISTS(SELECT 1 FROM calendar_connections WHERE user_id=? AND provider='microsoft' AND status='connected')`,
+          [
+            actor.sessionId,
+            actor.userId,
+            input.id,
+            actor.userId,
+            input.generation,
+            input.credentialRevision,
+            actor.userId,
+          ],
+        ),
+        {
+          text: `INSERT INTO calendar_manual_cleanup_receipts(obligation_id,user_id,session_id,provider,instance_nonce,generation,credential_revision,reason,attested_at,assertion)
+        SELECT id,user_id,?,'microsoft',instance_nonce,generation,credential_revision,reason,?,'owner_confirmed_provider_permission_removal' FROM calendar_cleanup_obligations WHERE id=? RETURNING obligation_id`,
+          params: [actor.sessionId, now, input.id],
+        },
+        {
+          text: `UPDATE calendar_cleanup_obligations SET status='revoked',sealed_grant=NULL,sealed_receipt=?,completed_at=?,lease_holder=NULL,lease_expires_at=NULL WHERE id=? RETURNING id`,
+          params: [
+            JSON.stringify({
+              kind: 'user_attestation',
+              assertion: 'owner_confirmed_provider_permission_removal',
+              at: now,
+            }),
+            now,
+            input.id,
+          ],
+        },
+        { text: 'DELETE FROM calendar_sync_guard RETURNING allowed', params: [] },
+      ])
+    } catch (error) {
+      if (
+        error instanceof Error &&
+        /CHECK constraint failed:\s*allowed\s*=\s*1/i.test(error.message)
+      )
+        throw new CalendarConnectionError('changed')
+      throw error
+    }
+  },
   async begin(a, expiresAt) {
-    await atomicStatements(database, [
-      guard(
-        `${authority} AND ?=(SELECT nonce FROM calendar_sync_instance WHERE singleton=1)
+    try {
+      await atomicStatements(database, [
+        guard(
+          `${authority} AND ?=(SELECT nonce FROM calendar_sync_instance WHERE singleton=1)
        AND coalesce((SELECT generation FROM calendar_connections WHERE user_id=? AND provider=?),0)=?
        AND NOT EXISTS(SELECT 1 FROM calendar_connections WHERE user_id=? AND provider=? AND status='connected')
        AND NOT EXISTS(SELECT 1 FROM calendar_cleanup_obligations WHERE user_id=? AND provider=? AND instance_nonce=? AND status<>'revoked')`,
-        [
-          a.authority.sessionId,
-          a.authority.userId,
-          a.instance,
-          a.authority.userId,
-          a.provider,
-          a.generation,
-          a.authority.userId,
-          a.provider,
-          a.authority.userId,
-          a.provider,
-          a.instance,
-        ],
-      ),
-      {
-        text: "DELETE FROM calendar_oauth_attempts WHERE julianday(expires_at)<=julianday('now') OR (user_id=? AND session_id=? AND provider=?) RETURNING state_hash",
-        params: [a.authority.userId, a.authority.sessionId, a.provider],
-      },
-      {
-        text: 'INSERT INTO calendar_oauth_attempts(state_hash,requester_hash,user_id,session_id,provider,instance_nonce,expected_generation,expires_at) VALUES(?,?,?,?,?,?,?,?) RETURNING state_hash',
-        params: [
-          a.stateHash,
-          a.requesterHash,
-          a.authority.userId,
-          a.authority.sessionId,
-          a.provider,
-          a.instance,
-          a.generation,
-          expiresAt,
-        ],
-      },
-      { text: 'DELETE FROM calendar_sync_guard RETURNING allowed', params: [] },
-    ])
+          [
+            a.authority.sessionId,
+            a.authority.userId,
+            a.instance,
+            a.authority.userId,
+            a.provider,
+            a.generation,
+            a.authority.userId,
+            a.provider,
+            a.authority.userId,
+            a.provider,
+            a.instance,
+          ],
+        ),
+        {
+          text: "DELETE FROM calendar_oauth_attempts WHERE julianday(expires_at)<=julianday('now') OR (user_id=? AND session_id=? AND provider=?) RETURNING state_hash",
+          params: [a.authority.userId, a.authority.sessionId, a.provider],
+        },
+        {
+          text: 'INSERT INTO calendar_oauth_attempts(state_hash,requester_hash,user_id,session_id,provider,instance_nonce,expected_generation,expires_at) VALUES(?,?,?,?,?,?,?,?) RETURNING state_hash',
+          params: [
+            a.stateHash,
+            a.requesterHash,
+            a.authority.userId,
+            a.authority.sessionId,
+            a.provider,
+            a.instance,
+            a.generation,
+            expiresAt,
+          ],
+        },
+        { text: 'DELETE FROM calendar_sync_guard RETURNING allowed', params: [] },
+      ])
+    } catch (error) {
+      if (
+        error instanceof Error &&
+        /CHECK constraint failed:\s*allowed\s*=\s*1/i.test(error.message)
+      )
+        throw new CalendarConnectionError('changed')
+      throw error
+    }
   },
   async consume(actor, provider, stateHash, requesterHash) {
     const result = await atomicStatements(database, [
@@ -100,7 +183,7 @@ export const createCalendarOAuthStore = (database: InvoiceStateDatabase): Calend
   async claimCleanup(keyId, holder, now) {
     // A changed deployment key or incarnation must never revoke another installation's grant.
     await database.run(sql`UPDATE calendar_cleanup_obligations SET status='manual_required'
-      WHERE status='pending' AND (key_id<>${keyId} OR instance_nonce<>(SELECT nonce FROM calendar_sync_instance WHERE singleton=1) OR provider='microsoft')`)
+      WHERE id IN(SELECT id FROM calendar_cleanup_obligations WHERE status='pending' AND (key_id<>${keyId} OR instance_nonce<>(SELECT nonce FROM calendar_sync_instance WHERE singleton=1) OR provider='microsoft') LIMIT 10)`)
     const rows = await database.all<
       Record<string, unknown>
     >(sql`UPDATE calendar_cleanup_obligations SET lease_holder=${holder},lease_expires_at=${new Date(Date.parse(now) + 60000).toISOString()},attempts=attempts+1

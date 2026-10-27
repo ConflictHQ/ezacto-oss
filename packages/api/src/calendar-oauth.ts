@@ -18,6 +18,19 @@ import {
 } from "./resources/support.js";
 
 export interface CalendarAuthorizationPort {
+  manualCleanup(authority: CalendarConnectionAuthority): Promise<
+    readonly {
+      id: string;
+      generation: number;
+      credential_revision: number;
+      reason: "disconnect" | "reauth";
+      created_at: string;
+    }[]
+  >;
+  confirmManualCleanup(
+    authority: CalendarConnectionAuthority,
+    input: { id: string; generation: number; credentialRevision: number },
+  ): Promise<void>;
   begin(
     authority: CalendarConnectionAuthority,
     provider: CalendarProvider,
@@ -61,6 +74,78 @@ export const installCalendarAuthorizationRoutes = <Bindings extends object>(
   api: Hono<ApiContext<Bindings>>,
   port: CalendarAuthorizationPort,
 ) => {
+  api.get("/calendar-connections/:provider/cleanup", async (c) => {
+    const p = requireSessionPrincipal(c);
+    if (provider(c.req.param("provider")) !== "microsoft")
+      throw new ApiError({
+        status: 404,
+        code: "not_found",
+        message: "This provider uses automatic cleanup.",
+      });
+    const data = await port.manualCleanup({
+      userId: p.userId,
+      sessionId: Number(p.authentication.sessionId),
+    });
+    return c.json({ data }, 200, { "cache-control": "no-store" });
+  });
+  api.post("/calendar-connections/:provider/cleanup/confirm", async (c) => {
+    const p = requireSessionPrincipal(c);
+    requireSameOriginForUnsafeSessionRequest(c.req.raw);
+    if (provider(c.req.param("provider")) !== "microsoft")
+      throw new ApiError({
+        status: 404,
+        code: "not_found",
+        message: "This provider uses automatic cleanup.",
+      });
+    const body = await readObjectBody(c);
+    assertFields(
+      unknownFieldErrors(
+        body,
+        new Set([
+          "obligation_id",
+          "generation",
+          "credential_revision",
+          "confirm_removed",
+        ]),
+      ),
+    );
+    if (
+      typeof body.obligation_id !== "string" ||
+      !/^[a-f0-9]{64}$/.test(body.obligation_id) ||
+      body.confirm_removed !== true ||
+      !Number.isSafeInteger(body.generation) ||
+      Number(body.generation) < 1 ||
+      !Number.isSafeInteger(body.credential_revision) ||
+      Number(body.credential_revision) < 1
+    )
+      throw validationError([
+        {
+          field: "body",
+          code: "invalid",
+          message:
+            "Review the exact cleanup record and confirm provider permission removal.",
+        },
+      ]);
+    try {
+      await port.confirmManualCleanup(
+        { userId: p.userId, sessionId: Number(p.authentication.sessionId) },
+        {
+          id: body.obligation_id,
+          generation: Number(body.generation),
+          credentialRevision: Number(body.credential_revision),
+        },
+      );
+    } catch (error) {
+      if (error instanceof CalendarConnectionError)
+        throw new ApiError({
+          status: error.code === "forbidden" ? 403 : 409,
+          code: "calendar_cleanup_changed",
+          message: "The cleanup record changed. Refresh and review it again.",
+        });
+      throw error;
+    }
+    return c.body(null, 204, { "cache-control": "no-store" });
+  });
   api.post("/calendar-connections/:provider/authorize", async (c) => {
     const p = requireSessionPrincipal(c),
       kind = provider(c.req.param("provider"));
@@ -98,9 +183,13 @@ export const installCalendarAuthorizationRoutes = <Bindings extends object>(
           status:
             error.code === "forbidden"
               ? 403
-              : error.code === "not_configured"
+              : error.code === "not_configured" ||
+                  error.code === "changed" ||
+                  error.code === "busy"
                 ? 409
-                : 503,
+                : error.code === "invalid"
+                  ? 400
+                  : 503,
           code: "calendar_authorization_unavailable",
           message:
             "Calendar authorization could not begin. Refresh this page and try again.",

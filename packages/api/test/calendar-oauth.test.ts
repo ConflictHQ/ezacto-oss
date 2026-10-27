@@ -8,6 +8,8 @@ import {
 
 const setup = () => {
   const port: CalendarAuthorizationPort = {
+    manualCleanup: vi.fn(async () => []),
+    confirmManualCleanup: vi.fn(async () => {}),
     begin: vi.fn(async () => ({
       requester: "R".repeat(43),
       authorizationUrl:
@@ -118,4 +120,41 @@ it("uses a fixed return path and clears only the successful provider cookie", as
     "/settings/user?calendar=failed&provider=microsoft",
   );
   expect(await denied.text()).not.toContain("PRIVATE");
+});
+it("requires a native owner and an explicit exact-record manual cleanup confirmation", async () => {
+  const f = setup(),
+    input = {
+      obligation_id: "a".repeat(64),
+      generation: 1,
+      credential_revision: 2,
+      confirm_removed: true,
+    };
+  expect((await f.request("/google/cleanup")).status).toBe(404);
+  expect((await f.request("/microsoft/cleanup")).status).toBe(200);
+  expect(
+    (
+      await f.request("/microsoft/cleanup/confirm", {
+        ...input,
+        confirm_removed: false,
+      })
+    ).status,
+  ).toBe(422);
+  expect(
+    (await f.request("/microsoft/cleanup/confirm", input, { cookie: "" }))
+      .status,
+  ).toBe(401);
+  expect(
+    (
+      await f.request("/microsoft/cleanup/confirm", input, {
+        origin: "https://foreign.example",
+      })
+    ).status,
+  ).toBe(403);
+  expect((await f.request("/microsoft/cleanup/confirm", input)).status).toBe(
+    204,
+  );
+  expect(f.port.confirmManualCleanup).toHaveBeenCalledExactlyOnceWith(
+    { userId: 2, sessionId: 10 },
+    { id: input.obligation_id, generation: 1, credentialRevision: 2 },
+  );
 });

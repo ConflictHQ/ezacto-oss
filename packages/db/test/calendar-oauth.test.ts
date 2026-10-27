@@ -222,5 +222,86 @@ for (const kind of ['sqlite', 'd1'] as const)
       expect(await f.rows('SELECT status FROM calendar_cleanup_obligations')).toEqual([
         { status: 'manual_required' },
       ])
+      const pending = await f.service.authorization.manualCleanup(f.authority)
+      expect(pending).toHaveLength(1)
+      const item = pending[0]!
+      const confirmation = {
+        id: item.id,
+        generation: item.generation,
+        credentialRevision: item.credential_revision,
+      }
+      await expect(
+        f.service.authorization.confirmManualCleanup(f.other, confirmation),
+      ).rejects.toThrow()
+      await expect(
+        f.service.authorization.confirmManualCleanup(f.authority, {
+          ...confirmation,
+          generation: item.generation + 1,
+        }),
+      ).rejects.toThrow()
+      await f.service.authorization.confirmManualCleanup(f.authority, confirmation)
+      await f.service.authorization.confirmManualCleanup(f.authority, confirmation)
+      expect(await f.rows('SELECT assertion FROM calendar_manual_cleanup_receipts')).toEqual([
+        { assertion: 'owner_confirmed_provider_permission_removal' },
+      ])
+      await expect(
+        f.run("UPDATE calendar_manual_cleanup_receipts SET assertion='changed'"),
+      ).rejects.toThrow()
+      const closed = await f.rows(
+        'SELECT sealed_grant,sealed_receipt FROM calendar_cleanup_obligations',
+      )
+      expect((closed[0] as { sealed_grant: unknown }).sealed_grant).toBeNull()
+      expect(JSON.stringify(closed)).toContain('user_attestation')
+      expect(JSON.stringify(closed)).not.toContain('provider_token_revocation')
+      const status = (await f.service.sync.connections(f.authority)).find(
+        (row) => row.provider === 'microsoft',
+      )!
+      expect(status.cleanupPending).toBe(false)
+      expect(
+        (
+          await f.service.authorization.begin(
+            f.authority,
+            'microsoft',
+            status.generation,
+            'https://owned.example',
+          )
+        ).authorizationUrl,
+      ).toContain('login.microsoftonline.com')
+    })
+    it('never accepts manual confirmation for closure, restore or another incarnation', async () => {
+      const f = await fixture(kind),
+        ms = await f.start('microsoft')
+      await f.service.authorization.complete(f.authority, 'microsoft', {
+        state: ms.state,
+        requester: ms.requester,
+        code: 'owned',
+        denied: false,
+        requestOrigin: 'https://owned.example',
+      })
+      await f.service.sync.disconnect(f.authority, 'microsoft', 1)
+      await f.service.authorization.processDue()
+      const original = (await f.service.authorization.manualCleanup(f.authority))[0]!
+      for (const [index, reason] of ['closure', 'restore', 'reauth'].entries()) {
+        const id = String(index + 3).repeat(64),
+          generation = original.generation + index + 10
+        await f.run(
+          `INSERT INTO calendar_cleanup_obligations(id,user_id,provider,instance_nonce,generation,credential_revision,key_id,sealed_grant,reason,status,created_at)
+          SELECT ?,user_id,provider,?, ?,credential_revision,key_id,sealed_grant,?,'manual_required',created_at FROM calendar_cleanup_obligations WHERE id=?`,
+          id,
+          index === 2 ? '0'.repeat(64) : await f.connections.instance(),
+          generation,
+          reason,
+          original.id,
+        )
+        await expect(
+          f.service.authorization.confirmManualCleanup(f.authority, {
+            id,
+            generation,
+            credentialRevision: original.credential_revision,
+          }),
+        ).rejects.toThrow()
+      }
+      expect(await f.service.authorization.manualCleanup(f.authority)).toHaveLength(1)
+      expect(await f.rows('SELECT * FROM calendar_manual_cleanup_receipts')).toHaveLength(0)
     })
   })

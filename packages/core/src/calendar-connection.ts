@@ -10,6 +10,8 @@ export interface CalendarCleanupStatus {
   pending: number;
   manual_required: number;
   revoked: number;
+  /** Owner confirmation of manual permission removal; not provider verification. */
+  manual_confirmed?: number;
 }
 export interface CalendarConnectionAuthority {
   userId: number;

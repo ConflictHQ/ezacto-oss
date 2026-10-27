@@ -52,6 +52,17 @@ export const createCalendarAuthorizationService = async (options: {
   const redirectUri = (provider: CalendarProvider) =>
     `${origin.origin}/api/v1/calendar-connections/${provider}/callback`
   return {
+    async manualCleanup(authority: CalendarConnectionAuthority) {
+      await options.connections.authorize(authority, now().toISOString())
+      return options.store.manualCleanup(authority)
+    },
+    async confirmManualCleanup(
+      authority: CalendarConnectionAuthority,
+      input: { id: string; generation: number; credentialRevision: number },
+    ) {
+      await options.connections.authorize(authority, now().toISOString())
+      await options.store.confirmManualCleanup(authority, input, now().toISOString())
+    },
     async begin(
       authority: CalendarConnectionAuthority,
       provider: CalendarProvider,

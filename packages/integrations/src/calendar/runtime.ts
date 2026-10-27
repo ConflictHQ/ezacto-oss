@@ -76,7 +76,8 @@ export const createConfiguredCalendarServices = async (options: {
     sync,
     clients,
     deploymentKey: options.deploymentKey,
-    appOrigin: options.appOrigin ?? 'https://unconfigured.invalid',
+    appOrigin:
+      Object.keys(clients).length > 0 ? options.appOrigin! : 'https://unconfigured.invalid',
     ...(options.now ? { now: options.now } : {}),
   })
   return { sync, authorization, maintenance: authorization }

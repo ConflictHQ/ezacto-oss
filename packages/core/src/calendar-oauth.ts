@@ -19,6 +19,22 @@ export interface CalendarCleanupClaim extends CalendarCredentialIdentity {
   holder: string;
 }
 export interface CalendarOAuthStore {
+  manualCleanup(
+    authority: CalendarConnectionAuthority,
+  ): Promise<
+    readonly {
+      id: string;
+      generation: number;
+      credential_revision: number;
+      reason: "disconnect" | "reauth";
+      created_at: string;
+    }[]
+  >;
+  confirmManualCleanup(
+    authority: CalendarConnectionAuthority,
+    input: { id: string; generation: number; credentialRevision: number },
+    now: string,
+  ): Promise<void>;
   begin(attempt: CalendarOAuthAttempt, expiresAt: string): Promise<void>;
   consume(
     authority: CalendarConnectionAuthority,

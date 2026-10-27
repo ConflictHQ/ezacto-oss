@@ -1,8 +1,9 @@
 # Private calendar connections and proposal sync
 
-Issue #1299 is the backend connection/apply slice of #428. Google and Microsoft
-adapters, approved OAuth consent, and the week-calendar UI remain separate work.
-No provider or fake source is installed by default. An unconfigured provider
+The connection/apply slice of #428 now composes the Google and Microsoft
+read-only sources with per-user OAuth consent. See [calendar OAuth setup](calendar-oauth-setup.md)
+for dedicated client registration and the remaining real-provider acceptance gate.
+No provider or fake source is installed without configuration. An unconfigured provider
 reports `available: false`; a refresh is refused without contacting a provider.
 There is no HTTP endpoint accepting a pasted grant.
 
@@ -50,10 +51,12 @@ its proposal rows; retained time follows the existing closure policy. An account
 closure review includes credential revisions and pending-cleanup state, so a
 concurrent grant change invalidates its acknowledgement.
 
-**Local deletion does not mean provider revocation.** This slice has no revocation
-adapter and never claims remote cleanup completed. Pending obligations block new
-OAuth admission, and there is no arbitrary completion setter. The administrator
-endpoint `GET /api/v1/calendar-cleanup-status` reports aggregate pending and manual
+**Local deletion does not mean provider revocation.** Google revocation is
+verified through its token endpoint. Microsoft permission removal requires an
+explicit owner attestation for their current-instance disconnect or reauthorization
+record; this is recorded separately from provider verification. Closure and restore
+records cannot use that confirmation path. Unresolved obligations block new OAuth
+admission. The administrator endpoint `GET /api/v1/calendar-cleanup-status` reports aggregate pending and manual
 counts across old incarnations, without revealing tokens or old users. Provider
 adapters must later complete revocation with evidence and an atomic receipt.
 

@@ -60,7 +60,7 @@ it('exchanges only at the fixed token endpoint and carries PKCE without URL cred
   expect(grant.refreshToken).toBe('owned-refresh')
   expect(fetch.mock.calls[0]![0]).toBe('https://oauth2.googleapis.com/token')
   const init = fetch.mock.calls[0]![1]!
-  expect(init.redirect).toBe('error')
+  expect(init.redirect).toBe('manual')
   expect((init.body as URLSearchParams).get('code_verifier')).toBe('owned-verifier')
   expect((init.body as URLSearchParams).get('client_secret')).toBe('private')
 })
@@ -164,4 +164,26 @@ it('revokes Google at its narrow endpoint but never widens Microsoft authority',
   })
   expect(await ms.revoke(grant)).toBe('manual_required')
   expect(fetch).not.toHaveBeenCalled()
+})
+it('rejects redirects without forwarding OAuth credentials to another destination', async () => {
+  const fetch = vi
+    .fn<typeof globalThis.fetch>()
+    .mockResolvedValue(
+      new Response(null, { status: 302, headers: { location: 'https://foreign.example/steal' } }),
+    )
+  const client = createCalendarOAuthClient('google', {
+    clientId: 'owned',
+    clientSecret: 'private',
+    fetch,
+  })
+  await expect(
+    client.exchange({
+      code: 'owned',
+      verifier: 'owned',
+      redirectUri: 'https://owned.example/callback',
+    }),
+  ).rejects.toMatchObject({ code: 'unavailable' })
+  expect(fetch).toHaveBeenCalledOnce()
+  expect(fetch.mock.calls[0]![1]?.redirect).toBe('manual')
+  expect(fetch.mock.calls[0]![0]).toBe('https://oauth2.googleapis.com/token')
 })

@@ -7,6 +7,31 @@ const provider = {
 };
 export const calendarConnectionOperations: readonly ApiContractOperation[] = [
   {
+    method: "get",
+    path: "/api/v1/calendar-connections/:provider/cleanup",
+    operationId: "listCalendarManualCleanup",
+    summary: "List the acting user’s manual Microsoft cleanup records",
+    tag: "time-entries",
+    sessionOnly: true,
+    responseStatus: 200,
+    responseSchema: "CalendarManualCleanupList",
+    parameters: [provider],
+  },
+  {
+    method: "post",
+    path: "/api/v1/calendar-connections/:provider/cleanup/confirm",
+    operationId: "confirmCalendarManualCleanup",
+    summary: "Record the owner’s confirmation of Microsoft permission removal",
+    description:
+      "This is a user attestation, not provider verification. Only the acting user’s current-incarnation disconnect or reauthorization record can be resolved.",
+    tag: "time-entries",
+    sessionOnly: true,
+    responseStatus: 204,
+    requestSchema: "CalendarManualCleanupInput",
+    requestRequired: true,
+    parameters: [provider],
+  },
+  {
     method: "post",
     path: "/api/v1/calendar-connections/:provider/authorize",
     operationId: "beginCalendarAuthorization",
@@ -80,6 +105,50 @@ export const calendarConnectionOperations: readonly ApiContractOperation[] = [
   },
 ];
 export const calendarConnectionSchemas = {
+  CalendarManualCleanupList: {
+    type: "object",
+    additionalProperties: false,
+    required: ["data"],
+    properties: {
+      data: {
+        type: "array",
+        items: {
+          type: "object",
+          additionalProperties: false,
+          required: [
+            "id",
+            "generation",
+            "credential_revision",
+            "reason",
+            "created_at",
+          ],
+          properties: {
+            id: { type: "string" },
+            generation: { type: "integer", minimum: 1 },
+            credential_revision: { type: "integer", minimum: 1 },
+            reason: { type: "string", enum: ["disconnect", "reauth"] },
+            created_at: { type: "string", format: "date-time" },
+          },
+        },
+      },
+    },
+  },
+  CalendarManualCleanupInput: {
+    type: "object",
+    additionalProperties: false,
+    required: [
+      "obligation_id",
+      "generation",
+      "credential_revision",
+      "confirm_removed",
+    ],
+    properties: {
+      obligation_id: { type: "string", pattern: "^[a-f0-9]{64}$" },
+      generation: { type: "integer", minimum: 1 },
+      credential_revision: { type: "integer", minimum: 1 },
+      confirm_removed: { const: true },
+    },
+  },
   CalendarAuthorizationInput: {
     type: "object",
     additionalProperties: false,

@@ -114,7 +114,7 @@ export const createCalendarOAuthClient = (
     try {
       return await (options.fetch ?? globalThis.fetch)(url, {
         method: 'POST',
-        redirect: 'error',
+        redirect: 'manual',
         headers: {
           'content-type': 'application/x-www-form-urlencoded',
           accept: 'application/json',
@@ -136,6 +136,10 @@ export const createCalendarOAuthClient = (
     body.set('client_id', options.clientId)
     body.set('client_secret', options.clientSecret)
     const response = await request(token, body, signal)
+    if (response.status >= 300 && response.status < 400) {
+      await response.body?.cancel()
+      throw new CalendarConnectionError('unavailable')
+    }
     if (!response.ok) {
       const status = response.status
       const error: Record<string, unknown> = await bodyJson(response).catch(() => ({}))
