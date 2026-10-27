@@ -1,3 +1,7 @@
+import { mkdtemp, mkdir, writeFile, rm } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { join, dirname } from 'node:path'
+import { restoreBackup } from '../../cli/src/backup.js'
 import { exportBundle } from '../src/backup.js'
 import BetterSqlite3 from 'better-sqlite3'
 import { Miniflare } from 'miniflare'
@@ -430,11 +434,30 @@ it('logical D1 backup records only encrypted calendar custody and marks live con
     },
     'owned/',
   )
-  expect(manifest.restore_skips).toContain('calendar_connections')
+  expect(manifest.restore_skips).not.toContain('calendar_connections')
+  expect(manifest.restore_reauthorizations).toContain('calendar_connections')
   const custody = objects.get('owned/tables/calendar_connections.csv')!
   expect(custody).toContain('sealed_grant')
   expect(custody).not.toContain(SECRET)
   expect(custody).not.toContain(CURSOR)
+  const directory=await mkdtemp(join(tmpdir(),'calendar-worker-restore-'))
+  try {
+    for (const [key,body] of objects) {
+      const path=join(directory,key)
+      await mkdir(dirname(path),{recursive:true})
+      await writeFile(path,body)
+    }
+    const target=join(directory,'restored.sqlite')
+    await restoreBackup({bundleDirectory:join(directory,'owned'),targetDatabasePath:target})
+    const restored=new BetterSqlite3(target)
+    try {
+      expect(restored.prepare('SELECT status,sealed_grant FROM calendar_connections').all()).toEqual([{status:'needs_reauth',sealed_grant:null}])
+      const obligations=restored.prepare('SELECT status,sealed_grant FROM calendar_cleanup_obligations').all() as {status:string;sealed_grant:string}[]
+      expect(obligations.some(row=>row.status==='manual_required'&&row.sealed_grant.length>0)).toBe(true)
+      expect(JSON.stringify(obligations)).not.toContain(SECRET)
+    } finally {restored.close()}
+  } finally {await rm(directory,{recursive:true,force:true})}
+
 })
 
 it('a timed-out provider cannot rotate credentials when it eventually resumes', async () => {

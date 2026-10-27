@@ -431,6 +431,7 @@ describe('worker entry', () => {
         .filter((segment): segment is string => segment !== undefined),
     )
     expect([...statics].sort()).toEqual([
+      'bank-deposits',
       'by-id',
       'configure',
       'estimates',
