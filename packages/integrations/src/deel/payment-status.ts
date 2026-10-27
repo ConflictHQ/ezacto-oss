@@ -52,6 +52,8 @@ export const createDeelPaymentStatusRuntime = (options: {
       if (lease.leaseId === null) return { configured: true, checked: 0, failed: 0, remaining: 0, retry_after_ms: lease.retryAfterMs }
       let checked = 0, failed = 0, cooldownMs = 500, completed = 0
       let claims: readonly DeelPaymentStatusClaim[] = []
+      const failures: unknown[] = []
+      let result: Awaited<ReturnType<DeelPaymentStatusRuntime['refresh']>> | undefined
       try {
         claims = await options.store.claim(month, options.now().toISOString(), authority)
         for (const claim of claims) {
@@ -86,18 +88,29 @@ export const createDeelPaymentStatusRuntime = (options: {
           else checked++
           if (rateLimited) break
         }
-        return { configured: true, checked, failed,
+        result = { configured: true, checked, failed,
           remaining: await options.store.remaining(month, options.now().toISOString(), authority) + claims.length - completed, retry_after_ms: cooldownMs }
-      } finally {
-        // Unsent claims become immediately eligible after the shared cooldown.
-        // Do not create a per-item delay merely because another item hit429.
-        try {
-          // Persist the provider's cooldown even if releasing a per-item claim fails.
-          await options.store.releaseRefresh(lease.leaseId, cooldownMs, options.now().toISOString())
-        } finally {
-          await options.store.releaseClaims(claims.slice(completed))
-        }
+      } catch (error) {
+        failures.push(error)
       }
+      // Unsent claims become immediately eligible after the shared cooldown.
+      // Do not create a per-item delay merely because another item hit429.
+      try {
+        // Persist the provider's cooldown even if releasing a per-item claim fails.
+        await options.store.releaseRefresh(lease.leaseId, cooldownMs, options.now().toISOString())
+      } catch (error) {
+        failures.push(error)
+      }
+      try {
+        await options.store.releaseClaims(claims.slice(completed))
+      } catch (error) {
+        failures.push(error)
+      }
+      // At most one initiating failure and two cleanup failures. Keep the
+      // initiating cause first; cleanup must not replace the diagnostic.
+      if (failures.length > 1) throw new AggregateError(failures, 'Deel payment status refresh and cleanup failed', { cause: failures[0] })
+      if (failures.length === 1) throw failures[0]
+      return result!
     },
   }
 }

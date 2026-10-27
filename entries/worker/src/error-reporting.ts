@@ -46,22 +46,50 @@ const errorClass = (error: unknown): string => {
     return typeof name === 'string' && classes.has(name) ? name : 'Error'
   } catch { return 'Error' }
 }
-/** Inspect at most eight cause-chain objects through own data properties. */
-const failureCode = (error: unknown): WorkerFailureCode => {
-  const seen = new Set<object>()
-  let current: unknown = error
-  let databaseQuery = false
-  try {
-    while (typeof current === 'object' && current !== null && seen.size < 8 && !seen.has(current)) {
-      seen.add(current)
-      const message: unknown = Object.getOwnPropertyDescriptor(current, 'message')?.value
-      if (typeof message === 'string') {
-        if (message.startsWith('D1_ERROR: Network connection lost')) return 'd1_network_lost'
-        if (message.startsWith('Failed query:')) databaseQuery = true
+const ownValue = (value: object, key: PropertyKey): unknown => {
+  try { return Object.getOwnPropertyDescriptor(value, key)?.value } catch { return undefined }
+}
+const isAggregate = (value: unknown): boolean => {
+  try { return value instanceof AggregateError } catch { return false }
+}
+const isError = (value: unknown): value is Error => {
+  try { return value instanceof Error } catch { return false }
+}
+const isArray = (value: unknown): value is unknown[] => {
+  try { return Array.isArray(value) } catch { return false }
+}
+/** Inspect at most eight distinct objects; never iterate caller-owned arrays. */
+const errorObjects = (error: unknown): readonly object[] => {
+  const objects: object[] = []
+  const visit = (value: unknown): void => {
+    if (typeof value !== 'object' || value === null || objects.includes(value) || objects.length >= 8) return
+    objects.push(value)
+    // Follow the initiating branch before cleanup siblings, including nested
+    // aggregates. A cleanup stack must not replace the original failure site.
+    visit(ownValue(value, 'cause'))
+    if (isAggregate(value)) {
+      const children = ownValue(value, 'errors')
+      if (isArray(children)) {
+        const length = ownValue(children, 'length')
+        if (typeof length === 'number' && Number.isSafeInteger(length) && length >= 0) {
+          for (let index = 0; index < Math.min(length, 8); index++) visit(ownValue(children, String(index)))
+        }
       }
-      current = Object.getOwnPropertyDescriptor(current, 'cause')?.value
     }
-  } catch { /* Proxies and hostile descriptors retain only the static fallback. */ }
+  }
+  visit(error)
+  return objects
+}
+
+const failureCode = (error: unknown): WorkerFailureCode => {
+  let databaseQuery = false
+  for (const current of errorObjects(error)) {
+    const message = ownValue(current, 'message')
+    if (typeof message === 'string') {
+      if (message.startsWith('D1_ERROR: Network connection lost')) return 'd1_network_lost'
+      if (message.startsWith('Failed query:')) databaseQuery = true
+    }
+  }
   return databaseQuery ? 'database_query_failed' : 'unknown'
 }
 const safeContext = (context: WorkerErrorContext): WorkerErrorContext => ({
@@ -79,7 +107,17 @@ export const captureWorkerError: WorkerErrorReporter = (error, context) => {
   safe.name = errorClass(error)
   safe.stack = ''
   let hasOriginalStack = false
-  try { const stack: unknown = error.stack; if (typeof stack === 'string' && stack.length > 0) { safe.stack = stack; hasOriginalStack = true } } catch { /* Optional positions only. */ }
+  // Multiple failures retain the initiating error before cleanup errors. Use
+  // its positions, rather than the AggregateError constructor's catch site.
+  const sources = isAggregate(error) ? errorObjects(error).filter(value => isError(value) && !isAggregate(value)) : [error]
+  for (const source of sources) {
+    // V8 may expose Error.stack through a lazy accessor. Preserve the existing
+    // one guarded read, while never invoking cause/children accessors above.
+    try {
+      const stack: unknown = (source as Error).stack
+      if (typeof stack === 'string' && stack.length > 0) { safe.stack = stack; hasOriginalStack = true; break }
+    } catch { /* Optional positions only. */ }
+  }
   trusted.set(safe, { context: safeContext(context), hasOriginalStack, failureCode: failureCode(error) })
   Sentry.captureException(safe)
 }

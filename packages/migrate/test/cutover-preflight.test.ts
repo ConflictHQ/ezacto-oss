@@ -1,3 +1,4 @@
+import { Buffer } from 'node:buffer'
 import BetterSqlite3 from 'better-sqlite3'
 import { migrateContainer, migrationIds } from '@ezacto/db'
 import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
@@ -19,12 +20,13 @@ describe('cutover migration preflight', () => {
   afterEach(async () => rm(directory, { recursive: true, force: true }))
 
   it('[security #468] checks a local artifact without changing any bytes', async () => {
+    // Compare native buffer bytes without enumerating the multi-MB database.
     const before = await readFile(databasePath)
     expect(await runCutoverPreflight({ databasePath })).toEqual({
       ledgerRows: migrationIds.length,
       pending: [],
     })
-    expect(await readFile(databasePath)).toEqual(before)
+    expect(Buffer.compare(await readFile(databasePath), before)).toBe(0)
   })
 
   it('[security #468] checks remote query evidence and rejects partial or failed results', async () => {
@@ -68,7 +70,7 @@ describe('cutover migration preflight', () => {
     const before = await readFile(databasePath)
     await expect(runCutoverPreflight({ databasePath })).rejects.toThrow(`missing=${migrationIds.slice(-6).join(',')}`)
     await expect(runCutoverPreflight({ databasePath })).rejects.toThrow(/unverifiable=0000_org_people/)
-    expect(await readFile(databasePath)).toEqual(before)
+    expect(Buffer.compare(await readFile(databasePath), before)).toBe(0)
   })
 
   it('[security #468] never creates a missing artifact or accepts ambiguous inputs', async () => {

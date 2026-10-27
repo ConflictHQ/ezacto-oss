@@ -2,35 +2,69 @@ import BetterSqlite3 from 'better-sqlite3'
 import { mkdtemp, mkdir, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { expect, it } from 'vitest'
+import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import { createBackup, restoreBackup } from '../src/backup.js'
 import { migrateContainer } from '../../db/src/migrate.js'
 import { createContainerDatabase } from '../../db/src/adapters.js'
 import { NativeGithubPublicationJournal } from '../../db/src/github-publication-journal.js'
 import type { InvoiceStateDatabase } from '../../db/src/invoice-state.js'
 
-it('[native] real bundle restore preserves remote receipts but fences old outbound publication consent', async () => {
-  const dir = await mkdtemp(join(tmpdir(), 'ezacto-github-restore-'))
+describe('native publication backup restore', () => {
+  let dir: string | undefined
+  let sourcePath: string, attachmentDirectory: string, original: string
   let source: BetterSqlite3.Database | undefined, restored: BetterSqlite3.Database | undefined
-  try {
-    const sourcePath = join(dir, 'source.sqlite'),
+  const close = async () => {
+    try {
+      source?.close()
+    } finally {
+      source = undefined
+      try {
+        restored?.close()
+      } finally {
+        restored = undefined
+        if (dir) await rm(dir, { recursive: true, force: true })
+        dir = undefined
+      }
+    }
+  }
+  // Schema construction is infrastructure; keep the actual restore checks bounded separately.
+  beforeAll(async () => {
+    try {
+      dir = await mkdtemp(join(tmpdir(), 'ezacto-github-restore-'))
+      sourcePath = join(dir, 'source.sqlite')
       attachmentDirectory = join(dir, 'attachments')
-    await mkdir(attachmentDirectory)
-    source = new BetterSqlite3(sourcePath)
-    migrateContainer(source)
-    const original = (
-      source.prepare('SELECT nonce FROM github_publication_instance').get() as { nonce: string }
-    ).nonce
-    source.exec(`INSERT INTO github_read_connections(id,installation_id,account_id) VALUES('11:22:33','22','33');
-      INSERT INTO github_read_resources(connection_id,repository_id,full_name) VALUES('11:22:33','77','owned/disposable');
-      INSERT INTO github_publication_policy(connection_id,enabled,marker,verified_app_id,verified_at,instance_nonce) VALUES('11:22:33',1,'${'a'.repeat(64)}','11','2026-10-26T00:00:00.000Z','${original}');
-      INSERT INTO github_publications(id,connection_id,entry_id,subject_user_id,subject_created_at,consent_nonce,marker,repository_id,issue_id,issue_number,destination,desired_date,desired_seconds,remote_id,last_body,status) VALUES(1,'11:22:33',1,1,'2026-10-26T00:00:00.000Z',(SELECT nonce FROM github_publication_instance WHERE singleton=1),'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa','77','900','5','https://github.com/owned/disposable/issues/5','2026-10-01',3600,'4321','Owned previous body','published');`)
+      await mkdir(attachmentDirectory)
+      source = new BetterSqlite3(sourcePath)
+      migrateContainer(source)
+      original = (
+        source.prepare('SELECT nonce FROM github_publication_instance').get() as { nonce: string }
+      ).nonce
+      source.exec(`INSERT INTO github_read_connections(id,installation_id,account_id) VALUES('11:22:33','22','33');
+        INSERT INTO github_read_resources(connection_id,repository_id,full_name) VALUES('11:22:33','77','owned/disposable');
+        INSERT INTO github_publication_policy(connection_id,enabled,marker,verified_app_id,verified_at,instance_nonce) VALUES('11:22:33',1,'${'a'.repeat(64)}','11','2026-10-26T00:00:00.000Z','${original}');
+        INSERT INTO github_publications(id,connection_id,entry_id,subject_user_id,subject_created_at,consent_nonce,marker,repository_id,issue_id,issue_number,destination,desired_date,desired_seconds,remote_id,last_body,status) VALUES(1,'11:22:33',1,1,'2026-10-26T00:00:00.000Z',(SELECT nonce FROM github_publication_instance WHERE singleton=1),'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa','77','900','5','https://github.com/owned/disposable/issues/5','2026-10-01',3600,'4321','Owned previous body','published');`)
+    } catch (error) {
+      const errors = [error]
+      try {
+        await close()
+      } catch (cleanupError) {
+        errors.push(cleanupError)
+      }
+      if (errors.length > 1) {
+        throw new AggregateError(errors, 'Publication restore setup and cleanup failed', { cause: error })
+      }
+      throw error
+    }
+  }, 60_000)
+  afterAll(close)
+
+  it('[native] real bundle restore preserves remote receipts but fences old outbound publication consent', async () => {
     const bundle = await createBackup({
       databasePath: sourcePath,
       attachmentDirectory,
-      outputDirectory: join(dir, 'backups'),
+      outputDirectory: join(dir!, 'backups'),
     })
-    const target = join(dir, 'restored.sqlite')
+    const target = join(dir!, 'restored.sqlite')
     await restoreBackup({
       bundleDirectory: bundle.bundleDirectory,
       targetDatabasePath: target,
@@ -56,11 +90,7 @@ it('[native] real bundle restore preserves remote receipts but fences old outbou
     expect(
       restored.prepare('SELECT token,expires_at FROM github_publication_dispatch').get(),
     ).toEqual({ token: null, expires_at: 0 })
-  } finally {
-    source?.close()
-    restored?.close()
-    await rm(dir, { recursive: true, force: true })
-  }
+  })
 })
 
 it.each(['known', 'unknown', 'snapshot_before_attempt'] as const)(

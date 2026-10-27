@@ -158,3 +158,81 @@ it('does not classify a user-controlled query parameter as a D1 network cause', 
   const clean = scrubWorkerEvent({}, { originalException: captured[0] })!
   expect(clean.tags?.failure_code).toBe('database_query_failed')
 })
+
+it('preserves the initiating stack and classifies retained cleanup causes without private data', () => {
+  const captured: Error[] = []
+  vi.mocked(Sentry.captureException).mockImplementation(error => { captured.push(error as Error); return 'e'.repeat(32) })
+  const primary = new Error('SECRET primary')
+  primary.stack = 'Error: SECRET primary\n    at refresh (entries/worker/src/index.ts:468:7)'
+  const cleanup = new Error('Failed query: SELECT SECRET', { cause: new Error('D1_ERROR: Network connection lost. SECRET') })
+  const original = new AggregateError([primary, cleanup], 'SECRET aggregate', { cause: primary })
+  captureWorkerError(original, { phase: 'scheduled', operation: 'Deel payment status' })
+  expect(captured[0]?.stack).toBe(primary.stack)
+  const clean = scrubWorkerEvent({ release, exception: { values: [{ type: 'AggregateError', value: original.message,
+    stacktrace: { frames: [{ filename: 'entries/worker/src/index.ts', lineno: 468, colno: 7 }] } }] } }, { originalException: captured[0] })!
+  expect(clean.tags).toMatchObject({ failure_code: 'd1_network_lost', operation: 'Deel payment status' })
+  expect(clean.exception?.values?.[0]?.stacktrace?.frames).toEqual([
+    { filename: 'entries/worker/src/index.ts', abs_path: '/entries/worker/src/index.ts', lineno: 468, colno: 7, in_app: true },
+  ])
+  expect(JSON.stringify(clean)).not.toContain('SECRET')
+  expect(JSON.stringify(clean)).not.toContain('SELECT')
+})
+
+it('bounds cyclic aggregate children and never invokes accessors or iterators', () => {
+  const captured: Error[] = []
+  vi.mocked(Sentry.captureException).mockImplementation(error => { captured.push(error as Error); return 'e'.repeat(32) })
+  let reads = 0
+  const original = new AggregateError([], 'SECRET')
+  const children = [original, new Error('Failed query: SELECT SECRET')]
+  Object.defineProperty(children, '2', { get: () => { reads++; throw new Error('SECRET') } })
+  Object.defineProperty(children, Symbol.iterator, { get: () => { reads++; throw new Error('SECRET') } })
+  Object.defineProperty(original, 'errors', { value: children })
+  Object.defineProperty(original, 'cause', { get: () => { reads++; throw new Error('SECRET') } })
+  captureWorkerError(original, { phase: 'scheduled' })
+  expect(reads).toBe(0)
+  const clean = scrubWorkerEvent({}, { originalException: captured[0] })!
+  expect(clean.tags?.failure_code).toBe('database_query_failed')
+  expect(JSON.stringify(clean)).not.toContain('SECRET')
+})
+
+it('does not inspect children beyond the eight-object diagnostic budget', () => {
+  const captured: Error[] = []
+  vi.mocked(Sentry.captureException).mockImplementation(error => { captured.push(error as Error); return 'e'.repeat(32) })
+  const original = new AggregateError([
+    ...Array.from({ length: 7 }, () => new Error('SECRET')),
+    new Error('D1_ERROR: Network connection lost. SECRET'),
+  ], 'SECRET')
+  captureWorkerError(original, { phase: 'scheduled' })
+  expect(scrubWorkerEvent({}, { originalException: captured[0] })!.tags?.failure_code).toBe('unknown')
+})
+
+it('tolerates revoked aggregate arrays and hostile errors properties', () => {
+  const captured: Error[] = []
+  vi.mocked(Sentry.captureException).mockImplementation(error => { captured.push(error as Error); return 'e'.repeat(32) })
+  const revoked = Proxy.revocable([], {})
+  revoked.revoke()
+  const original = new AggregateError([], 'SECRET')
+  Object.defineProperty(original, 'errors', { value: revoked.proxy, configurable: true })
+  expect(() => captureWorkerError(original, { phase: 'scheduled' })).not.toThrow()
+  let reads = 0
+  Object.defineProperty(original, 'errors', { get: () => { reads++; throw new Error('SECRET') } })
+  expect(() => captureWorkerError(original, { phase: 'scheduled' })).not.toThrow()
+  expect(reads).toBe(0)
+  for (const error of captured) expect(JSON.stringify(scrubWorkerEvent({}, { originalException: error }))).not.toContain('SECRET')
+})
+
+it('never reads a plain cause or child stack and prefers a nested initiating Error over cleanup', () => {
+  const captured: Error[] = []
+  vi.mocked(Sentry.captureException).mockImplementation(error => { captured.push(error as Error); return 'e'.repeat(32) })
+  let reads = 0
+  const plain = Object.defineProperty({}, 'stack', { get: () => { reads++; throw new Error('SECRET') } })
+  const primary = new Error('SECRET primary')
+  primary.stack = 'Error: SECRET primary\n    at origin (entries/worker/src/index.ts:468:7)'
+  const nested = new AggregateError([plain, primary], 'SECRET nested', { cause: plain })
+  const cleanup = new Error('SECRET cleanup')
+  cleanup.stack = 'Error: SECRET cleanup\n    at cleanup (entries/worker/src/index.ts:496:7)'
+  captureWorkerError(new AggregateError([nested, cleanup], 'SECRET outer', { cause: nested }), { phase: 'scheduled' })
+  expect(reads).toBe(0)
+  expect(captured[0]?.stack).toBe(primary.stack)
+  expect(JSON.stringify(scrubWorkerEvent({}, { originalException: captured[0] }))).not.toContain('SECRET')
+})
