@@ -1,0 +1,87 @@
+{
+  "issue": 99,
+  "date": "2026-10-26",
+  "source_revision": "f1eb4a06769144ea3f0dc350d228f889fda35a3f",
+  "runtime": "Owned local Miniflare/workerd D1 and R2; native SQLite; compiled ez CLI. No new Cloudflare deployment.",
+  "format": {
+    "bundle_version": "0038",
+    "schema": "schema.json with exact schema SQL and migration ledger",
+    "rows": "SQL-side typed scalar encoding; bounded rows/<table>/<chunk>.json",
+    "attachments": "All referenced file_objects and brand_assets bytes verified against hash/length; original storage keys retained"
+  },
+  "proofs": [
+    "Actual exportBundle output downloaded from owned R2; executed exact generated RESTORE.md command with compiled CLI.",
+    "NULL, empty string, embedded NUL, Unicode, BLOB, int64 maximum and round-trip real value preserved.",
+    "Attachment bytes identical; damaged object and legacy0037 fail closed; existing target refused.",
+    "Current full migrated schema reconstructed; 0176 migration receipt retained; transient capture tables empty.",
+    "Nonempty auth_first_run, API token and session tables cleared; restored database remains quarantined before atomic publication.",
+    "Ordinary source update during streaming leaves frozen prior value; closure and recorded retention erasure purge active typed copies.",
+    "Erasure after final object publication prevents completed backup receipt; identical successful replay preserves original completion timestamps.",
+    "Two late-R2-write races covered: requeue after initial cleanup, and generation CAS prevents older empty-list cleanup deleting a newer obligation."
+  ],
+  "scale": {
+    "proof": "synthetic-production-shape",
+    "tables": 243,
+    "rows": 84570,
+    "d1_batch_calls": 412,
+    "d1_direct_calls": 1,
+    "r2_puts": 657,
+    "elapsed_ms": 13429,
+    "max_page_bytes": 507500
+  },
+  "scale_limits": [
+    "Elapsed time is local test wall time, not a claim of remote Cloudflare CPU measurement.",
+    "R2 PUTs in the scale case are counted through an in-memory sink; separate full native Worker and real R2 cases cover transport.",
+    "413 D1 calls plus small scheduler/completion overhead fits current paid1000 allowance; this does not prove Free50 or unbounded data."
+  ],
+  "production_read_only_fit_check": {
+    "tables": 243,
+    "rows": 84905,
+    "raw_column_bytes": 20389518,
+    "writes": 0,
+    "file_objects": {
+      "count": 7,
+      "bytes": 3643430,
+      "maximum_bytes": 2118383,
+      "over_16MiB": 0
+    },
+    "brand_assets": {
+      "count": 3,
+      "bytes": 9119,
+      "maximum_bytes": 4084,
+      "over_16MiB": 0
+    },
+    "privacy": "Only table/column metadata, counts and byte-length sums read. No row contents or credentials recorded."
+  },
+  "validation": {
+    "db_backup_archive_and_staging": 19,
+    "core_invariants_and_file_validator": 19,
+    "cli_backup_and_restore": 15,
+    "native_worker_nightly_and_cleanup": 6,
+    "consumer_peer_checks": "12 SQLite/D1 offsite cases and 4 decrypt cases passed at 77e8588f; implementation unchanged after integration.",
+    "typecheck": [
+      "db",
+      "cli",
+      "worker"
+    ],
+    "lint": "All touched DB/CLI/Worker source and tests passed."
+  },
+  "custody": {
+    "source": "Frozen in D1 transaction; temporary data excluded from recursive capture.",
+    "expiration": "One hour; minute cleanup purges abandoned rows.",
+    "privacy": "Formal closure, retention erasure receipt, organization/user deletion purge in same SQL transaction.",
+    "partial_r2": "Private and not eligible for ZIP/L2; cleanup after one-hour in-flight grace, version-fenced retries; completed historical backups retained under existing policy.",
+    "restoration": "Offline quarantine; current evidence replay and reviewed release still required."
+  },
+  "bounds": [
+    "2,000,000 bytes per encoded D1 row; 16MiB per CSV, schema, typed chunk or attachment.",
+    "Legacy0037 cannot restore losslessly and is explicitly refused.",
+    "No live D1 replacement, production restore, provider payment action, secret export or human walkthrough claimed."
+  ],
+  "references": [
+    "docs/evidence/1294-container-guide-walkthrough.md",
+    "docs/evidence/99-worker-guide-walkthrough.md",
+    "https://developers.cloudflare.com/d1/platform/limits/",
+    "https://developers.cloudflare.com/workers/runtime-apis/handlers/scheduled/"
+  ]
+}
