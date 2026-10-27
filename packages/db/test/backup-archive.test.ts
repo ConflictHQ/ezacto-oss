@@ -1,3 +1,4 @@
+import { workerBackupFiles } from '@ezacto/core'
 import { execFileSync } from 'node:child_process'
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
@@ -94,6 +95,7 @@ describe('backup archive stream', () => {
       ...Object.keys(manifest.tables)
         .sort()
         .map((t) => `tables/${t}.csv`),
+      ...workerBackupFiles(manifest.files).map(file => file.name),
     ])
 
     for (const name of listing) {

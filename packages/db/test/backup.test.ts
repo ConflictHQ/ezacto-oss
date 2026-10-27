@@ -116,7 +116,8 @@ describe('backup module', () => {
         'sessions',
         'auth_tokens',
         'oidc_transactions',
-        '_ezacto_migrations',
+        'api_tokens',
+        'auth_first_run',
         'backup_download_links',
         'backup_download_limits',
       ]) {
@@ -124,6 +125,8 @@ describe('backup module', () => {
         expect(objects.has(`backups/2026-09-01/tables/${table}.csv`), table).toBe(true)
         expect(manifest.restore_skips, table).toContain(table)
       }
+      expect(manifest.restore_skips).not.toContain('_ezacto_migrations')
+      expect(manifest.restore_skips).not.toContain('calendar_connections')
       // And the skip list never names a table the bundle does not carry.
       for (const skipped of manifest.restore_skips) expect(covered).toContain(skipped)
     }, 60_000)
@@ -142,7 +145,7 @@ describe('backup module', () => {
       const manifest = await exportBundle(database, store, 'backups/2026-09-01/')
 
       expect(manifest.schema_version).toBe(1)
-      expect(manifest.bundle_version).toBe('0037')
+      expect(manifest.bundle_version).toBe('0038')
       expect(manifest.exported_at).toMatch(/^\d{4}-\d{2}-\d{2}T/)
       const expected = await backupTables(database)
       expect(manifest.table_count).toBe(expected.length)

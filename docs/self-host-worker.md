@@ -227,9 +227,9 @@ automatically, while `prod` remains an explicit decision. Database migrations
 run before request handling and deployment does not bypass a failed check.
 
 D1 Time Travel is an in-place database undo, not a complete Ezacto backup. It
-does not copy the R2 attachment bucket. The Worker also writes a nightly CSV
-bundle to R2 (`backups/<date>/`): rows only, no schema, no attachment bytes, and
-no command reads that format back yet. Read [RESTORE.md](../RESTORE.md) before an
+does not copy the R2 attachment bucket. The Worker also writes a nightly bundle to R2 (`backups/<date>/`). Format 0038+
+includes typed rows, exact schema and verified attachments; `ez restore` reconstructs
+a quarantined SQLite copy. Older CSV-only bundles are not losslessly restorable. Read [RESTORE.md](../RESTORE.md) before an
 incident, including how the Worker and container bundles differ and what is not
 yet synced off-platform.
 

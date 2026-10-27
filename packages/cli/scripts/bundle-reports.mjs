@@ -19,17 +19,19 @@ await build({
   },
 })
 
-// The offline decryption command also shares unpublished, dependency-free
-// domain code. Bundle only that format reader into its public entry module.
-await build({
-  entryPoints: [resolve(root, 'src/backup-decrypt.ts')],
-  outfile: resolve(root, 'dist/backup-decrypt.js'),
-  bundle: true,
-  platform: 'node',
-  format: 'esm',
-  target: 'node22',
-  packages: 'external',
-  alias: {
-    '@ezacto/core': resolve(root, '../core/src/backup-encryption.ts'),
-  },
-})
+// Offline decryption and Worker restore share unpublished, dependency-free
+// format code. Include it in both public entry modules.
+for (const entry of ['backup-decrypt', 'worker-backup']) {
+  await build({
+    entryPoints: [resolve(root, `src/${entry}.ts`)],
+    outfile: resolve(root, `dist/${entry}.js`),
+    bundle: true,
+    platform: 'node',
+    format: 'esm',
+    target: 'node22',
+    packages: 'external',
+    alias: {
+      '@ezacto/core': resolve(root, 'scripts/backup-core.ts'),
+    },
+  })
+}

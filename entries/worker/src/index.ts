@@ -16,7 +16,7 @@ import { workerInstanceThemeSurface } from './instance-theme.js'
 import { consumeCloudflareEmailBatch } from './email-queue.js'
 import { createAttachmentResolver } from './invoice-documents.js'
 import { runDemoMaintenance, seedDemoSender } from './demo.js'
-import { runNightlyExport } from './nightly-export.js'
+import { cleanupAbandonedWorkerBackups, runNightlyExport } from './nightly-export.js'
 import { createScheduledBillReconciliation } from '@ezacto/integrations'
 import {
   createR2AttachmentObjectStore,
@@ -375,6 +375,9 @@ export const createWorker = (options: WorkerOptions = {}): ExportedHandler<Worke
         console.error('[worker] scheduled run expiry failed', error)
         report(error, { phase: 'scheduled', operation: 'scheduled run expiry' })
       }))
+    }
+    if (controller.cron === '* * * * *' && env.ATTACHMENTS !== undefined && !demoDeployment(env)) {
+      await isolate('temporary backup cleanup', () => cleanupAbandonedWorkerBackups(env.DB, env.ATTACHMENTS!))
     }
     // Not on the demo (#931): its database is thrown away at this hour, and an
     // export would copy whatever visitors typed into it into the bucket, which
