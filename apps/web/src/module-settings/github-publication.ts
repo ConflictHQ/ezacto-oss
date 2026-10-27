@@ -7,7 +7,7 @@ export type GithubPublicationUiApi = Pick<EzactoClient, 'getGithubPublications' 
 interface Active extends SessionPresenter { signal: AbortSignal; identity: { profile: string } }
 type Data = GithubPublicationsEnvelope['data']
 type Preview = GithubPublicationPreviewEnvelope['data']
-const statusLabels: Record<string, string> = { pending: 'Queued', attempted: 'Confirming GitHub response', published: 'Published', ambiguous: 'Needs review', conflicted: 'Comment changed in GitHub', deferred: 'Waiting for GitHub', retired: 'Removed', failed: 'Needs attention', adopted: 'GitHub edit accepted', unlinked: 'Unlinked' }
+const statusLabels: Record<string, string> = { pending: 'Queued', attempted: 'Confirming GitHub response', published: 'Published', ambiguous: 'Needs review', conflicted: 'Comment changed in GitHub', deferred: 'Waiting for GitHub', retired: 'Removed', failed: 'Needs attention', adopted: 'GitHub edit accepted', unlinked: 'Unlinked', prior_instance: 'Previous instance — review required' }
 const statusLabel = (value: string): string => Object.hasOwn(statusLabels, value) ? statusLabels[value]! : 'Needs review'
 const duration = (seconds: number) => `${Math.floor(seconds / 3600)}h ${Math.floor(seconds % 3600 / 60)}m ${seconds % 60}s`
 const option = (value: string, text: string) => { const el = document.createElement('option'); el.value = value; el.textContent = text; return el }
@@ -93,11 +93,16 @@ export const createGithubPublicationController = (api: GithubPublicationUiApi | 
       heading.textContent = `${row.destination} · time entry ${row.entry_id}`
       detail.textContent = `${statusLabel(row.status)}${row.spent_date ? ` · ${row.spent_date}` : ''}${row.seconds !== null ? ` · ${duration(row.seconds)}` : ''}${row.failure_code ? ' · Review this publication before retrying.' : ''}${row.next_retry_at ? ` · retry after ${new Date(row.next_retry_at).toLocaleString()}` : ''}`
       card.append(heading, detail)
+      if (row.status === 'prior_instance') {
+        const note = document.createElement('p')
+        note.textContent = 'Preview and allow this time entry again to reuse a verified GitHub comment. Unlink leaves the existing comment in GitHub; a later consent can create another note.'
+        card.appendChild(note)
+      }
       if (row.status !== 'unlinked') {
         const form = document.createElement('form'); form.className = 'settings-form'
         const label = document.createElement('label'); label.textContent = 'Resolve publication'
         const select = document.createElement('select'); select.append(option('unlink', 'Unlink — keep the GitHub comment'))
-        select.append(option('retry', 'Retry checking this publication'))
+        if (row.status !== 'prior_instance') select.append(option('retry', 'Retry checking this publication'))
         if (row.status === 'conflicted') select.append(option('adopt', 'Adopt the edited GitHub comment'), option('restore', 'Restore the eZacto comment'))
         label.appendChild(select)
         const explanation = document.createElement('p')

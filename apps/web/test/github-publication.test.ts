@@ -78,6 +78,15 @@ describe('GitHub publication settings', () => {
     await vi.waitFor(() => expect(mock.actGithubPublication).toHaveBeenCalledOnce())
     expect(mock.actGithubPublication.mock.calls[0]![0]).toMatchObject({ id: 4, body: { expected_version: 5, action: 'restore', confirm: true } })
   })
+  it('keeps previous-instance receipts for review and offers only explicit unlink', async () => {
+    const mock = api(); mock.getGithubPublications.mockResolvedValue({ data: { ...initial(), publications: [{ id: 4, connection_id: 'connection', entry_id: 45, destination: 'owned/project#9', spent_date: '2026-09-17', seconds: 3661, status: 'prior_instance', source_version: 5, version: 5, remote_id: '99', failure_code: null, next_retry_at: null }] } })
+    await createGithubPublicationController(mock).load(session().active)
+    expect(el('rows').textContent).toContain('Previous instance — review required')
+    expect(el('rows').textContent).toContain('a later consent can create another note')
+    const select = el('rows').querySelector<HTMLSelectElement>('select')!
+    expect([...select.options].map(item => item.value)).toEqual(['unlink'])
+    expect(mock.actGithubPublication).not.toHaveBeenCalled()
+  })
   it('discards private previews after logout and ignores stale responses', async () => {
     const mock = api(); let finish!: (value: Awaited<ReturnType<GithubPublicationUiApi['previewGithubPublication']>>) => void
     mock.previewGithubPublication.mockImplementationOnce(() => new Promise(resolve => { finish = resolve }))
