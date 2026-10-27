@@ -104,7 +104,9 @@ jobs:
           # schema growth pushed a healthy shard past the old 20-minute job
           # deadline (#745). A bounded 30 minutes leaves completion headroom.
           - { name: db 1, workspaces: -w @ezacto/db, shard: 1/12, timeout_minutes: 30 }
-          - { name: db 2, workspaces: -w @ezacto/db, shard: 2/12, timeout_minutes: 30 }
+          # Run 40448030202 passed all 306 DB2 tests at 30m, then hit the job cap.
+          # Leave test limits and sharding intact; allow completion and cleanup.
+          - { name: db 2, workspaces: -w @ezacto/db, shard: 2/12, timeout_minutes: 35 }
           - { name: db 3, workspaces: -w @ezacto/db, shard: 3/12, timeout_minutes: 30 }
           - { name: db 4, workspaces: -w @ezacto/db, shard: 4/12, timeout_minutes: 30 }
           # Run 40433991573 was still completing passing DB5 cases at 30m.
