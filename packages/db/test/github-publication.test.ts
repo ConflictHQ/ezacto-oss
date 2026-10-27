@@ -130,6 +130,38 @@ for (const runtime of ['SQLite', 'D1'] as const)
       await query('UPDATE github_publications SET source_version=2 WHERE id=?', id)
       expect(await journal.claim(key, 1)).toBeNull()
     })
+    it('[native] keeps a transferred issue destination separate and gates it on retiring the old comment', async () => {
+      const { id, key, journal, ctx } = await setup(),
+        held = (await journal.claim(key, 1))!
+      await journal.save({ ...held, status: 'published', remoteId: 'old-comment' })
+      await journal.release(key, held.fence)
+      await query(
+        "INSERT INTO github_read_resources(connection_id,repository_id,full_name,project_id) VALUES(?,'78','owned/second',1)",
+        key.connectionId,
+      )
+      const [moved] = await query(
+        "INSERT INTO github_publications(id,connection_id,entry_id,subject_user_id,subject_created_at,consent_nonce,marker,repository_id,issue_id,issue_number,destination,desired_date,desired_seconds) SELECT id+1000000,connection_id,entry_id,subject_user_id,subject_created_at,consent_nonce,marker,'78',issue_id,'9','https://github.com/owned/second/issues/9',desired_date,desired_seconds FROM github_publications WHERE id=? RETURNING id",
+        id,
+      )
+      const second = new NativeGithubPublicationJournal(db, Number(moved!.id), ctx.now),
+        movedKey = { ...key, itemId: '9' }
+      expect(await second.claim(movedKey, 1)).toBeNull()
+      await query(
+        "UPDATE github_publications SET status='unlinked',source_version=source_version+1 WHERE id=?",
+        id,
+      )
+      const admitted = await second.claim(movedKey, 1)
+      expect(admitted).not.toBeNull()
+      const rows = await query(
+        'SELECT repository_id,remote_id FROM github_publications WHERE entry_id=? ORDER BY id',
+        Number(key.entryId),
+      )
+      expect(rows).toEqual([
+        { repository_id: '77', remote_id: 'old-comment' },
+        { repository_id: '78', remote_id: null },
+      ])
+    })
+
     it('[native] disconnect blocks new writes while late acknowledgements remain durable', async () => {
       const { id, key, journal } = await setup()
       const held = (await journal.claim(key, 1))!

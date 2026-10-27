@@ -30,7 +30,7 @@ export const githubPublicationMigration = [
     create_attempts INTEGER NOT NULL DEFAULT 0 CHECK(create_attempts BETWEEN 0 AND 2),
     retry_at INTEGER, next_due INTEGER NOT NULL DEFAULT 0, failure_code TEXT,
     fence INTEGER NOT NULL DEFAULT 0, lease_until INTEGER,
-    UNIQUE(connection_id,entry_id,issue_id,consent_nonce,subject_user_id,subject_created_at),
+    UNIQUE(connection_id,entry_id,repository_id,issue_id,consent_nonce,subject_user_id,subject_created_at),
     CHECK((desired_date IS NULL)=(desired_seconds IS NULL))
   ) STRICT`,
   `CREATE TRIGGER github_publication_identity_immutable BEFORE UPDATE ON github_publications
