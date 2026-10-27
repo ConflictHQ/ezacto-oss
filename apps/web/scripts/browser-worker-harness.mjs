@@ -776,7 +776,10 @@ const fixtureControl = async (request, response) => {
     }
   } else if (action === 'scheduled-manifest-seed') {
     await run(`DELETE FROM auth_rate_limits WHERE action = 'sign_in'`)
-    const now = new Date().toISOString(), expires = new Date(Date.now()-7200000).toISOString()
+    // Scheduling and review-link validation use the real runtime clock, not
+    // the fixed time-entry fixture date. Keep the original one-hour decision window valid.
+    const proposedAt = new Date()
+    const now = proposedAt.toISOString(), expires = new Date(proposedAt.getTime()+3600000).toISOString()
     const clients=[], invoices=[]
     scheduledManifestFixture={clientIds:clients,projectIds:[],jobId:null}
     for (const [index,label] of ['A','B'].entries()) {
