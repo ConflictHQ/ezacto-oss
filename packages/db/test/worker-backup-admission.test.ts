@@ -180,7 +180,8 @@ describe('Worker snapshot bounded pages and privacy custody', () => {
       const successful = await recordBackupStart(db, 'manual', now)
       const good = await exportBundle(db, { async put() {} }, 'good/')
       await completeBackupRun(db, successful, good, 'good/', now)
-      await completeBackupRun(db, successful, good, 'good/', now)
+      await completeBackupRun(db, successful, good, 'good/', new Date(Date.parse(now)+60000).toISOString())
+      expect(await db.prepare('SELECT completed_at,updated_at FROM backup_runs WHERE id=?').bind(successful).first()).toEqual({completed_at:now,updated_at:now})
       await failBackupRun(db, successful, 'lost acknowledgement', now)
       expect(
         await db.prepare('SELECT status FROM backup_runs WHERE id=?').bind(successful).first(),
