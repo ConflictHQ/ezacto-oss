@@ -74,7 +74,7 @@ export const githubPublicationOperations: readonly ApiContractOperation[] = [
   },
   {
     method: 'get',
-    path: root + '/preview/{id}',
+    path: root + '/preview/:id',
     operationId: 'previewGithubPublication',
     summary: 'Preview date and duration before publication consent',
     tag: 'work-items',
@@ -107,7 +107,7 @@ export const githubPublicationOperations: readonly ApiContractOperation[] = [
   },
   {
     method: 'post',
-    path: root + '/{id}/actions',
+    path: root + '/:id/actions',
     operationId: 'actGithubPublication',
     summary: 'Resolve a publication conflict or retry decision',
     tag: 'work-items',

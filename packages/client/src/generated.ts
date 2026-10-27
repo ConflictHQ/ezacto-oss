@@ -6756,7 +6756,7 @@ export class EzactoClient {
   async previewGithubPublication(args: { "id": number; signal?: AbortSignal; headers?: HeadersInit }): Promise<GithubPublicationPreviewEnvelope> {
     const headers = new Headers(args.headers);
 
-    return this.request<GithubPublicationPreviewEnvelope>("GET", "/api/v1/work-items/github/publication/preview/{id}".replace(":id", encodeURIComponent(String(args["id"]))), {
+    return this.request<GithubPublicationPreviewEnvelope>("GET", "/api/v1/work-items/github/publication/preview/:id".replace(":id", encodeURIComponent(String(args["id"]))), {
       signal: args.signal,
       headers,
     });
@@ -6785,7 +6785,7 @@ export class EzactoClient {
   async actGithubPublication(args: { "id": number; body: GithubPublicationActionRequest; signal?: AbortSignal; headers?: HeadersInit }): Promise<void> {
     const headers = new Headers(args.headers);
 
-    return this.request<void>("POST", "/api/v1/work-items/github/publication/{id}/actions".replace(":id", encodeURIComponent(String(args["id"]))), {
+    return this.request<void>("POST", "/api/v1/work-items/github/publication/:id/actions".replace(":id", encodeURIComponent(String(args["id"]))), {
       body: args.body,
       signal: args.signal,
       headers,
