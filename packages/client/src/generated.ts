@@ -480,6 +480,53 @@ export type CalendarRefreshResult = {
 };
 };
 
+export type CalendarOperatorCleanupList = {
+  "data": Array<{
+  "id": string;
+  "user_id": number;
+  "provider": "google" | "microsoft";
+  "instance_nonce": string;
+  "generation": number;
+  "credential_revision": number;
+  "key_id": string;
+  "request_id": string | null;
+  "reason": "disconnect" | "closure" | "reauth" | "restore" | "reset";
+  "review_instance": string;
+  "status": "pending" | "manual_required";
+  "created_at": string;
+  "provider_cleanup_in_progress": boolean;
+}>;
+  "page": {
+  "next_cursor": string | null;
+};
+};
+
+export type CalendarOperatorCleanupInput = {
+  "id": string;
+  "user_id": number;
+  "provider": "google" | "microsoft";
+  "instance_nonce": string;
+  "generation": number;
+  "credential_revision": number;
+  "key_id": string;
+  "request_id": string | null;
+  "reason": "disconnect" | "closure" | "reauth" | "restore" | "reset";
+  "review_instance": string;
+  "expected_status": "pending" | "manual_required";
+  "evidence_reference": string;
+  "confirm_provider_removed": true;
+};
+
+export type CalendarOperatorCleanupReceiptEnvelope = {
+  "data": {
+  "obligation_id": string;
+  "kind": "operator_attestation";
+  "provider_verified": false;
+  "attested_at": string;
+  "evidence_sha256": string;
+};
+};
+
 export type CalendarFeedInput = {
   "scope": "self" | "project" | "team";
   "project_id": number | null;
@@ -2869,6 +2916,7 @@ export type CalendarCleanupStatus = {
   "manual_required": number;
   "revoked": number;
   "manual_confirmed"?: number;
+  "operator_confirmed"?: number;
 };
 
 export type CalendarProposal = {
@@ -7601,6 +7649,26 @@ export class EzactoClient {
     const headers = new Headers(args.headers);
 
     return this.request<CalendarRefreshResult>("POST", "/api/v1/calendar-connections/:provider/refresh".replace(":provider", encodeURIComponent(String(args["provider"]))), {
+      body: args.body,
+      signal: args.signal,
+      headers,
+    });
+  }
+
+  async listCalendarOperatorCleanup(args: { query?: { "after"?: string }; signal?: AbortSignal; headers?: HeadersInit } = {}): Promise<CalendarOperatorCleanupList> {
+    const headers = new Headers(args.headers);
+
+    return this.request<CalendarOperatorCleanupList>("GET", "/api/v1/admin/calendar-cleanup", {
+      query: args.query,
+      signal: args.signal,
+      headers,
+    });
+  }
+
+  async confirmCalendarOperatorCleanup(args: { body: CalendarOperatorCleanupInput; signal?: AbortSignal; headers?: HeadersInit }): Promise<CalendarOperatorCleanupReceiptEnvelope> {
+    const headers = new Headers(args.headers);
+
+    return this.request<CalendarOperatorCleanupReceiptEnvelope>("POST", "/api/v1/admin/calendar-cleanup/confirm", {
       body: args.body,
       signal: args.signal,
       headers,

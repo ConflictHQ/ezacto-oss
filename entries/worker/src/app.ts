@@ -1,3 +1,5 @@
+import { installCalendarOperatorCleanupRoutes } from '@ezacto/api'
+import type { CalendarOperatorCleanupStore } from '@ezacto/core'
 import { installCalendarConnectionRoutes, installCalendarAuthorizationRoutes, type CalendarConnectionPort, type CalendarAuthorizationPort } from '@ezacto/api'
 import { installInvoiceProviderAlertRoutes, type InvoiceProviderAlertService } from '@ezacto/api'
 import type { BankFeedEnvironment, CalendarEnvironment } from '@ezacto/integrations'
@@ -446,6 +448,7 @@ export interface RuntimeServices {
   team: TeamRouteOptions['repository']
   trackedResources: TrackedResourceRepository & HarvestTimeEntrySource & HarvestExpenseSource
   /** Calendar events offered as time, accepted through `trackedResources` (issue 428). */
+  calendarOperatorCleanup?: CalendarOperatorCleanupStore
   calendarConnections?: CalendarConnectionPort
   calendarAuthorization?: CalendarAuthorizationPort
   calendarMaintenance?: { processDue(): Promise<void> }
@@ -987,6 +990,7 @@ export const createApp = (
               cursorSigningKey: services.cursorSigningKey,
               now: () => new Date(systemClock.now().instant),
             })
+            if(services.calendarOperatorCleanup) installCalendarOperatorCleanupRoutes(api,services.calendarOperatorCleanup)
             if(services.calendarConnections) installCalendarConnectionRoutes(api,services.calendarConnections)
             if(services.calendarAuthorization) installCalendarAuthorizationRoutes(api,services.calendarAuthorization)
             installCalendarProposalRoutes(api, {

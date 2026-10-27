@@ -125,3 +125,5 @@ export * from './calendar-oauth.js'
 export { workerBackupFiles, WORKER_BACKUP_FILE_MAX_BYTES, WORKER_BACKUP_FILE_MAX_COUNT, type WorkerBackupFileReceipt, type WorkerBackupFileEntry } from './worker-backup-files.js'
 
 export * from './worker-backup-policy.js'
+
+export * from './calendar-operator-cleanup.js'

@@ -1,3 +1,4 @@
+import { createCalendarOperatorCleanupStore } from '@ezacto/db'
 import { createConfiguredCalendarServices } from '@ezacto/integrations'
 import { createCalendarOAuthStore } from '@ezacto/db'
 import { createCalendarConnectionStore } from '@ezacto/db'
@@ -978,6 +979,7 @@ export const createContainerRuntime = async (
     estimateTemplates: createEstimateTemplateRepository(drizzle),
     clientRateCards: createClientRateCardRepository(drizzle),
       trackedResources,
+      calendarOperatorCleanup: createCalendarOperatorCleanupStore(drizzle),
       calendarConnections: calendar.sync,
       calendarAuthorization: calendar.authorization,
       calendarMaintenance: calendar.maintenance,

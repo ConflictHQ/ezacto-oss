@@ -1,3 +1,4 @@
+import { calendarOperatorCleanupOperations, calendarOperatorCleanupSchemas } from './calendar-operator-cleanup-contract.js'
 import { calendarConnectionOperations, calendarConnectionSchemas } from './calendar-connection-contract.js'
 import { invoiceProviderAlertOperations, invoiceProviderAlertSchemas } from './invoice-provider-alert-contract.js'
 import { bankDepositOperations, bankDepositSchemas } from './bank-deposit-contract.js'
@@ -3801,6 +3802,7 @@ export const apiContractOperations: readonly ApiContractOperation[] = [
   ...timeEntryOperations,
   ...calendarProposalOperations,
   ...calendarConnectionOperations,
+  ...calendarOperatorCleanupOperations,
   ...allocationOperations,
   ...timeOffOperations,
   ...organizationHolidayOperations,
@@ -4099,6 +4101,7 @@ export const apiContractSchemas: Readonly<Record<string, JsonSchema>> = {
   ...placeholderPlanningSchemas,
   ...resourceCalendarSchemas,
   ...calendarConnectionSchemas,
+  ...calendarOperatorCleanupSchemas,
   ...calendarFeedSchemas,
   ...attachmentContractSchemas,
   ...staffPaymentSchemas,
@@ -6090,7 +6093,7 @@ export const apiContractSchemas: Readonly<Record<string, JsonSchema>> = {
   },
   TimeEntryEnvelope: envelope("TimeEntry"),
   TimeEntryPage: page("TimeEntry"),
-  CalendarCleanupStatus: {type:'object',additionalProperties:false,required:['pending','manual_required','revoked'],properties:{pending:{type:'integer',minimum:0},manual_required:{type:'integer',minimum:0},revoked:{type:'integer',minimum:0},manual_confirmed:{type:'integer',minimum:0}}},
+  CalendarCleanupStatus: {type:'object',additionalProperties:false,required:['pending','manual_required','revoked'],properties:{pending:{type:'integer',minimum:0},manual_required:{type:'integer',minimum:0},revoked:{type:'integer',minimum:0},manual_confirmed:{type:'integer',minimum:0},operator_confirmed:{type:'integer',minimum:0}}},
   CalendarProposal: {
     type: "object",
     required: [

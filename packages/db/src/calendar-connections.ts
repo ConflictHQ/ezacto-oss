@@ -137,13 +137,15 @@ export const createCalendarConnectionStore = (
         pending: number
         manual_required: number
         revoked: number
+        operator_confirmed: number
         manual_confirmed: number
       }>(
         `SELECT
         (SELECT count(*) FROM calendar_cleanup_obligations WHERE status='pending') AS pending,
         (SELECT count(*) FROM calendar_cleanup_obligations WHERE status='manual_required') AS manual_required,
-        (SELECT count(*) FROM calendar_cleanup_obligations c WHERE status='revoked' AND NOT EXISTS(SELECT 1 FROM calendar_manual_cleanup_receipts r WHERE r.obligation_id=c.id)) AS revoked,
-        (SELECT count(*) FROM calendar_manual_cleanup_receipts) AS manual_confirmed
+        (SELECT count(*) FROM calendar_cleanup_obligations c WHERE status='revoked' AND NOT EXISTS(SELECT 1 FROM calendar_manual_cleanup_receipts r WHERE r.obligation_id=c.id) AND NOT EXISTS(SELECT 1 FROM calendar_operator_cleanup_receipts r WHERE r.obligation_id=c.id)) AS revoked,
+        (SELECT count(*) FROM calendar_manual_cleanup_receipts) AS manual_confirmed,
+        (SELECT count(*) FROM calendar_operator_cleanup_receipts) AS operator_confirmed
         WHERE (${session}) AND EXISTS(SELECT 1 FROM users WHERE id=? AND profile='administrator')`,
         [...authorityValues(authority, now), authority.userId],
       )
@@ -152,6 +154,7 @@ export const createCalendarConnectionStore = (
         pending: row.pending,
         manual_required: row.manual_required,
         revoked: row.revoked,
+        ...(row.operator_confirmed > 0 ? { operator_confirmed: row.operator_confirmed } : {}),
         ...(row.manual_confirmed > 0 ? { manual_confirmed: row.manual_confirmed } : {}),
       }
     },

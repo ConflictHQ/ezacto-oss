@@ -9859,6 +9859,139 @@
         }
       }
     },
+    "/api/v1/admin/calendar-cleanup": {
+      "get": {
+        "operationId": "listCalendarOperatorCleanup",
+        "summary": "Review retained old-incarnation and closed-account calendar cleanup",
+        "tags": [
+          "time-entries"
+        ],
+        "security": [
+          {
+            "cookieSession": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CalendarOperatorCleanupList"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/MalformedRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/AuthenticationRequired"
+          },
+          "403": {
+            "$ref": "#/components/responses/InsufficientPermission"
+          },
+          "404": {
+            "$ref": "#/components/responses/ResourceNotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/StateConflict"
+          },
+          "413": {
+            "$ref": "#/components/responses/PayloadTooLarge"
+          },
+          "422": {
+            "$ref": "#/components/responses/ValidationFailed"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "503": {
+            "$ref": "#/components/responses/ServiceUnavailable"
+          }
+        },
+        "x-ezacto-runtime-path": "/api/v1/admin/calendar-cleanup",
+        "x-ezacto-generate-client": true,
+        "parameters": [
+          {
+            "name": "after",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 256
+            }
+          }
+        ]
+      }
+    },
+    "/api/v1/admin/calendar-cleanup/confirm": {
+      "post": {
+        "operationId": "confirmCalendarOperatorCleanup",
+        "summary": "Record administrator evidence of exact calendar permission removal",
+        "description": "Operator attestation only; never provider verification. Requires the complete reviewed custody identity.",
+        "tags": [
+          "time-entries"
+        ],
+        "security": [
+          {
+            "cookieSession": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CalendarOperatorCleanupReceiptEnvelope"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/MalformedRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/AuthenticationRequired"
+          },
+          "403": {
+            "$ref": "#/components/responses/InsufficientPermission"
+          },
+          "404": {
+            "$ref": "#/components/responses/ResourceNotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/StateConflict"
+          },
+          "413": {
+            "$ref": "#/components/responses/PayloadTooLarge"
+          },
+          "422": {
+            "$ref": "#/components/responses/ValidationFailed"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "503": {
+            "$ref": "#/components/responses/ServiceUnavailable"
+          }
+        },
+        "x-ezacto-runtime-path": "/api/v1/admin/calendar-cleanup/confirm",
+        "x-ezacto-generate-client": true,
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CalendarOperatorCleanupInput"
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/allocations": {
       "get": {
         "operationId": "listAllocations",
@@ -39285,6 +39418,279 @@
           }
         }
       },
+      "CalendarOperatorCleanupList": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "data",
+          "page"
+        ],
+        "properties": {
+          "data": {
+            "type": "array",
+            "maxItems": 100,
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "id",
+                "user_id",
+                "provider",
+                "instance_nonce",
+                "generation",
+                "credential_revision",
+                "key_id",
+                "request_id",
+                "reason",
+                "review_instance",
+                "status",
+                "created_at",
+                "provider_cleanup_in_progress"
+              ],
+              "properties": {
+                "id": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 256
+                },
+                "user_id": {
+                  "type": "integer",
+                  "minimum": 1
+                },
+                "provider": {
+                  "type": "string",
+                  "enum": [
+                    "google",
+                    "microsoft"
+                  ]
+                },
+                "instance_nonce": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 256
+                },
+                "generation": {
+                  "type": "integer",
+                  "minimum": 1
+                },
+                "credential_revision": {
+                  "type": "integer",
+                  "minimum": 1
+                },
+                "key_id": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 256
+                },
+                "request_id": {
+                  "anyOf": [
+                    {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 256
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "reason": {
+                  "type": "string",
+                  "enum": [
+                    "disconnect",
+                    "closure",
+                    "reauth",
+                    "restore",
+                    "reset"
+                  ]
+                },
+                "review_instance": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 256
+                },
+                "status": {
+                  "type": "string",
+                  "enum": [
+                    "pending",
+                    "manual_required"
+                  ]
+                },
+                "created_at": {
+                  "type": "string"
+                },
+                "provider_cleanup_in_progress": {
+                  "type": "boolean"
+                }
+              }
+            }
+          },
+          "page": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "next_cursor"
+            ],
+            "properties": {
+              "next_cursor": {
+                "anyOf": [
+                  {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 256
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              }
+            }
+          }
+        }
+      },
+      "CalendarOperatorCleanupInput": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "id",
+          "user_id",
+          "provider",
+          "instance_nonce",
+          "generation",
+          "credential_revision",
+          "key_id",
+          "request_id",
+          "reason",
+          "review_instance",
+          "expected_status",
+          "evidence_reference",
+          "confirm_provider_removed"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 256
+          },
+          "user_id": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "provider": {
+            "type": "string",
+            "enum": [
+              "google",
+              "microsoft"
+            ]
+          },
+          "instance_nonce": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 256
+          },
+          "generation": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "credential_revision": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "key_id": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 256
+          },
+          "request_id": {
+            "anyOf": [
+              {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 256
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "reason": {
+            "type": "string",
+            "enum": [
+              "disconnect",
+              "closure",
+              "reauth",
+              "restore",
+              "reset"
+            ]
+          },
+          "review_instance": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 256
+          },
+          "expected_status": {
+            "type": "string",
+            "enum": [
+              "pending",
+              "manual_required"
+            ]
+          },
+          "evidence_reference": {
+            "type": "string",
+            "minLength": 20,
+            "maxLength": 1000
+          },
+          "confirm_provider_removed": {
+            "type": "boolean",
+            "const": true
+          }
+        }
+      },
+      "CalendarOperatorCleanupReceiptEnvelope": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "data"
+        ],
+        "properties": {
+          "data": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "obligation_id",
+              "kind",
+              "provider_verified",
+              "attested_at",
+              "evidence_sha256"
+            ],
+            "properties": {
+              "obligation_id": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 256
+              },
+              "kind": {
+                "type": "string",
+                "enum": [
+                  "operator_attestation"
+                ]
+              },
+              "provider_verified": {
+                "type": "boolean",
+                "const": false
+              },
+              "attested_at": {
+                "type": "string"
+              },
+              "evidence_sha256": {
+                "type": "string",
+                "minLength": 64,
+                "maxLength": 64
+              }
+            }
+          }
+        }
+      },
       "CalendarFeedInput": {
         "type": "object",
         "properties": {
@@ -50803,6 +51209,10 @@
             "minimum": 0
           },
           "manual_confirmed": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "operator_confirmed": {
             "type": "integer",
             "minimum": 0
           }

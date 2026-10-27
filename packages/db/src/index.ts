@@ -193,3 +193,5 @@ export * from './stripe-payment-alerts.js'
 
 export * from './bank-deposit-review.js'
 export * from './calendar-oauth.js'
+
+export { createCalendarOperatorCleanupStore } from './calendar-operator-cleanup.js'

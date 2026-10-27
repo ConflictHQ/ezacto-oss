@@ -592,3 +592,5 @@ export { installHarvestInvoiceRoutes, serializeHarvestInvoice, parseHarvestInvoi
 
 export { installBankDepositRoutes, type BankDepositReviewApi } from './bank-deposits.js'
 export { installCalendarAuthorizationRoutes, type CalendarAuthorizationPort } from './calendar-oauth.js'
+
+export { installCalendarOperatorCleanupRoutes } from './calendar-operator-cleanup.js'

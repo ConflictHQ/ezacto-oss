@@ -192,7 +192,7 @@ export const PRESERVED_TABLES: ReadonlySet<string> = new Set([
 ])
 
 /** Pending external cleanup is encrypted custody, not seed data. */
-const RETAINED_CUSTODY_TABLES = new Set(['calendar_cleanup_obligations'])
+const RETAINED_CUSTODY_TABLES = new Set(['calendar_cleanup_obligations', 'calendar_manual_cleanup_receipts', 'calendar_operator_cleanup_receipts'])
 
 /**
  * D1 keeps its own bookkeeping in the same database, under a reserved `_cf_`

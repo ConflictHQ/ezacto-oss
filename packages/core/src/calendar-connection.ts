@@ -12,6 +12,8 @@ export interface CalendarCleanupStatus {
   revoked: number;
   /** Owner confirmation of manual permission removal; not provider verification. */
   manual_confirmed?: number;
+  /** Administrator attestation of retained custody cleanup; not provider verification. */
+  operator_confirmed?: number;
 }
 export interface CalendarConnectionAuthority {
   userId: number;

@@ -1,3 +1,4 @@
+import { createCalendarOperatorCleanupStore } from '@ezacto/db/d1'
 import { createConfiguredCalendarServices } from '@ezacto/integrations'
 import { createCalendarOAuthStore } from '@ezacto/db/d1'
 import { createConfiguredBankFeedRuntime } from '@ezacto/integrations'
@@ -1358,7 +1359,8 @@ export const createRuntimeServices = async (
     },
     activityRoll: createActivityRoll(drizzle, () => new Date().toISOString()),
     trackedResources,
-    calendarConnections: calendar.sync,
+    calendarOperatorCleanup: createCalendarOperatorCleanupStore(drizzle),
+      calendarConnections: calendar.sync,
     calendarAuthorization: calendar.authorization,
     calendarMaintenance: calendar.maintenance,
     calendarProposals: new DrizzleCalendarProposalRepository(drizzle, trackedResources),

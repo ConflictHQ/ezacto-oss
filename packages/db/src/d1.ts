@@ -586,3 +586,5 @@ export * from './bank-deposit-review.js'
 export * from './calendar-oauth.js'
 
 export { expireWorkerSnapshots, discardWorkerSnapshot } from './worker-backup-snapshot.js'
+
+export { createCalendarOperatorCleanupStore } from './calendar-operator-cleanup.js'
