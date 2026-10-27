@@ -10,6 +10,7 @@ export const controlAuditScreens = [
   ['invoice-recurring-editor', '/invoices/recurring/new'],
   ['invoice-estimates', '/invoices/estimates'],
   ['invoice-retainers', '/invoices/retainers'],
+  ['invoice-bank-deposits', '/invoices/bank-deposits'],
   ['client-list', '/clients'],
   ['client-detail', '/clients/9300'],
   ['project-list', '/projects'],

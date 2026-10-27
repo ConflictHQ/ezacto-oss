@@ -1,5 +1,5 @@
 export const renderBankDepositPage = (view?: string): string => `
-<main class="app-content invoice-workspace bank-deposit-workspace" data-bank-deposits-page${view === "invoice-bank-deposits" ? "" : " hidden"}>
+<main class="app-content invoice-workspace bank-deposit-workspace page--grid" data-bank-deposits-page${view === "invoice-bank-deposits" ? "" : " hidden"}>
   <header class="context-row"><div><p class="eyebrow">Money</p><h1>Bank deposits</h1></div></header>
   <p>Review incoming credits and choose the invoice they pay. Matching suggestions never record a payment automatically.</p>
   <p data-bank-provider-status role="status" aria-live="polite"></p>
