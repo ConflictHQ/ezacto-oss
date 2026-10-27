@@ -10256,3 +10256,9 @@ input::file-selector-button:hover { background: var(--ez-surface-2); }
 .bank-deposit-workspace form label { display: block; }
 .bank-deposit-workspace input:not([type=checkbox]), .bank-deposit-workspace select { max-width: 100%; min-height: 44px; }
 .bank-deposit-workspace [hidden] { display: none !important; }
+
+[data-calendar-connections]:not([hidden]),
+[data-calendar-connections-list] { display: grid; gap: 16px; }
+[data-calendar-provider] { display: grid; gap: 12px; min-width: 0; padding: 16px; border: 1px solid var(--ez-border); border-radius: var(--ez-radius); }
+[data-calendar-provider] :is(h3, p) { margin: 0; }
+.calendar-connection-actions { display: flex; flex-wrap: wrap; gap: 8px; }

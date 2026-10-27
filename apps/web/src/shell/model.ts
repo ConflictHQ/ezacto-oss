@@ -2624,6 +2624,8 @@ export const createShellApi = (client: EzactoClient): ShellApi => ({
       })
     ).data,
   calendarConnections: {
+    manualCleanup: async (signal) => (await client.listCalendarManualCleanup({ provider: 'microsoft', ...withSignal(signal) })).data,
+    confirmManualCleanup: (item, signal) => client.confirmCalendarManualCleanup({ provider: 'microsoft', body: { obligation_id: item.id, generation: item.generation, credential_revision: item.credential_revision, confirm_removed: true }, ...withSignal(signal) }),
     list: (signal) => client.listCalendarConnections(withSignal(signal)),
     authorize: async (provider, generation, signal) =>
       (await client.beginCalendarAuthorization({ provider, body: { generation }, ...withSignal(signal) })).data.authorization_url,

@@ -1,5 +1,10 @@
 import { setRequestBusy } from '../request-feedback.js'
-import type { CalendarConnection, CalendarConnectionApi, CalendarProvider } from './model.js'
+import type {
+  CalendarConnection,
+  CalendarConnectionApi,
+  CalendarProvider,
+  CalendarManualCleanup,
+} from './model.js'
 
 const providerName = (provider: CalendarProvider) =>
   provider === 'google' ? 'Google' : 'Microsoft'
@@ -37,6 +42,7 @@ export const createCalendarConnectionController = (
   let detach = () => {}
   let busy = false
   let rows: CalendarConnection[] = []
+  let cleanup: CalendarManualCleanup[] = []
   const current = (signal: AbortSignal) => controller?.signal === signal && !signal.aborted
   const setBusy = (value: boolean) => {
     busy = value
@@ -54,6 +60,8 @@ export const createCalendarConnectionController = (
     for (const row of rows) {
       const section = document.createElement('section')
       section.dataset.calendarProvider = row.provider
+      const actions = document.createElement('div')
+      actions.className = 'calendar-connection-actions'
       const heading = document.createElement('h3')
       heading.textContent = providerName(row.provider)
       const detail = document.createElement('p')
@@ -93,12 +101,18 @@ export const createCalendarConnectionController = (
       ) => {
         const control = document.createElement('button')
         control.type = 'button'
+        control.className =
+          action === 'authorize'
+            ? 'primary-action'
+            : action === 'disconnect'
+              ? 'editor-secondary danger-action'
+              : 'editor-secondary'
         control.textContent = text
         control.dataset.calendarAction = action
         control.dataset.unavailable = String(disabled)
         control.disabled = disabled || busy
         control.addEventListener('click', () => void run(action, row))
-        section.append(control)
+        actions.append(control)
       }
       if (row.status !== 'connected')
         button(
@@ -109,19 +123,62 @@ export const createCalendarConnectionController = (
       if (row.status === 'connected')
         button('Sync calendar', 'refresh', !row.available || row.syncing)
       if (row.status !== 'disconnected') button('Disconnect', 'disconnect', row.cleanup_pending)
+      section.append(actions)
+      if (row.provider === 'microsoft' && api?.confirmManualCleanup) {
+        for (const item of cleanup) {
+          const instructions = document.createElement('p')
+          instructions.textContent =
+            'Remove this app’s calendar permission in your Microsoft account before confirming. This records your confirmation; it does not verify removal with Microsoft.'
+          section.append(instructions)
+          for (const [label, href] of [
+            ['Work or school account permissions', 'https://myapps.microsoft.com'],
+            ['Personal account permissions', 'https://account.live.com/consent/Manage'],
+          ]) {
+            const link = document.createElement('a')
+            link.textContent = label!
+            link.href = href!
+            link.target = '_blank'
+            link.rel = 'noopener noreferrer'
+            section.append(link, document.createElement('br'))
+          }
+          const label = document.createElement('label')
+          const check = document.createElement('input')
+          check.type = 'checkbox'
+          label.append(check, ' I removed this app’s calendar permission in Microsoft.')
+          const confirm = document.createElement('button')
+          confirm.type = 'button'
+          confirm.className = 'primary-action'
+          confirm.textContent = 'Record permission removal'
+          confirm.disabled = true
+          confirm.dataset.unavailable = 'true'
+          check.addEventListener('change', () => {
+            confirm.dataset.unavailable = String(!check.checked)
+            confirm.disabled = busy || !check.checked
+          })
+          confirm.addEventListener('click', () => {
+            if (check.checked) void run('confirm', row, item)
+          })
+          section.append(label, confirm)
+        }
+      }
       list.append(section)
     }
   }
   const read = async (signal: AbortSignal) => {
-    const result = await api!.list(signal)
+    const [result, obligations] = await Promise.all([
+      api!.list(signal),
+      api!.manualCleanup?.(signal) ?? Promise.resolve([]),
+    ])
     if (!current(signal)) return false
     rows = result.data
+    cleanup = obligations
     render()
     return true
   }
   const run = async (
-    action: 'load' | 'authorize' | 'refresh' | 'disconnect',
+    action: 'load' | 'authorize' | 'refresh' | 'disconnect' | 'confirm',
     row?: CalendarConnection,
+    obligation?: CalendarManualCleanup,
   ) => {
     const signal = controller?.signal
     if (!api || !signal || !current(signal) || busy) return false
@@ -133,7 +190,9 @@ export const createCalendarConnectionController = (
           ? `Opening ${providerName(row!.provider)} consent…`
           : action === 'refresh'
             ? `Syncing ${providerName(row!.provider)} calendar…`
-            : `Disconnecting ${providerName(row!.provider)}…`
+            : action === 'confirm'
+              ? 'Recording your permission-removal confirmation…'
+              : `Disconnecting ${providerName(row!.provider)}…`
     let mutationFinished = false
     let navigating = false
     try {
@@ -146,6 +205,7 @@ export const createCalendarConnectionController = (
         return
       }
       if (action === 'refresh') await api.refresh(row!.provider, signal)
+      if (action === 'confirm') await api.confirmManualCleanup!(obligation!, signal)
       if (action === 'disconnect') await api.disconnect(row!.provider, row!.generation, signal)
       mutationFinished = action !== 'load'
       if (!current(signal) || !(await read(signal))) return false
@@ -154,7 +214,9 @@ export const createCalendarConnectionController = (
           ? ''
           : action === 'refresh'
             ? 'Calendar check finished. Review the connection status and your time-entry suggestions.'
-            : 'Disconnected here. Review the provider cleanup status below.'
+            : action === 'confirm'
+              ? 'Your permission-removal confirmation was recorded. Review the connection status below.'
+              : 'Disconnected here. Review the provider cleanup status below.'
       return true
     } catch (error) {
       if (!current(signal) || host.sessionFailure(error)) return
@@ -173,6 +235,7 @@ export const createCalendarConnectionController = (
     detach()
     detach = () => {}
     rows = []
+    cleanup = []
     list.replaceChildren()
     status.textContent = ''
     setBusy(false)
@@ -181,7 +244,7 @@ export const createCalendarConnectionController = (
   reload.addEventListener('click', () => void run('load'))
   return {
     clear,
-    activate(signal: AbortSignal, callbackResult?: string) {
+    activate(signal: AbortSignal, callbackResult?: string, callbackProvider?: string) {
       clear()
       if (!api || signal.aborted) return
       controller = new AbortController()
@@ -196,7 +259,7 @@ export const createCalendarConnectionController = (
           status.textContent =
             'Calendar connection was not completed. Refresh the connection status before trying Connect again.'
         if (callbackResult === 'connected')
-          status.textContent = rows.some((row) => row.status === 'connected')
+          status.textContent = rows.some((row) => row.status === 'connected' && row.provider === callbackProvider)
             ? 'Calendar consent completed. Review the connection status below.'
             : 'Calendar setup returned. Review the connection status below.'
       })

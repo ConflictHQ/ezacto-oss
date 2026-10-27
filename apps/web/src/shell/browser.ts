@@ -3164,7 +3164,7 @@ export const mountShell = async (
     const operation = sessionOperation()
     if (operation !== null && identity.authentication.kind === 'session') {
       const callback = new URLSearchParams(globalThis.location.search).get('calendar') ?? undefined
-      calendarConnections.activate(operation.signal, callback)
+      calendarConnections.activate(operation.signal, callback, new URLSearchParams(globalThis.location.search).get('provider') ?? undefined)
     }
   }
 

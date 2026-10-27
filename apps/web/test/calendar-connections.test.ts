@@ -148,6 +148,41 @@ describe('calendar consent controls', () => {
     expect(status().textContent).toContain('could not be loaded')
     expect(status().textContent).not.toContain('consent completed')
   })
+  it('requires deliberate Microsoft permission-removal confirmation and labels it as operator evidence', async () => {
+    const item = {
+      id: 'owned-obligation',
+      generation: 3,
+      credential_revision: 4,
+      reason: 'disconnect' as const,
+      created_at: '2026-10-26T00:00:00Z',
+    }
+    const confirmation = deferred<void>()
+    const list = vi
+      .fn()
+      .mockResolvedValueOnce({
+        data: [row({ provider: 'microsoft', generation: 3, cleanup_pending: true })],
+      })
+      .mockResolvedValueOnce({ data: [row({ provider: 'microsoft', generation: 3 })] })
+    const manualCleanup = vi.fn().mockResolvedValueOnce([item]).mockResolvedValueOnce([])
+    const { api } = setup({
+      list,
+      manualCleanup,
+      confirmManualCleanup: vi.fn(() => confirmation.promise),
+    })
+    await flush()
+    expect(button('Record permission removal').disabled).toBe(true)
+    expect(document.body.textContent).toContain('does not verify removal with Microsoft')
+    const check = document.querySelector<HTMLInputElement>('input[type=checkbox]')!
+    check.checked = true
+    check.dispatchEvent(new Event('change'))
+    button('Record permission removal').click()
+    button('Record permission removal').click()
+    expect(api.confirmManualCleanup).toHaveBeenCalledExactlyOnceWith(item, expect.any(AbortSignal))
+    confirmation.resolve()
+    await flush()
+    expect(status().textContent).toContain('Your permission-removal confirmation was recorded')
+    expect(button('Connect').disabled).toBe(false)
+  })
   it('clears old account data and ignores an old load after reactivation', async () => {
     const old = deferred<{ data: CalendarConnection[] }>()
     const list = vi
