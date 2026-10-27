@@ -125,3 +125,15 @@ regexTarget = "line"
 regexes = [
   '''not\-a\-real\-token''',
 ]
+
+
+# These exact JavaScript expressions generate a fresh ephemeral key during the
+# test; there is no encoded private key in source or history. Match the entire
+# generator line, not arbitrary private keys or whole test files.
+[[allowlists]]
+targetRules = ["private-key"]
+description = "Runtime-generated GitHub App test keys; exact generator expression only"
+condition = "AND"
+regexTarget = "line"
+paths = ['''^packages/(db/test/(github-reader-admin|github-publication-runtime)|cli/test/github-publication-restore|integrations/test/github-comments)\.test\.ts$''']
+regexes = ['''^\s*(const\s+(pem|privateKey)\s*=|pem\s*=)\s*`-----BEGIN PRIVATE KEY-----\\n\$\{Buffer\.from\(await crypto\.subtle\.exportKey\('pkcs8', (keys|keypair)\.privateKey\)\)\.toString\('base64'\)\}\\n-----END PRIVATE KEY-----`\s*;?\s*$''']
