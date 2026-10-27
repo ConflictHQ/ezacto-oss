@@ -25,7 +25,7 @@
     "@ezacto/web": "0.0.0",
     "@sentry/cloudflare": "^10.74.0",
     "pdf-lib": "^1.17.1",
-    "@conflict-hq/ezacto-migrate": "0.1.5"
+    "@conflict-hq/ezacto-migrate": "0.1.6"
   },
   "devDependencies": {
     "@cloudflare/workers-types": "^5.20260826.1",
