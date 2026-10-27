@@ -96,6 +96,7 @@ const fixture = async (kind: 'sqlite' | 'd1') => {
   let clock = new Date(initial)
   let events = [event()],
     cursor: string | null = CURSOR,
+    complete = false,
     beforeRead: (() => Promise<void>) | undefined,
     refused = false,
     beforeFactory: ((context: Parameters<CalendarSourceFactory>[0]) => Promise<void>) | undefined
@@ -113,7 +114,8 @@ const fixture = async (kind: 'sqlite' | 'd1') => {
             seen.push(request.cursor)
             await beforeRead?.()
             if (refused) throw new CalendarAuthorizationError()
-            return { events, nextCursor: cursor, nextPage: null }
+            return { events, nextCursor: cursor, nextPage: null,
+              ...(complete && request.cursor === null ? { completeCalendarIds: ['primary'] } : {}) }
           },
         }
       },
@@ -138,6 +140,7 @@ const fixture = async (kind: 'sqlite' | 'd1') => {
     setCursor: (v: string | null) => {
       cursor = v
     },
+    setComplete: () => { complete = true },
     onRead: (v: () => Promise<void>) => {
       beforeRead = v
     },
@@ -185,8 +188,9 @@ for (const kind of ['sqlite', 'd1'] as const)
       expect(f.seen).toEqual([null, null, CURSOR, null])
       expect(await f.rows('SELECT count(*) AS n FROM calendar_proposals')).toEqual([{ n: 1 }])
     })
-    it('calendar identity includes calendarId; accepted updates and cancellation only mark provider changes', async () => {
+    it.each(['tombstone', 'complete-window'] as const)('calendar identity includes calendarId; %s cancellation only marks accepted provider changes', async (mode) => {
       const f = await fixture(kind)
+      if (mode === 'complete-window') f.setCursor(null)
       f.setEvents([event(), event({ calendarId: 'second' })])
       await f.service.refresh(f.a, 'google')
       expect(await f.rows('SELECT count(*) AS n FROM calendar_proposals')).toEqual([{ n: 2 }])
@@ -225,7 +229,10 @@ for (const kind of ['sqlite', 'd1'] as const)
       await f.run(
         "UPDATE calendar_proposals SET status='accepted',time_entry_id=1 WHERE calendar_id='primary'",
       )
-      f.setEvents([event({ version: 'v2', summary: 'Changed title', cancelled: true })])
+      if (mode === 'complete-window') {
+        f.setComplete()
+        f.setEvents([])
+      } else f.setEvents([event({ version: 'v2', summary: 'Changed title', cancelled: true })])
       await f.service.refresh(f.a, 'google')
       const changed = await f.rows<{
         status: string
@@ -242,6 +249,7 @@ for (const kind of ['sqlite', 'd1'] as const)
         source_cancelled_at: initial,
       })
       expect(await f.rows('SELECT * FROM time_entries')).toEqual(before)
+      expect(await f.rows("SELECT status FROM calendar_proposals WHERE calendar_id='second'")).toEqual([{ status: 'proposed' }])
     })
     it('disconnect during a provider response fences the entire late batch and cursor', async () => {
       const f = await fixture(kind)

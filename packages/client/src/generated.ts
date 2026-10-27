@@ -420,6 +420,33 @@ export type ResourceCalendarEnvelope = {
 };
 };
 
+export type CalendarManualCleanupList = {
+  "data": Array<{
+  "id": string;
+  "generation": number;
+  "credential_revision": number;
+  "reason": "disconnect" | "reauth";
+  "created_at": string;
+}>;
+};
+
+export type CalendarManualCleanupInput = {
+  "obligation_id": string;
+  "generation": number;
+  "credential_revision": number;
+  "confirm_removed": true;
+};
+
+export type CalendarAuthorizationInput = {
+  "generation": number;
+};
+
+export type CalendarAuthorizationEnvelope = {
+  "data": {
+  "authorization_url": string;
+};
+};
+
 export type CalendarCleanupEnvelope = {
   "data": CalendarCleanupStatus;
 };
@@ -2841,6 +2868,7 @@ export type CalendarCleanupStatus = {
   "pending": number;
   "manual_required": number;
   "revoked": number;
+  "manual_confirmed"?: number;
 };
 
 export type CalendarProposal = {
@@ -7507,6 +7535,35 @@ export class EzactoClient {
     const headers = new Headers(args.headers);
 
     return this.request<CalendarProposalEnvelope>("POST", "/api/v1/calendar-proposals/:id/discard".replace(":id", encodeURIComponent(String(args["id"]))), {
+      signal: args.signal,
+      headers,
+    });
+  }
+
+  async listCalendarManualCleanup(args: { "provider": "google" | "microsoft"; signal?: AbortSignal; headers?: HeadersInit }): Promise<CalendarManualCleanupList> {
+    const headers = new Headers(args.headers);
+
+    return this.request<CalendarManualCleanupList>("GET", "/api/v1/calendar-connections/:provider/cleanup".replace(":provider", encodeURIComponent(String(args["provider"]))), {
+      signal: args.signal,
+      headers,
+    });
+  }
+
+  async confirmCalendarManualCleanup(args: { "provider": "google" | "microsoft"; body: CalendarManualCleanupInput; signal?: AbortSignal; headers?: HeadersInit }): Promise<void> {
+    const headers = new Headers(args.headers);
+
+    return this.request<void>("POST", "/api/v1/calendar-connections/:provider/cleanup/confirm".replace(":provider", encodeURIComponent(String(args["provider"]))), {
+      body: args.body,
+      signal: args.signal,
+      headers,
+    });
+  }
+
+  async beginCalendarAuthorization(args: { "provider": "google" | "microsoft"; body: CalendarAuthorizationInput; signal?: AbortSignal; headers?: HeadersInit }): Promise<CalendarAuthorizationEnvelope> {
+    const headers = new Headers(args.headers);
+
+    return this.request<CalendarAuthorizationEnvelope>("POST", "/api/v1/calendar-connections/:provider/authorize".replace(":provider", encodeURIComponent(String(args["provider"]))), {
+      body: args.body,
       signal: args.signal,
       headers,
     });

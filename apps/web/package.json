@@ -29,12 +29,13 @@
     "typecheck": "npm run theme:check && npm run shell:generate && tsc --noEmit",
     "lint": "eslint .",
     "browser:prepare": "npm run build -w @ezacto/core && npm run build -w @ezacto/integrations && npm run build -w @ezacto/db && npm run build -w @ezacto/api && npm run build -w @conflict-hq/ezacto-client && npm run build -w @conflict-hq/ezacto-cli && npm run build -w @ezacto/mailer && npm run build -w @ezacto/web",
-    "test:browser": "npm run browser:prepare && playwright test --config playwright.config.ts && npm run test:browser:deel && playwright test --config playwright.csv-import.config.ts",
+    "test:browser": "npm run browser:prepare && playwright test --config playwright.config.ts && npm run test:browser:deel && playwright test --config playwright.csv-import.config.ts && npm run test:browser:calendar",
     "test": "npm run theme:check && npm run shell:generate && vitest run && npm run test:browser",
     "test:load": "npm run theme:check && npm run shell:generate && vitest run --maxWorkers=1 && npm run test:browser",
     "build": "npm run theme:check && npm run shell:generate && tsc -p tsconfig.build.json",
     "test:deployed": "playwright test --config playwright.postdeploy.config.ts",
     "controls:audit": "node scripts/audit-control-styles.mjs",
+    "test:browser:calendar": "playwright test --config playwright.calendar.config.ts",
     "test:browser:deel": "EZACTO_BROWSER_DEEL_STAGING_FIXTURE=1 playwright test --config playwright.config.ts e2e/deel-staging.browser.ts"
   },
   "dependencies": {

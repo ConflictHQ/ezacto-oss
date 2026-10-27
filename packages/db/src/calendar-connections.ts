@@ -133,15 +133,27 @@ export const createCalendarConnectionStore = (
   ]
   return {
     async cleanupStatus(authority, now) {
-      const rows = await query<{ pending: number; manual_required: number; revoked: number }>(
+      const rows = await query<{
+        pending: number
+        manual_required: number
+        revoked: number
+        manual_confirmed: number
+      }>(
         `SELECT
         (SELECT count(*) FROM calendar_cleanup_obligations WHERE status='pending') AS pending,
         (SELECT count(*) FROM calendar_cleanup_obligations WHERE status='manual_required') AS manual_required,
-        (SELECT count(*) FROM calendar_cleanup_obligations WHERE status='revoked') AS revoked
+        (SELECT count(*) FROM calendar_cleanup_obligations c WHERE status='revoked' AND NOT EXISTS(SELECT 1 FROM calendar_manual_cleanup_receipts r WHERE r.obligation_id=c.id)) AS revoked,
+        (SELECT count(*) FROM calendar_manual_cleanup_receipts) AS manual_confirmed
         WHERE (${session}) AND EXISTS(SELECT 1 FROM users WHERE id=? AND profile='administrator')`,
         [...authorityValues(authority, now), authority.userId],
       )
-      return rows[0] ?? fail('forbidden')
+      const row = rows[0] ?? fail('forbidden')
+      return {
+        pending: row.pending,
+        manual_required: row.manual_required,
+        revoked: row.revoked,
+        ...(row.manual_confirmed > 0 ? { manual_confirmed: row.manual_confirmed } : {}),
+      }
     },
     async instance() {
       return (
@@ -174,17 +186,31 @@ export const createCalendarConnectionStore = (
           )
         ).map((row) => row.provider),
       )
-      return (
-        await query<Row>('SELECT * FROM calendar_connections WHERE user_id=?', [authority.userId])
-      ).map((row) => ({
-        provider: row.provider,
-        state: row.instance_nonce === instance ? row.status : ('needs_reauth' as const),
-        generation: row.generation,
-        lastSyncedAt: row.last_synced_at,
-        lastError: row.last_error,
-        cleanupPending: pending.has(row.provider),
-        syncing: !!row.lease_holder && Date.parse(row.lease_expires_at ?? '') > Date.parse(now),
-      }))
+      const held = await query<Row>('SELECT * FROM calendar_connections WHERE user_id=?', [
+        authority.userId,
+      ])
+      return [
+        ...held.map((row) => ({
+          provider: row.provider,
+          state: row.instance_nonce === instance ? row.status : ('needs_reauth' as const),
+          generation: row.generation,
+          lastSyncedAt: row.last_synced_at,
+          lastError: row.last_error,
+          cleanupPending: pending.has(row.provider),
+          syncing: !!row.lease_holder && Date.parse(row.lease_expires_at ?? '') > Date.parse(now),
+        })),
+        ...[...pending]
+          .filter((provider) => !held.some((row) => row.provider === provider))
+          .map((provider) => ({
+            provider,
+            state: 'disconnected' as const,
+            generation: 0,
+            lastSyncedAt: null,
+            lastError: null,
+            cleanupPending: true,
+            syncing: false,
+          })),
+      ]
     },
     async read(userId, provider) {
       const row = await readRow(userId, provider)

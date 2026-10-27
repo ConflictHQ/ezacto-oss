@@ -9,6 +9,7 @@ import BetterSqlite3 from "better-sqlite3";
 import { Miniflare } from "miniflare";
 import { describe, it, expect } from "vitest";
 import { workerBackupCaptureMigration } from "../../db/src/migrations/0176_worker_backup_capture.js";
+import { createD1SessionStore } from "../../db/src/sessions.js";
 import { migrateD1 } from "../../db/src/migrate.js";
 import { exportBundle } from "../../db/src/backup.js";
 import { restoreBackup } from "../src/backup.js";
@@ -26,6 +27,61 @@ describe("actual Worker bundle restore", () => {
     try {
       const database = await mf.getD1Database("DB");
       await migrateD1(database as unknown as D1Database);
+      const stamp = new Date().toISOString();
+      await database
+        .prepare(
+          "INSERT INTO organizations(id,name,modules,created_at,updated_at) VALUES(1,'Owned restore fixture','{}',?,?)",
+        )
+        .bind(stamp, stamp)
+        .run();
+      await database
+        .prepare(
+          "INSERT INTO users(id,first_name,last_name,profile,manager_grants,created_at,updated_at) VALUES(1,'Owned','Operator','administrator','[]',?,?)",
+        )
+        .bind(stamp, stamp)
+        .run();
+      const session = await createD1SessionStore(
+        database as unknown as D1Database,
+      ).issue(1);
+      const instance = await database
+        .prepare("SELECT nonce FROM calendar_sync_instance WHERE singleton=1")
+        .first<{ nonce: string }>();
+      await database
+        .prepare(
+          "INSERT INTO calendar_oauth_attempts(state_hash,requester_hash,user_id,session_id,provider,instance_nonce,expected_generation,expires_at) VALUES(?,?,1,?,'google',?,0,?)",
+        )
+        .bind(
+          "a".repeat(64),
+          "b".repeat(64),
+          session.session.id,
+          instance!.nonce,
+          new Date(Date.now() + 600000).toISOString(),
+        )
+        .run();
+      await database
+        .prepare(
+          "INSERT INTO calendar_connections(user_id,provider,instance_nonce,generation,credential_revision,status,key_id,sealed_grant,updated_at) VALUES(1,'google',?,1,1,'connected','owned-key','owned-encrypted-grant',?)",
+        )
+        .bind(instance!.nonce, stamp)
+        .run();
+      await database
+        .prepare(
+          "INSERT INTO calendar_cleanup_obligations(id,user_id,provider,instance_nonce,generation,credential_revision,key_id,reason,status,created_at,completed_at,sealed_receipt) VALUES('owned-manual',1,'microsoft',?,1,1,'owned-key','disconnect','revoked',?,?,?)",
+        )
+        .bind(
+          instance!.nonce,
+          stamp,
+          stamp,
+          JSON.stringify({ kind: "user_attestation" }),
+        )
+        .run();
+      await database
+        .prepare(
+          "INSERT INTO calendar_manual_cleanup_receipts(obligation_id,user_id,session_id,provider,instance_nonce,generation,credential_revision,reason,attested_at,assertion) VALUES('owned-manual',1,?,'microsoft',?,1,1,'disconnect',?,'owner_confirmed_provider_permission_removal')",
+        )
+        .bind(session.session.id, instance!.nonce, stamp)
+        .run();
+
       const store = {
         async put(key: string, body: string) {
           const path = join(root, key);
@@ -54,6 +110,45 @@ describe("actual Worker bundle restore", () => {
         ).toBeGreaterThan(170);
         expect(restored.pragma("foreign_key_check")).toEqual([]);
         expect(
+          restored.prepare("SELECT count(*) AS n FROM sessions").get(),
+        ).toEqual({ n: 0 });
+        expect(
+          restored
+            .prepare("SELECT count(*) AS n FROM calendar_oauth_attempts")
+            .get(),
+        ).toEqual({ n: 0 });
+        expect(
+          restored
+            .prepare(
+              "SELECT status,sealed_grant,instance_nonce FROM calendar_connections",
+            )
+            .get(),
+        ).toEqual({
+          status: "needs_reauth",
+          sealed_grant: null,
+          instance_nonce: instance!.nonce,
+        });
+        expect(
+          restored.prepare("SELECT nonce FROM calendar_sync_instance").get(),
+        ).not.toEqual(instance);
+        expect(
+          restored
+            .prepare(
+              "SELECT reason,status,sealed_grant FROM calendar_cleanup_obligations WHERE provider='google'",
+            )
+            .get(),
+        ).toEqual({
+          reason: "restore",
+          status: "manual_required",
+          sealed_grant: "owned-encrypted-grant",
+        });
+        expect(
+          restored
+            .prepare("SELECT assertion FROM calendar_manual_cleanup_receipts")
+            .get(),
+        ).toEqual({ assertion: "owner_confirmed_provider_permission_removal" });
+
+        expect(
           restored
             .prepare("SELECT quarantined FROM account_restore_quarantine")
             .get(),
@@ -65,7 +160,7 @@ describe("actual Worker bundle restore", () => {
               "SELECT id FROM _ezacto_migrations ORDER BY id DESC LIMIT 1",
             )
             .get(),
-        ).toEqual({ id: "0176_worker_backup_capture" });
+        ).toEqual({ id: "0177_calendar_oauth" });
         for (const table of [
           "worker_backup_rows",
           "worker_backup_snapshots",

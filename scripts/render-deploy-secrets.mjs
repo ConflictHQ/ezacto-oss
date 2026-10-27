@@ -183,7 +183,14 @@ export const deploySecretPayload = (environment) => {
     )
   }
 
+  const calendar = Object.fromEntries(['GOOGLE_CALENDAR_CLIENT_ID','GOOGLE_CALENDAR_CLIENT_SECRET','MICROSOFT_CALENDAR_CLIENT_ID','MICROSOFT_CALENDAR_CLIENT_SECRET','MICROSOFT_CALENDAR_TENANT'].map(key=>[key,optionalCredential(environment[key])]))
+  for (const prefix of ['GOOGLE_CALENDAR','MICROSOFT_CALENDAR']) {
+    if ((calendar[prefix+'_CLIENT_ID'] === null) !== (calendar[prefix+'_CLIENT_SECRET'] === null))
+      throw new TypeError(prefix+'_CLIENT_ID and '+prefix+'_CLIENT_SECRET must be configured together')
+  }
+
   return {
+    ...calendar,
     API_CURSOR_SIGNING_KEY: cursor,
     MAGIC_LINK_SIGNING_KEY: magicLink,
     PORTAL_MAGIC_LINK_SIGNING_KEY: portalMagicLink,

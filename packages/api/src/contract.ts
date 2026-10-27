@@ -6090,7 +6090,7 @@ export const apiContractSchemas: Readonly<Record<string, JsonSchema>> = {
   },
   TimeEntryEnvelope: envelope("TimeEntry"),
   TimeEntryPage: page("TimeEntry"),
-  CalendarCleanupStatus: {type:'object',additionalProperties:false,required:['pending','manual_required','revoked'],properties:{pending:{type:'integer',minimum:0},manual_required:{type:'integer',minimum:0},revoked:{type:'integer',minimum:0}}},
+  CalendarCleanupStatus: {type:'object',additionalProperties:false,required:['pending','manual_required','revoked'],properties:{pending:{type:'integer',minimum:0},manual_required:{type:'integer',minimum:0},revoked:{type:'integer',minimum:0},manual_confirmed:{type:'integer',minimum:0}}},
   CalendarProposal: {
     type: "object",
     required: [

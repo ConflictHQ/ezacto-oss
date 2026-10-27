@@ -12,7 +12,9 @@ import type { CalendarProvider } from "./calendar-proposal.js";
  * Invariants any adapter and any store must keep:
  * - Identity is (provider, calendarId, eventId, occurrence). Adapters must use
  *   an id that survives edits (Graph: the immutable id, not the default id) and
- *   give each instance of a recurring event its own `occurrence`.
+ *   distinguish each recurring instance. When the provider already gives each
+ *   instance a stable unique event ID, preserve that ID and use an empty
+ *   `occurrence` (including for deletion tombstones that carry only the ID).
  * - A proposal is never a time entry. Sync only ever creates, updates or
  *   cancels proposals; it never touches an accepted entry.
  * - A decided proposal (accepted or discarded) is never reopened or
@@ -22,7 +24,7 @@ import type { CalendarProvider } from "./calendar-proposal.js";
 export interface CalendarSourceEvent {
   readonly calendarId: string;
   readonly eventId: string;
-  /** Tells recurring instances apart; the empty string for a one-off event. */
+  /** Extra instance discriminator when eventId alone is not instance-unique. */
   readonly occurrence: string;
   readonly summary: string | null;
   /** UTC instants. Ignored for all-day events, which carry no interval. */
@@ -50,6 +52,8 @@ export interface CalendarSourcePage {
   readonly nextPage: string | null;
   /** Present on the final page: pass it back to resume incrementally. */
   readonly nextCursor: string | null;
+  /** Final page of a full window read only: absence is authoritative for these calendars. */
+  readonly completeCalendarIds?: readonly string[];
 }
 
 export interface CalendarSource {
@@ -224,6 +228,7 @@ export const runCalendarSync = async (input: {
     const events: CalendarSourceEvent[] = [];
     let page: string | null = null;
     let nextCursor: string | null;
+    let completeCalendarIds: readonly string[] = [];
     const pages = new Set<string | null>();
     do {
       input.signal?.throwIfAborted();
@@ -236,13 +241,20 @@ export const runCalendarSync = async (input: {
         page,
         ...(input.signal ? { signal: input.signal } : {}),
       });
+      if (result.completeCalendarIds !== undefined) {
+        if (result.nextPage !== null || cursor !== null ||
+          !Array.isArray(result.completeCalendarIds) || result.completeCalendarIds.length > 100 ||
+          result.completeCalendarIds.some(id => typeof id !== 'string' || !id || id.length > 1024))
+          throw new CalendarSyncLimitError();
+        completeCalendarIds = result.completeCalendarIds;
+      }
       events.push(...result.events);
       if (events.length > calendarSyncLimits.events)
         throw new CalendarSyncLimitError();
       page = result.nextPage;
       nextCursor = result.nextCursor;
     } while (page !== null);
-    return { events, nextCursor };
+    return { events, nextCursor, completeCalendarIds };
   };
   try {
     let result;
@@ -252,10 +264,24 @@ export const runCalendarSync = async (input: {
       if (!(error instanceof CalendarCursorExpiredError)) throw error;
       result = await read(null);
     }
+    const observed = new Set(result.events.map(calendarEventKey));
+    // A completed full window can withdraw stale suggestions even when the
+    // provider no longer returns a moved/deleted event. Never infer absence
+    // from an incremental response, incomplete pagination or another calendar.
+    const missing: CalendarSourceEvent[] = [];
+    for (const key of result.completeCalendarIds.length ? input.existing.keys() : []) {
+      if (observed.has(key)) continue;
+      const [calendarId, eventId, occurrence] = JSON.parse(key) as [string, string, string];
+      if (!result.completeCalendarIds.includes(calendarId)) continue;
+      missing.push({ calendarId, eventId, occurrence, summary: null, startsAt: '', endsAt: '',
+        allDay: false, cancelled: true, response: 'none', showAs: 'busy', version: 'absent-from-complete-window' });
+    }
+    const actions = planCalendarSync([...result.events, ...missing], input.existing);
+    if (actions.length > calendarSyncLimits.events) throw new CalendarSyncLimitError();
     return {
       status: "connected",
       cursor: result.nextCursor,
-      actions: planCalendarSync(result.events, input.existing),
+      actions,
     };
   } catch (error) {
     if (error instanceof CalendarAuthorizationError) {

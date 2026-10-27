@@ -191,6 +191,11 @@ export function createAccountClosureRepository(database: Database): AccountClosu
       (SELECT count(*) FROM calendar_connections WHERE user_id=(SELECT id FROM subject) AND sealed_grant IS NOT NULL)
       +(SELECT count(*) FROM calendar_cleanup_obligations WHERE user_id=(SELECT id FROM subject) AND instance_nonce=coalesce((SELECT c.instance_nonce FROM calendar_connections c WHERE c.user_id=calendar_cleanup_obligations.user_id AND c.provider=calendar_cleanup_obligations.provider),(SELECT nonce FROM calendar_sync_instance WHERE singleton=1)) AND status<>'revoked'),
       'category','audit_and_security')`)
+    if (tables.some(({name}) => name === 'calendar_manual_cleanup_receipts'))
+      entries.push(`json_object('location','calendar_manual_cleanup_receipts','count',
+        (SELECT count(*) FROM calendar_manual_cleanup_receipts WHERE user_id=(SELECT id FROM subject)
+          AND instance_nonce=(SELECT nonce FROM calendar_sync_instance WHERE singleton=1)),
+        'category','audit_and_security')`)
     // D1 has tighter compound-SELECT and function-argument limits than SQLite.
     // Each bounded array contains objects, so trimming its outer brackets is exact.
     const groups: string[] = []
