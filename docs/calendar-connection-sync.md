@@ -57,10 +57,12 @@ explicit owner attestation for their current-instance disconnect or reauthorizat
 record; this is recorded separately from provider verification. Closure and restore
 records cannot use that confirmation path. Unresolved obligations block new OAuth
 admission. The administrator endpoint `GET /api/v1/calendar-cleanup-status` reports aggregate pending and manual
-counts across old incarnations, without revealing tokens or old users. There is currently no operator API or CLI to complete closure or old-instance
-manual obligations. Those records remain unresolved and block affected restored
-connections before token exchange; a dedicated operator evidence-and-receipt
-workflow is still required. Current-instance Google cleanup is completed by the
+counts across old incarnations, without revealing tokens or old users. The [operator cleanup workflow](calendar-operator-cleanup.md) resolves exact
+closure or old-instance obligations using a current administrator session and
+protected evidence of actual permission removal. Its immutable operator-attestation
+receipt is counted separately as `operator_confirmed`; it is not provider
+verification. Restored connections remain blocked until their applicable
+obligations are resolved. Current-instance Google cleanup is completed by the
 provider adapter with evidence and an atomic receipt.
 
 Logical backups retain encrypted evidence but mark live connection rows as

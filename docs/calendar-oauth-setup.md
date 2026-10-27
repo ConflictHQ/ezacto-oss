@@ -66,13 +66,15 @@ allows a new consent flow. It cannot resolve another person's record, an
 account-closure obligation or a restored instance's cleanup. Administrator
 cleanup counts distinguish these attestations from provider revocations.
 
-Restored or closed-account obligations cannot currently be completed through an
-operator API or CLI. The administrator status endpoint reports them, but is
-read-only. Keep the retained custody and resolve the provider permission outside
-eZacto; recording that evidence and safely releasing the matching old-instance
-obligation is tracked in [#1316](https://github.com/ConflictHQ/ezacto-pvt/issues/1316). Until that workflow
-exists, affected restored connections remain blocked before a new token exchange.
-Do not edit the database to claim revocation or use the owner confirmation path.
+Restored or closed-account obligations use the separate
+[administrator operator-cleanup workflow](calendar-operator-cleanup.md). It
+requires the exact custody identity and protected evidence of actual provider
+permission removal, recorded as operator attestation. While a restored database
+is quarantined, the CLI can inspect metadata read-only; perform the existing
+privacy replay/release procedure before authenticating a live administrator to
+record completion. Affected calendars cannot reconnect until the matching
+obligations are resolved. The owner confirmation path remains restricted to
+current-instance Microsoft disconnect/reauth records.
 
 ## Verification limits
 
