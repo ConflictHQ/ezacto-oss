@@ -1,12 +1,21 @@
-import { installCalendarConnectionRoutes, type CalendarConnectionPort } from '@ezacto/api'
+import { installCalendarOperatorCleanupRoutes } from '@ezacto/api'
+import type { CalendarOperatorCleanupStore } from '@ezacto/core'
+import { installCalendarConnectionRoutes, installCalendarAuthorizationRoutes, type CalendarConnectionPort, type CalendarAuthorizationPort } from '@ezacto/api'
 import { installInvoiceProviderAlertRoutes, type InvoiceProviderAlertService } from '@ezacto/api'
-import type { BankFeedEnvironment } from '@ezacto/integrations'
+import type { BankFeedEnvironment, CalendarEnvironment } from '@ezacto/integrations'
 import { installBankDepositRoutes, type BankDepositReviewApi } from '@ezacto/api'
 import { installCalendarFeedRoutes, installCalendarSubscriptionRoute } from '@ezacto/api'
 import type { CalendarFeedService } from '@ezacto/core'
 import { installDeelPaymentStatusRoutes } from '@ezacto/api'
+import {
+  installGithubReaderRoutes,
+  installGithubReaderWebhookRoute,
+  type GithubReaderApiPort,
+  type GithubReaderWebhookPort,
+} from '@ezacto/api'
 import type { DeelPaymentStatusRuntime } from '@ezacto/integrations'
-import { billConfigured, deelConfigurationProblem, quickBooksConfigured, wiseConfigured, parseWiseMode } from '@ezacto/integrations'
+import { billConfigured, deelConfigurationProblem, quickBooksConfigured, wiseConfigured, parseWiseMode,
+} from '@ezacto/integrations'
 import { installOrganizationHolidayRoutes } from '@ezacto/api'
 import { installModuleGate, moduleAvailability } from '@ezacto/api'
 import type { OrganizationHolidayRepository } from '@ezacto/core'
@@ -14,23 +23,29 @@ import type { PayoutPreferenceService, PayoutProviderEnablement } from '@ezacto/
 import { installOutboundWebhookRoutes } from '@ezacto/api'
 import type { WebhookManagement } from '@ezacto/core'
 import {installMigrationLoadRoutes,type MigrationLoadStatusReader} from '@ezacto/api'
-import { installInvoiceElevationRoutes, type InvoiceElevationStore, type ElevatedInvoiceTimeUnlinkPort } from '@ezacto/api'
+import { installInvoiceElevationRoutes, type InvoiceElevationStore, type ElevatedInvoiceTimeUnlinkPort,
+} from '@ezacto/api'
 import { installEstimateTemplateRoutes, type EstimateTemplateRepository } from '@ezacto/api'
 import type { OffsiteBackupEnvironment } from './offsite-backups.js'
 import type { ReminderProcessOptions, ReminderProcessSummary } from '@ezacto/db/d1'
 import { appleWebConfiguration } from './apple-web.js'
-import { aggregateAppleCleanup, type AppleCleanupPort, type AppleLifecycleStore, type AppleWebCleanupPort } from '@ezacto/core'
-import type { AccountDeletionStore, AccountClosureStore, AccountRetentionReviewStore, AccountDeletionStatusStore } from '@ezacto/core'
+import { aggregateAppleCleanup, type AppleCleanupPort, type AppleLifecycleStore, type AppleWebCleanupPort,
+} from '@ezacto/core'
+import type { AccountDeletionStore, AccountClosureStore, AccountRetentionReviewStore, AccountDeletionStatusStore,
+} from '@ezacto/core'
 import type { PaymentRunsService, ScheduledRunsService, ScheduledJobsService } from '@ezacto/core'
 import { workItemProviders, type WorkItemProviderId } from '@ezacto/core'
-import { installContractorReviewRoutes, installStaffInvoiceRoutes, installPaymentRunRoutes } from '@ezacto/api'
+import { installContractorReviewRoutes, installStaffInvoiceRoutes, installPaymentRunRoutes,
+} from '@ezacto/api'
 import { installScheduledRunRoutes, installScheduledJobRoutes } from '@ezacto/api'
-import { installDeelStagingRoutes, type DeelStagingApiRuntime, installDeelSyncRoutes, installStaffPaymentRoutes, type DeelSyncApiDependencies } from '@ezacto/api'
+import { installDeelStagingRoutes, type DeelStagingApiRuntime, installDeelSyncRoutes, installStaffPaymentRoutes, type DeelSyncApiDependencies,
+} from '@ezacto/api'
 import type { ContractorReviewStore, StaffPaymentStore } from '@ezacto/core'
 import { installMyPaymentRoutes } from '@ezacto/api'
 import type { MyPaymentsStore } from '@ezacto/core'
 import { apiFailureStatus, reportWorkerError, runtimeTraceId } from './error-reporting.js'
-import type { BillRuntime, DeelSyncRuntime, QuickBooksService, WiseRuntime } from "@ezacto/integrations";
+import type { BillRuntime, DeelSyncRuntime, QuickBooksService, WiseRuntime,
+} from "@ezacto/integrations";
 import type {
   InvoiceDocumentPreferenceService,
   InvoiceDocumentPort,
@@ -280,6 +295,11 @@ export type AppEnv = Env & {
    * named here and not by any request; connecting GitHub is refused without it.
    */
   GITHUB_WORK_ITEMS_CREDENTIAL?: string
+  GITHUB_APP_ID?: string
+  GITHUB_APP_PRIVATE_KEY?: string
+  GITHUB_APP_WEBHOOK_SECRET?: string
+  GITHUB_APP_ENCRYPTION_KEY?: string
+  GITHUB_TIME_PUBLICATION_ENABLED?: string
   /**
    * Publishes sign-in credentials on the front page and lets the nightly cron
    * wipe the database. Both are refused outside a non-production environment
@@ -301,7 +321,7 @@ export type AppEnv = Env & {
   BACKUPS_ENABLED?: string
 }
 
-export type WorkerEnv = AppEnv & OffsiteBackupEnvironment & BankFeedEnvironment & {
+export type WorkerEnv = AppEnv & OffsiteBackupEnvironment & BankFeedEnvironment & CalendarEnvironment & {
   DB: D1Database
   SCHEDULED_RUN_WORKFLOW?: Workflow<{runId: number; proposedAt: string}>
   /** Sentry DSN. Absent means error reporting is off (a no-op wrapper). */
@@ -310,28 +330,28 @@ export type WorkerEnv = AppEnv & OffsiteBackupEnvironment & BankFeedEnvironment 
   ATTACHMENTS?: R2Bucket
   WEBHOOK_ENCRYPTION_KEY?: string
   API_CURSOR_SIGNING_KEY: string
-  /**
-   * How many seconds a session's last-seen time, or an API token's last-used
-   * time, may age before a signed-in request writes it again (#951). Unset is
-   * 300; 0 writes on every request; at most 3600. Inside the interval an
-   * authenticated read is a read, which is what keeps page views off the
-   * database's write path.
-   */
-  LAST_SEEN_INTERVAL_SECONDS?: string
-  /**
-   * Portal magic-link signing key. Absent means portal auth is off: the routes
-   * hand out sessions, so an install with no key must not serve them rather
-   * than serve them with a weak one.
-   */
-  MAGIC_LINK_SIGNING_KEY?: string
-  /**
-   * Contact sign-in for the in-app portal, separate from the staff key above.
-   * Absent everywhere by default: `clients.conflict.media` runs its own portal
-   * worker with its own tokens and mailer, so nothing needs these routes today.
-   * Kept switchable because central portal auth here is a direction worth
-   * leaving open -- see PORTAL_ROUTES for what setting it does and does not do.
-   */
-  PORTAL_MAGIC_LINK_SIGNING_KEY?: string
+    /**
+     * How many seconds a session's last-seen time, or an API token's last-used
+     * time, may age before a signed-in request writes it again (#951). Unset is
+     * 300; 0 writes on every request; at most 3600. Inside the interval an
+     * authenticated read is a read, which is what keeps page views off the
+     * database's write path.
+     */
+    LAST_SEEN_INTERVAL_SECONDS?: string
+    /**
+     * Portal magic-link signing key. Absent means portal auth is off: the routes
+     * hand out sessions, so an install with no key must not serve them rather
+     * than serve them with a weak one.
+     */
+    MAGIC_LINK_SIGNING_KEY?: string
+    /**
+     * Contact sign-in for the in-app portal, separate from the staff key above.
+     * Absent everywhere by default: `clients.conflict.media` runs its own portal
+     * worker with its own tokens and mailer, so nothing needs these routes today.
+     * Kept switchable because central portal auth here is a direction worth
+     * leaving open -- see PORTAL_ROUTES for what setting it does and does not do.
+     */
+    PORTAL_MAGIC_LINK_SIGNING_KEY?: string
   /** Bound together with a provider implementation; absent deployments fail auth email closed. */
   EMAIL_QUEUE?: Queue<QueuedEmailJob>
   MIGRATION_QUEUE?: Queue<{kind:'migration-load-v1';runId:string;sequence:number}>
@@ -342,74 +362,74 @@ export type WorkerEnv = AppEnv & OffsiteBackupEnvironment & BankFeedEnvironment 
   /** Optional Cloudflare Access provider; both values are required together. */
   ACCESS_TEAM_DOMAIN?: string
   ACCESS_POLICY_AUD?: string
-  /**
-   * Intuit credentials. Both are Worker secrets; without them the QuickBooks
-   * routes are not mounted at all.
-   */
-  QUICKBOOKS_CLIENT_ID?: string
+    /**
+     * Intuit credentials. Both are Worker secrets; without them the QuickBooks
+     * routes are not mounted at all.
+     */
+    QUICKBOOKS_CLIENT_ID?: string
   QUICKBOOKS_CLIENT_SECRET?: string
   /** From the webhooks page in the Intuit portal; without it no delivery is accepted. */
   QUICKBOOKS_WEBHOOK_VERIFIER_TOKEN?: string
   /** `sandbox` reaches Intuit's test companies; anything else is live books. */
   QUICKBOOKS_ENVIRONMENT?: string
-  /**
-   * The organisation's own Wise API token. Without it the Wise routes are not
-   * mounted, because a screen that cannot list a single destination is worse
-   * than no screen.
-   *
-   * This is not an OAuth pair: the token authenticates as the business that
-   * sends the money, and a contractor supplies a destination rather than a
-   * grant.
-   */
-  WISE_TOKEN?: string
+    /**
+     * The organisation's own Wise API token. Without it the Wise routes are not
+     * mounted, because a screen that cannot list a single destination is worse
+     * than no screen.
+     *
+     * This is not an OAuth pair: the token authenticates as the business that
+     * sends the money, and a contractor supplies a destination rather than a
+     * grant.
+     */
+    WISE_TOKEN?: string
   /** Which profile pays, where the token reaches more than one. */
   WISE_PROFILE_ID?: string
-  /**
-   * `read_only` keeps the Wise token for status and masked recipient reads only
-   * (issue 1237): no destination writes, and the payment provider is not
-   * composed, so a token alone never enables money movement. Absent keeps the
-   * existing behaviour, where the token also composes payments.
-   */
-  WISE_MODE?: string
-  /**
-   * The PEM Wise signs webhook deliveries with. Without it the webhook route is
-   * not mounted at all: an unverifiable claim about money is not one to act on.
-   */
-  WISE_WEBHOOK_PUBLIC_KEY?: string
-  /**
-   * BILL credentials. All Worker secrets, and all four are needed before
-   * anything can be sent: BILL has no OAuth, so there is no connect flow that
-   * could obtain them and nothing for this system to rotate.
-   *
-   * `BILL_USERNAME` and `BILL_PASSWORD` take either an operator's BILL login or
-   * the NAME and VALUE of an AP/AR sync token -- BILL reads both from the same
-   * two fields. The sync token is the safer of the two and cannot have BILL
-   * send the invoice email, which is what `BILL_REPLY_TO_USER_ID` selects: set
-   * it and BILL emails the client, leave it and ezacto emails them with a BILL
-   * payment link instead.
-   */
-  BILL_DEV_KEY?: string
+    /**
+     * `read_only` keeps the Wise token for status and masked recipient reads only
+     * (issue 1237): no destination writes, and the payment provider is not
+     * composed, so a token alone never enables money movement. Absent keeps the
+     * existing behaviour, where the token also composes payments.
+     */
+    WISE_MODE?: string
+    /**
+     * The PEM Wise signs webhook deliveries with. Without it the webhook route is
+     * not mounted at all: an unverifiable claim about money is not one to act on.
+     */
+    WISE_WEBHOOK_PUBLIC_KEY?: string
+    /**
+     * BILL credentials. All Worker secrets, and all four are needed before
+     * anything can be sent: BILL has no OAuth, so there is no connect flow that
+     * could obtain them and nothing for this system to rotate.
+     *
+     * `BILL_USERNAME` and `BILL_PASSWORD` take either an operator's BILL login or
+     * the NAME and VALUE of an AP/AR sync token -- BILL reads both from the same
+     * two fields. The sync token is the safer of the two and cannot have BILL
+     * send the invoice email, which is what `BILL_REPLY_TO_USER_ID` selects: set
+     * it and BILL emails the client, leave it and ezacto emails them with a BILL
+     * payment link instead.
+     */
+    BILL_DEV_KEY?: string
   BILL_COMPANY_ID?: string
   BILL_USERNAME?: string
   BILL_PASSWORD?: string
   BILL_REPLY_TO_USER_ID?: string
   /** `sandbox` reaches BILL's test organisation; anything else is the real book. */
   BILL_ENVIRONMENT?: string
-  /**
-   * Stripe. The API key mints payment links; the signing secret is the whole
-   * authorisation on the webhook, so without it every delivery is refused.
-   * Both are Worker secrets.
-   */
-  STRIPE_API_KEY?: string
+    /**
+     * Stripe. The API key mints payment links; the signing secret is the whole
+     * authorisation on the webhook, so without it every delivery is refused.
+     * Both are Worker secrets.
+     */
+    STRIPE_API_KEY?: string
   STRIPE_WEBHOOK_SECRET?: string
-  /**
-   * Deel time sync (issue 103). Both are needed before anything is sent: the
-   * API token, and the first day (ISO) whose approved time may be submitted.
-   * The start date is the guard against a first run submitting every earlier
-   * month that was paid by other means. Supply both for the deployment; leaving
-   * either absent keeps approved-hour staging unavailable.
-   */
-  DEEL_TOKEN?: string
+    /**
+     * Deel time sync (issue 103). Both are needed before anything is sent: the
+     * API token, and the first day (ISO) whose approved time may be submitted.
+     * The start date is the guard against a first run submitting every earlier
+     * month that was paid by other means. Supply both for the deployment; leaving
+     * either absent keeps approved-hour staging unavailable.
+     */
+    DEEL_TOKEN?: string
   DEEL_SYNC_START_DATE?: string
   /** SES credentials are Worker secrets; never place them in wrangler vars. */
   AWS_ACCESS_KEY_ID?: string
@@ -422,11 +442,11 @@ export type WorkerEnv = AppEnv & OffsiteBackupEnvironment & BankFeedEnvironment 
   MAILGUN_API_KEY?: string
   MAILGUN_DOMAIN?: string
   MAILGUN_REGION?: 'us' | 'eu'
-  /**
-   * Mailgun's HTTP webhook signing key (not the API key). Without it the
-   * /webhooks/mailgun route is not mounted, so no unsigned post is accepted.
-   */
-  MAILGUN_WEBHOOK_SIGNING_KEY?: string
+    /**
+     * Mailgun's HTTP webhook signing key (not the API key). Without it the
+     * /webhooks/mailgun route is not mounted, so no unsigned post is accepted.
+     */
+    MAILGUN_WEBHOOK_SIGNING_KEY?: string
   MAIL_FROM?: string
 }
 
@@ -436,8 +456,7 @@ export interface RuntimeServices {
   appleWebLifecycle?: AppleWebLifecyclePort
   bootstrap(input: InstanceBootstrapInput): Promise<InstanceBootstrapResult>
   enrollOwnerPassword(
-    input: InstanceOwnerPasswordInput,
-  ): Promise<InstanceOwnerPasswordResult>
+    input: InstanceOwnerPasswordInput): Promise<InstanceOwnerPasswordResult>
   tokens: ApiTokenService
   projectMissingRates?: GeneralResourceRouteOptions['missingRates']
   generalResources: GeneralResourceRouteOptions['repository']
@@ -446,7 +465,10 @@ export interface RuntimeServices {
   team: TeamRouteOptions['repository']
   trackedResources: TrackedResourceRepository & HarvestTimeEntrySource & HarvestExpenseSource
   /** Calendar events offered as time, accepted through `trackedResources` (issue 428). */
+  calendarOperatorCleanup?: CalendarOperatorCleanupStore
   calendarConnections?: CalendarConnectionPort
+  calendarAuthorization?: CalendarAuthorizationPort
+  calendarMaintenance?: { processDue(): Promise<void> }
   calendarProposals: CalendarProposalRepository
   /** Planned hours per week and the capacity view (issue 1007). */
   organizationHolidays?: OrganizationHolidayRepository
@@ -457,7 +479,7 @@ export interface RuntimeServices {
   /** Issue tracker connections and the links to their items (issue 1008). */
   workItems: {
     repository: WorkItemRepository
-    credentialConfigured(provider: WorkItemProviderId): boolean
+    credentialConfigured(provider: WorkItemProviderId): boolean | Promise<boolean>
   }
   profile: ProfileRepositoryPort
   isExpensesModuleEnabled(): Promise<boolean>
@@ -668,6 +690,7 @@ export interface RuntimeServices {
   bill?: BillRuntime
   /** Deel time sync, run from the daily cron. Absent on the demo. */
   deelPaymentStatus?: DeelPaymentStatusRuntime
+  githubReader?: GithubReaderApiPort & GithubReaderWebhookPort & { tick(): Promise<void>; publishTimeNotes?(): Promise<void> }
   deelStaging?: DeelStagingApiRuntime
   deelSync?: DeelSyncRuntime
   /** Administrator control of the Deel sync (#1102): the mode, the schedule and the run history. */
@@ -762,7 +785,8 @@ export const createApp = (
   const cleanupPorts = ([services?.nativeAppleLifecycle, services?.appleWebCleanup] as (AppleCleanupPort | undefined)[]).filter((port): port is AppleCleanupPort => port !== undefined)
   const appleCleanup: AppleCleanupPort | undefined = cleanupPorts.length === 0 ? undefined : {
     async begin(userId,requestId) { for(const port of cleanupPorts) await port.begin(userId,requestId) },
-    async status(requestId) { return aggregateAppleCleanup(await Promise.all(cleanupPorts.map(port=>port.status(requestId)))) },
+    async status(requestId) { return aggregateAppleCleanup(await Promise.all(cleanupPorts.map((port) =>port.status(requestId))),
+            ) },
   }
   const shellBrand = async (env: AppEnv) => {
     const stored = brandAssets === undefined ? [] : await brandAssets.list(env)
@@ -876,7 +900,8 @@ export const createApp = (
     // in index.ts, and never given a request or response body.
     reportError: (error, requestId) => {
       reportWorkerError(telemetry?.reportError === undefined ? undefined : (failure) => telemetry.reportError!(failure, requestId), error,
-        { phase: 'api', requestId, traceId: runtimeTraceId(), status: apiFailureStatus(error) })
+        { phase: 'api', requestId, traceId: runtimeTraceId(), status: apiFailureStatus(error) },
+      )
     },
     ...(services === undefined
       ? {}
@@ -907,8 +932,11 @@ export const createApp = (
                 ? {}
                 : { deletionMailer: services.accountDeletionMailer }),
             })
-            if(services.accountRetentionReview) installAccountRetentionReviewRoutes(api,{store:services.accountRetentionReview,clock:()=>systemClock.now().instant,...(appleCleanup===undefined?{}:{appleCleanup})})
-            if (services.accountClosure) installAccountClosureRoutes(api, { store: services.accountClosure, clock: () => systemClock.now().instant, ...(appleCleanup === undefined ? {} : { appleCleanup }), ...(services.appleWebCleanup === undefined ? {} : {performAppleCleanup:(requestId:string)=>services.appleWebCleanup!.perform(requestId)}) })
+            if(services.accountRetentionReview) installAccountRetentionReviewRoutes(api,{store:services.accountRetentionReview,clock:()=>systemClock.now().instant,...(appleCleanup===undefined?{}:{appleCleanup}),
+              })
+            if (services.accountClosure) installAccountClosureRoutes(api, { store: services.accountClosure, clock: () => systemClock.now().instant, ...(appleCleanup === undefined ? {} : { appleCleanup }), ...(services.appleWebCleanup === undefined ? {} : {performAppleCleanup:(requestId:string)=>services.appleWebCleanup!.perform(requestId),
+                    }),
+              })
             // The organization's timezone decides where a calendar day begins,
             // for the logs a day range narrows.
             const organizationTimezone = async (): Promise<string> =>
@@ -921,7 +949,8 @@ export const createApp = (
                 : { viewReceipts: services.invoiceViewReceipts }),
             })
             installEmailHealthRoutes(api, services.emailLog)
-            if (services.emailSuppressions) installEmailSuppressionRoutes(api, services.emailSuppressions, {cursorSigningKey: services.cursorSigningKey})
+            if (services.emailSuppressions) installEmailSuppressionRoutes(api, services.emailSuppressions, {cursorSigningKey: services.cursorSigningKey,
+              })
             installEmailConfigurationRoutes(api, {
               service: services.emailConfiguration,
               ...(services.senderIdentityVerifier === undefined
@@ -950,16 +979,20 @@ export const createApp = (
             if (services.invoiceElevations && services.twoFactor) installInvoiceElevationRoutes(api, {
               store: services.invoiceElevations, passwords: services.passwordAuth,
               ...(services.invoiceTimeUnlink === undefined ? {} : {unlinkTime:services.invoiceTimeUnlink}),
-              policy: createSignInMethodPolicy({service: services.signInMethods, configured: bindings => deployedSignInMethods(bindings as WorkerEnv)}),
+              policy: createSignInMethodPolicy({service: services.signInMethods, configured: (bindings) => deployedSignInMethods(bindings as WorkerEnv),
+                }),
               secondFactor: services.twoFactor, emailCodesReady: services.twoFactorEmailCodes !== undefined,
               ...(services.twoFactorEmailCodes === undefined ? {} : {emailCodeMailer:services.twoFactorEmailCodes}),
               clock: () => systemClock.now().instant,
-              clientKey: request => request.headers.get('cf-connecting-ip') ?? 'unknown-client',
+              clientKey: (request) => request.headers.get('cf-connecting-ip') ?? 'unknown-client',
             })
-            if (services.webhooks) installOutboundWebhookRoutes(api, services.webhooks, {cursorSigningKey:services.cursorSigningKey})
+            if (services.webhooks) installOutboundWebhookRoutes(api, services.webhooks, {cursorSigningKey:services.cursorSigningKey,
+              })
             if (services.migrationLoads) installMigrationLoadRoutes(api, services.migrationLoads)
-            if (services.estimateTemplates) installEstimateTemplateRoutes(api, services.estimateTemplates, () => systemClock.now().instant)
-            if (services.clientRateCards) installClientRateCardRoutes(api, { repository: services.clientRateCards, clock: systemClock })
+            if (services.estimateTemplates) installEstimateTemplateRoutes(api, services.estimateTemplates, () => systemClock.now().instant,
+              )
+            if (services.clientRateCards) installClientRateCardRoutes(api, { repository: services.clientRateCards, clock: systemClock,
+              })
             installTeamRoutes(api, {
               repository: services.team,
               costRateBackfill: services.costRateBackfill,
@@ -972,8 +1005,10 @@ export const createApp = (
               cursorSigningKey: services.cursorSigningKey,
               isExpensesModuleEnabled: services.isExpensesModuleEnabled,
             })
-            if (services.organizationHolidays) installOrganizationHolidayRoutes(api, services.organizationHolidays, { cursorSigningKey: services.cursorSigningKey, clock: () => systemClock.now().instant })
-            if(services.placeholderPlanning) installPlaceholderPlanningRoutes(api,services.placeholderPlanning,{clock:()=>systemClock.now().instant,cursorSigningKey:services.cursorSigningKey})
+            if (services.organizationHolidays) installOrganizationHolidayRoutes(api, services.organizationHolidays, { cursorSigningKey: services.cursorSigningKey, clock: () => systemClock.now().instant,
+              })
+            if(services.placeholderPlanning) installPlaceholderPlanningRoutes(api,services.placeholderPlanning,{clock:()=>systemClock.now().instant,cursorSigningKey:services.cursorSigningKey,
+              })
             installAllocationRoutes(api, {
               repository: services.allocations,
               clock: systemClock,
@@ -985,7 +1020,9 @@ export const createApp = (
               cursorSigningKey: services.cursorSigningKey,
               now: () => new Date(systemClock.now().instant),
             })
+            if(services.calendarOperatorCleanup) installCalendarOperatorCleanupRoutes(api,services.calendarOperatorCleanup)
             if(services.calendarConnections) installCalendarConnectionRoutes(api,services.calendarConnections)
+            if(services.calendarAuthorization) installCalendarAuthorizationRoutes(api,services.calendarAuthorization)
             installCalendarProposalRoutes(api, {
               repository: services.calendarProposals,
               clock: systemClock,
@@ -1050,16 +1087,20 @@ export const createApp = (
             installReportRoutes(api, services.reports)
             if (services.paymentRuns !== undefined) {
               installPaymentRunRoutes(api, services.paymentRuns)
-              if (services.paymentRuns.invoices) installStaffInvoiceRoutes(api, services.paymentRuns.invoices, services.attachments?.objects)
+              if (services.paymentRuns.invoices) installStaffInvoiceRoutes(api, services.paymentRuns.invoices, services.attachments?.objects,
+                )
             }
             if (services.contractorReview !== undefined) installContractorReviewRoutes(api, services.contractorReview)
             if (services.scheduledJobs !== undefined)
-              installScheduledJobRoutes(api, services.scheduledJobs, { cursorSigningKey: services.cursorSigningKey })
+              installScheduledJobRoutes(api, services.scheduledJobs, { cursorSigningKey: services.cursorSigningKey,
+              })
             if (services.scheduledRuns !== undefined) installScheduledRunRoutes(api, services.scheduledRuns, services.attachments?.objects)
             if (services.staffPayments !== undefined) {
               installStaffPaymentRoutes(api, services.staffPayments)
             }
             if (services.deelPaymentStatus !== undefined) installDeelPaymentStatusRoutes(api, services.deelPaymentStatus)
+            if (services.githubReader !== undefined)
+              installGithubReaderRoutes(api, services.githubReader)
             if (services.deelStaging !== undefined) installDeelStagingRoutes(api, services.deelStaging)
             if (services.deelSync !== undefined && services.deelSyncAdmin !== undefined) {
               installDeelSyncRoutes(api, {
@@ -1118,8 +1159,7 @@ export const createApp = (
             if (services.invoiceDocumentPreference !== undefined) {
               installInvoiceDocumentPreferenceRoutes(
                 api,
-                services.invoiceDocumentPreference,
-              )
+                services.invoiceDocumentPreference)
             }
             if (services.invoiceHoursReport !== undefined) {
               installInvoiceHoursReportRoutes(api, services.invoiceHoursReport)
@@ -1127,8 +1167,7 @@ export const createApp = (
             if (services.invoiceHoursReconciliation !== undefined) {
               installInvoiceHoursReconciliationRoutes(
                 api,
-                services.invoiceHoursReconciliation,
-              )
+                services.invoiceHoursReconciliation)
             }
             if (services.recurringRepair !== undefined) {
               installRecurringRepairRoutes(api, services.recurringRepair, () =>
@@ -1205,7 +1244,8 @@ export const createApp = (
             }
             installBrandRoute(api, {
               organizationName: services.organizationName,
-              assets: (env) => (brandAssets === undefined ? Promise.resolve([]) : brandAssets.list(env)),
+              assets: (env) =>
+                brandAssets === undefined ? Promise.resolve([]) : brandAssets.list(env),
               ...(instanceTheme === undefined
                 ? {}
                 : {
@@ -1325,6 +1365,8 @@ export const createApp = (
       if (services?.wiseWebhook !== undefined) {
         installWiseWebhookRoute(app, services.wiseWebhook)
       }
+      if (services?.githubReader !== undefined)
+        installGithubReaderWebhookRoute(app, services.githubReader)
       // The page a client reaches from the link in an emailed invoice (issue
       // 936). No session, so the link's token is the whole of the authorisation
       // and these sit outside the API surface, beside the webhooks.
@@ -1395,8 +1437,10 @@ export const createApp = (
         // token and gets the ordinary session back; it reuses the shared
         // identity resolver and session issuer, so it needs no store of its
         // own. Configured off (404) until APPLE_CLIENT_ID names an audience.
-        if (services.accountDeletionTracking) installAccountDeletionStatusRoutes(app, { store: services.accountDeletionTracking, clock: () => systemClock.now().instant, ...(appleCleanup === undefined ? {} : { appleCleanup }) })
-        const nativeLifecycle=services.nativeAppleLifecycle===undefined?undefined:{store:services.nativeAppleLifecycle,origin:(env:AppEnv)=>env.APP_BASE_URL,clock:()=>systemClock.now().instant}
+        if (services.accountDeletionTracking) installAccountDeletionStatusRoutes(app, { store: services.accountDeletionTracking, clock: () => systemClock.now().instant, ...(appleCleanup === undefined ? {} : { appleCleanup }),
+          })
+        const nativeLifecycle=services.nativeAppleLifecycle===undefined?undefined:{store:services.nativeAppleLifecycle,origin:(env:AppEnv)=>env.APP_BASE_URL,clock:()=>systemClock.now().instant,
+              }
         if(nativeLifecycle)installAppleLifecycleRoutes(app,nativeLifecycle)
         installAppleRoutes(app, {
           ...(nativeLifecycle === undefined ? {} : { lifecycle: nativeLifecycle }),
@@ -1412,8 +1456,8 @@ export const createApp = (
           provider: appleWebConfiguration,
           lifecycle: () => services.appleWebLifecycle ?? null,
           policy: signInPolicy,
-          clientKey: request => request.headers.get('cf-connecting-ip') ?? 'unknown-client',
-          demoAccount: env => demoDeployment(env) ? demoAccounts.find(account => account.label === 'Teammate')!.userId : null,
+          clientKey: (request) => request.headers.get('cf-connecting-ip') ?? 'unknown-client',
+          demoAccount: (env) => demoDeployment(env) ? demoAccounts.find((account) => account.label === 'Teammate')!.userId : null,
           renderDisconnect: renderAppleDisconnect,
         })
         installPasswordAuthRoutes(app, {
@@ -1532,8 +1576,7 @@ export const createApp = (
           if (!(await secureTokenEqual(expected, presented))) {
             context.header(
               'www-authenticate',
-              'Bearer realm="ezacto-bootstrap"',
-            )
+              'Bearer realm="ezacto-bootstrap"')
             throw new ApiError({
               status: 401,
               code: 'authentication_required',
@@ -1597,8 +1640,7 @@ export const createApp = (
           if (!(await secureTokenEqual(expected, presented))) {
             context.header(
               'www-authenticate',
-              'Bearer realm="ezacto-bootstrap"',
-            )
+              'Bearer realm="ezacto-bootstrap"')
             throw new ApiError({
               status: 401,
               code: 'authentication_required',
@@ -1964,8 +2006,7 @@ export const createApp = (
       // still work: 301, the same way /settings/modules kept working when it
       // folded into /settings/company.
       app.get('/invoices/configure', (context) =>
-        context.redirect('/settings/templates', 301),
-      )
+        context.redirect('/settings/templates', 301))
 
       app.get('/clients', async (context) =>
         context.html(
@@ -2092,7 +2133,8 @@ export const createApp = (
             tabs: [
               { label: 'People', href: '/team' },
               { label: 'Payments', href: '/payments', current: context.req.path === '/payments' },
-              { label: 'Payments report', href: '/payments/report', current: context.req.path === '/payments/report' },
+              { label: 'Payments report', href: '/payments/report', current: context.req.path === '/payments/report',
+                },
             ],
             demoAccounts: publishedDemoAccounts(context.env),
             sessionCookiePresent: hasSessionCookie(context.req.raw),
@@ -2162,7 +2204,8 @@ export const createApp = (
             ...(await shellChrome(context.env, context.req.raw)),
             activeSection: 'Reports',
             view: 'reports',
-            tabs: reportKindTabs(context.req.path === '/reports/saved' ? 'saved' : (context.req.query('report') ?? null)),
+            tabs: reportKindTabs(context.req.path === '/reports/saved' ? 'saved' : (context.req.query('report') ?? null),
+              ),
             demoAccounts: publishedDemoAccounts(context.env),
             sessionCookiePresent: hasSessionCookie(context.req.raw),
           }),
@@ -2259,7 +2302,7 @@ export const createApp = (
           200,
           {
             'cache-control': 'no-store',
-            'content-security-policy': shellContentSecurityPolicy,
+            'content-security-policy': companySettingsContentSecurityPolicy,
             'permissions-policy': 'camera=(), microphone=(), geolocation=()',
             'referrer-policy': 'same-origin',
             'x-content-type-options': 'nosniff',
@@ -2656,8 +2699,7 @@ const configuredCredential = (value: string | undefined): string | null => {
 }
 
 export const cloudflareAccessConfig = (
-  env: WorkerEnv,
-): CloudflareAccessVerifierConfig | null => {
+  env: WorkerEnv): CloudflareAccessVerifierConfig | null => {
   const teamDomain = configuredCredential(env.ACCESS_TEAM_DOMAIN)
   const audience = configuredCredential(env.ACCESS_POLICY_AUD)
   if (teamDomain === null && audience === null) return null
@@ -2730,8 +2772,7 @@ const assertRedirectOrigin = (value: string): string => {
 /** Application-owned provider registry. Request input never selects an issuer. */
 export const oidcProvider = (
   key: string,
-  env: AppEnv,
-): OidcProviderConfig | null => {
+  env: AppEnv): OidcProviderConfig | null => {
   if (key !== 'google') return null
   const clientId = configuredCredential(env.OIDC_GOOGLE_CLIENT_ID)
   const clientSecret = configuredCredential(env.OIDC_GOOGLE_CLIENT_SECRET)
@@ -2752,8 +2793,7 @@ export const oidcProvider = (
 
 /** GitHub OAuth2 provider. Not OIDC; uses /user and /user/emails endpoints. */
 export const githubProvider = (
-  env: AppEnv,
-): GitHubProviderConfig | null => {
+  env: AppEnv): GitHubProviderConfig | null => {
   const clientId = configuredCredential(env.GITHUB_CLIENT_ID)
   const clientSecret = configuredCredential(env.GITHUB_CLIENT_SECRET)
   if (clientId === null && clientSecret === null) return null
@@ -2789,7 +2829,8 @@ export const appleProvider = (env: AppEnv): AppleProviderConfig | null => {
  * nothing. Everything demo-shaped in this codebase asks this function, so
  * there is one place to read to know what it takes.
  */
-export const workItemCredentialConfigured = (env: AppEnv, provider: WorkItemProviderId): boolean => {
+export const workItemCredentialConfigured = (env: AppEnv, provider: WorkItemProviderId,
+): boolean => {
   const value = env[workItemProviders[provider].credentialSecret]
   return typeof value === 'string' && value !== ''
 }
@@ -2798,9 +2839,11 @@ export const workItemCredentialConfigured = (env: AppEnv, provider: WorkItemProv
 const configuredAccountingProviders = (env: AppEnv): AccountingProviderAvailability => {
   const keys = env as WorkerEnv
   return {
-    quickbooks: quickBooksConfigured({ clientId: keys.QUICKBOOKS_CLIENT_ID, clientSecret: keys.QUICKBOOKS_CLIENT_SECRET, appBaseUrl: keys.APP_BASE_URL }),
+    quickbooks: quickBooksConfigured({ clientId: keys.QUICKBOOKS_CLIENT_ID, clientSecret: keys.QUICKBOOKS_CLIENT_SECRET, appBaseUrl: keys.APP_BASE_URL,
+    }),
     bill: billConfigured({ devKey: keys.BILL_DEV_KEY, companyId: keys.BILL_COMPANY_ID,
-      username: keys.BILL_USERNAME, password: keys.BILL_PASSWORD, replyToUserId: undefined, environment: keys.BILL_ENVIRONMENT }),
+      username: keys.BILL_USERNAME, password: keys.BILL_PASSWORD, replyToUserId: undefined, environment: keys.BILL_ENVIRONMENT,
+    }),
     wise: wiseConfigured({ token: keys.WISE_TOKEN }, parseWiseMode(keys.WISE_MODE)),
     deel: deelConfigurationProblem({ token: keys.DEEL_TOKEN, startDate: keys.DEEL_SYNC_START_DATE }) === null,
   }
@@ -2860,8 +2903,7 @@ export const publishedDemoAccounts = (env: AppEnv): readonly DemoSignInAccount[]
 
 /** Public shell availability contains provider keys only, never credentials. */
 export const configuredSignInProviders = (
-  env: AppEnv,
-): readonly SignInProvider[] => {
+  env: AppEnv): readonly SignInProvider[] => {
   const providers: SignInProvider[] = []
   // Operator-disabled single sign-on advertises no federated provider (issue 1254).
   if (!moduleAvailability(env).sso) return providers
@@ -2930,8 +2972,7 @@ const parseBootstrapBody = async (
     ...bootstrapFields
       .filter(
         (field) =>
-          typeof record[field] !== 'string' || record[field].trim() === '',
-      )
+          typeof record[field] !== 'string' || record[field].trim() === '')
       .map((field) => ({
         field,
         code: 'required',
@@ -2988,12 +3029,10 @@ const parseBootstrapPasswordBody = async (
 
 const secureTokenEqual = async (
   expected: string,
-  presented: string,
-): Promise<boolean> => {
+  presented: string): Promise<boolean> => {
   const digest = async (value: string): Promise<Uint8Array> =>
     new Uint8Array(
-      await crypto.subtle.digest('SHA-256', new TextEncoder().encode(value)),
-    )
+      await crypto.subtle.digest('SHA-256', new TextEncoder().encode(value)))
   const [left, right] = await Promise.all([digest(expected), digest(presented)])
   let difference = left.length ^ right.length
   for (let index = 0; index < left.length; index += 1) {
@@ -3027,3 +3066,11 @@ const shellContentSecurityPolicy = [
 ].join('; ')
 import type { ResourceCalendarRepository } from '@ezacto/core'
 import { installResourceCalendarRoutes } from '@ezacto/api'
+
+// Only the company settings page can hand the reviewed App manifest to GitHub.
+// The UI additionally validates the complete registration pathname. Other shell
+// forms and all fetch connections retain their same-origin policy.
+const companySettingsContentSecurityPolicy = shellContentSecurityPolicy.replace(
+  "form-action 'self'",
+  "form-action 'self' https://github.com/settings/apps/new https://github.com/organizations/",
+)

@@ -9,7 +9,7 @@ export const workerScheduledOperations = [
   'off-site backup checkpoint', 'scheduled job proposal sweep',
   'Stripe alert notice', 'scheduled manifest notice', 'scheduled run dispatch', 'scheduled run expiry',
   'nightly export', 'temporary backup cleanup', 'recurring invoice generation', 'payment reminders',
-  'BILL reconciliation', 'QuickBooks catch-up', 'Deel time sync', 'Deel payment status',
+  'calendar sync', 'GitHub issue reconciliation', 'BILL reconciliation', 'QuickBooks catch-up', 'Deel time sync', 'Deel payment status',
   'demo maintenance', 'demo sender seed', 'outbox drain',
 ] as const
 export type WorkerScheduledOperation = (typeof workerScheduledOperations)[number]

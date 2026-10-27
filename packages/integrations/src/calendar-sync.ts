@@ -8,6 +8,7 @@ import {
   runCalendarSync,
   type CalendarConnectionAuthority,
   type CalendarConnectionStore,
+  type CalendarCredentialIdentity,
   type CalendarOAuthGrant,
   type CalendarProvider,
   type CalendarSourceFactory,
@@ -20,6 +21,10 @@ export const createCalendarSyncService = async (options: {
   store: CalendarConnectionStore
   deploymentKey: Uint8Array
   sources?: Readonly<Partial<Record<CalendarProvider, CalendarSourceFactory>>>
+  retainRejectedGrant?: (
+    grant: CalendarOAuthGrant,
+    identity: CalendarCredentialIdentity,
+  ) => Promise<void>
   now?: () => Date
 }) => {
   const { store } = options,
@@ -77,21 +82,68 @@ export const createCalendarSyncService = async (options: {
       const source = await bounded(() =>
         factory({
           grant,
+          ...(options.retainRejectedGrant
+            ? {
+                retainRejectedGrant: async (nextGrant: CalendarOAuthGrant) => {
+                  if (!lease) throw new CalendarConnectionError('changed')
+                  const random = crypto.getRandomValues(new Uint32Array(2))
+                  await options.retainRejectedGrant!(nextGrant, {
+                    ...lease,
+                    credentialRevision: 4294967296 + (random[0]! % 65535) * 4294967296 + random[1]!,
+                  })
+                },
+              }
+            : {}),
           rotateGrant: async (nextGrant) => {
-            if (!lease || !active || timeout.signal.aborted)
-              throw new CalendarConnectionError('changed')
-            const prior = lease
-            const identity = { ...prior, credentialRevision: prior.credentialRevision + 1 }
-            const [sealedGrant, sealedCursor] = await Promise.all([
-              vault.sealGrant(nextGrant, identity),
-              cursor ? vault.sealCursor(cursor, identity) : Promise.resolve(null),
-            ])
-            if (!active || timeout.signal.aborted) throw new CalendarConnectionError('changed')
-            lease = await store.rotate(
-              prior,
-              { keyId: vault.keyId, sealedGrant, sealedCursor },
-              now(),
-            )
+            const original = lease
+            let attempted: { identity: CalendarCredentialIdentity; sealedGrant: string } | undefined
+            try {
+              if (!lease || !active || timeout.signal.aborted)
+                throw new CalendarConnectionError('changed')
+              const prior = lease
+              const identity = { ...prior, credentialRevision: prior.credentialRevision + 1 }
+              const [sealedGrant, sealedCursor] = await Promise.all([
+                vault.sealGrant(nextGrant, identity),
+                cursor ? vault.sealCursor(cursor, identity) : Promise.resolve(null),
+              ])
+              attempted = { identity, sealedGrant }
+              if (!active || timeout.signal.aborted) throw new CalendarConnectionError('changed')
+              lease = await store.rotate(
+                prior,
+                { keyId: vault.keyId, sealedGrant, sealedCursor },
+                now(),
+              )
+            } catch (error) {
+              // A write can commit even when its response is lost. Never revoke
+              // the exact envelope that a fresh read proves is now installed.
+              if (attempted) {
+                let accepted = false
+                try {
+                  const held = await store.read(
+                    attempted.identity.userId,
+                    attempted.identity.provider,
+                  )
+                  accepted =
+                    held?.state === 'connected' &&
+                    held.instance === attempted.identity.instance &&
+                    held.generation === attempted.identity.generation &&
+                    held.credentialRevision === attempted.identity.credentialRevision &&
+                    held.keyId === vault.keyId &&
+                    held.sealedGrant === attempted.sealedGrant
+                } catch {
+                  /* Unproven custody remains a cleanup obligation. */
+                }
+                if (accepted) throw error
+              }
+              if (original && options.retainRejectedGrant) {
+                const random = crypto.getRandomValues(new Uint32Array(2))
+                await options.retainRejectedGrant(nextGrant, {
+                  ...original,
+                  credentialRevision: 4294967296 + (random[0]! % 65535) * 4294967296 + random[1]!,
+                })
+              }
+              throw error
+            }
           },
         }),
       )
@@ -176,8 +228,7 @@ export const createCalendarSyncService = async (options: {
         now: at,
         // Provider cursors can be scoped to exact query bounds. Never reuse a
         // custom or rolling-window cursor for a different requested window.
-        cursor:
-          lease.window?.from === window.from && lease.window.to === window.to ? cursor : null,
+        cursor: lease.window?.from === window.from && lease.window.to === window.to ? cursor : null,
         ...(days ? { days } : {}),
         existing,
         ...(signal ? { signal } : {}),
@@ -226,7 +277,7 @@ export const createCalendarSyncService = async (options: {
       store.cleanupStatus(authority, now()),
     async connections(authority: CalendarConnectionAuthority) {
       const values = await store.list(authority, now())
-      return Promise.all(
+      const connected = await Promise.all(
         values.map(async (value) => {
           const held = await store.read(authority.userId, value.provider)
           return {
@@ -239,6 +290,21 @@ export const createCalendarSyncService = async (options: {
           }
         }),
       )
+      return [
+        ...connected,
+        ...available()
+          .filter((provider) => !values.some((value) => value.provider === provider))
+          .map((provider) => ({
+            provider,
+            state: 'disconnected' as const,
+            generation: 0,
+            lastSyncedAt: null,
+            lastError: null,
+            cleanupPending: false,
+            syncing: false,
+            available: true,
+          })),
+      ]
     },
     /** Called only by a verified, native-session-bound OAuth callback. */
     async completeOAuth(
@@ -257,13 +323,30 @@ export const createCalendarSyncService = async (options: {
           credentialRevision: 1,
         }
       const sealedGrant = await vault.sealGrant(grant, identity)
-      await store.connect(
-        authority,
-        provider,
-        expectedGeneration,
-        { instance, keyId: vault.keyId, sealedGrant },
-        now(),
-      )
+      try {
+        await store.connect(
+          authority,
+          provider,
+          expectedGeneration,
+          { instance, keyId: vault.keyId, sealedGrant },
+          now(),
+        )
+      } catch (error) {
+        let accepted = false
+        try {
+          const held = await store.read(authority.userId, provider)
+          accepted =
+            held?.state === 'connected' &&
+            held.instance === instance &&
+            held.generation === identity.generation &&
+            held.credentialRevision === 1 &&
+            held.keyId === vault.keyId &&
+            held.sealedGrant === sealedGrant
+        } catch {
+          /* Unproven custody is retained by the authorization caller. */
+        }
+        if (!accepted) throw error
+      }
     },
     async disconnect(
       authority: CalendarConnectionAuthority,
@@ -299,6 +382,9 @@ export const createCalendarSyncService = async (options: {
       // while disconnect, closure, and connection/lease fences cancel this one.
       return refresh(authority.userId, provider, signal, days)
     },
+    /** Runtime-only admission through a previously consented, fenced connection. */
+    refreshConnected: (userId: number, provider: CalendarProvider, signal?: AbortSignal) =>
+      refresh(userId, provider, signal),
   }
 }
 export type CalendarSyncService = Awaited<ReturnType<typeof createCalendarSyncService>>

@@ -328,3 +328,13 @@ export { createWiseBankFeed, type WiseBankFeedOptions } from './bank-feed/wise.j
 export { BankFeedError, type FeedObservation, type FeedObservations } from './bank-feed/shared.js'
 export { createBankFeedRuntime, bankFeedConfiguration, type BankFeedConfiguration, type BankFeedEnvironment, type BankFeedRuntimeStore, type BankFeedStatus } from './bank-feed/runtime.js'
 export { createConfiguredBankFeedRuntime } from './bank-feed/runtime.js'
+export { createGoogleCalendarSource, createMicrosoftCalendarSource, type CalendarSourceOptions } from './calendar/sources.js'
+export * from './calendar/oauth.js'
+export * from './calendar/runtime.js'
+export * from './work-items/github-client.js'
+export * from './work-items/github-runtime.js'
+export * from './work-items/github-reader-errors.js'
+export { createGithubCommentSurface, type GithubCommentOptions } from './work-items/github-comments.js'
+export { GithubPublicationError, type GithubPublicationAuthority, type GithubPublicationPort, type GithubPublicationPreview, type GithubPublicationRow } from './work-items/github-publication-model.js'
+
+export * from './work-items/publication.js'

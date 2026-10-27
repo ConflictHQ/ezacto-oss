@@ -4,6 +4,40 @@ The policy behind the authentication code, written down where the code can cite
 it. Each section names the routes it governs; changing a decision here means
 changing the tests that assert it.
 
+## Financial visibility and CONFLICT operating policy
+
+Financial access follows the native permission profile, manager grants and the
+identified subject of the requested figure. An employee/contractor flag does not
+itself grant or deny access to rates, costs, invoices or financial reports. The
+shared rules live in
+[`money-permissions.ts`](../packages/core/src/money-permissions.ts).
+
+For the CONFLICT production instance at `app.example.com`, **`own_money`
+stays disabled permanently**, per owner decision D44 recorded on
+[issue #549, 2026-10-24](https://github.com/ConflictHQ/ezacto-pvt/issues/549#issuecomment-6390787615).
+Do not enable it during deployment, onboarding or an access-verification run.
+This keeps the optional own-rate and own-payment views off. Existing
+administrator financial permissions remain governed by the native profile.
+Other self-hosted operators retain the documented administrator-controlled
+setting; an absent `own_money` key is off.
+
+When enabled on an instance whose policy permits it, the own-money exception
+requires a known acting user and an exact match to the figure's subject. It
+never widens access to another person's rates or to an organization budget. The
+[personal payment summary](contractor-payments.md) uses the same setting and
+subject boundary.
+
+Verification follows owner decision D43 in the same issue: production inspection
+is a read-only aggregate of profiles, grants and the effective `own_money` value.
+Authenticated denial probes use owner-provisioned test identities and synthetic
+records on `ezacto.io`, never real production employees' prices. Record the
+deployed revision, status codes and absent field names; keep credentials,
+identities and financial payloads out of the evidence. Local synthetic tests
+establish code behavior, while production aggregates establish the current
+configuration; preserve that distinction in the acceptance record. The
+[deployed verification procedure](financial-access-verification.md) includes the
+read-only probe and the browser checklist.
+
 ## Which sign-in methods are live
 
 Five methods exist: `password`, `magic_link`, `google`, `github` and `apple`. A

@@ -1,6 +1,10 @@
+import { githubPublicationMigration } from './migrations/0180_github_publication.js'
+import { githubReaderMigration } from './migrations/0179_github_reader.js'
+import { calendarOperatorCleanupMigration } from './migrations/0178_calendar_operator_cleanup.js'
 import { workerBackupCaptureMigration } from './migrations/0176_worker_backup_capture.js'
 import { staffCodeRequesterMigration } from './migrations/0175_staff_code_requester.js'
 import { calendarConnectionsMigration } from './migrations/0172_calendar_connections.js'
+import { calendarOAuthMigration } from './migrations/0177_calendar_oauth.js'
 import { stripePaymentAlertsMigration } from './migrations/0173_stripe_payment_alerts.js'
 import { bankDepositReviewMigration } from './migrations/0174_bank_deposit_review.js'
 import { deelStatusThrottleMigration } from './migrations/0167_deel_status_throttle.js'
@@ -1711,6 +1715,10 @@ const migrations = [
   { id: '0174_bank_deposit_review', statements: bankDepositReviewMigration },
   { id: '0175_staff_code_requester', statements: staffCodeRequesterMigration },
   { id: '0176_worker_backup_capture', statements: workerBackupCaptureMigration },
+  { id: '0177_calendar_oauth', statements: calendarOAuthMigration },
+  { id: '0178_calendar_operator_cleanup', statements: calendarOperatorCleanupMigration },
+  { id: '0179_github_reader', statements: githubReaderMigration },
+  { id: '0180_github_publication', statements: githubPublicationMigration },
 ] as const
 
 // Fixtures assert against this rather than re-listing ids: a hand-copied ledger merges

@@ -1,0 +1,43 @@
+{
+  "issue": 428,
+  "source_revision": "6ddb127457ef177e386202794f40454005a300f9",
+  "runtime": "Native Worker composition with disposable Miniflare D1 and Chromium on owned localhost origin",
+  "provider_transport": "Strictly allowlisted synthetic Google and Microsoft HTTP responses; browser consent navigations intercepted and returned to the real callback. No real provider grant or credentials.",
+  "command": "npm run test:browser:calendar --workspace @ezacto/web",
+  "result": {
+    "tests_passed": 2,
+    "duration_seconds": 11.3
+  },
+  "checks": [
+    "Native password session and HttpOnly requester cookie used on real callback; one-time state and PKCE exchanged through real backend",
+    "Google read-only consent creates a connection, sync creates one proposed event and zero time entries, disconnect persists, logout clears UI",
+    "Microsoft read-only consent and event sync succeed; disconnect blocks reconnect until explicit permission-removal confirmation is recorded; then fresh consent reconnects",
+    "Provider permission-removal instructions distinguish user confirmation from provider verification",
+    "Action feedback and duplicate-submit/session-cancellation controller tests pass; 47 focused UI/settings tests passed",
+    "Web/API typechecks and web lint passed; dependency browser build passed",
+    "390x844 screenshots visually reviewed; action controls use 44px shared styles"
+  ],
+  "limitations": [
+    "Local synthetic provider transport is not proof of real Google or Microsoft App registration or provider grant acceptance",
+    "No production deployment or production provider account was changed"
+  ],
+  "privacy": "Only fictional fixture events and temporary sessions/grants were used. No token, cookie value, OAuth code or state is included in this evidence. Disposable Miniflare is stopped by Playwright.",
+  "integrated_verification": {
+    "source_revision": "6085f19a",
+    "native_browser": {
+      "tests_passed": 2,
+      "duration_seconds": 13.3,
+      "command": "EZACTO_BROWSER_PORT=47828 npm run test:browser:calendar --workspace @ezacto/web",
+      "google_datetime_fixture": "offsetless dateTime with explicit America/Costa_Rica zone; exact stored UTC asserted"
+    },
+    "native_sqlite_d1": {
+      "oauth_custody_cases_passed": 16,
+      "lost_response_cases_passed": 4,
+      "scope": "Rejected issued grants, native authority/state, late closure, restored-instance fence, manual confirmation, and accepted-envelope response loss."
+    },
+    "worker_backup_roundtrip": {
+      "passed": true,
+      "scope": "Current D1 schema through migration177 exported and restored to SQLite; pending OAuth attempts and sessions cleared, no foreign-key violations, old grant retained as manual cleanup, owner attestation retained, instance rotated."
+    }
+  }
+}

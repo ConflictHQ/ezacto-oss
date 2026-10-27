@@ -62,7 +62,14 @@ export const parseGithubIssueReference = (
     } catch {
       return null
     }
-    if (url.origin !== githubWebOrigin || url.username !== '' || url.password !== '') return null
+    if (
+      url.origin !== githubWebOrigin ||
+      url.username !== '' ||
+      url.password !== '' ||
+      url.search !== '' ||
+      url.hash !== ''
+    )
+      return null
     const match = /^\/([^/]+)\/([^/]+)\/issues\/(\d{1,10})\/?$/u.exec(url.pathname)
     if (match === null) return null
     fullName = `${match[1]}/${match[2]}`
@@ -151,7 +158,14 @@ export const githubIssueToRemoteItem = (
   } catch {
     return null
   }
-  if (parsed.origin !== githubWebOrigin) return null
+  if (
+    parsed.origin !== githubWebOrigin ||
+    parsed.username !== '' ||
+    parsed.password !== '' ||
+    parsed.search !== '' ||
+    parsed.hash !== ''
+  )
+    return null
   const issuePath = /^\/([^/]+)\/([^/]+)\/issues\/(\d+)$/u.exec(parsed.pathname)
   if (issuePath === null || Number(issuePath[3]) !== number) return null
   const urlFullName = `${issuePath[1]}/${issuePath[2]}`.toLowerCase()

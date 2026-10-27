@@ -1,4 +1,4 @@
-import type { BankFeedEnvironment } from '@ezacto/integrations'
+import type { BankFeedEnvironment, CalendarEnvironment } from '@ezacto/integrations'
 import { isAbsolute, normalize, resolve } from 'node:path'
 import { lastSeenIntervalFromSeconds } from '@ezacto/db'
 import { moduleAvailability, OPERATOR_MODULE_FLAGS, OPERATOR_MODULES } from '@ezacto/api'
@@ -26,6 +26,9 @@ export interface ContainerConfig {
   brandDirectory: string
   appBaseUrl: string
   webhookEncryptionKey?: string
+  githubAppEncryptionKey?: string
+  githubTimePublicationEnabled?: boolean
+  githubReader?: { appId: string; privateKey: string; webhookSecret: string }
   cursorSigningKey: Uint8Array
   /**
    * Portal magic-link signing key. Absent means portal auth is off: the routes
@@ -40,6 +43,7 @@ export interface ContainerConfig {
    * routes are not mounted, because a connect button that cannot connect is
    * worse than no button. Same rule as the Worker's.
    */
+  calendar?: CalendarEnvironment
   bankFeeds?: BankFeedEnvironment
   stripe?: { apiKey: string; webhookSecret?: string }
   bill?: {
@@ -69,8 +73,7 @@ export interface ContainerConfig {
 const required = (
   environment: NodeJS.ProcessEnv,
   name: string,
-  maximum: number,
-): string => {
+  maximum: number): string => {
   const value = environment[name]
   if (
     value === undefined ||
@@ -113,8 +116,7 @@ const origin = (value: string): string => {
       !(parsed.protocol === 'http:' && parsed.hostname === 'localhost'))
   ) {
     throw new TypeError(
-      'APP_BASE_URL must use HTTPS outside localhost and contain only an origin',
-    )
+      'APP_BASE_URL must use HTTPS outside localhost and contain only an origin')
   }
   return parsed.origin
 }
@@ -163,23 +165,20 @@ const dataDirectory = (value: string | undefined): string => {
     candidate.length > 2_048
   ) {
     throw new TypeError(
-      'EZACTO_DATA_DIR must be a normalized absolute directory below root',
-    )
+      'EZACTO_DATA_DIR must be a normalized absolute directory below root')
   }
   return candidate
 }
 
 export const readContainerConfig = (
-  environment: NodeJS.ProcessEnv,
-): ContainerConfig => {
+  environment: NodeJS.ProcessEnv): ContainerConfig => {
   const directory = dataDirectory(environment.EZACTO_DATA_DIR)
   const appBaseUrl = origin(required(environment, 'APP_BASE_URL', 2_048))
   const googleClientId = optional(environment, 'OIDC_GOOGLE_CLIENT_ID', 512)
   const googleClientSecret = optional(
     environment,
     'OIDC_GOOGLE_CLIENT_SECRET',
-    4_096,
-  )
+    4_096)
   const appleClientId = optional(environment, 'APPLE_CLIENT_ID', 1_024)
   const bootstrapToken = optional(environment, 'EZACTO_BOOTSTRAP_TOKEN', 512)
   const magicLinkKey = optional(environment, 'MAGIC_LINK_SIGNING_KEY', 128)
@@ -209,8 +208,7 @@ export const readContainerConfig = (
     // Half a credential is a deployment that will fail at the token exchange
     // with a message about Intuit rather than about its own configuration.
     throw new TypeError(
-      'QUICKBOOKS_CLIENT_ID and QUICKBOOKS_CLIENT_SECRET must be set together',
-    )
+      'QUICKBOOKS_CLIENT_ID and QUICKBOOKS_CLIENT_SECRET must be set together')
   }
   // The operator's module switches (issue 1254; ACCOUNTING_ENABLED is #1217).
   // Invalid values throw here, at start-up.
@@ -226,6 +224,26 @@ export const readContainerConfig = (
   const deelToken = optional(environment, 'DEEL_TOKEN', 4096)
   const deelStart = optional(environment, 'DEEL_SYNC_START_DATE', 10)
   const githubWorkItemsCredential = optional(environment, 'GITHUB_WORK_ITEMS_CREDENTIAL', 4_096)
+  const publicationFlag=environment.GITHUB_TIME_PUBLICATION_ENABLED
+  if(publicationFlag!==undefined && publicationFlag!=='true' && publicationFlag!=='false')throw new TypeError('GITHUB_TIME_PUBLICATION_ENABLED must be true or false')
+  const githubAppId = optional(environment, 'GITHUB_APP_ID', 16)
+  const githubWebhookSecret = optional(environment, 'GITHUB_APP_WEBHOOK_SECRET', 4096)
+  const githubAppEncryptionKey = optional(environment, 'GITHUB_APP_ENCRYPTION_KEY', 43)
+  const githubPrivateKey = environment.GITHUB_APP_PRIVATE_KEY?.replaceAll('\\n', '\n').trim()
+  if (
+    githubPrivateKey !== undefined &&
+    (githubPrivateKey.length > 32768 ||
+      !/^-----BEGIN (?:RSA )?PRIVATE KEY-----\n/.test(githubPrivateKey) ||
+      !/-----END (?:RSA )?PRIVATE KEY-----$/.test(githubPrivateKey))
+  )
+    throw new TypeError('GITHUB_APP_PRIVATE_KEY must be a PEM private key')
+  if (
+    [githubAppId, githubPrivateKey, githubWebhookSecret].some((value) => value !== undefined) &&
+    ![githubAppId, githubPrivateKey, githubWebhookSecret].every((value) => value !== undefined)
+  )
+    throw new TypeError('GitHub App ID, private key and webhook secret must be configured together')
+  if (githubAppId !== undefined && !/^[1-9]\d{0,15}$/.test(githubAppId))
+    throw new TypeError('GITHUB_APP_ID must be a positive decimal identifier')
   const wiseProfileId = optional(environment, 'WISE_PROFILE_ID', 64)
   const wiseWebhookKey = optional(environment, 'WISE_WEBHOOK_PUBLIC_KEY', 4_096)
   const brandName = optional(environment, 'BRAND_NAME', 200)
@@ -254,7 +272,8 @@ export const readContainerConfig = (
       ['APPLE_WEB_CAPABILITY_KEYS', optional(environment, 'APPLE_WEB_CAPABILITY_KEYS', 4096)],
       ['APPLE_WEB_ACTIVE_KEY_ID', optional(environment, 'APPLE_WEB_ACTIVE_KEY_ID', 32)],
       ['APPLE_WEB_ROUTING_SECRET', optional(environment, 'APPLE_WEB_ROUTING_SECRET', 43)],
-    ].filter(([, value]) => value !== undefined)),
+    ].filter(([, value]) => value !== undefined),
+    ),
     ...moduleFlags,
     ...(bootstrapToken === undefined
       ? {}
@@ -276,7 +295,9 @@ export const readContainerConfig = (
       'WISE_BANK_FEED_CURRENCY', 'BANK_FEED_ENVIRONMENT']
       .flatMap(key => environment[key] === undefined ? [] : [[key, optional(environment, key, 1000)!]]),
   )
+  const calendar: CalendarEnvironment = Object.fromEntries(['GOOGLE_CALENDAR_CLIENT_ID','GOOGLE_CALENDAR_CLIENT_SECRET','MICROSOFT_CALENDAR_CLIENT_ID','MICROSOFT_CALENDAR_CLIENT_SECRET','MICROSOFT_CALENDAR_TENANT'].flatMap(key=>environment[key]===undefined?[]:[[key,optional(environment,key,4096)!]]))
   return {
+    ...(Object.keys(calendar).length ? {calendar} : {}),
     ...(Object.keys(bankFeeds).length ? { bankFeeds } : {}),
     host: optional(environment, 'HOST', 255) ?? '0.0.0.0',
     port: port(environment.PORT),
@@ -289,8 +310,7 @@ export const readContainerConfig = (
     appBaseUrl,
     ...(optional(environment, 'WEBHOOK_ENCRYPTION_KEY', 128) === undefined ? {} : { webhookEncryptionKey: optional(environment, 'WEBHOOK_ENCRYPTION_KEY', 128)! }),
     cursorSigningKey: signingKey(
-      required(environment, 'API_CURSOR_SIGNING_KEY', 128),
-    ),
+      required(environment, 'API_CURSOR_SIGNING_KEY', 128)),
     ...(magicLinkKey === undefined
       ? {}
       : { magicLinkSigningKey: signingKey(magicLinkKey) }),
@@ -336,10 +356,24 @@ export const readContainerConfig = (
               : { environment: quickBooksEnvironment }),
           },
         }),
+    githubTimePublicationEnabled: publicationFlag === 'true',
+    ...(githubAppEncryptionKey === undefined ? {} : { githubAppEncryptionKey }),
+    ...(githubAppId === undefined ||
+    githubPrivateKey === undefined ||
+    githubWebhookSecret === undefined
+      ? {}
+      : {
+          githubReader: {
+            appId: githubAppId,
+            privateKey: githubPrivateKey,
+            webhookSecret: githubWebhookSecret,
+          },
+        }),
     ...(deelToken === undefined && deelStart === undefined ? {} : {deel: {
       ...(deelToken === undefined ? {} : {token:deelToken}),
       ...(deelStart === undefined ? {} : {startDate:deelStart}),
-    }}),
+    },
+        }),
     ...(wiseToken === undefined
       ? {}
       : {

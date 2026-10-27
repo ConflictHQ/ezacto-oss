@@ -1,3 +1,4 @@
+import type { CalendarConnectionApi } from '../calendar-connections/model.js'
 import type { CalendarProposalApi } from '../calendar-proposals/browser.js'
 import type { FirstRunApi } from '../first-run/model.js'
 import type { EstimateComposerApi } from '../estimates/composer.js'
@@ -110,6 +111,7 @@ export interface ShellApi
     Partial<TeamDirectoryApi>,
     Partial<CompanySettingsApi>,
     Partial<FirstRunApi> {
+  calendarConnections?: CalendarConnectionApi
   whoami(signal?: AbortSignal): Promise<Whoami>
   /**
    * Your own reminder preferences (issue 935), under Settings. Optional like
@@ -1202,6 +1204,35 @@ const clientInvoiceSending = (
 })
 
 export const createShellApi = (client: EzactoClient): ShellApi => ({
+  githubPublication: {
+    getGithubPublications: args => client.getGithubPublications(args),
+    getGithubReaderStatus: args => client.getGithubReaderStatus(args),
+    previewGithubPublication: args => client.previewGithubPublication(args),
+    setGithubPublicationPolicy: args => client.setGithubPublicationPolicy(args),
+    consentGithubPublication: args => client.consentGithubPublication(args),
+    actGithubPublication: args => client.actGithubPublication(args),
+  },
+  githubReader: {
+    getGithubReaderStatus: (args) => client.getGithubReaderStatus(args),
+    beginGithubAppSetup: (args) => client.beginGithubAppSetup(args),
+    listGithubReaderInstallations: (args) => client.listGithubReaderInstallations(args),
+    listGithubReaderRepositories: (args) => client.listGithubReaderRepositories(args),
+    mapGithubRepository: (args) => client.mapGithubRepository(args),
+    disconnectGithubReader: (args) => client.disconnectGithubReader(args),
+    reconcileGithubReader: (args) => client.reconcileGithubReader(args),
+    catalog: async (signal) => {
+      const [projects, tasks, assignments] = await Promise.all([
+        collectPlanned(cursor => client.listProjects({ query: { is_active: true, per_page: 200, ...(cursor ? { cursor } : {}) }, ...withSignal(signal) }), signal),
+        collectPlanned(cursor => client.listTasks({ query: { is_active: true, per_page: 200, ...(cursor ? { cursor } : {}) }, ...withSignal(signal) }), signal),
+        collectPlanned(cursor => client.listTaskAssignments({ query: { is_active: true, per_page: 200, ...(cursor ? { cursor } : {}) }, ...withSignal(signal) }), signal),
+      ])
+      return {
+        projects: projects.map(row => ({ id: row.id, name: String(row.name ?? `Project ${row.id}`) })),
+        tasks: tasks.map(row => ({ id: row.id, name: String(row.name ?? `Task ${row.id}`) })),
+        assignments: assignments.map(row => ({ project_id: Number(row.project_id), task_id: Number(row.task_id) })),
+      }
+    },
+  },
   getDeelStaging: (args) => client.getDeelStaging(args),
   previewDeelStaging: (args) => client.previewDeelStaging(args),
   stageDeelHours: (args) => client.stageDeelHours(args),
@@ -2621,6 +2652,15 @@ export const createShellApi = (client: EzactoClient): ShellApi => ({
         ...withSignal(signal),
       })
     ).data,
+  calendarConnections: {
+    manualCleanup: async (signal) => (await client.listCalendarManualCleanup({ provider: 'microsoft', ...withSignal(signal) })).data,
+    confirmManualCleanup: (item, signal) => client.confirmCalendarManualCleanup({ provider: 'microsoft', body: { obligation_id: item.id, generation: item.generation, credential_revision: item.credential_revision, confirm_removed: true }, ...withSignal(signal) }),
+    list: (signal) => client.listCalendarConnections(withSignal(signal)),
+    authorize: async (provider, generation, signal) =>
+      (await client.beginCalendarAuthorization({ provider, body: { generation }, ...withSignal(signal) })).data.authorization_url,
+    refresh: (provider, signal) => client.refreshCalendarConnection({ provider, body: {}, ...withSignal(signal) }),
+    disconnect: (provider, generation, signal) => client.disconnectCalendarConnection({ provider, body: { generation }, ...withSignal(signal) }),
+  },
   listCalendarProposals: (query, signal) => client.listCalendarProposals({ query, ...withSignal(signal) }),
   acceptCalendarProposal: async (id, body, signal) =>
     (await client.acceptCalendarProposal({ id, body, ...withSignal(signal) })).data,

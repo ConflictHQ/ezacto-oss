@@ -3,7 +3,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import BetterSqlite3 from 'better-sqlite3'
 import { Miniflare } from 'miniflare'
-import { afterAll, afterEach, describe, expect, it } from 'vitest'
+import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest'
 import {
   createContainerDatabase,
   createD1Database,
@@ -122,12 +122,23 @@ let migratedD1Snapshot: Promise<string> | null = null
 const migratedD1Directory = async (): Promise<string> => {
   migratedD1Snapshot ??= (async () => {
     const directory = await mkdtemp(join(tmpdir(), 'ezacto-d1-ledger-'))
-    const miniflare = new Miniflare({ ...d1Worker, d1Persist: directory })
-    await migrateD1(await miniflare.getD1Database('DB'))
-    // dispose() checkpoints the WAL and closes the files, which is what makes
-    // the directory safe to copy rather than a half-written snapshot.
-    await miniflare.dispose()
-    return directory
+    let miniflare: Miniflare | undefined
+    try {
+      miniflare = new Miniflare({ ...d1Worker, d1Persist: directory })
+      await migrateD1(await miniflare.getD1Database('DB'))
+      // Close the source worker before copying its persisted files.
+      await miniflare.dispose()
+      miniflare = undefined
+      return directory
+    } catch (error) {
+      try {
+        try { await miniflare?.dispose() }
+        finally { await rm(directory, { recursive: true, force: true }) }
+      } catch (cleanupError) {
+        throw new AggregateError([error, cleanupError], 'D1 snapshot setup and cleanup failed', { cause: cleanupError })
+      }
+      throw error
+    }
   })()
   return migratedD1Snapshot
 }
@@ -135,54 +146,64 @@ const migratedD1Directory = async (): Promise<string> => {
 // Each case copies this directory and removes its own copy; the original would
 // otherwise outlive the run, one ledger per invocation of this file.
 afterAll(async () => {
-  if (migratedD1Snapshot === null) return
-  await rm(await migratedD1Snapshot, { recursive: true, force: true })
+  const directory = await migratedD1Snapshot?.catch(() => null)
+  if (directory) await rm(directory, { recursive: true, force: true })
 })
 
 const d1Database = async (): Promise<TestDatabase> => {
   const directory = await mkdtemp(join(tmpdir(), 'ezacto-d1-'))
-  await cp(await migratedD1Directory(), directory, { recursive: true })
-  const miniflare = new Miniflare({ ...d1Worker, d1Persist: directory })
-  const d1 = await miniflare.getD1Database('DB')
-  const orm = createD1Database(d1)
-  return {
-    orm,
-    run: async (statement, ...params) => {
-      await d1
-        .prepare(statement)
-        .bind(...params)
-        .run()
-    },
-    rows: async <T>(statement: string, ...params: unknown[]) =>
-      (
+  let miniflare: Miniflare | undefined
+  const close = async () => {
+    try { await miniflare?.dispose() }
+    finally { await rm(directory, { recursive: true, force: true }) }
+  }
+  try {
+    await cp(await migratedD1Directory(), directory, { recursive: true })
+    miniflare = new Miniflare({ ...d1Worker, d1Persist: directory })
+    const d1 = await miniflare.getD1Database('DB')
+    const orm = createD1Database(d1)
+    return {
+      orm,
+      run: async (statement, ...params) => {
         await d1
           .prepare(statement)
           .bind(...params)
-          .all<T>()
-      ).results,
-    interleaveAtomic: (statement, ...params) => {
-      let pending = true
-      const client = new Proxy(d1, {
-        get(target, property) {
-          if (property === 'batch') {
-            return async (statements: D1PreparedStatement[]) => {
-              if (pending) {
-                pending = false
-                await target.prepare(statement).bind(...params).run()
+          .run()
+      },
+      rows: async <T>(statement: string, ...params: unknown[]) =>
+        (
+          await d1
+            .prepare(statement)
+            .bind(...params)
+            .all<T>()
+        ).results,
+      interleaveAtomic: (statement, ...params) => {
+        let pending = true
+        const client = new Proxy(d1, {
+          get(target, property) {
+            if (property === 'batch') {
+              return async (statements: D1PreparedStatement[]) => {
+                if (pending) {
+                  pending = false
+                  await target.prepare(statement).bind(...params).run()
+                }
+                return target.batch(statements)
               }
-              return target.batch(statements)
             }
-          }
-          const value: unknown = Reflect.get(target, property, target)
-          return typeof value === 'function' ? value.bind(target) : value
-        },
-      })
-      return ormWithNativeClient(orm, client)
-    },
-    close: async () => {
-      await miniflare.dispose()
-      await rm(directory, { recursive: true, force: true })
-    },
+            const value: unknown = Reflect.get(target, property, target)
+            return typeof value === 'function' ? value.bind(target) : value
+          },
+        })
+        return ormWithNativeClient(orm, client)
+      },
+      close,
+    }
+  } catch (error) {
+    try { await close() }
+    catch (cleanupError) {
+      throw new AggregateError([error, cleanupError], 'D1 fixture setup and cleanup failed', { cause: cleanupError })
+    }
+    throw error
   }
 }
 
@@ -370,50 +391,58 @@ const harness = async (
   options: { ownMoneyVisible?: boolean } = {},
 ): Promise<Harness> => {
   const database = await factory()
-  await seed(database)
-  const locks = new Set<string>()
-  const orm = interleave === undefined
-    ? database.orm
-    : database.interleaveAtomic(interleave.sql, ...interleave.params)
-  let pendingPolicyInterleave = policyInterleave !== undefined
-  const implementation = new DrizzleTrackedResourceRepository(orm, {
-    isLocked: async (subject) => {
-      if (pendingPolicyInterleave && subject.entityType === 'tracked_date') {
-        pendingPolicyInterleave = false
-        await database.run(policyInterleave!.sql, ...policyInterleave!.params)
-      }
-      return locks.has(policyKey(subject))
-    },
-  })
-  const repository: TrackedResourceRepository = implementation
-  let current: ResourceTimeBoundary = {
-    instant: '2026-08-28T09:00:00.000Z',
-    date: '2026-08-28',
-    time: '09:00',
-  }
-  const app = createApiApp({
-    authentication: authenticationWith(options.ownMoneyVisible ?? false),
-    installApi: (api) =>
-      installTrackedResourceRoutes(api, {
-        repository,
-        clock: { now: () => ({ ...current }) },
-        cursorSigningKey: new TextEncoder().encode(
-          'tracked-resource-cursor-key-32-bytes',
-        ),
-        isExpensesModuleEnabled: async () => true,
-      }),
-  })
-  return {
-    database,
-    request: async (path, init) => {
-      const headers = new Headers(init?.headers)
-      headers.set('origin', 'http://localhost')
-      return app.request(path, { ...init, headers })
-    },
-    locks,
-    setBoundary: (boundary) => {
-      current = { ...boundary }
-    },
+  try {
+    await seed(database)
+    const locks = new Set<string>()
+    const orm = interleave === undefined
+      ? database.orm
+      : database.interleaveAtomic(interleave.sql, ...interleave.params)
+    let pendingPolicyInterleave = policyInterleave !== undefined
+    const implementation = new DrizzleTrackedResourceRepository(orm, {
+      isLocked: async (subject) => {
+        if (pendingPolicyInterleave && subject.entityType === 'tracked_date') {
+          pendingPolicyInterleave = false
+          await database.run(policyInterleave!.sql, ...policyInterleave!.params)
+        }
+        return locks.has(policyKey(subject))
+      },
+    })
+    const repository: TrackedResourceRepository = implementation
+    let current: ResourceTimeBoundary = {
+      instant: '2026-08-28T09:00:00.000Z',
+      date: '2026-08-28',
+      time: '09:00',
+    }
+    const app = createApiApp({
+      authentication: authenticationWith(options.ownMoneyVisible ?? false),
+      installApi: (api) =>
+        installTrackedResourceRoutes(api, {
+          repository,
+          clock: { now: () => ({ ...current }) },
+          cursorSigningKey: new TextEncoder().encode(
+            'tracked-resource-cursor-key-32-bytes',
+          ),
+          isExpensesModuleEnabled: async () => true,
+        }),
+    })
+    return {
+      database,
+      request: async (path, init) => {
+        const headers = new Headers(init?.headers)
+        headers.set('origin', 'http://localhost')
+        return app.request(path, { ...init, headers })
+      },
+      locks,
+      setBoundary: (boundary) => {
+        current = { ...boundary }
+      },
+    }
+  } catch (error) {
+    try { await database.close() }
+    catch (cleanupError) {
+      throw new AggregateError([error, cleanupError], 'Tracked fixture setup and cleanup failed', { cause: cleanupError })
+    }
+    throw error
   }
 }
 
@@ -511,7 +540,15 @@ for (const [runtime, factory] of factories) {
   describe(`tracked resource API (${runtime})`, () => {
     let active: Harness | undefined
 
-    afterEach(async () => active?.database.close())
+    if (runtime === 'D1') {
+      // Cold schema construction is infrastructure, not part of the 20s API case budget.
+      beforeAll(async () => { await migratedD1Directory() }, 60_000)
+    }
+    afterEach(async () => {
+      const current = active
+      active = undefined
+      await current?.database.close()
+    })
 
     const setup = async (): Promise<Harness> => {
       active = await harness(factory)

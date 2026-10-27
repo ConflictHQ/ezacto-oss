@@ -112,6 +112,15 @@ export const WISE_ROUTES: readonly string[] = [
   'delete /api/v1/integrations/wise/recipients/:accountId',
 ]
 
+/** Explicit deployment opt-in; reader setup never exposes publication by itself. */
+export const GITHUB_PUBLICATION_ROUTES: readonly string[] = [
+  'get /api/v1/work-items/github/publication',
+  'get /api/v1/work-items/github/publication/preview/:id',
+  'post /api/v1/work-items/github/publication/policy',
+  'post /api/v1/work-items/github/publication/consent',
+  'post /api/v1/work-items/github/publication/:id/actions',
+]
+
 /**
  * Mounted by the Worker and not by the container.
  *
@@ -234,12 +243,14 @@ export const expectedApiRoutes = (
     readonly quickBooks?: boolean
     readonly wise?: boolean
     readonly csvImport?: boolean
+    readonly githubPublication?: boolean
   },
 ): ReadonlySet<string> => {
   const gatedOff = new Set([
     ...(options.portal ? [] : [...PORTAL_ROUTES, ...STAFF_MAGIC_LINK_ROUTES]),
     ...(options.quickBooks === true ? [] : QUICKBOOKS_ROUTES),
     ...(options.wise === true ? [] : WISE_ROUTES),
+    ...(options.githubPublication === true ? [] : GITHUB_PUBLICATION_ROUTES),
     ...(entry === 'worker' ? options.csvImport ? [] : CONTAINER_ONLY_ROUTES : WORKER_ONLY_ROUTES),
   ])
   return new Set(

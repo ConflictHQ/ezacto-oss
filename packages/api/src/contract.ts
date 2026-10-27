@@ -1,7 +1,10 @@
+import { githubPublicationOperations, githubPublicationSchemas } from './github-publication-contract.js'
+import { calendarOperatorCleanupOperations, calendarOperatorCleanupSchemas } from './calendar-operator-cleanup-contract.js'
 import { calendarConnectionOperations, calendarConnectionSchemas } from './calendar-connection-contract.js'
 import { invoiceProviderAlertOperations, invoiceProviderAlertSchemas } from './invoice-provider-alert-contract.js'
 import { bankDepositOperations, bankDepositSchemas } from './bank-deposit-contract.js'
 import { calendarFeedOperations, calendarFeedSchemas } from './calendar-feed-contract.js'
+import { githubReaderOperations, githubReaderSchemas } from './github-reader-contract.js'
 import { deelStagingOperations, deelStagingSchemas } from './deel-staging-contract.js'
 import { csvImportApplyOperations, csvImportApplySchemas } from './csv-import-apply-contract.js'
 import { csvImportStagingOperations, csvImportStagingSchemas } from './csv-import-staging-contract.js'
@@ -3248,6 +3251,8 @@ const teamOperations: ApiContractOperation[] = [
 ];
 
 export const apiContractOperations: readonly ApiContractOperation[] = [
+  ...githubReaderOperations,
+  ...githubPublicationOperations,
   { method: "post", path: "/api/v1/projects/:id/missing-rates", operationId: "recoverProjectMissingRates", summary: "Preview or explicitly repair missing project-rate snapshots on open time", tag: "projects", responseStatus: 200, responseSchema: "ProjectMissingRatesEnvelope", requestSchema: "ProjectMissingRatesInput", requestRequired: true, sessionOnly: true, parameters: [path("id")] },
   { method:"get",path:"/auth/apple/native-capabilities",operationId:"getNativeAppleCapabilities",summary:"Check explicit native Apple lifecycle protocol support",tag:"authentication",public:true,responseStatus:200,responseSchema:"NativeAppleCapabilities" },
   { method:"post",path:"/auth/apple",operationId:"signInNativeApple",summary:"Verify origin-bound Apple lifecycle custody and native identity before sign-in",tag:"authentication",public:true,responseStatus:200,responseSchema:"NativeAppleSignInEnvelope",requestSchema:"NativeAppleSignInInput",requestRequired:true },
@@ -3801,6 +3806,7 @@ export const apiContractOperations: readonly ApiContractOperation[] = [
   ...timeEntryOperations,
   ...calendarProposalOperations,
   ...calendarConnectionOperations,
+  ...calendarOperatorCleanupOperations,
   ...allocationOperations,
   ...timeOffOperations,
   ...organizationHolidayOperations,
@@ -4093,12 +4099,15 @@ const timeReportTotalsRequired: readonly string[] = [
 ];
 
 export const apiContractSchemas: Readonly<Record<string, JsonSchema>> = {
+  ...githubReaderSchemas,
+  ...githubPublicationSchemas,
   ...outboundWebhookSchemas,
   ...invoiceElevationSchemas,
   ...organizationHolidaySchemas,
   ...placeholderPlanningSchemas,
   ...resourceCalendarSchemas,
   ...calendarConnectionSchemas,
+  ...calendarOperatorCleanupSchemas,
   ...calendarFeedSchemas,
   ...attachmentContractSchemas,
   ...staffPaymentSchemas,
@@ -6090,7 +6099,7 @@ export const apiContractSchemas: Readonly<Record<string, JsonSchema>> = {
   },
   TimeEntryEnvelope: envelope("TimeEntry"),
   TimeEntryPage: page("TimeEntry"),
-  CalendarCleanupStatus: {type:'object',additionalProperties:false,required:['pending','manual_required','revoked'],properties:{pending:{type:'integer',minimum:0},manual_required:{type:'integer',minimum:0},revoked:{type:'integer',minimum:0}}},
+  CalendarCleanupStatus: {type:'object',additionalProperties:false,required:['pending','manual_required','revoked'],properties:{pending:{type:'integer',minimum:0},manual_required:{type:'integer',minimum:0},revoked:{type:'integer',minimum:0},manual_confirmed:{type:'integer',minimum:0},operator_confirmed:{type:'integer',minimum:0}}},
   CalendarProposal: {
     type: "object",
     required: [

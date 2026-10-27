@@ -118,7 +118,7 @@ export function createAccountClosureRepository(database: Database): AccountClosu
     )
     const row = rows[0]
     if (!row) return null
-    const cleanup = (await all<{pending:number;manual_required:number;revoked:number}>(client,"SELECT coalesce(sum(status='pending'),0) AS pending,coalesce(sum(status='manual_required'),0) AS manual_required,coalesce(sum(status='revoked'),0) AS revoked FROM calendar_cleanup_obligations WHERE request_id=?",[requestId]))[0]!
+    const cleanup = (await all<{pending:number;manual_required:number;revoked:number;operator_confirmed:number}>(client,"SELECT coalesce(sum(status='pending'),0) AS pending,coalesce(sum(status='manual_required'),0) AS manual_required,coalesce(sum(status='revoked' AND NOT EXISTS(SELECT 1 FROM calendar_operator_cleanup_receipts r WHERE r.obligation_id=calendar_cleanup_obligations.id)),0) AS revoked,coalesce(sum(EXISTS(SELECT 1 FROM calendar_operator_cleanup_receipts r WHERE r.obligation_id=calendar_cleanup_obligations.id)),0) AS operator_confirmed FROM calendar_cleanup_obligations WHERE request_id=?",[requestId]))[0]!
     return {
       request_id: row.request_id,
       user_id: row.user_id,
@@ -127,7 +127,7 @@ export function createAccountClosureRepository(database: Database): AccountClosu
       policy_version: row.policy_version,
       policy_snapshot: parseAccountRetentionPolicy(JSON.parse(row.policy_snapshot)),
       inventory: JSON.parse(row.inventory_json) as AccountClosureInventoryItem[],
-      ...(cleanup.pending+cleanup.manual_required+cleanup.revoked>0?{calendar_cleanup:cleanup}:{}),
+      ...(cleanup.pending+cleanup.manual_required+cleanup.revoked+cleanup.operator_confirmed>0?{calendar_cleanup:cleanup}:{}),
       retained_identity: row.retained_identity === 1,
       apple_cleanup: row.apple_cleanup,
     }
@@ -191,6 +191,20 @@ export function createAccountClosureRepository(database: Database): AccountClosu
       (SELECT count(*) FROM calendar_connections WHERE user_id=(SELECT id FROM subject) AND sealed_grant IS NOT NULL)
       +(SELECT count(*) FROM calendar_cleanup_obligations WHERE user_id=(SELECT id FROM subject) AND instance_nonce=coalesce((SELECT c.instance_nonce FROM calendar_connections c WHERE c.user_id=calendar_cleanup_obligations.user_id AND c.provider=calendar_cleanup_obligations.provider),(SELECT nonce FROM calendar_sync_instance WHERE singleton=1)) AND status<>'revoked'),
       'category','audit_and_security')`)
+    if (tables.some(({name}) => name === 'calendar_manual_cleanup_receipts'))
+      entries.push(`json_object('location','calendar_manual_cleanup_receipts','count',
+        (SELECT count(*) FROM calendar_manual_cleanup_receipts WHERE user_id=(SELECT id FROM subject)
+          AND instance_nonce=(SELECT nonce FROM calendar_sync_instance WHERE singleton=1)),
+        'category','audit_and_security')`)
+    if (tables.some(({name}) => name === 'calendar_operator_cleanup_receipts'))
+      entries.push(`json_object('location','calendar_operator_cleanup_receipts','count',
+        (SELECT count(*) FROM calendar_operator_cleanup_receipts WHERE (subject_user_id=(SELECT id FROM subject) AND instance_nonce=(SELECT nonce FROM calendar_sync_instance WHERE singleton=1)) OR (administrator_user_id=(SELECT id FROM subject) AND review_instance=(SELECT nonce FROM calendar_sync_instance WHERE singleton=1))),
+        'category','audit_and_security')`)
+    if (tables.some(({name}) => name === 'github_publications'))
+      entries.push(`json_object('location','github_publications.external_comments','count',
+        (SELECT count(DISTINCT CASE WHEN p.remote_id IS NOT NULL THEN p.connection_id||':'||p.repository_id||':'||p.remote_id ELSE 'pending:'||p.id END) FROM github_publications p
+          WHERE p.subject_user_id=(SELECT id FROM subject) AND p.subject_created_at=(SELECT created_at FROM users WHERE id=(SELECT id FROM subject)) AND (p.remote_id IS NOT NULL OR p.attempted_at IS NOT NULL OR p.pending_write IS NOT NULL)),
+        'category','audit_and_security')`)
     // D1 has tighter compound-SELECT and function-argument limits than SQLite.
     // Each bounded array contains objects, so trimming its outer brackets is exact.
     const groups: string[] = []

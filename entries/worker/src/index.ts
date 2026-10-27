@@ -132,7 +132,9 @@ const unavailable = (): Response => {
 type Report = (error: unknown, context: WorkerErrorContext) => void
 const reporter = (options: WorkerOptions, executionContext: ExecutionContext): Report => {
   let traceId: string | undefined
-  return (error, context) => reportWorkerError(options.reportError, error, { ...context, traceId: traceId ??= runtimeTraceId() }, promise => executionContext?.waitUntil(promise))
+  return (error, context) => reportWorkerError(options.reportError, error, { ...context, traceId: (traceId ??= runtimeTraceId()) },
+      (promise) => executionContext?.waitUntil(promise),
+    )
 }
 
 const readiness = async (env: WorkerEnv, report: Report): Promise<Response> => {
@@ -156,11 +158,13 @@ export const createWorker = (options: WorkerOptions = {}): ExportedHandler<Worke
       if (report) report(error, context)
       else reportWorkerError(options.reportError, error, { ...context, traceId: runtimeTraceId() })
     },
-  })
-  return ({
+  },
+  )
+  return {
   async fetch(request, env, executionContext) {
     const report = reporter(options, executionContext)
-    const telemetry = { reportError: (error: Error, requestId: string) => report(error, { phase: 'api', requestId, status: apiFailureStatus(error) }) }
+    const telemetry = { reportError: (error: Error, requestId: string) => report(error, { phase: 'api', requestId, status: apiFailureStatus(error) }),
+      }
     return reports.run(report, async () => {
     // First, before a route is matched or a service is constructed: nothing
     // below this line should ever compose a response for a cleartext request.
@@ -174,8 +178,7 @@ export const createWorker = (options: WorkerOptions = {}): ExportedHandler<Worke
     if (!isDataRequest(request)) {
       return withStrictTransport(
         request,
-        await publicApp.fetch(request, env, executionContext),
-      )
+        await publicApp.fetch(request, env, executionContext))
     }
     try {
       const services = await createRuntimeServices(env, { reportError: report })
@@ -201,7 +204,10 @@ export const createWorker = (options: WorkerOptions = {}): ExportedHandler<Worke
               tokens: services.tokens,
               sessions: services.authenticationSessions ?? services.sessions,
               ownMoneyVisible: services.isOwnMoneyVisible,
-            }, async () => JSON.stringify([await services.idempotency.store.authorizationRevision(), env.RELEASE, demoDeployment(env)]), { ...(services.invoiceElevations === undefined ? {} : {invoiceElevations:services.invoiceElevations}) }),
+            }, async () => JSON.stringify([await services.idempotency.store.authorizationRevision(), env.RELEASE, demoDeployment(env),
+                    ]), { ...(services.invoiceElevations === undefined ? {} : {invoiceElevations:services.invoiceElevations}),
+                  },
+                ),
             secret: services.idempotency.secret,
             waitUntil: (promise) => executionContext.waitUntil(promise),
             report: (error) => {
@@ -215,7 +221,8 @@ export const createWorker = (options: WorkerOptions = {}): ExportedHandler<Worke
       // Configuration and migration failures stay fail-closed and never reflect
       // binding values, bearer credentials, SQL, or secret material.
       const response = unavailable()
-      report(error, { phase: 'bootstrap', status: 503, requestId: response.headers.get('x-request-id')! })
+      report(error, { phase: 'bootstrap', status: 503, requestId: response.headers.get('x-request-id')!,
+          })
       return withStrictTransport(request, response)
     }
     })
@@ -277,12 +284,14 @@ export const createWorker = (options: WorkerOptions = {}): ExportedHandler<Worke
         return undefined
       }
     }
+    if (controller.cron === '* * * * *' && services.calendarMaintenance) await isolate('calendar sync', () => services.calendarMaintenance!.processDue())
     if (controller.cron === '* * * * *' && services.webhooks) {
       await isolate('webhook sweep', () => services.webhooks!.processDue())
       await isolate('webhook purge', () => services.webhooks!.purge())
     }
     if (controller.cron === '* * * * *' && services.paymentRuns !== undefined)
-      await isolate('payment run sweep', () => services.paymentRuns!.processDue(new Date().toISOString()))
+      await isolate('payment run sweep', () => services.paymentRuns!.processDue(new Date().toISOString()),
+          )
     if (controller.cron === '* * * * *' && services.budgetAlerts !== undefined) {
       // Budget alerts (issue 934): a pass over the projects that asked to be
       // told, before the drain below so the event it writes is mailed in the
@@ -311,9 +320,11 @@ export const createWorker = (options: WorkerOptions = {}): ExportedHandler<Worke
       // policy has made due. A no-op while the policy is off. A failure is
       // reported and never stops the drain.
       try {
-        const run = await services.timesheetAutoApprovalSweep.processDue(new Date().toISOString())
+        const run = await services.timesheetAutoApprovalSweep.processDue(new Date().toISOString(),
+            )
         for (const failure of run.failed) {
-          console.error('[worker] automatic approval failed', failure.submissionId, failure.message)
+          console.error('[worker] automatic approval failed', failure.submissionId, failure.message,
+              )
         }
       } catch (error) {
         console.error('[worker] automatic approval sweep failed', error)
@@ -331,7 +342,8 @@ export const createWorker = (options: WorkerOptions = {}): ExportedHandler<Worke
       try {
         const result = await services.scheduledJobProposals.processDue(new Date().toISOString())
         for (const failure of result.failed)
-          console.error('[worker] scheduled job proposal failed', failure.jobId, failure.message)
+          console.error('[worker] scheduled job proposal failed', failure.jobId, failure.message,
+              )
       } catch (error) {
         console.error('[worker] scheduled job proposal sweep failed', error)
         report(error, { phase: 'scheduled', operation: 'scheduled job proposal sweep' })
@@ -356,11 +368,13 @@ export const createWorker = (options: WorkerOptions = {}): ExportedHandler<Worke
     if (controller.cron === '* * * * *' && invoices && services.scheduledRunDispatch !== undefined) {
       try {
         if (env.SCHEDULED_RUN_WORKFLOW !== undefined) {
-          const result = await scheduleConfirmedRunWorkflows(env.SCHEDULED_RUN_WORKFLOW, services.scheduledRunDispatch)
+          const result = await scheduleConfirmedRunWorkflows(env.SCHEDULED_RUN_WORKFLOW, services.scheduledRunDispatch,
+              )
           for (const failure of result.failed) console.error('[worker] scheduled run Workflow failed', failure)
         } else {
           // Direct invocation remains available to unbound native fixtures and older installs.
-          const result = await services.scheduledRunDispatch.processDue(new Date().toISOString())
+          const result = await services.scheduledRunDispatch.processDue(new Date().toISOString(),
+              )
           for (const failure of result.failed) console.error('[worker] scheduled run item failed', failure)
         }
       } catch (error) {
@@ -404,14 +418,16 @@ export const createWorker = (options: WorkerOptions = {}): ExportedHandler<Worke
       await isolate('recurring invoice generation', () => services.recurringInvoices.generateDue(
         new Date(controller.scheduledTime).toISOString().slice(0, 10),
         { type: 'system' },
-      ))
+      ),
+          )
       // Payment reminders that have come due (issue 801). Daily, like the
       // generation above and for the same reason: a reminder is due on a
       // date. The mail it enqueues is drained below in the same invocation.
       // `now` rather than `scheduledTime`: the rows carry their own due date,
       // and the message says how late the invoice is today.
       if (services.reminders !== undefined) {
-        await isolate('payment reminders', () => services.reminders!.processDue(new Date().toISOString()))
+        await isolate('payment reminders', () => services.reminders!.processDue(new Date().toISOString()),
+            )
       }
     }
     if (controller.cron === '0 * * * *' && services.bill !== undefined) {
@@ -426,7 +442,8 @@ export const createWorker = (options: WorkerOptions = {}): ExportedHandler<Worke
           console.error('[worker] BILL reconciliation failed', error)
           report(error, { phase: 'scheduled', operation: 'BILL reconciliation' })
         },
-      })())
+      })(),
+          )
     }
     if (controller.cron === '0 * * * *' && services.quickBooks !== undefined) {
       // Payments QuickBooks changed that no webhook told us of (issue 1013).
@@ -439,6 +456,13 @@ export const createWorker = (options: WorkerOptions = {}): ExportedHandler<Worke
         console.error('[worker] QuickBooks catch-up failed', error)
         report(error, { phase: 'scheduled', operation: 'QuickBooks catch-up' })
       }
+        }
+    const githubReader = services.githubReader
+    if (controller.cron === '* * * * *' && githubReader !== undefined) {
+      await isolate('GitHub issue reconciliation', async () => {
+        await githubReader.tick()
+        await githubReader.publishTimeNotes?.()
+      })
     }
     if (controller.cron === '* * * * *' && invoices && services.deelPaymentStatus !== undefined) {
       try { await services.deelPaymentStatus.refresh(null) }
@@ -464,7 +488,8 @@ export const createWorker = (options: WorkerOptions = {}): ExportedHandler<Worke
     }
     // Refuses on any deployment that is not the demo, so this line is safe to
     // read as unconditional. See `runDemoMaintenance`.
-    const maintenance = await isolate('demo maintenance', () => runDemoMaintenance(env, controller.cron))
+    const maintenance = await isolate('demo maintenance', () => runDemoMaintenance(env, controller.cron),
+        )
     // The rebuild empties the demo's sender with everything else, and nobody
     // using the demo may make another (#931).
     if (maintenance?.ran === 'rebuild') await isolate('demo sender seed', () => seedDemoSender(services, env))
@@ -478,7 +503,7 @@ export const createWorker = (options: WorkerOptions = {}): ExportedHandler<Worke
     }
     } catch (error) { if (options.reportError) report(error, { phase: 'scheduled', operation: 'scheduled tick' }); throw error }
   },
-})
+}
 }
 
 export const worker = createWorker()

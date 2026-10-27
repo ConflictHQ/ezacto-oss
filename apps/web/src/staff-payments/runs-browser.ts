@@ -21,7 +21,8 @@ import {
   paymentReportTotals,
   paymentAllocationRows,
   paymentRunCsv,
-  paymentStateLabel,
+  paymentItemStatusLabel,
+  paymentItemDetails,
 } from "./runs-model.js";
 export interface PaymentRunsApi {
   getStaffInvoiceReport?(month: string, signal?: AbortSignal): Promise<StaffInvoiceReport>;
@@ -208,8 +209,8 @@ export const createPaymentRunsController = (
             {
               key: "state",
               label: "Status",
-              sortValue: (i) => paymentStateLabel(i.state),
-              render: (i) => paymentStateLabel(i.state),
+              sortValue: (i) => paymentItemStatusLabel(i),
+              render: (i) => paymentItemStatusLabel(i),
             },
             {
               key: "reference",
@@ -220,8 +221,8 @@ export const createPaymentRunsController = (
             {
               key: "failure",
               label: "Details",
-              sortValue: (i) => i.failure || null,
-              render: (i) => i.failure ?? "",
+              sortValue: (i) => paymentItemDetails(i) || null,
+              render: (i) => paymentItemDetails(i),
             },
             {
               key: "check",
@@ -246,7 +247,7 @@ export const createPaymentRunsController = (
                       // queried by the next minute's run, so say what happened
                       // instead of leaving a silent button.
                       const now = checked.items.find((x) => x.id === i.id);
-                      return `Status check requested for ${i.name}. Now: ${paymentStateLabel((now ?? i).state)}${
+                      return `Status check requested for ${i.name}. Now: ${paymentItemStatusLabel(now ?? i)}${
                         (now ?? i).transfer_id === null
                           ? ", with no Wise transfer created yet"
                           : ""
@@ -475,8 +476,8 @@ export const createPaymentRunsController = (
           {
             key: "state",
             label: "Status",
-            sortValue: (i) => paymentStateLabel(i.state),
-            render: (i) => paymentStateLabel(i.state),
+            sortValue: (i) => paymentItemStatusLabel(i),
+            render: (i) => paymentItemStatusLabel(i),
           },
           {
             key: "cost",
@@ -504,7 +505,7 @@ export const createPaymentRunsController = (
             sortValue: (i) => i.transfer_id,
             render: (i) => i.transfer_id ?? "",
           },
-          { key: "failure", label: "Details", sortValue: (i) => i.failure || null, render: (i) => i.failure ?? "" },
+          { key: "failure", label: "Details", sortValue: (i) => paymentItemDetails(i) || null, render: (i) => paymentItemDetails(i) },
         ],
       }),
     );

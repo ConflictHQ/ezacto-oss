@@ -1,6 +1,6 @@
 {
   "name": "@conflict-hq/ezacto-migrate",
-  "version": "0.1.4",
+  "version": "0.1.6",
   "description": "Move a Harvest account into ezacto: extract a snapshot, verify it, load it, reconcile, sync.",
   "license": "AGPL-3.0-only",
   "repository": {

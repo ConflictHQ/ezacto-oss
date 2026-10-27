@@ -31,6 +31,8 @@ export const demoRefusal = (): ApiError =>
  * why, and does so before a request is built.
  */
 export const DEMO_INTEGRATION_ROUTES: readonly string[] = [
+  'get /api/v1/admin/calendar-cleanup',
+  'post /api/v1/admin/calendar-cleanup/confirm',
   'post /api/v1/integrations/quickbooks/authorize',
   'get /api/v1/integrations/quickbooks/callback',
   'post /api/v1/integrations/quickbooks/settings',

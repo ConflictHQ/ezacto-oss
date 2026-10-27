@@ -13,6 +13,52 @@ const valid = (): NodeJS.ProcessEnv => ({
 })
 
 describe('container configuration', () => {
+  it('requires explicit deployment opt-in for GitHub time publication', () => {
+    expect(readContainerConfig(valid()).githubTimePublicationEnabled).toBe(false)
+    expect(
+      readContainerConfig({ ...valid(), GITHUB_TIME_PUBLICATION_ENABLED: 'false' })
+        .githubTimePublicationEnabled,
+    ).toBe(false)
+    expect(
+      readContainerConfig({ ...valid(), GITHUB_TIME_PUBLICATION_ENABLED: 'true' })
+        .githubTimePublicationEnabled,
+    ).toBe(true)
+    expect(() =>
+      readContainerConfig({ ...valid(), GITHUB_TIME_PUBLICATION_ENABLED: 'yes' }),
+    ).toThrow('must be true or false')
+  })
+  it('keeps GitHub App credentials separate from page configuration and validates complete custody', () => {
+    const privateKey = '-----BEGIN PRIVATE KEY-----\nZmFrZQ==\n-----END PRIVATE KEY-----'
+    const config = readContainerConfig({
+      ...valid(),
+      GITHUB_APP_ID: '123',
+      GITHUB_APP_PRIVATE_KEY: privateKey,
+      GITHUB_APP_WEBHOOK_SECRET: 'fixture-hook-secret',
+      GITHUB_APP_ENCRYPTION_KEY: key,
+    })
+    expect(config.githubReader).toEqual({
+      appId: '123',
+      privateKey,
+      webhookSecret: 'fixture-hook-secret',
+    })
+    expect(config.githubAppEncryptionKey).toBe(key)
+    for (const field of [
+      'GITHUB_APP_ID',
+      'GITHUB_APP_PRIVATE_KEY',
+      'GITHUB_APP_WEBHOOK_SECRET',
+      'GITHUB_APP_ENCRYPTION_KEY',
+    ])
+      expect(config.appEnv).not.toHaveProperty(field)
+    expect(() => readContainerConfig({ ...valid(), GITHUB_APP_ID: '123' })).toThrow(
+      'configured together',
+    )
+    expect(() =>
+      readContainerConfig({
+        ...valid(),
+        GITHUB_APP_PRIVATE_KEY: 'not a private key',
+      }),
+    ).toThrow('PEM private key')
+  })
   it('[unit] resolves the stable volume contract without exposing SMTP credentials', () => {
     const config = readContainerConfig(valid())
     expect(config).toMatchObject({
@@ -40,7 +86,12 @@ describe('container configuration', () => {
   })
 
   it('[unit] carries every operator module switch and refuses a bad one at start-up (issue 1254)', () => {
-    const flags = { SSO_ENABLED: 'false', BACKUPS_ENABLED: 'false', INVOICES_ENABLED: 'false', ACCOUNTING_ENABLED: 'true' }
+    const flags = {
+      SSO_ENABLED: 'false',
+      BACKUPS_ENABLED: 'false',
+      INVOICES_ENABLED: 'false',
+      ACCOUNTING_ENABLED: 'true',
+    }
     expect(readContainerConfig({ ...valid(), ...flags }).appEnv).toMatchObject(flags)
     expect(readContainerConfig(valid()).appEnv).not.toHaveProperty('SSO_ENABLED')
     for (const name of Object.keys(flags)) {
@@ -51,8 +102,13 @@ describe('container configuration', () => {
   })
 
   it('[unit] keeps Deel staging credentials private and independent of the QuickBooks switch', () => {
-    const config = readContainerConfig({...valid(),DEEL_TOKEN:'owned-fixture-token',DEEL_SYNC_START_DATE:'2026-10-01',ACCOUNTING_ENABLED:'false'})
-    expect(config.deel).toEqual({token:'owned-fixture-token',startDate:'2026-10-01'})
+    const config = readContainerConfig({
+      ...valid(),
+      DEEL_TOKEN: 'owned-fixture-token',
+      DEEL_SYNC_START_DATE: '2026-10-01',
+      ACCOUNTING_ENABLED: 'false',
+    })
+    expect(config.deel).toEqual({ token: 'owned-fixture-token', startDate: '2026-10-01' })
     expect(config.appEnv).not.toHaveProperty('DEEL_TOKEN')
     expect(config.appEnv).not.toHaveProperty('DEEL_SYNC_START_DATE')
     expect(readContainerConfig(valid()).deel).toBeUndefined()
@@ -117,9 +173,7 @@ describe('the operator guide and the config it describes', () => {
     const enforced = new Set(
       [...source.matchAll(/required\(environment, '([A-Z_]+)'/gu)].map((match) => match[1]!),
     )
-    const documented = new Set(
-      [...readme.matchAll(/^([A-Z_]+)=/gmu)].map((match) => match[1]!),
-    )
+    const documented = new Set([...readme.matchAll(/^([A-Z_]+)=/gmu)].map((match) => match[1]!))
 
     // Counted before they are compared, so two empty sets cannot agree.
     expect(enforced.size).toBeGreaterThan(0)
@@ -130,10 +184,7 @@ describe('the operator guide and the config it describes', () => {
     // Both are the guide's answer to "what do I do when this goes wrong", and a
     // dead link is that answer missing.
     const root = fileURLToPath(new URL('../../../', import.meta.url))
-    const readme = await readFile(
-      fileURLToPath(new URL('../README.md', import.meta.url)),
-      'utf8',
-    )
+    const readme = await readFile(fileURLToPath(new URL('../README.md', import.meta.url)), 'utf8')
     const targets = [...readme.matchAll(/\]\((\.\.[^)]+\.md)\)/gu)].map((match) => match[1]!)
     expect(targets.length).toBeGreaterThan(0)
     for (const target of targets) {

@@ -101,8 +101,7 @@ export {
 export { createD1EmailFeedbackLedger } from './email-feedback-events.js'
 export {
   createD1EmailLogStore,
-  type EmailLogStoreOptions,
-} from './email-log.js'
+  type EmailLogStoreOptions } from './email-log.js'
 export {
   createD1EmailConfigurationStore,
   EmailConfigurationError,
@@ -210,8 +209,7 @@ export {
 export {
   createBillLinkStore,
   createBillMirrorSource,
-  setBillDelivery,
-} from './bill.js'
+  setBillDelivery } from './bill.js'
 export {
   createStripeLinkStore,
   type StripeLinkRecord,
@@ -503,7 +501,8 @@ export { backfillCostRates } from './cost-rate-backfill.js'
 export { captureActivityEvent } from './activity-log.js'
 export { createActivityRoll } from './activity-partitions.js'
 export { requestAccountDeletion } from './account-deletion.js'
-export { createD1ReminderScheduler, type ReminderProcessOptions, type ReminderProcessSummary } from './reminders.js'
+export { createD1ReminderScheduler, type ReminderProcessOptions, type ReminderProcessSummary,
+} from './reminders.js'
 
 // The QuickBooks store is type-only against better-sqlite3, so it is safe to
 // reach from the Worker entry -- the native driver never enters the bundle.
@@ -583,5 +582,14 @@ export { previewTimesheetLockedDates, type TimesheetLockPreviewWindow } from './
 export * from './stripe-payment-alerts.js'
 
 export * from './bank-deposit-review.js'
+export * from './calendar-oauth.js'
 
 export { expireWorkerSnapshots, discardWorkerSnapshot } from './worker-backup-snapshot.js'
+
+export { createCalendarOperatorCleanupStore } from './calendar-operator-cleanup.js'
+export * from './github-read.js'
+export * from './github-reader-admin.js'
+export * from './github-reader-work.js'
+export * from './github-reader-service.js'
+
+export * from './github-app-setup.js'

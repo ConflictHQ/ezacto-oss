@@ -10,6 +10,10 @@ export interface CalendarCleanupStatus {
   pending: number;
   manual_required: number;
   revoked: number;
+  /** Owner confirmation of manual permission removal; not provider verification. */
+  manual_confirmed?: number;
+  /** Administrator attestation of retained custody cleanup; not provider verification. */
+  operator_confirmed?: number;
 }
 export interface CalendarConnectionAuthority {
   userId: number;
@@ -33,7 +37,8 @@ export class CalendarConnectionError extends Error {
       | "invalid"
       | "busy"
       | "not_configured"
-      | "not_connected",
+      | "not_connected"
+      | "consent_required",
   ) {
     super(`Calendar connection ${code}.`);
     this.name = "CalendarConnectionError";
@@ -158,6 +163,7 @@ export interface CalendarGrantVault {
 export type CalendarSourceFactory = (context: {
   readonly grant: CalendarOAuthGrant;
   readonly rotateGrant: (grant: CalendarOAuthGrant) => Promise<void>;
+  readonly retainRejectedGrant?: (grant: CalendarOAuthGrant) => Promise<void>;
 }) => Promise<CalendarSource>;
 
 const encode = (bytes: Uint8Array) =>

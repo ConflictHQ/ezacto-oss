@@ -81,6 +81,10 @@ const bundle = await build({
   write: false,
 })
 
+const calendarFixture = process.env.EZACTO_BROWSER_CALENDAR_FIXTURE === '1'
+const calendarFixtureEventStart = new Date(Math.floor((Date.now()-7200000)/1000)*1000).toISOString()
+const calendarFixtureLocal = instant => new Date(Date.parse(instant)-6*3600000).toISOString().slice(0,19)
+const calendarCalls = { outbound: 0, tokenAttempt: 0, token: 0, events: 0, revoke: 0 }
 const deelStagingFixture = process.env.EZACTO_BROWSER_DEEL_STAGING_FIXTURE === '1'
 const deelStagingPosts = []
 const deelTimesheetStatuses = new Map()
@@ -106,7 +110,35 @@ const workerOptions = {
     }
     throw new Error('Unexpected fixture outbound operation')
   }} : {}),
+  ...(calendarFixture ? {outboundService: async request => {
+    calendarCalls.outbound++
+    const url = new URL(request.url)
+    if (url.origin === 'https://login.microsoftonline.com' && url.pathname === '/common/oauth2/v2.0/token' && request.method === 'POST') {
+      const body = new globalThis.URLSearchParams(await request.text())
+      if (body.get('grant_type') === 'authorization_code' && !body.get('code_verifier')) throw new Error('Calendar fixture expected PKCE')
+      calendarCalls.token++
+      return globalThis.Response.json({access_token:'local-microsoft-access',refresh_token:'local-microsoft-refresh',token_type:'Bearer',expires_in:3600,scope:'https://graph.microsoft.com/Calendars.Read offline_access'})
+    }
+    if (url.origin === 'https://graph.microsoft.com' && url.pathname === '/v1.0/me/calendarView/delta' && request.method === 'GET') {
+      calendarCalls.events++
+      return globalThis.Response.json({value:[{id:'owned-microsoft-event-428',changeKey:'owned-microsoft-version-1',subject:'Owned Microsoft fixture',isAllDay:false,isOrganizer:true,responseStatus:{response:'organizer'},showAs:'busy',start:{dateTime:new Date(Date.now()-7200000).toISOString(),timeZone:'UTC'},end:{dateTime:new Date(Date.now()-3600000).toISOString(),timeZone:'UTC'}}],'@odata.deltaLink':'https://graph.microsoft.com/v1.0/me/calendarView/delta?$deltatoken=owned'})
+    }
+    if (url.origin === 'https://oauth2.googleapis.com' && url.pathname === '/token' && request.method === 'POST') {
+      calendarCalls.tokenAttempt++
+      const body = new globalThis.URLSearchParams(await request.text())
+      if (body.get('grant_type') === 'authorization_code' && !body.get('code_verifier')) throw new Error('Calendar fixture expected PKCE')
+      calendarCalls.token++
+      return globalThis.Response.json({access_token:'local-calendar-access',refresh_token:'local-calendar-refresh',token_type:'Bearer',expires_in:3600,scope:'https://www.googleapis.com/auth/calendar.readonly'})
+    }
+    if (url.origin === 'https://www.googleapis.com' && url.pathname === '/calendar/v3/calendars/primary/events' && request.method === 'GET') {
+      calendarCalls.events++
+      return globalThis.Response.json({items:[{id:'owned-calendar-event-428',etag:'owned-calendar-version-1',organizer:{self:true},status:'confirmed',summary:'Owned calendar fixture',start:{dateTime:calendarFixtureLocal(calendarFixtureEventStart),timeZone:'America/Costa_Rica'},end:{dateTime:calendarFixtureLocal(new Date(Date.parse(calendarFixtureEventStart)+3600000).toISOString()),timeZone:'America/Costa_Rica'}}],nextSyncToken:'owned-sync-token'})
+    }
+    if (url.origin === 'https://oauth2.googleapis.com' && url.pathname === '/revoke' && request.method === 'POST') { calendarCalls.revoke++; return new globalThis.Response(null,{status:200}) }
+    throw new Error('Unexpected calendar fixture outbound operation')
+  }} : {}),
   bindings: {
+    ...(calendarFixture ? {GOOGLE_CALENDAR_CLIENT_ID:'owned-calendar-client',GOOGLE_CALENDAR_CLIENT_SECRET:'owned-calendar-secret',MICROSOFT_CALENDAR_CLIENT_ID:'owned-microsoft-client',MICROSOFT_CALENDAR_CLIENT_SECRET:'owned-microsoft-secret',APP_BASE_URL:`http://localhost:${listenPort}`} : {}),
     ...(deelStagingFixture ? {DEEL_TOKEN:'local-deel-staging-fixture',DEEL_SYNC_START_DATE:'2026-08-01'} : {}),
     API_CURSOR_SIGNING_KEY: cursorSigningKey,
     WEBHOOK_ENCRYPTION_KEY: 'AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAY',
@@ -610,7 +642,11 @@ const fixtureControl = async (request, response) => {
     response.end()
     return
   }
-  if (action === 'bank-deposit-seed') {
+  if (action === 'calendar-oauth-receipt' && calendarFixture) {
+    response.writeHead(200, { 'content-type': 'application/json', 'cache-control': 'no-store' })
+    response.end(JSON.stringify({calls:calendarCalls,eventStart:calendarFixtureEventStart,attempts:await rows("SELECT consumed_at IS NOT NULL AS consumed FROM calendar_oauth_attempts"),proposals:await rows("SELECT status,starts_at FROM calendar_proposals WHERE event_id='owned-calendar-event-428'"),entries:await rows("SELECT count(*) AS count FROM time_entries WHERE calendar_event_ref LIKE '%owned-calendar-event-428%'"),connections:await rows("SELECT status FROM calendar_connections WHERE user_id=1")}))
+    return
+  } else if (action === 'bank-deposit-seed') {
     const db = createD1Database(database), ingestion = createBankDepositIngestionService(db)
     const account = await ingestion.ensureAccount({ provider: 'mercury', externalAccountId: 'owned-browser-bank', name: 'Browser bank review' })
     const now = new Date().toISOString(), invoiceIds = [], deposits = [], observations = {}
@@ -740,7 +776,10 @@ const fixtureControl = async (request, response) => {
     }
   } else if (action === 'scheduled-manifest-seed') {
     await run(`DELETE FROM auth_rate_limits WHERE action = 'sign_in'`)
-    const now = new Date().toISOString(), expires = new Date(Date.now()+3600000).toISOString()
+    // Scheduling and review-link validation use the real runtime clock, not
+    // the fixed time-entry fixture date. Keep the original one-hour decision window valid.
+    const proposedAt = new Date()
+    const now = proposedAt.toISOString(), expires = new Date(proposedAt.getTime()+3600000).toISOString()
     const clients=[], invoices=[]
     scheduledManifestFixture={clientIds:clients,projectIds:[],jobId:null}
     for (const [index,label] of ['A','B'].entries()) {

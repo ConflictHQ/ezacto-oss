@@ -43,6 +43,7 @@ try {
   const help = run(ez, ['--help'])
   assert.match(help, /ez <command>/)
   assert.match(help, /backup-decrypt/)
+  assert.match(help, /calendar-cleanup/)
 
   // Write the documented V1 format with Node's cipher API, independently of
   // the WebCrypto implementation embedded in the installed command.
@@ -93,7 +94,23 @@ try {
   assert.equal(backup.tables, 1)
   assert.equal(backup.rows, 1)
   assert.match(readFileSync(join(backup.bundle, 'tables/package_smoke.csv'), 'utf8'), /packed install/)
-  process.stdout.write(`Packed CLI ${manifest.version}: isolated global install, reports, decryption, and SQLite backup passed.\n`)
+  // The new command and generated methods must travel in the same release pair.
+  writeFileSync(fixture, `
+    const { createRequire } = require('node:module')
+    const installedRequire = createRequire(${JSON.stringify(join(cliDirectory, 'package.json'))})
+    const Database = installedRequire('better-sqlite3')
+    const { EzactoClient } = installedRequire('@conflict-hq/ezacto-client')
+    if (typeof EzactoClient.prototype.listCalendarOperatorCleanup !== 'function' || typeof EzactoClient.prototype.confirmCalendarOperatorCleanup !== 'function') throw new Error('Packed client lacks calendar operator methods')
+    const db = new Database('operator.sqlite')
+    db.exec("CREATE TABLE calendar_sync_instance(singleton INTEGER,nonce TEXT); INSERT INTO calendar_sync_instance VALUES(1,'current'); CREATE TABLE calendar_cleanup_obligations(id TEXT,user_id INTEGER,provider TEXT,instance_nonce TEXT,generation INTEGER,credential_revision INTEGER,key_id TEXT,request_id TEXT,reason TEXT,status TEXT,created_at TEXT,lease_holder TEXT,lease_expires_at TEXT,sealed_grant TEXT); INSERT INTO calendar_cleanup_obligations VALUES('owned',1,'google','old',1,1,'key',NULL,'restore','manual_required','2026-10-26T00:00:00Z',NULL,NULL,'PRIVATE_PACKED_GRANT')")
+    db.close()
+  `)
+  run(process.execPath, [fixture])
+  const inspected = run(ez, ['calendar-cleanup', 'inspect', realpathSync(join(directory, 'operator.sqlite'))])
+  assert.equal(JSON.parse(inspected).data[0].id, 'owned')
+  assert.equal(JSON.parse(inspected).inspection_only, true)
+  assert.ok(!inspected.includes('PRIVATE_PACKED_GRANT'))
+  process.stdout.write(`Packed CLI ${manifest.version}: isolated global install, reports, decryption, SQLite backup, and calendar operator inspection/client contract passed.\n`)
 } finally {
   rmSync(directory, { recursive: true, force: true })
 }

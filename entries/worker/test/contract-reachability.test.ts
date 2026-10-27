@@ -6,6 +6,7 @@ import { workerBrandAssetSurface } from '../src/brand-assets.js'
 import { workerInstanceThemeSurface } from '../src/instance-theme.js'
 import {
   CONTAINER_ONLY_ROUTES,
+  GITHUB_PUBLICATION_ROUTES,
   PORTAL_ROUTES,
   UNDOCUMENTED_ROUTES,
   expectedApiRoutes,
@@ -28,6 +29,7 @@ import { createRuntimeServices } from '../src/runtime.js'
 describe('Worker contract reachability', () => {
   let miniflare: Miniflare
   let app: ReturnType<typeof createApp>
+  let env: WorkerEnv
 
   beforeAll(async () => {
     miniflare = new Miniflare({
@@ -35,11 +37,12 @@ describe('Worker contract reachability', () => {
       script: 'export default { fetch() { return new Response("ok") } }',
       d1Databases: ['DB'],
     })
-    const env: WorkerEnv = {
+    env = {
       DB: await miniflare.getD1Database('DB'),
       API_CURSOR_SIGNING_KEY: 'A'.repeat(43),
       ENVIRONMENT: 'test',
       RELEASE: 'contract-reachability-test',
+      GITHUB_TIME_PUBLICATION_ENABLED: 'true',
       // Configured, so the QuickBooks routes are composed and this guard sees
       // them. Without keys they are not mounted at all, which is the point of
       // the gating in `entry-surface.ts` -- but a documented operation that is
@@ -78,6 +81,13 @@ describe('Worker contract reachability', () => {
     expect(unreachable).toEqual([])
   })
 
+  it('[contract] omits only the declared publication routes when the deployment opts out', async () => {
+    const disabled = createApp(await createRuntimeServices({ ...env, GITHUB_TIME_PUBLICATION_ENABLED: 'false' }), workerBrandAssetSurface, workerInstanceThemeSurface)
+    const mounted = mountedApiRoutes(disabled.routes)
+    expect(routeDifference(mounted, expectedApiRoutes(apiContractOperations.map(operation => `${operation.method} ${operation.path}`), 'worker', { portal: false, quickBooks: true, wise: true, githubPublication: false }))).toEqual({ unexpected: [], missing: [] })
+    for (const route of GITHUB_PUBLICATION_ROUTES) expect(mounted.has(route)).toBe(false)
+  })
+
   // The other half of the same promise: a route the deployment answers but the
   // document never mentions is a surface no client can discover. The list lives
   // in `entry-surface.ts` now, because the container's guard asserts the same
@@ -111,7 +121,7 @@ describe('Worker contract reachability', () => {
           (operation) => `${operation.method} ${operation.path}`,
         ),
         'worker',
-        { portal: false, quickBooks: true, wise: true },
+        { portal: false, quickBooks: true, wise: true, githubPublication: true },
       ),
     )
 

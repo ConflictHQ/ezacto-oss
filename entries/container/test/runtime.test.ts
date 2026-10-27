@@ -16,6 +16,7 @@ import type { EmailMessage, HttpEmailProvider } from '@ezacto/mailer'
 import { createApp } from '../../worker/src/app.js'
 import {
   UNDOCUMENTED_ROUTES,
+  GITHUB_PUBLICATION_ROUTES,
   WORKER_ONLY_ROUTES,
   expectedApiRoutes,
   mountedApiRoutes,
@@ -485,7 +486,7 @@ describe('container runtime composition', () => {
   // runtime leaves out is a documented operation this deployment 404s.
   it('[contract] answers every documented operation the container composes', async () => {
     const root = await temporary()
-    const runtime = await createContainerRuntime(config(root), {
+    const runtime = await createContainerRuntime({ ...config(root), githubTimePublicationEnabled: true }, {
       emailProvider: provider([]),
     })
     try {
@@ -547,7 +548,7 @@ describe('container runtime composition', () => {
   // services are not, and the difference was invisible.
   it('[contract] answers exactly the surface declared for this entry', async () => {
     const root = await temporary()
-    const runtime = await createContainerRuntime(config(root), {
+    const runtime = await createContainerRuntime({ ...config(root), githubTimePublicationEnabled: true }, {
       emailProvider: provider([]),
     })
     try {
@@ -558,7 +559,7 @@ describe('container runtime composition', () => {
             (operation) => `${operation.method} ${operation.path}`,
           ),
           'container',
-          { portal: false, quickBooks: true, wise: true },
+          { portal: false, quickBooks: true, wise: true, githubPublication: true },
         ),
       )
 
@@ -566,6 +567,16 @@ describe('container runtime composition', () => {
     } finally {
       await runtime.close()
     }
+  })
+
+  it('[contract] omits only the declared publication routes by default', async () => {
+    const root = await temporary()
+    const runtime = await createContainerRuntime(config(root), { emailProvider: provider([]) })
+    try {
+      const mounted = mountedApiRoutes(createApp(runtime.services, runtime.brandAssets, runtime.instanceTheme).routes)
+      expect(routeDifference(mounted, expectedApiRoutes(apiContractOperations.map(operation => `${operation.method} ${operation.path}`), 'container', { portal: false, quickBooks: true, wise: true, githubPublication: false }))).toEqual({ unexpected: [], missing: [] })
+      for (const route of GITHUB_PUBLICATION_ROUTES) expect(mounted.has(route)).toBe(false)
+    } finally { await runtime.close() }
   })
 
   // The portal was mounted nowhere: `services.portalAuth` was optional and no

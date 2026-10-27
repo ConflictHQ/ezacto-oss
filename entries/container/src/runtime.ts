@@ -1,3 +1,6 @@
+import { createCalendarOperatorCleanupStore } from '@ezacto/db'
+import { createConfiguredCalendarServices } from '@ezacto/integrations'
+import { createCalendarOAuthStore } from '@ezacto/db'
 import { createCalendarConnectionStore } from '@ezacto/db'
 import { createCalendarSyncService } from '@ezacto/integrations'
 import { createStripePaymentAlertStore, prepareStripePaymentAlertNotifications } from '@ezacto/db'
@@ -5,6 +8,7 @@ import { createConfiguredBankFeedRuntime } from '@ezacto/integrations'
 import { createBankDepositIngestionService } from '@ezacto/db'
 import { createBankDepositReviewService } from '@ezacto/db'
 import { createCalendarFeedService } from '@ezacto/db'
+import { createGithubReaderService } from '@ezacto/db'
 import { createDeelPaymentStatusStore } from '@ezacto/db'
 import { createDeelPaymentStatusRuntime } from '@ezacto/integrations'
 import { createDeelStageStore } from '@ezacto/db'
@@ -28,7 +32,8 @@ import { createContainerEmailSuppressionStore } from '@ezacto/db'
 import type { ReminderProcessOptions } from '@ezacto/db'
 import { createRuntimeAppleWeb } from '../../worker/src/apple-web.js'
 import { createContainerAppleWebCustodyStore } from '@ezacto/db'
-import { createPaymentRunsService, createScheduledRunsService, createScheduledJobsService, proposeDueScheduledJobs } from '@ezacto/db'
+import { createPaymentRunsService, createScheduledRunsService, createScheduledJobsService, proposeDueScheduledJobs,
+} from '@ezacto/db'
 import { createContainerBrandAssetStore, createContainerInstanceThemeStore } from '@ezacto/db'
 import { createWisePaymentProvider } from '@ezacto/integrations'
 import { createContractorReviewStore, createStaffPaymentStore } from '@ezacto/db'
@@ -207,7 +212,8 @@ import type {
   CostRateBackfillPort,
   InstanceThemeSurface,
 } from '@ezacto/api'
-import { workItemCredentialConfigured, type AppEnv, type RuntimeServices } from '../../worker/src/app.js'
+import { workItemCredentialConfigured, type AppEnv, type RuntimeServices,
+} from '../../worker/src/app.js'
 import {
   createBillMirrorSubscriber,
   createBillRuntime,
@@ -231,8 +237,7 @@ const exists = (
 ): boolean => database.prepare(query).get(...bindings) !== undefined
 
 export const createContainerAttachmentOwnerAuthorizer = (
-  database: BetterSqlite3.Database,
-): AttachmentRouteOptions['authorizeOwnerAccess'] =>
+  database: BetterSqlite3.Database): AttachmentRouteOptions['authorizeOwnerAccess'] =>
   async ({ owner, parentId, principal }) => {
     switch (owner) {
       case 'invoice':
@@ -241,8 +246,7 @@ export const createContainerAttachmentOwnerAuthorizer = (
         return exists(
           database,
           'SELECT 1 FROM recurring_invoices WHERE id = ?',
-          parentId,
-        )
+          parentId)
       case 'estimate':
         return exists(database, 'SELECT 1 FROM estimates WHERE id = ?', parentId)
       case 'expense':
@@ -303,18 +307,20 @@ const assertPragma = (
 }
 
 export const prepareContainerDatabase = (
-  database: BetterSqlite3.Database,
-): void => {
+  database: BetterSqlite3.Database): void => {
   database.pragma('journal_mode = WAL')
   database.pragma('synchronous = FULL')
   database.pragma('foreign_keys = ON')
   database.pragma('busy_timeout = 5000')
   database.pragma('wal_autocheckpoint = 1000')
   migrateContainer(database)
-  if (database.prepare("SELECT 1 FROM migration_loads WHERE status<>'completed' AND (status<>'cancelled' OR started_at IS NOT NULL) LIMIT 1").get()) {
-    throw new Error('Queued migration target is quarantined; finish or recover the import before serving this database.')
+  if (database.prepare("SELECT 1 FROM migration_loads WHERE status<>'completed' AND (status<>'cancelled' OR started_at IS NOT NULL) LIMIT 1",
+      ).get()) {
+    throw new Error('Queued migration target is quarantined; finish or recover the import before serving this database.',
+    )
   }
-  if(database.prepare('SELECT 1 FROM account_restore_quarantine WHERE id=1 AND quarantined=1').get())throw new Error('Restored privacy evidence must be reconciled before this instance serves traffic.')
+  if(database.prepare('SELECT 1 FROM account_restore_quarantine WHERE id=1 AND quarantined=1').get())throw new Error('Restored privacy evidence must be reconciled before this instance serves traffic.',
+    )
 
   assertPragma(database, 'journal_mode', 'wal')
   assertPragma(database, 'synchronous', 2)
@@ -387,8 +393,7 @@ export const createSmtpSenderIdentityVerifier = (
       if (address !== configured.email || providerIdentity !== configured.email) {
         throw new SenderIdentityUnavailableError(
           'sender_identity_binding_mismatch',
-          identity.id,
-        )
+          identity.id)
       }
       return {
         source: 'deployment_config',
@@ -407,8 +412,7 @@ const ensureDataDirectory = async (directory: string): Promise<void> => {
   await mkdir(directory, { recursive: true, mode: 0o700 })
   const [linkMetadata, canonical] = await Promise.all([
     lstat(directory),
-    realpath(directory),
-  ])
+    realpath(directory)])
   if (
     linkMetadata.isSymbolicLink() ||
     !linkMetadata.isDirectory() ||
@@ -482,6 +486,13 @@ export const createContainerRuntime = async (
     csvSweep=setInterval(()=>{void csvStaging!.sweep().catch(()=>console.error('ezacto: private CSV expiry cleanup deferred'))},60_000)
     csvSweep.unref()
     const drizzle = createContainerDatabase(database)
+    const githubReader = createGithubReaderService(drizzle, {
+      publicationEnabled: !demoDeployment(config.appEnv) && config.githubTimePublicationEnabled === true,
+      ...(!demoDeployment(config.appEnv) ? {setup:{key: config.githubAppEncryptionKey,origin:config.appBaseUrl}} : {}),
+      credentials: async () =>
+        demoDeployment(config.appEnv) ? null : (config.githubReader ?? null), fetch: (request: Request) => fetch(request), now: () => new Date(),
+    })
+    const calendar = await createConfiguredCalendarServices({store:createCalendarConnectionStore(drizzle),oauthStore:createCalendarOAuthStore(drizzle),deploymentKey:config.cursorSigningKey,environment:demoDeployment(config.appEnv)?{}:config.calendar??{},appOrigin:config.appBaseUrl,...(options.calendarSources?{sourceOverrides:options.calendarSources}:{})})
     const bankFeeds=createConfiguredBankFeedRuntime({store:createBankDepositIngestionService(drizzle),environment:demoDeployment(config.appEnv)?{}:config.bankFeeds??{}})
     const deelPaymentStatus = createDeelPaymentStatusRuntime({ token: demoDeployment(config.appEnv) ? undefined : config.deel?.token, store: createDeelPaymentStatusStore(drizzle), fetch: (request: Request) => fetch(request), now: () => new Date() })
     const webhooks = createWebhookService(drizzle, {
@@ -495,9 +506,9 @@ export const createContainerRuntime = async (
         ? {}
         : { touchIntervalMs: config.lastSeenIntervalMs }
     const sessions = createApiSessionService(
-      createContainerSessionStore(database, touch),
-    )
-    const emailLog = createContainerEmailLogStore(database, { kindTemplates: EMAIL_LOG_KIND_TEMPLATES })
+      createContainerSessionStore(database, touch))
+    const emailLog = createContainerEmailLogStore(database, { kindTemplates: EMAIL_LOG_KIND_TEMPLATES,
+    })
     const emailConfiguration = createContainerEmailConfigurationStore(database)
     const smtp =
       options.emailProvider ??
@@ -525,8 +536,7 @@ export const createContainerRuntime = async (
     }
     const emailSuppressions = createContainerEmailSuppressionStore(database)
     const objects = await createDiskAttachmentObjectStore(
-      config.attachmentDirectory,
-    )
+      config.attachmentDirectory)
     queue = new ContainerEmailQueue(emailLog, smtp, emailSuppressions.lookup, async (reference) => {
       const object = await objects.get(reference.key)
       return object === null ? null : new Uint8Array(await new Response(object.body).arrayBuffer())
@@ -897,10 +907,18 @@ export const createContainerRuntime = async (
       try {
         const run = await runTimesheetAutoApproval(drizzle, now)
         for (const failure of run.failed) {
-          console.error('[container] automatic approval failed', failure.submissionId, failure.message)
+          console.error('[container] automatic approval failed', failure.submissionId, failure.message,
+          )
         }
       } catch (error) {
         console.error('[container] automatic approval sweep failed', error)
+      }
+      try { await calendar.maintenance.processDue() } catch(error) { reportWorkerError(options.reportError,error,{phase:'scheduled',operation:'calendar sync',traceId:runtimeTraceId()}) }
+      try {
+        await githubReader.tick()
+        await githubReader.publishTimeNotes?.()
+      } catch {
+        console.error('[container] GitHub issue reconciliation failed')
       }
       if (!invoicesOn) return
       try { await stripeAlerts.processDue(now) } catch { console.error('[container] Stripe report reconciliation failed') }
@@ -949,8 +967,7 @@ export const createContainerRuntime = async (
     })
     const brandAssets = await createContainerBrandAssetSurface(
       database,
-      config.brandDirectory,
-    )
+      config.brandDirectory)
     const instanceTheme = createContainerInstanceThemeSurface(database)
 
     const services: RuntimeServices = {
@@ -960,7 +977,9 @@ export const createContainerRuntime = async (
       enrollOwnerPassword: (input) =>
         enrollInstanceOwnerPasswordContainer(database, input),
       tokens: createApiTokenStore(drizzle, touch),
-      projectMissingRates: { recover: input => recoverProjectMissingRates(drizzle, input, dates => timesheetLockPolicy.lockedDates(dates)) },
+      projectMissingRates: { recover: (input) => recoverProjectMissingRates(drizzle, input, (dates) => timesheetLockPolicy.lockedDates(dates),
+          ),
+      },
       generalResources: createGeneralResourceRepository(drizzle),
       clientTree: {
         ancestors: (clientId) => listClientAncestors(drizzle, clientId),
@@ -970,21 +989,29 @@ export const createContainerRuntime = async (
       invoiceElevations: createInvoiceElevationStore(drizzle),
     invoiceTimeUnlink: (command, elevation, now) => unlinkElevatedInvoiceTime(drizzle, command, elevation, now),
     webhooks,
-    migrationLoads: {status:async(id:string)=>database.prepare(`SELECT ${migrationLoadStatusProjection} FROM migration_loads WHERE id=?`).get(id) as MigrationLoadStatus|undefined??null},
+    migrationLoads: {status:async(id:string)=>
+          (database.prepare(`SELECT ${migrationLoadStatusProjection} FROM migration_loads WHERE id=?`).get(id) as MigrationLoadStatus|undefined) ??null,
+      },
     estimateTemplates: createEstimateTemplateRepository(drizzle),
     clientRateCards: createClientRateCardRepository(drizzle),
       trackedResources,
-      calendarConnections: await createCalendarSyncService({store:createCalendarConnectionStore(drizzle),deploymentKey:config.cursorSigningKey,...(options.calendarSources?{sources:options.calendarSources}:{})}),
+      calendarOperatorCleanup: createCalendarOperatorCleanupStore(drizzle),
+      calendarConnections: calendar.sync,
+      calendarAuthorization: calendar.authorization,
+      calendarMaintenance: calendar.maintenance,
       calendarProposals: new DrizzleCalendarProposalRepository(drizzle, trackedResources),
       placeholderPlanning: createPlaceholderAllocationRepository(drizzle),
       allocations: new DrizzleAllocationRepository(drizzle),
       calendarFeeds: createCalendarFeedService(drizzle),
       resourceCalendar: createResourceCalendarRepository(drizzle),
       organizationHolidays: createOrganizationHolidayRepository(drizzle),
+      githubReader,
       workItems: {
         repository: new DrizzleWorkItemRepository(drizzle),
         credentialConfigured: (provider) =>
-          workItemCredentialConfigured(config.appEnv, provider),
+          provider === 'github'
+            ? githubReader.isConfigured()
+            : workItemCredentialConfigured(config.appEnv, provider),
       },
       profile: {
         readTimezone: async (userId) => await readUserTimezone(drizzle, userId),
@@ -1057,11 +1084,14 @@ export const createContainerRuntime = async (
       scheduledRunNotices,
       scheduledRunDispatch,
       scheduledJobs: createScheduledJobsService(drizzle),
-      scheduledJobProposals: { processDue: (now: string) => proposeDueScheduledJobs(drizzle, now, objects) },
-      scheduledRuns: createScheduledRunsService(drizzle, {reviewLinkSigningKey:config.cursorSigningKey}),
+      scheduledJobProposals: { processDue: (now: string) => proposeDueScheduledJobs(drizzle, now, objects),
+      },
+      scheduledRuns: createScheduledRunsService(drizzle, {reviewLinkSigningKey:config.cursorSigningKey,
+      }),
       staffPayments: createStaffPaymentStore(drizzle),
       deelPaymentStatus,
-      deelStaging: createDeelStagingRuntime({token:demoDeployment(config.appEnv)?undefined:config.deel?.token,startDate:config.deel?.startDate,store:createDeelStageStore(drizzle),fetch:(request:Request)=>fetch(request),now:()=>new Date()}),
+      deelStaging: createDeelStagingRuntime({token:demoDeployment(config.appEnv)?undefined:config.deel?.token,startDate:config.deel?.startDate,store:createDeelStageStore(drizzle),fetch:(request:Request)=>fetch(request),now:()=>new Date(),
+      }),
       contractorReview: createContractorReviewStore(drizzle),
       myPayments: createMyPaymentsStore(drizzle),
       payoutAccounts: (() => {
@@ -1337,8 +1367,7 @@ export const createContainerRuntime = async (
               mailer: createQueuedStaffMagicLinkMailer(
                 createDeploymentSenderQueuedMailer(
                   config.smtp.from,
-                  queuedMailer,
-                ),
+                  queuedMailer),
                 organizationName,
               ),
               codeKey: config.magicLinkSigningKey,
@@ -1352,8 +1381,7 @@ export const createContainerRuntime = async (
       deploymentAuthMailer: createQueuedAuthMailer(
         createDeploymentSenderQueuedMailer(
           config.smtp.from,
-          queuedMailer,
-        ),
+          queuedMailer),
         emailConfiguration,
         organizationName,
         config.appBaseUrl,
@@ -1388,7 +1416,8 @@ export const createContainerRuntime = async (
                 get: (clientId: number, estimateId: number) =>
                   moneyResources.getCustomerEstimate(clientId, estimateId),
                 respond: (input) =>
-                  moneyResources.respondToEstimate({ ...input, occurredAt: new Date().toISOString() }),
+                  moneyResources.respondToEstimate({ ...input, occurredAt: new Date().toISOString(),
+                  }),
               },
             },
           }),

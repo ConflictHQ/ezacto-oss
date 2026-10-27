@@ -1,10 +1,10 @@
 /**
- * Opt-in time publication as an app-owned issue comment (issue 1176, contract).
+ * Opt-in time publication as an app-owned issue comment (issue 1176).
  *
- * Contract only: no network, no storage. A real adapter implements
+ * Provider-neutral reducer: no direct network or storage. Native adapters implement
  * `CommentSurface` (GitHub issue comments) and a real store implements
  * `PublicationJournal` (SQLite and D1 with the same uniqueness and fences);
- * both must pass `work-item-publication.test.ts` through the fakes' behaviour.
+ * both are exercised by contract and native SQLite/D1 runtime tests.
  *
  * Invariants:
  * - A POST is never assumed idempotent. Before any create is sent the attempt is
@@ -77,6 +77,7 @@ export type PublicationStatus =
   | 'conflicted' // a human changed or removed our comment; operator action
   | 'deferred' // provider cooldown
   | 'retired'
+  | 'failed' // automatic create retry exhausted; explicit operator retry required
 
 /** One row per (connectionId, entryId, itemId). SQLite and D1 enforce that uniqueness. */
 export interface PublicationRecord {
@@ -93,6 +94,8 @@ export interface PublicationRecord {
   readonly retryAt: number | null
   /** Monotonic claim fence; a write with a stale fence is refused by the store. */
   readonly fence: number
+  /** Number of POST attempts in the current operator-authorized cycle. */
+  readonly createAttempts?: number
 }
 
 export interface PublicationKey {
@@ -126,6 +129,7 @@ export type PublishOutcome =
   | 'deferred'
   | 'ambiguous'
   | 'conflicted'
+  | 'failed'
 
 /** Operator-facing, safe: a code and ids, never a provider payload. */
 export interface PublicationResult {
@@ -225,6 +229,7 @@ async function run(
   }
   // Only an operator clears a conflict; a retired row simply starts over if the entry returns.
   if (record.status === 'conflicted') return { outcome: 'conflicted', code: null }
+  if (record.status === 'failed') return { outcome: 'failed', code: 'retry_exhausted' }
   if (start.retryAt !== null && ctx.now() < start.retryAt)
     return { outcome: 'deferred', code: 'cooldown' }
 
@@ -238,6 +243,10 @@ async function run(
       if (matches.length > 1) return hold('ambiguous', 'ambiguous', 'duplicate_marker')
       if (matches.length === 1) {
         const found = matches[0]!
+        // An unknown POST may have landed and then been edited by a human.
+        // Never adopt that edit as a new baseline for automatic overwrites.
+        if (record.lastBody !== null && found.body !== record.lastBody)
+          return hold('conflicted', 'conflicted', 'remote_edited', { remoteId: found.id })
         const saved = await save(ctx, record, {
           status: 'published',
           remoteId: found.id,
@@ -248,13 +257,18 @@ async function run(
         const same =
           values !== null && found.body === renderTimeComment(ctx.marker, record.entryId, values)
         if (same) {
-          const done = await save(ctx, record, { lastPublished: values })
+          const done = await save(ctx, record, {
+            lastPublished: values,
+            createAttempts: 0,
+            attemptedAt: null,
+          })
           return done === null ? fenced : { outcome: 'adopted', code: null }
         }
       } else {
         const settled =
           record.attemptedAt !== null && ctx.now() - record.attemptedAt >= ctx.settleMs
         if (!listing.complete || !settled) return hold('ambiguous', 'ambiguous', 'absence_unproven')
+        if ((record.createAttempts ?? 0) >= 2) return hold('failed', 'failed', 'retry_exhausted')
         const reset = await save(ctx, record, { status: 'pending', attemptedAt: null })
         if (reset === null) return fenced
         record = reset
@@ -265,7 +279,12 @@ async function run(
       if (values === null) return hold('retired', 'unchanged', 'never_published')
       const body = renderTimeComment(ctx.marker, record.entryId, values)
       // Journal the attempt durably before the POST is sent.
-      const attempted = await save(ctx, record, { status: 'attempted', attemptedAt: ctx.now() })
+      const attempted = await save(ctx, record, {
+        status: 'attempted',
+        attemptedAt: ctx.now(),
+        lastBody: body,
+        createAttempts: (record.createAttempts ?? 0) + 1,
+      })
       if (attempted === null) return fenced
       record = attempted
       sentCreate = true
@@ -276,6 +295,7 @@ async function run(
         lastBody: body,
         lastPublished: values,
         attemptedAt: null,
+        createAttempts: 0,
       })
       return saved === null ? fenced : { outcome: 'created', code: null }
     }
@@ -339,7 +359,9 @@ async function run(
       // A refused write (429) did not land, so the attempt is withdrawn; a refused
       // reconcile leaves the earlier unknown attempt in place.
       const extra = {
-        ...(sentCreate ? { attemptedAt: null } : {}),
+        ...(sentCreate
+          ? { attemptedAt: null, createAttempts: Math.max(0, (record.createAttempts ?? 1) - 1) }
+          : {}),
         ...(sentWrite ? { pendingWrite: null } : {}),
       }
       return hold('deferred', 'deferred', 'cooldown', {

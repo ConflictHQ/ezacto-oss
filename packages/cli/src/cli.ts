@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+import { calendarCleanupCommand } from './calendar-cleanup.js'
 import { webhookCommand } from './webhooks.js'
 import { invoiceEditInput, invoiceTimeSelection } from './invoice-input.js'
 import { beginInvoiceSudo, createSudoClients, endInvoiceSudo, readTerminalSecret } from './sudo.js'
@@ -71,6 +72,7 @@ Commands:
   sudo         Reauthenticate for one draft edit: ez sudo invoice edit <number> [options]
   report       List or run reports; report list shows each required scope
   export       Export time entries or expenses as CSV (or --verify a backup bundle)
+  calendar-cleanup  Inspect retained calendar custody or record administrator cleanup evidence
   webhooks     Show delivery logs or replay a delivery using a session piped on stdin
   backup       Create a full backup bundle from a local database (--sync-to copies it to S3)
   backup-decrypt  Decrypt and verify a downloaded encrypted Worker logical bundle
@@ -511,6 +513,7 @@ const executeCli = async (
   if (values['base-url'] !== undefined || values.token !== undefined || values['token-stdin']) {
     throw new Error('--base-url and token options are valid only with ez login')
   }
+  if (command === 'calendar-cleanup') return calendarCleanupCommand(commandArguments, runtime)
   if (command === 'webhooks') return webhookCommand(commandArguments, runtime)
 
   if (values.columns !== undefined && command !== 'export') {

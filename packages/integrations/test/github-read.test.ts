@@ -37,6 +37,8 @@ describe('github reference and issue mapping', () => {
       'https://github.com:8443/acme/app/issues/5',
       'https://github.com/acme/app/pull/5',
       'http://github.com/acme/app/issues/5',
+      'https://github.com/acme/app/issues/5?private=secret',
+      'https://github.com/acme/app/issues/5#private',
       'acme/app#0',
       '../x#1',
       'acme/app#5 extra',
@@ -64,6 +66,12 @@ describe('github reference and issue mapping', () => {
     ).toBeNull()
     expect(githubIssueToRemoteItem(wire({ state: 'merged' }), scope)).toBeNull()
     expect(githubIssueToRemoteItem(wire({ id: '1001' }), scope)).toBeNull()
+    for (const url of [
+      'https://u:pw@github.com/acme/app/issues/5',
+      'https://github.com/acme/app/issues/5?secret=value',
+      'https://github.com/acme/app/issues/5#private',
+    ])
+      expect(githubIssueToRemoteItem(wire({ html_url: url }), scope)).toBeNull()
     expect(githubIssueToRemoteItem(null, scope)).toBeNull()
   })
 

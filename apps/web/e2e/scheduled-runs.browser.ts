@@ -67,6 +67,11 @@ test('[e2e:month-end #61] email deep-link requires sign-in and an explicit, sing
     expect((await signedIn).status()).toBe(200)
     expect((await reviewed).status()).toBe(200)
     await expect(page.getByRole('heading', { name: 'Review month-end pack' })).toBeVisible()
+    const proposedResponse = await page.request.get(`${new URL(link).origin}/api/v1/scheduled-runs/${runId}`)
+    expect(proposedResponse.status()).toBe(200)
+    const proposed = (await proposedResponse.json()).data
+    expect(Date.parse(proposed.expires_at)-Date.parse(proposed.proposed_at)).toBe(3600000)
+    expect(Date.parse(proposed.expires_at)).toBeGreaterThan(Date.now())
     await expect(page.locator('[data-scheduled-run-items]')).toContainText(
       'month-end-accounts@example.test',
     )

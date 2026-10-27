@@ -1,3 +1,4 @@
+import { createCalendarConnectionController } from '../calendar-connections/browser.js'
 import { setRequestBusy } from '../request-feedback.js'
 import { moduleAvailable, withdrawUnavailableSettingsSections } from '../module-availability.js'
 import {
@@ -2087,7 +2088,18 @@ export const mountShell = async (
     if (!authGateway.hidden) authGateway.dataset.state = pending ? 'signing-in' : 'signed-out'
   }
 
+  const calendarConnections = createCalendarConnectionController(
+    required<HTMLElement>('[data-calendar-connections]'), api.calendarConnections, {
+      sessionFailure: (error) => {
+        const operation = sessionOperation()
+        return operation === null || handleSessionFailure(error, operation)
+      },
+      navigate: (url) => globalThis.location.assign(url),
+    },
+  )
+
   const clearFormState = (): void => {
+    calendarConnections.clear()
     signInForm.reset()
     twoFactorForm.reset()
     commandForm.reset()
@@ -3149,6 +3161,11 @@ export const mountShell = async (
     wireUserPayout(identity)
     wireApiTokens(identity)
     wireTwoFactor()
+    const operation = sessionOperation()
+    if (operation !== null && identity.authentication.kind === 'session') {
+      const callback = new URLSearchParams(globalThis.location.search).get('calendar') ?? undefined
+      calendarConnections.activate(operation.signal, callback, new URLSearchParams(globalThis.location.search).get('provider') ?? undefined)
+    }
   }
 
   const handleSessionFailure = (
@@ -7702,7 +7719,11 @@ export const mountShell = async (
     const panes = [...document.querySelectorAll<HTMLElement>('[data-settings-user-pane]')]
     const links = [...document.querySelectorAll<HTMLElement>('[data-settings-user-link]')]
     const showPart = (): void => {
-      const wanted = resolveSettingsSection(globalThis.location.hash, USER_SETTINGS_SECTIONS)
+      const callback = new URLSearchParams(globalThis.location.search).get('calendar')
+      const wanted = resolveSettingsSection(
+        globalThis.location.hash || (callback === 'connected' || callback === 'failed' || callback === 'admin_consent_required' ? '#calendars' : ''),
+        USER_SETTINGS_SECTIONS,
+      )
       for (const pane of panes) pane.hidden = pane.dataset['settingsUserPane'] !== wanted
       for (const link of links) {
         if (link.dataset['settingsUserLink'] === wanted) link.setAttribute('aria-current', 'page')

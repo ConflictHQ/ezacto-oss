@@ -1,0 +1,61 @@
+import { expect, test } from '@playwright/test'
+
+test('reviews connection permission and each time note before publishing, with explicit conflict resolution', async ({ page, request }, testInfo) => {
+  const reset = await request.post('/__ezacto_browser_fixture__/start-end', { headers: { 'x-ezacto-browser-fixture-control': 'start-end-round-trip' }, data: { action: 'sign-in-rate-reset' } })
+  expect(reset.status()).toBe(204)
+  let enabled = false, consented = false
+  const commands: { path: string; body: Record<string, unknown> }[] = []
+  let finishConsent!: () => void
+  await page.route('**/api/v1/work-items/github/**', async route => {
+    const path = new URL(route.request().url()).pathname
+    if (path.endsWith('/status')) return route.fulfill({ json: { data: { publication_enabled: true, configured: true, available: true, setup_supported: true, owned_acceptance_required: true, app: null, connections: [{ id: 'fixture', generation: 1, installation_id: '55', state: 'active', deferred_until: null, failure_codes: [], resources: [{ repository_id: '77', full_name: 'owned/project', project_id: 11, task_id: 12, state: 'active', checkpoint_status: 'complete', attempts: 0, next_retry_at: 0, failure_code: null, items_visible: 1, items_unavailable: 0 }] }] } } })
+    if (path.endsWith('/installations')) return route.fulfill({ json: { data: { items: [], next_page: null } } })
+    if (path.endsWith('/publication') && route.request().method() === 'GET') return route.fulfill({ json: { data: { policies: [{ connection_id: 'fixture', enabled, generation: enabled ? 1 : 0 }], candidates: [{ link_id: 12, entry_id: 45 }], publications: consented ? [{ id: 4, connection_id: 'fixture', entry_id: 45, destination: 'owned/project#9', spent_date: '2026-09-17', seconds: 3661, status: 'conflicted', source_version: 5, version: 5, remote_id: '99', failure_code: 'remote_edited', next_retry_at: null }] : [] } } })
+    if (path.endsWith('/preview/12')) return route.fulfill({ json: { data: { link_id: 12, connection_id: 'fixture', destination: 'owned/project#9', spent_date: '2026-09-17', seconds: 3661, source_version: 'source', policy_enabled: enabled } } })
+    const body = route.request().postDataJSON() as Record<string, unknown>
+    commands.push({ path, body })
+    if (path.endsWith('/policy')) enabled = body.enabled === true
+    if (path.endsWith('/consent')) { await new Promise<void>(resolve => { finishConsent = resolve }); consented = true }
+    return route.fulfill({ status: 204, body: '' })
+  })
+  await page.goto('/settings/company#work-items')
+  await page.locator('[data-sign-in-form]').getByLabel('Email', { exact: true }).fill(process.env.EZACTO_BROWSER_FIXTURE_EMAIL!)
+  await page.getByLabel('Password', { exact: true }).fill(process.env.EZACTO_BROWSER_FIXTURE_PASSWORD!)
+  await page.getByRole('button', { name: 'Sign in', exact: true }).click()
+  const root = page.locator('[data-github-publications]')
+  await expect(root.locator('[data-gh-pub-content]')).toBeVisible()
+  const enable = root.getByRole('button', { name: 'Enable publication', exact: true })
+  await expect(enable).toBeDisabled()
+  await root.getByLabel('I reviewed the selected repositories and granted the GitHub App Issues read and write permission.').check()
+  await enable.click()
+  await expect(root.locator('[data-gh-pub-status]')).toContainText('Permission verified')
+  await root.getByRole('combobox', { name: 'Time entry', exact: true }).selectOption('12')
+  await root.getByRole('button', { name: 'Preview comment', exact: true }).click()
+  await expect(root.locator('[data-gh-pub-preview-text]')).toContainText('owned/project#9 · 2026-09-17 · 1h 1m 1s')
+  const publish = root.getByRole('button', { name: 'Allow this time note', exact: true })
+  await expect(publish).toBeDisabled()
+  await root.getByLabel('I reviewed this destination, date and duration and allow this entry to be published and kept in sync.').check()
+  await publish.click()
+  await expect(root.locator('[data-gh-pub-status]')).toHaveAttribute('aria-busy', 'true')
+  await expect(publish).toBeDisabled()
+  await expect.poll(() => commands.filter(item => item.path.endsWith('/consent')).length).toBe(1)
+  finishConsent()
+  await expect(root.locator('[data-gh-pub-status]')).toContainText('Consent recorded')
+  const action = root.getByRole('combobox', { name: 'Resolve publication', exact: true })
+  await expect(action).toHaveValue('unlink')
+  await action.selectOption('restore')
+  await expect(root.getByText('Restore overwrites the edited comment, or creates it again if it was deleted.')).toBeVisible()
+  const apply = root.getByRole('button', { name: 'Apply action', exact: true })
+  await expect(apply).toBeDisabled()
+  await root.getByLabel('I reviewed this action and confirm.').check()
+  for (const button of await root.getByRole('button').all()) if (await button.isVisible()) expect((await button.boundingBox())!.height).toBeGreaterThanOrEqual(44)
+  await page.screenshot({ path: testInfo.outputPath('github-publication-phone.png'), fullPage: true })
+  await page.setViewportSize({ width: 1440, height: 1000 })
+  await page.screenshot({ path: testInfo.outputPath('github-publication-desktop.png'), fullPage: true })
+  await apply.click()
+  await expect(root.locator('[data-gh-pub-status]')).toContainText('Action recorded')
+  expect(commands.map(item => item.path.split('/').at(-1))).toEqual(['policy', 'consent', 'actions'])
+  expect(commands[0]!.body).toMatchObject({ enabled: true, confirm_permission: true, expected_generation: 0 })
+  expect(commands[1]!.body).toMatchObject({ link_id: 12, source_version: 'source' })
+  expect(commands[2]!.body).toMatchObject({ action: 'restore', confirm: true, expected_version: 5 })
+})

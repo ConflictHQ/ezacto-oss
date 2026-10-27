@@ -9622,6 +9622,8 @@ th[aria-sort="descending"] .table-sort [data-part="ascending"] { opacity: 0.15; 
 @media (prefers-reduced-motion: reduce) { .staff-payment-opening [data-deel-stage-message][data-busy='true']::before { animation: none; } }
 [data-deel-payment-refresh][aria-busy='true'] { display: flex; align-items: center; gap: 9px; }
 [data-deel-payment-refresh][aria-busy='true']::before { content: ''; width: 14px; aspect-ratio: 1; flex: 0 0 auto; border: 2px solid var(--ez-border); border-top-color: var(--ez-action); border-radius: 50%; animation: auth-spin 900ms linear infinite; }
+[data-settings-section='work-items'] button { min-height: 44px; padding: 8px 12px; border: 1px solid var(--ez-border); border-radius: var(--ez-radius); background: var(--ez-surface); color: var(--ez-ink); font: inherit; }
+[data-github-reader-manifest] { white-space: pre-wrap; overflow-wrap: anywhere; font-size: 12px; }
 @media (prefers-reduced-motion: reduce) { [data-deel-payment-refresh][aria-busy='true']::before { animation: none; } }
 .staff-payment-person header { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; }
 [data-payment-opening-people] { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 10px; }
@@ -10256,3 +10258,9 @@ input::file-selector-button:hover { background: var(--ez-surface-2); }
 .bank-deposit-workspace form label { display: block; }
 .bank-deposit-workspace input:not([type=checkbox]), .bank-deposit-workspace select { max-width: 100%; min-height: 44px; }
 .bank-deposit-workspace [hidden] { display: none !important; }
+
+[data-calendar-connections]:not([hidden]),
+[data-calendar-connections-list] { display: grid; gap: 16px; }
+[data-calendar-provider] { display: grid; gap: 12px; min-width: 0; padding: 16px; border: 1px solid var(--ez-border); border-radius: var(--ez-radius); }
+[data-calendar-provider] :is(h3, p) { margin: 0; }
+.calendar-connection-actions { display: flex; flex-wrap: wrap; gap: 8px; }

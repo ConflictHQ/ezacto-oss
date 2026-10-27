@@ -62,8 +62,7 @@ export const deploySecretPayload = (environment) => {
   const cursor = canonicalCursor(environment.API_CURSOR_SIGNING_KEY)
   const magicLink = optionalSigningKey(
     environment.MAGIC_LINK_SIGNING_KEY,
-    'MAGIC_LINK_SIGNING_KEY',
-  )
+    'MAGIC_LINK_SIGNING_KEY')
   // Its own key on purpose: staff magic-link and the in-app contact portal are
   // unrelated features, and one secret switching on both is how a deployment
   // gets a surface it did not ask for.
@@ -88,9 +87,10 @@ export const deploySecretPayload = (environment) => {
   const appleWebClientId = optionalCredential(environment.APPLE_WEB_SERVICES_ID)
   const appleWebKeys = optionalCredential(environment.APPLE_WEB_CAPABILITY_KEYS)
   const appleWebActiveKey = optionalCredential(environment.APPLE_WEB_ACTIVE_KEY_ID)
-  const appleWebRouting = optionalSigningKey(environment.APPLE_WEB_ROUTING_SECRET, 'APPLE_WEB_ROUTING_SECRET')
+  const appleWebRouting = optionalSigningKey(environment.APPLE_WEB_ROUTING_SECRET, 'APPLE_WEB_ROUTING_SECRET',
+  )
   const appleWebValues = [appleWebClientId, appleWebKeys, appleWebActiveKey, appleWebRouting]
-  if (appleWebValues.some(value => value !== null) && appleWebValues.some(value => value === null)) throw new TypeError('Apple web custody configuration must be supplied together')
+  if (appleWebValues.some((value) => value !== null) && appleWebValues.some((value) => value === null)) throw new TypeError('Apple web custody configuration must be supplied together')
   if (appleWebEnabled === 'true' && appleWebClientId === null) throw new TypeError('Apple web custody is required before enabling sign-in')
   if (appleWebKeys !== null) {
     if (appleWebClientId !== 'com.ezacto.web') throw new TypeError('Apple web Services ID is not approved')
@@ -106,8 +106,7 @@ export const deploySecretPayload = (environment) => {
   const accessKeyId = optionalSesCredential(
     environment.AWS_ACCESS_KEY_ID,
     'AWS_ACCESS_KEY_ID',
-    256,
-  )
+    256)
   const secretAccessKey = optionalSesCredential(
     environment.AWS_SECRET_ACCESS_KEY,
     'AWS_SECRET_ACCESS_KEY',
@@ -143,14 +142,12 @@ export const deploySecretPayload = (environment) => {
   const mailgunApiKey = optionalSesCredential(
     environment.MAILGUN_API_KEY,
     'MAILGUN_API_KEY',
-    512,
-  )
+    512)
   // One transport per deployment. Two configured providers cannot share a
   // sender, and picking one silently would decide where invoices come from.
   if (mailgunApiKey !== null && sesConfigured) {
     throw new TypeError(
-      'Configure either Mailgun or SES, not both',
-    )
+      'Configure either Mailgun or SES, not both')
   }
   /**
    * The payment integrations. None of these reached a deployment before, which
@@ -183,7 +180,14 @@ export const deploySecretPayload = (environment) => {
     )
   }
 
+  const calendar = Object.fromEntries(['GOOGLE_CALENDAR_CLIENT_ID','GOOGLE_CALENDAR_CLIENT_SECRET','MICROSOFT_CALENDAR_CLIENT_ID','MICROSOFT_CALENDAR_CLIENT_SECRET','MICROSOFT_CALENDAR_TENANT'].map(key=>[key,optionalCredential(environment[key])]))
+  for (const prefix of ['GOOGLE_CALENDAR','MICROSOFT_CALENDAR']) {
+    if ((calendar[prefix+'_CLIENT_ID'] === null) !== (calendar[prefix+'_CLIENT_SECRET'] === null))
+      throw new TypeError(prefix+'_CLIENT_ID and '+prefix+'_CLIENT_SECRET must be configured together')
+  }
+
   return {
+    ...calendar,
     API_CURSOR_SIGNING_KEY: cursor,
     MAGIC_LINK_SIGNING_KEY: magicLink,
     PORTAL_MAGIC_LINK_SIGNING_KEY: portalMagicLink,
@@ -232,14 +236,16 @@ export const deploySecretPayload = (environment) => {
     // reach BILL's real book. Absent still means production; `sandbox` is the
     // only value that selects the test organisation.
     BILL_ENVIRONMENT: optionalCredential(environment.BILL_ENVIRONMENT),
-    WEBHOOK_ENCRYPTION_KEY: optionalSigningKey(environment.WEBHOOK_ENCRYPTION_KEY, 'WEBHOOK_ENCRYPTION_KEY'),
+    WEBHOOK_ENCRYPTION_KEY: optionalSigningKey(environment.WEBHOOK_ENCRYPTION_KEY, 'WEBHOOK_ENCRYPTION_KEY',
+    ),
     STRIPE_API_KEY: optionalCredential(environment.STRIPE_API_KEY),
     EZACTO_BACKUP_S3_BUCKET: optionalCredential(environment.EZACTO_BACKUP_S3_BUCKET),
     EZACTO_BACKUP_S3_ENDPOINT: optionalCredential(environment.EZACTO_BACKUP_S3_ENDPOINT),
     EZACTO_BACKUP_S3_REGION: optionalCredential(environment.EZACTO_BACKUP_S3_REGION),
     EZACTO_BACKUP_S3_PREFIX: optionalCredential(environment.EZACTO_BACKUP_S3_PREFIX),
     EZACTO_BACKUP_S3_ACCESS_KEY_ID: optionalCredential(environment.EZACTO_BACKUP_S3_ACCESS_KEY_ID),
-    EZACTO_BACKUP_S3_SECRET_ACCESS_KEY: optionalCredential(environment.EZACTO_BACKUP_S3_SECRET_ACCESS_KEY),
+    EZACTO_BACKUP_S3_SECRET_ACCESS_KEY: optionalCredential(environment.EZACTO_BACKUP_S3_SECRET_ACCESS_KEY,
+    ),
     EZACTO_BACKUP_S3_SESSION_TOKEN: optionalCredential(environment.EZACTO_BACKUP_S3_SESSION_TOKEN),
     EZACTO_BACKUP_ENCRYPTION_KEY: optionalCredential(environment.EZACTO_BACKUP_ENCRYPTION_KEY),
     STRIPE_WEBHOOK_SECRET: optionalCredential(environment.STRIPE_WEBHOOK_SECRET),
@@ -256,6 +262,10 @@ export const deploySecretPayload = (environment) => {
     // date set by hand on the Worker is deleted by the next deploy otherwise.
     DEEL_TOKEN: optionalCredential(environment.DEEL_TOKEN),
     DEEL_SYNC_START_DATE: optionalCredential(environment.DEEL_SYNC_START_DATE),
+    GITHUB_APP_ID: optionalCredential(environment.GITHUB_APP_ID),
+    GITHUB_APP_PRIVATE_KEY: optionalCredential(environment.GITHUB_APP_PRIVATE_KEY),
+    GITHUB_APP_WEBHOOK_SECRET: optionalCredential(environment.GITHUB_APP_WEBHOOK_SECRET),
+    GITHUB_APP_ENCRYPTION_KEY: optionalCredential(environment.GITHUB_APP_ENCRYPTION_KEY),
   }
 }
 

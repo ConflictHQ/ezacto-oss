@@ -304,6 +304,18 @@ describe('worker entry', () => {
     expect(nav).not.toContain('aria-current')
   })
 
+  it('permits reviewed GitHub App registration forms only from company settings', async () => {
+    const company = await app.request('/settings/company', {}, env)
+    const policy = company.headers.get('content-security-policy')!
+    expect(policy).toContain("form-action 'self' https://github.com/settings/apps/new https://github.com/organizations/")
+    expect(policy).toContain("connect-src 'self'")
+    for (const path of ['/', '/settings/user', '/settings/templates']) {
+      const response = await app.request(path, {}, env)
+      expect(response.headers.get('content-security-policy')).toContain("form-action 'self';")
+      expect(response.headers.get('content-security-policy')).not.toContain('https://github.com')
+    }
+  })
+
   it('serves the responsive application shell with the deployment stamp', async () => {
     const res = await app.request('/', {}, env)
 

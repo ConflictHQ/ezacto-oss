@@ -189,10 +189,12 @@ export const PRESERVED_TABLES: ReadonlySet<string> = new Set([
   // The wipe advances its generation and disconnects it (issue 1252).
   'bill_managed_connection',
   'calendar_sync_instance',
+  'github_publication_instance',
+  'github_publication_dispatch',
 ])
 
 /** Pending external cleanup is encrypted custody, not seed data. */
-const RETAINED_CUSTODY_TABLES = new Set(['calendar_cleanup_obligations'])
+const RETAINED_CUSTODY_TABLES = new Set(['calendar_cleanup_obligations', 'calendar_manual_cleanup_receipts', 'calendar_operator_cleanup_receipts'])
 
 /**
  * D1 keeps its own bookkeeping in the same database, under a reserved `_cf_`
@@ -251,6 +253,8 @@ const wipeStatements = (objects: DemoSchemaObjects, now: string): readonly DemoS
   // sealed credential and binding; the generation advances, so no stale command applies.
   { text: "UPDATE bill_managed_connection SET generation = generation + 1, status = 'disconnected', company_id = NULL, binding_company_id = NULL, sealed_credential = NULL, connected_by_user_id = NULL, health_at = NULL WHERE singleton = 1", bindings: [] },
   { text: "UPDATE calendar_sync_instance SET nonce=lower(hex(randomblob(32))) WHERE singleton=1", bindings: [] },
+  { text: "UPDATE github_publication_instance SET nonce=lower(hex(randomblob(32))) WHERE singleton=1", bindings: [] },
+  { text: "UPDATE github_publication_dispatch SET token=NULL,expires_at=0 WHERE id=1", bindings: [] },
   { text: 'UPDATE contractor_source_clock SET revision = revision + 1 WHERE id = 1', bindings: [] },
   { text: "INSERT INTO contractor_source_versions(scope,revision) SELECT 'all',revision FROM contractor_source_clock WHERE id=1 ON CONFLICT(scope) DO UPDATE SET revision=excluded.revision", bindings: [] },
   // Preserved, but not carried over either: a template version records who

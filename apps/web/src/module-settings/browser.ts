@@ -1,3 +1,4 @@
+import { createGithubPublicationController } from './github-publication.js'
 import { setRequestBusy } from '../request-feedback.js'
 import { accountingProviderAvailable } from '../accounting-providers.js'
 import type { createCsvImportController } from '../csv-import/browser.js'
@@ -7,6 +8,7 @@ import {
   withdrawUnavailableSettingsSections,
 } from '../module-availability.js'
 import { createWebhookController } from './webhooks.js'
+import { createGithubReaderController } from './github-reader.js'
 import { createPayoutProviderSwitches } from './payout-provider-switches.js'
 import { createCompanyDataTools } from './data-tools.js'
 import { createEmailSuppressionController } from './email-suppressions-browser.js'
@@ -398,6 +400,8 @@ export const createModuleSettingsController = (
   const emailReputation = required<HTMLElement>('[data-settings-email-reputation]')
   const emailIdentityHealth = required<HTMLElement>('[data-settings-email-identities-health]')
   const webhookController = createWebhookController(api.webhooks)
+  const githubReader = createGithubReaderController(api.githubReader)
+  const githubPublication = createGithubPublicationController(api.githubPublication)
   const suppressionReview = createEmailSuppressionController(api)
   const wiseSection = required<HTMLElement>('[data-settings-wise]')
   const wiseStatus = required<HTMLElement>('[data-settings-wise-status]')
@@ -1312,6 +1316,8 @@ export const createModuleSettingsController = (
     emailSenders.replaceChildren()
     emailSenders.hidden = true
     webhookController.clear()
+    githubReader.clear()
+    githubPublication.clear()
     suppressionReview.clear()
     emailIdentityHealth.replaceChildren()
     emailIdentityHealth.hidden = true
@@ -2714,6 +2720,7 @@ export const createModuleSettingsController = (
   const sectionLoaders: Readonly<Record<string, (active: ActiveSession) => Promise<void>>> = {
     modules: loadModules,
     webhooks: active => webhookController.load(active),
+    'work-items': async active => { await Promise.all([githubReader.load(active), githubPublication.load(active)]) },
     'import-export': async active=>{
       const loadImport = async () => {
         const root = document.querySelector<HTMLElement>('[data-csv-import]')
