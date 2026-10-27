@@ -107,7 +107,9 @@ jobs:
           - { name: db 2, workspaces: -w @ezacto/db, shard: 2/12, timeout_minutes: 30 }
           - { name: db 3, workspaces: -w @ezacto/db, shard: 3/12, timeout_minutes: 30 }
           - { name: db 4, workspaces: -w @ezacto/db, shard: 4/12, timeout_minutes: 30 }
-          - { name: db 5, workspaces: -w @ezacto/db, shard: 5/12, timeout_minutes: 30 }
+          # Run 40433991573 was still completing passing DB5 cases at 30m.
+          # Keep all cases and their own limits; allow this shard to finish.
+          - { name: db 5, workspaces: -w @ezacto/db, shard: 5/12, timeout_minutes: 40 }
           - { name: db 6, workspaces: -w @ezacto/db, shard: 6/12, timeout_minutes: 30 }
           - { name: db 7, workspaces: -w @ezacto/db, shard: 7/12, timeout_minutes: 30 }
           - { name: db 8, workspaces: -w @ezacto/db, shard: 8/12, timeout_minutes: 30 }
