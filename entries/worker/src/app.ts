@@ -689,7 +689,7 @@ export interface RuntimeServices {
   bill?: BillRuntime
   /** Deel time sync, run from the daily cron. Absent on the demo. */
   deelPaymentStatus?: DeelPaymentStatusRuntime
-  githubReader?: GithubReaderApiPort & GithubReaderWebhookPort & { tick(): Promise<void> }
+  githubReader?: GithubReaderApiPort & GithubReaderWebhookPort & { tick(): Promise<void>; publishTimeNotes?(): Promise<void> }
   deelStaging?: DeelStagingApiRuntime
   deelSync?: DeelSyncRuntime
   /** Administrator control of the Deel sync (#1102): the mode, the schedule and the run history. */

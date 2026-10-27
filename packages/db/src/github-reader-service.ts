@@ -52,8 +52,13 @@ export const createGithubReaderService = (
     if (!value) throw new GithubReaderCommandError('unavailable')
     return value
   }
+  const publication = createGithubPublicationService(database, {
+    ...options,
+    credentials: credentialsFor,
+  })
   return {
-    publication: createGithubPublicationService(database, { ...options, credentials: credentialsFor }),
+    publication,
+    publishTimeNotes: () => publication.tick(),
     async installations(authority: GithubReaderAuthority, page: number) {
       await admin.status(authority, clock())
       try {

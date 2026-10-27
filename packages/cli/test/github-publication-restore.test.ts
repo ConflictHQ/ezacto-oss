@@ -63,7 +63,7 @@ it('[native] real bundle restore preserves remote receipts but fences old outbou
   }
 })
 
-it.each(['known', 'unknown'] as const)(
+it.each(['known', 'unknown', 'snapshot_before_attempt'] as const)(
   '[native] restored %s receipt and fresh consent reuse verified identity without a duplicate POST',
   async (mode) => {
     const { calendarOperatorFixture } =
@@ -160,9 +160,9 @@ it.each(['known', 'unknown'] as const)(
         "INSERT INTO github_publications(id,connection_id,entry_id,subject_user_id,subject_created_at,consent_nonce,marker,link_id,repository_id,issue_id,issue_number,destination,desired_date,desired_seconds,remote_id,last_body,last_date,last_seconds,status,attempted_at) VALUES(1,'11:22:33',1,3,(SELECT created_at FROM users WHERE id=3),(SELECT nonce FROM github_publication_instance),?,1,'77','900','5','https://github.com/owned/disposable/issues/5','2026-10-01',3600,?,?,'2026-10-01',3600,?,?)",
         marker,
         mode === 'known' ? '4321' : null,
-        body,
-        mode === 'known' ? 'published' : 'attempted',
-        mode === 'known' ? null : Date.now() - 60000,
+        mode === 'snapshot_before_attempt' ? null : body,
+        mode === 'known' ? 'published' : mode === 'unknown' ? 'attempted' : 'pending',
+        mode === 'unknown' ? Date.now() - 60000 : null,
       )
       const sourcePath = join(directory, 'current.sqlite')
       await f.sqlite!.backup(sourcePath)

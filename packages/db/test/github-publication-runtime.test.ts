@@ -357,10 +357,16 @@ for (const runtime of ['SQLite', 'D1'] as const)
       )
       await run("UPDATE github_publications SET remote_id='owned-remote' WHERE id=2")
       await run('UPDATE github_publications SET attempted_at=123456 WHERE id=3')
+      await run(
+        `INSERT INTO github_publications(id,connection_id,entry_id,subject_user_id,subject_created_at,consent_nonce,marker,repository_id,issue_id,issue_number,destination,remote_id) SELECT 4,'11:22:33',1,3,created_at,'${'d'.repeat(64)}','${'a'.repeat(64)}','77','904','5','https://github.com/owned/disposable/issues/5','old-same-subject' FROM users WHERE id=3`,
+      )
+      await run(
+        `INSERT INTO github_publications(id,connection_id,entry_id,subject_user_id,subject_created_at,consent_nonce,marker,repository_id,issue_id,issue_number,destination,remote_id) VALUES(5,'11:22:33',1,3,'1900-01-01T00:00:00.000Z','${'d'.repeat(64)}','${'a'.repeat(64)}','77','905','5','https://github.com/owned/disposable/issues/5','old-other-subject')`,
+      )
       const preview = await createAccountClosureRepository(database).preview(2, 'owned-close')
       expect(preview.inventory).toContainEqual({
         location: 'github_publications.external_comments',
-        count: 2,
+        count: 3,
         category: 'audit_and_security',
       })
       await run(

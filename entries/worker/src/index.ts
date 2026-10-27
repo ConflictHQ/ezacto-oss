@@ -457,9 +457,13 @@ export const createWorker = (options: WorkerOptions = {}): ExportedHandler<Worke
         report(error, { phase: 'scheduled', operation: 'QuickBooks catch-up' })
       }
         }
-        if (controller.cron === '* * * * *' && services.githubReader !== undefined) {
-          await isolate('GitHub issue reconciliation', async () => { await services.githubReader!.tick(); await services.githubReader!.publication.tick() })
-        }
+    const githubReader = services.githubReader
+    if (controller.cron === '* * * * *' && githubReader !== undefined) {
+      await isolate('GitHub issue reconciliation', async () => {
+        await githubReader.tick()
+        await githubReader.publishTimeNotes?.()
+      })
+    }
     if (controller.cron === '* * * * *' && invoices && services.deelPaymentStatus !== undefined) {
       try { await services.deelPaymentStatus.refresh(null) }
       catch (error) { report(error, { phase: 'scheduled', operation: 'Deel payment status' }) }

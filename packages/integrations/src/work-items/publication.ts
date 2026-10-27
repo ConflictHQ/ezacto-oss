@@ -1,10 +1,10 @@
 /**
- * Opt-in time publication as an app-owned issue comment (issue 1176, contract).
+ * Opt-in time publication as an app-owned issue comment (issue 1176).
  *
- * Contract only: no network, no storage. A real adapter implements
+ * Provider-neutral reducer: no direct network or storage. Native adapters implement
  * `CommentSurface` (GitHub issue comments) and a real store implements
  * `PublicationJournal` (SQLite and D1 with the same uniqueness and fences);
- * both must pass `work-item-publication.test.ts` through the fakes' behaviour.
+ * both are exercised by contract and native SQLite/D1 runtime tests.
  *
  * Invariants:
  * - A POST is never assumed idempotent. Before any create is sent the attempt is

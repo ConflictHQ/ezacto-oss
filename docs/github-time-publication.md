@@ -64,3 +64,9 @@ attempts under audit and security. Closing local access does **not** erase a
 GitHub comment: an administrator must review the journal and remove any retained
 remote copy in GitHub. The inventory is evidence of possible external copies,
 not proof of provider deletion.
+
+For a restored pending row with no recorded attempt, fresh consent still lists
+the old marker: a post-snapshot write may exist. Absence requires a complete
+listing and a 60-second settling period measured no earlier than the new policy
+verification. A verified old comment is reused, never blindly duplicated. A
+prior-instance Unlink is an explicit decision to leave that copy unmanaged.

@@ -7,13 +7,13 @@ import {
   GithubHttpError,
   parseGithubIssueReference,
   reconcilePublication,
+  renderTimeComment,
   type GithubPublicationAuthority,
   type GithubPublicationPort,
   type GithubPublicationPreview,
   type GithubPublicationRow,
 } from '@ezacto/integrations'
 import { atomicStatements } from './atomic-statements.js'
-import { NativeGithubReaderAdmin } from './github-reader-admin.js'
 import { NativeGithubPublicationJournal } from './github-publication-journal.js'
 import type { InvoiceStateDatabase } from './invoice-state.js'
 import type { GithubReaderServiceOptions } from './github-reader-service.js'
@@ -46,10 +46,9 @@ export function createGithubPublicationService(
   database: InvoiceStateDatabase,
   options: GithubReaderServiceOptions,
 ) {
-  const admin = new NativeGithubReaderAdmin(database)
   const now = () => options.now().getTime()
   async function authorized(authority: GithubPublicationAuthority) {
-    await admin.status(authority, options.now().toISOString())
+    await transaction(authority, [])
   }
   async function transaction(
     authority: GithubPublicationAuthority,
@@ -120,7 +119,7 @@ export function createGithubPublicationService(
   async function binding(connectionId: string) {
     const [rows] = await atomicStatements(database, [
       sql(
-        `SELECT c.*,p.marker,p.generation policy_generation,p.enabled FROM github_read_connections c LEFT JOIN github_publication_policy p ON p.connection_id=c.id WHERE c.id=?`,
+        `SELECT c.*,p.marker,p.generation policy_generation,p.enabled,p.verified_at publication_verified_at FROM github_read_connections c LEFT JOIN github_publication_policy p ON p.connection_id=c.id WHERE c.id=?`,
         connectionId,
       ),
     ])
@@ -185,13 +184,13 @@ export function createGithubPublicationService(
     const item = JSON.parse(String(items[0]!.metadata)) as { canonicalUrl: string }
     const [priorRows] = await transaction(authority, [
       sql(
-        `SELECT * FROM github_publications WHERE connection_id=? AND entry_id=? AND issue_id=? AND consent_nonce<>(SELECT nonce FROM github_publication_instance WHERE singleton=1) AND status<>'unlinked' ORDER BY id DESC LIMIT 101`,
+        `SELECT * FROM github_publications WHERE connection_id=? AND entry_id=? AND issue_id=? AND consent_nonce<>(SELECT nonce FROM github_publication_instance WHERE singleton=1) AND status<>'unlinked' ORDER BY id DESC LIMIT 17`,
         row.connection_id,
         row.entry_id,
         items[0]!.issue_id,
       ),
     ])
-    if (priorRows!.length > 100) throw new GithubPublicationError('conflict')
+    if (priorRows!.length > 16) throw new GithubPublicationError('conflict')
     const prior = priorRows!
     return {
       link_id: linkId,
@@ -215,66 +214,86 @@ export function createGithubPublicationService(
   async function priorReceipt(proposed: Awaited<ReturnType<typeof readPreview>>) {
     const existing = proposed.prior
     if (!existing.length) return null
-    const knownIds = new Set(
-      existing.filter((r) => r.remote_id !== null).map((r) => String(r.remote_id)),
-    )
-    if (knownIds.size > 1) throw new GithubPublicationError('conflict')
     if (
       existing.some(
         (r) =>
           r.subject_user_id !== proposed.snapshot.subject_user_id ||
-          r.subject_created_at !== proposed.snapshot.subject_created_at,
+          r.subject_created_at !== proposed.snapshot.subject_created_at ||
+          String(r.repository_id) !== String(proposed.snapshot.repository_id),
       )
     )
       throw new GithubPublicationError('conflict')
-    const latest = existing[0]!
-    if (String(latest.repository_id) !== String(proposed.snapshot.repository_id))
-      throw new GithubPublicationError('conflict')
-    const connection = await binding(proposed.connection_id)
+    const knownIds = new Set(
+      existing.filter((r) => r.remote_id !== null).map((r) => String(r.remote_id)),
+    )
+    if (knownIds.size > 1) throw new GithubPublicationError('conflict')
+    const latest = existing[0]!,
+      connection = await binding(proposed.connection_id)
     const api = await surface(
       connection,
       String(latest.repository_id),
       async () => false,
       String(latest.issue_id),
     )
-    const marker = String(latest.marker),
-      prefix = `<!-- ezacto-time:${marker}:${latest.entry_id} -->`
-    let remote: Awaited<ReturnType<typeof api.getComment>> = null
-    if (latest.remote_id !== null)
-      remote = await api.getComment(String(latest.issue_number), String(latest.remote_id))
-    else if (latest.attempted_at !== null) {
+    const prefix = (row: Record<string, unknown>) =>
+      `<!-- ezacto-time:${row.marker}:${row.entry_id} -->`
+    let matched: Record<string, unknown>,
+      remote: Awaited<ReturnType<typeof api.getComment>> = null
+    if (knownIds.size) {
+      matched = existing.find((r) => r.remote_id !== null)!
+      remote = await api.getComment(String(matched.issue_number), String(matched.remote_id))
+      if (!remote) {
+        const pending =
+          matched.pending_write === null
+            ? null
+            : (JSON.parse(String(matched.pending_write)) as { kind: string })
+        if (pending?.kind !== 'delete') throw new GithubPublicationError('conflict')
+        return null
+      }
+    } else {
+      // A snapshot can precede the durable attempt while the old instance later
+      // sends it. Even an apparently untouched pending row must be reconciled.
       const listing = await api.listComments(String(latest.issue_number))
       const matches = listing.comments.filter(
-        (c) => c.authorId === api.appAuthorId && c.body.startsWith(prefix),
+        (c) => c.authorId === api.appAuthorId && existing.some((r) => c.body.startsWith(prefix(r))),
       )
       if (matches.length > 1) throw new GithubPublicationError('conflict')
       remote = matches[0] ?? null
-      if (!remote && (!listing.complete || now() - Number(latest.attempted_at) < 60000))
-        throw new GithubPublicationError('conflict')
+      if (!remote) {
+        const lastAdmission = Math.max(
+          Date.parse(String(connection.publication_verified_at)),
+          ...existing.map((r) => Number(r.attempted_at ?? 0)),
+        )
+        if (!listing.complete || !Number.isFinite(lastAdmission) || now() - lastAdmission < 60000)
+          throw new GithubPublicationError('conflict')
+        return null
+      }
+      matched = existing.find((r) => remote!.body.startsWith(prefix(r)))!
     }
     const pending =
-      latest.pending_write === null
+      matched.pending_write === null
         ? null
-        : (JSON.parse(String(latest.pending_write)) as { kind: string; body?: string })
-    if (!remote) {
-      // A human-removed known note requires explicit prior-instance Unlink.
-      if (latest.remote_id !== null && pending?.kind !== 'delete')
-        throw new GithubPublicationError('conflict')
-      return null
-    }
+        : (JSON.parse(String(matched.pending_write)) as { kind: string; body?: string })
+    const intended =
+      matched.last_body ??
+      (matched.desired_date !== null && matched.desired_seconds !== null
+        ? renderTimeComment(String(matched.marker), String(matched.entry_id), {
+            spentDate: String(matched.desired_date),
+            seconds: Number(matched.desired_seconds),
+          })
+        : null)
     if (
       remote.authorId !== api.appAuthorId ||
-      !remote.body.startsWith(prefix) ||
-      (remote.body !== latest.last_body &&
-        !(pending?.kind === 'update' && remote.body === pending.body))
+      !remote.body.startsWith(prefix(matched)) ||
+      (remote.body !== intended && !(pending?.kind === 'update' && remote.body === pending.body))
     )
       throw new GithubPublicationError('conflict')
     return {
       id: remote.id,
       body: remote.body,
-      marker,
-      date: latest.last_date,
-      seconds: latest.last_seconds,
+      marker: String(matched.marker),
+      date: matched.last_date,
+      seconds: matched.last_seconds,
     }
   }
   const port: GithubPublicationPort & { tick(): Promise<void> } = {
@@ -284,7 +303,7 @@ export function createGithubPublicationService(
           'SELECT connection_id,CASE WHEN instance_nonce=(SELECT nonce FROM github_publication_instance WHERE singleton=1) THEN enabled ELSE 0 END enabled,generation FROM github_publication_policy ORDER BY connection_id LIMIT 100',
         ),
         sql(
-          `SELECT id,connection_id,entry_id,destination,desired_date spent_date,desired_seconds seconds,CASE WHEN status='unlinked' THEN 'unlinked' WHEN consent_nonce=(SELECT nonce FROM github_publication_instance WHERE singleton=1) THEN status ELSE 'prior_instance' END status,source_version,source_version version,remote_id,failure_code,retry_at next_retry_at FROM github_publications ORDER BY id DESC LIMIT 100`,
+          `SELECT id,connection_id,entry_id,destination,desired_date spent_date,desired_seconds seconds,CASE WHEN status='unlinked' THEN 'unlinked' WHEN consent_nonce=(SELECT nonce FROM github_publication_instance WHERE singleton=1) THEN status ELSE 'prior_instance' END status,source_version,source_version version,remote_id,failure_code,retry_at next_retry_at FROM github_publications ORDER BY CASE WHEN status IN ('unlinked','retired') THEN 1 ELSE 0 END,id DESC LIMIT 100`,
         ),
         sql(
           `SELECT l.id link_id,l.time_entry_id entry_id FROM work_item_links l JOIN work_item_connections c ON c.id=l.connection_id JOIN time_entries t ON t.id=l.time_entry_id WHERE c.provider='github' AND c.status='active' AND t.seconds>0 ORDER BY l.id DESC LIMIT 100`,
