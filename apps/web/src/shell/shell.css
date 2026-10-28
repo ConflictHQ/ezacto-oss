@@ -6130,32 +6130,41 @@ html[data-time-view='calendar'] .week-grid-foot {
 }
 /* The week's total reads in the blue the reference gives its grand total,
    at the toolbar's own size: the footer below carries it large. */
-.week-actions [data-week-total] {
-  padding-left: 6px;
-  color: var(--ez-data);
-  font-size: 16px;
-  line-height: 1.05;
-  font-weight: 700;
-  text-align: right;
-}
 /* The seven-day strip: the week's shape before you read a row. Seven equal
    columns so the eye compares heights, not positions. */
+/* The week bar as the reference draws it: seven cells on a grey ground with
+   a rule between them, the day you are on raised white-blue under a blue
+   rule, the weekend and the empty days greyed, and the week's total in a
+   column of its own at the end. */
+.day-strip {
+  display: flex;
+  border-bottom: 2px solid var(--ez-border);
+}
+
 .day-totals {
   display: grid;
+  flex: 1 1 auto;
   grid-template-columns: repeat(7, minmax(0, 1fr));
-  gap: 1px;
+  gap: 0;
+  min-width: 0;
   margin: 0;
   padding: 0;
   border: 0;
-  border-bottom: 1px solid var(--ez-border);
   overflow: hidden;
-  background: var(--ez-border);
   list-style: none;
 }
 
 .day-totals li {
   display: grid;
+  min-width: 0;
+  border-right: 1px solid var(--ez-border);
   background: var(--ez-ground);
+}
+
+/* A day with nothing on it sits on the grey ground; a day with hours is
+   white, as the reference bar tells the two apart. */
+.day-totals li:has(strong[data-empty]) {
+  background: var(--ez-surface);
 }
 
 /* The padding moves onto the control so the whole tile is the hit target,
@@ -6163,7 +6172,8 @@ html[data-time-view='calendar'] .week-grid-foot {
 .day-totals li > button {
   display: grid;
   gap: 2px;
-  padding: 10px 14px;
+  min-width: 0;
+  padding: 10px 12px 8px;
   border: 0;
   border-radius: 0;
   background: none;
@@ -6174,7 +6184,7 @@ html[data-time-view='calendar'] .week-grid-foot {
 }
 
 .day-totals li > button:hover {
-  background: var(--ez-surface);
+  background: color-mix(in srgb, var(--ez-action) 3%, var(--ez-ground));
 }
 
 .day-totals li > button:focus-visible {
@@ -6182,36 +6192,76 @@ html[data-time-view='calendar'] .week-grid-foot {
   outline-offset: -2px;
 }
 
-/* Today is a tint; the day you are looking at is the blue rule (the reference
-   strip). The rule is the one that moves when you click, so it is the one
-   that marks a choice. */
-.day-totals li[data-today] {
+/* The day you are looking at is the tinted cell under the blue rule (the
+   reference strip); today is named in blue wherever it stands. */
+.day-totals li[data-selected],
+.day-totals li[data-selected]:has(strong[data-empty]) {
   background: color-mix(in srgb, var(--ez-action) 5%, var(--ez-ground));
-}
-
-.day-totals li[data-selected] {
   box-shadow: inset 0 -2px var(--ez-data);
 }
 
-.day-totals span {
-  color: var(--ez-muted);
-  font: 700 11px/1.4 var(--ez-font-body), sans-serif;
-  letter-spacing: 0.06em;
+/* The reference's greys, mixed from the muted token: the day name a step
+   lighter than body captions, the date beside it lighter still. */
+.day-totals span,
+.day-strip-total span {
+  overflow: hidden;
+  color: color-mix(in srgb, var(--ez-muted) 90%, var(--ez-ground));
+  font: 600 12px/normal var(--ez-font-body), sans-serif;
+  letter-spacing: 0.04em;
+  text-overflow: ellipsis;
   text-transform: uppercase;
+  white-space: nowrap;
 }
 
-.day-totals li[data-today] span {
+.day-totals span small {
+  color: color-mix(in srgb, var(--ez-muted) 62%, var(--ez-ground));
+  font-size: inherit;
+  font-weight: 500;
+  letter-spacing: 0;
+  text-transform: none;
+}
+
+.day-totals li[data-today] span,
+.day-totals li[data-selected] span,
+.day-totals li[data-selected] strong {
   color: var(--ez-data);
 }
 
-.day-totals strong {
-  font: 700 18px/1.2 var(--ez-font-body), sans-serif;
+.day-totals strong,
+.day-strip-total strong,
+.day-strip-total [data-week-total] {
+  font: 700 18px/normal var(--ez-font-body), sans-serif;
   font-variant-numeric: tabular-nums;
+  letter-spacing: -0.5px;
 }
 
-.day-totals strong[data-empty] {
-  color: var(--ez-muted);
-  font-weight: 400;
+.day-totals strong[data-empty],
+.day-totals li[data-weekend]:not([data-selected]):not([data-today]) span,
+.day-totals li[data-weekend]:not([data-selected]):not([data-today]) span small {
+  color: color-mix(in srgb, var(--ez-muted) 28%, var(--ez-ground));
+}
+
+.day-totals li[data-selected] strong[data-empty] {
+  color: color-mix(in srgb, var(--ez-data) 45%, var(--ez-ground));
+}
+
+.day-strip-total {
+  display: grid;
+  flex: none;
+  gap: 2px;
+  align-content: start;
+  width: 120px;
+  padding: 10px 16px 8px;
+  text-align: right;
+}
+
+/* The week's state under the toolbar says nothing the title row's button
+   does not, so the band shows only when it has more to say: a reason the
+   week came back, or how a submission is going. */
+.timesheet-status:not(
+    :has([data-timesheet-rejection-reason]:not([hidden]), [data-timesheet-result]:not(:empty))
+  ) {
+  display: none;
 }
 
 .day-row-start {
@@ -6604,21 +6654,38 @@ html[data-time-view='calendar'] .week-grid-foot {
   .notifications-page .notif-list {
     padding: 24px;
   }
-  /* On the week grid the footer row carries the week's total, so the toolbar
-     does not say it twice (the reference toolbar has no total). The day view
-     has no footer, and keeps it. */
-  html:not([data-time-view='day']) .week-actions [data-week-total] {
-    display: none;
-  }
   /* The keyboard route into a cell is in the cell's own tooltip and the
      command bar; a sentence over the grid was the one line the reference
      does without. */
   .week-hint {
     display: none;
   }
-  .day-switcher {
-    padding: 8px 24px;
+  /* In Day view the day stands in the week's box and the week's box steps
+     aside; in the other views there is no day to step. (Named with the
+     toolbar: the stepper's own rule comes later in the file.) */
+  .week-toolbar .day-switcher {
+    display: none;
+  }
+  html[data-time-view='day'] .week-toolbar .day-switcher {
+    display: inline-flex;
+    flex: 0 1 auto;
+    gap: 6px;
+    min-height: 0;
+    padding: 4px 8px;
+    border: 1px solid var(--ez-border);
+    border-radius: 8px;
     background: var(--ez-ground);
+  }
+  html[data-time-view='day'] .week-period {
+    display: none;
+  }
+  /* The reference week bar opens with the calendar's 64px ruler column; in
+     Day view the bar keeps that gutter so the days line up as they do there. */
+  html[data-time-view='day'] .day-strip::before {
+    content: '';
+    flex: none;
+    width: 64px;
+    border-right: 1px solid var(--ez-border);
   }
   .day-switcher button {
     width: 28px;
@@ -6627,10 +6694,9 @@ html[data-time-view='calendar'] .week-grid-foot {
     border-radius: 6px;
     color: var(--ez-muted);
   }
-  .day-switcher [data-day-label] {
-    color: var(--ez-data);
-    font-size: 16px;
-    font-weight: 600;
+  .day-switcher-label {
+    min-width: 240px;
+    padding: 3px 6px;
   }
   .day-row {
     padding: 10px 24px;
@@ -6813,16 +6879,39 @@ html[data-time-view='calendar'] .week-grid-foot {
 .day-list {
   display: none;
 }
+/* The day stepper: on a phone a row of the toolbar, under the week's; on a
+   desktop the box the week stepper has, shown in Day view in its place. */
 .day-switcher {
   min-height: 52px;
   display: grid;
+  flex: 1 1 100%;
   grid-template-columns: 44px 1fr 44px;
   align-items: center;
   gap: 8px;
-  padding: 4px 12px;
-  border-bottom: 1px solid var(--ez-border);
-  background: var(--ez-ground);
+  padding: 4px 0;
   text-align: center;
+}
+.day-switcher-label {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  min-width: 0;
+  color: var(--ez-ink);
+  font-size: 16px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+.day-switcher-label .ez-icon {
+  width: 13px;
+  height: 13px;
+  color: var(--ez-muted);
+  stroke-width: 2;
+}
+.day-switcher-label strong {
+  overflow: hidden;
+  font-weight: inherit;
+  text-overflow: ellipsis;
 }
 .day-row {
   min-height: 72px;
@@ -6890,18 +6979,6 @@ html[data-time-view="day"] .day-list {
    markup was being rendered at phone density on a screen with room to spare --
    a 52px switcher, 14px hours, and rows sized for a thumb. */
 @media (min-width: 721px) {
-  html[data-time-view="day"] .day-switcher {
-    min-height: 72px;
-    grid-template-columns: 44px 1fr 44px;
-    padding: 8px 20px;
-  }
-
-  html[data-time-view="day"] .day-switcher [data-day-label] {
-    font-size: 28px;
-    font-weight: 600;
-    line-height: 44px;
-  }
-
   html[data-time-view="day"] .day-row {
     min-height: 88px;
     grid-template-columns: minmax(0, 1fr) 180px;
@@ -7031,6 +7108,300 @@ dialog textarea {
 [data-entry-duration][hidden],
 [data-entry-running][hidden] {
   display: none;
+}
+/*
+ * The time entry editor as the ezacto-ui Track time card: 460px at the top
+ * right of the page, the description first, the assignment as rows, the
+ * timing in a section of its own over a blue glow, and the action as a bar
+ * across the foot.
+ */
+.entry-dialog {
+  width: min(460px, calc((100vw - 32px) / var(--ez-zoom, 1)));
+  max-height: calc(100vh - 32px);
+  overflow: auto;
+  border-radius: 16px;
+  box-shadow:
+    0 8px 32px color-mix(in srgb, var(--ez-shadow) 14%, transparent),
+    0 2px 8px color-mix(in srgb, var(--ez-shadow) 8%, transparent);
+}
+@media (min-width: 721px) {
+  .entry-dialog {
+    inset: 150px 24px auto auto;
+    margin: 0;
+    max-height: calc(100vh - 174px);
+  }
+}
+.entry-dialog form {
+  position: relative;
+  display: block;
+  padding: 0;
+}
+.entry-dialog form::after {
+  content: '';
+  position: absolute;
+  inset: auto 0 0;
+  height: 96px;
+  border-radius: 0 0 16px 16px;
+  background: linear-gradient(
+    to top,
+    color-mix(in srgb, var(--ez-action) 15%, var(--ez-ground)),
+    transparent
+  );
+  pointer-events: none;
+}
+.entry-dialog form > * {
+  position: relative;
+  z-index: 1;
+}
+.entry-head {
+  align-items: center;
+  padding: 12px 16px;
+  border-bottom: 1px solid var(--ez-border);
+}
+.entry-head-title {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--ez-muted);
+}
+.entry-head-title .ez-icon {
+  width: 13px;
+  height: 13px;
+  stroke-width: 2;
+}
+.entry-head-title .eyebrow {
+  display: none;
+}
+.entry-head h2 {
+  margin: 0;
+  color: var(--ez-muted);
+  font: 700 11px/1.3 var(--ez-font-body), sans-serif;
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
+}
+.entry-head button[aria-label^='Close'] {
+  width: 26px;
+  height: 26px;
+  border-radius: 7px;
+  font-size: 15px;
+}
+.entry-description textarea {
+  display: block;
+  min-height: 0;
+  padding: 22px 20px;
+  border: 0;
+  border-radius: 0;
+  background: var(--ez-ground);
+  font-size: 16px;
+  line-height: 1.3;
+  resize: none;
+}
+.entry-description textarea::placeholder {
+  color: color-mix(in srgb, var(--ez-muted) 55%, var(--ez-ground));
+}
+.entry-description .hint {
+  margin: 0;
+  padding: 0 20px 12px;
+  font-size: 12px;
+}
+.entry-fields {
+  border-top: 1px solid var(--ez-border);
+  border-bottom: 1px solid var(--ez-border);
+}
+.entry-field {
+  display: flex;
+  align-items: center;
+  gap: 0;
+  padding: 16px 20px;
+  border-bottom: 1px solid var(--ez-border);
+  color: var(--ez-muted);
+  font-size: 13px;
+}
+.entry-field:last-child {
+  border-bottom: 0;
+}
+.entry-field > .ez-icon:first-child {
+  width: 16px;
+  height: 16px;
+  margin-right: 14px;
+  color: color-mix(in srgb, var(--ez-muted) 70%, var(--ez-ground));
+}
+.entry-field-label {
+  flex: none;
+  width: 76px;
+}
+.entry-field select {
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  padding: 2px 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  color: var(--ez-action);
+  font-size: 14px;
+  font-weight: 500;
+  appearance: none;
+  cursor: pointer;
+}
+.entry-field select:disabled {
+  color: var(--ez-muted);
+  cursor: default;
+}
+.entry-field > .ez-icon:last-child {
+  flex: none;
+  width: 14px;
+  height: 14px;
+  color: var(--ez-muted);
+}
+.entry-timing {
+  display: flex;
+  flex-direction: column;
+  gap: 13px;
+  padding: 18px 20px 22px;
+}
+.entry-date {
+  position: relative;
+}
+.entry-date-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--ez-muted);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.03em;
+  cursor: pointer;
+}
+.entry-date-chip:disabled {
+  cursor: default;
+}
+.entry-date-chip .ez-icon {
+  width: 12px;
+  height: 12px;
+  stroke-width: 2;
+}
+.entry-date-input {
+  position: absolute;
+  bottom: 0;
+  left: 0;
+  width: 1px;
+  height: 1px;
+  min-height: 0;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  opacity: 0;
+  pointer-events: none;
+}
+.entry-time-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+.entry-times {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.entry-times label,
+.entry-duration {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.entry-time-row input {
+  width: 120px;
+  min-height: 0;
+  padding: 7px 14px;
+  border: 1.5px solid var(--ez-border);
+  border-radius: 8px;
+  background: var(--ez-ground);
+  color: var(--ez-ink);
+  font-size: 16px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  text-align: center;
+}
+.entry-time-row input:focus {
+  border-color: var(--ez-action);
+  outline: none;
+}
+.entry-time-row input::placeholder {
+  color: color-mix(in srgb, var(--ez-muted) 40%, var(--ez-ground));
+  font-weight: 400;
+}
+.entry-time-arrow {
+  color: var(--ez-muted);
+}
+.entry-duration .ez-icon {
+  width: 14px;
+  height: 14px;
+  color: var(--ez-muted);
+}
+.entry-timing .form-result {
+  margin: 0;
+  font-size: 12px;
+}
+.entry-timing .form-result:empty {
+  display: none;
+}
+.entry-secondary {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.entry-secondary:not(:has(button:not([hidden]))) {
+  display: none;
+}
+.entry-secondary button {
+  min-height: 32px;
+  padding: 0 12px;
+  border-radius: 8px;
+  font-size: 13px;
+}
+.entry-submit {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  width: 100%;
+  min-height: 0;
+  padding: 14px 20px;
+  border: 0;
+  border-radius: 0 0 16px 16px;
+  background: var(--ez-action);
+  color: var(--ez-action-fg);
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: opacity 0.15s;
+}
+.entry-submit:hover:not(:disabled) {
+  opacity: 0.88;
+}
+.entry-submit:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+.entry-submit[hidden] {
+  display: none;
+}
+.entry-submit-duration::before {
+  content: '· ';
+}
+.entry-submit-duration[hidden] {
+  display: none;
+}
+.entry-submit kbd {
+  padding: 1px 5px;
+  border-radius: 4px;
+  background: color-mix(in srgb, var(--ez-action-fg) 22%, transparent);
+  font: 600 11px/1.3 var(--ez-font-body), sans-serif;
 }
 .hint,
 .form-result {
@@ -7900,10 +8271,19 @@ dialog textarea {
   .day-switcher button {
     min-height: 44px;
   }
-  .week-actions [data-week-total] {
-    width: 100%;
-    padding: 4px 0 0;
-    text-align: right;
+  /* The day stepper under the week stepper, each a row of its own. */
+  .week-period {
+    order: 1;
+  }
+  .day-switcher {
+    order: 2;
+  }
+  .week-actions {
+    order: 3;
+  }
+  .day-strip-total {
+    width: 84px;
+    padding: 10px 10px 8px;
   }
   .week-grid-wrap {
     display: none;
@@ -7919,6 +8299,16 @@ dialog textarea {
     max-width: none;
     margin: auto 0 0;
     border-radius: var(--ez-radius) var(--ez-radius) 0 0;
+  }
+  /* The Track time card is a sheet here like every other dialog: full width,
+     rounded at the top, its action bar flush with the bottom edge. */
+  .entry-dialog {
+    width: calc(100vw / var(--ez-zoom, 1));
+    border-radius: 16px 16px 0 0;
+  }
+  .entry-dialog form::after,
+  .entry-submit {
+    border-radius: 0;
   }
   .timer-actions {
     flex-direction: column;

@@ -472,10 +472,12 @@ test('[e2e:track-week] uses one editor and submits 12-hour UI times as canonical
   // markup was being rendered at phone density on a screen with room, so the
   // hours -- the thing you came to this screen to read -- were 14px.
   await page.setViewportSize({ width: 1280, height: 900 })
+  // The day is named in the toolbar's stepper box at the box's own size (the
+  // ezacto-ui toolbar), not in the phone switcher's 14px.
   const dayLabelSize = await page
     .locator('[data-day-label]')
     .evaluate((node) => globalThis.getComputedStyle(node).fontSize)
-  expect(Number.parseFloat(dayLabelSize)).toBeGreaterThanOrEqual(24)
+  expect(Number.parseFloat(dayLabelSize)).toBeGreaterThanOrEqual(16)
   const dayHoursSize = await page
     .locator('[data-day-rows] .week-cell input')
     .first()
@@ -776,7 +778,7 @@ test('[e2e:browser-auth] issues and revokes a real D1-backed browser session', a
   await expect(identity).toContainText('administrator')
   await expect(page.locator('[data-day-rows]')).toContainText('Browser Acceptance Project')
   await expect(page.locator('[data-day-rows]')).toContainText('Browser Acceptance Task')
-  await expect(page.locator('[data-day-label]')).toHaveText('Sunday, Aug 30')
+  await expect(page.locator('[data-day-label]')).toHaveText('Sunday, 30 Aug 2026')
   // The fixture organisation is decimal, and the week total honours that now
   // rather than always printing H:MM. 45 minutes is 0.75, not 0:45.
   await expect(page.locator('[data-week-total]')).toHaveText('0.75')
@@ -3268,14 +3270,18 @@ test('[e2e:timesheet-approval] [e2e:lock-policy] rejects, approves, reopens, pol
   await page.locator('[data-sign-in-form]').getByLabel('Email').fill(fixtureEmail)
   await page.getByLabel('Password', { exact: true }).fill(fixturePassword)
   await page.getByRole('button', { name: 'Sign in', exact: true }).click()
-  await expect(page.locator('[data-day-label]')).toContainText('Monday, Aug 17')
+  await expect(page.locator('[data-day-label]')).toContainText('Monday, 17 Aug 2026')
   await page.getByRole('button', { name: 'Next day' }).click()
-  await expect(page.locator('[data-day-label]')).toContainText('Tuesday, Aug 18')
+  await expect(page.locator('[data-day-label]')).toContainText('Tuesday, 18 Aug 2026')
   await page.getByRole('button', { name: 'Next day' }).click()
-  await expect(page.locator('[data-day-label]')).toContainText('Wednesday, Aug 19')
+  await expect(page.locator('[data-day-label]')).toContainText('Wednesday, 19 Aug 2026')
 
+  // The band under the toolbar shows only with a reason or a result to add
+  // to the title row's button; the label it carries still says the state.
   const status = page.locator('[data-timesheet-status]')
-  await expect(status).toBeVisible()
+  await expect(status).toBeAttached()
+  await expect(page.locator('[data-day-totals] li')).toHaveCount(7)
+  await expect(page.getByRole('button', { name: 'Send to approval' })).toBeEnabled()
   await expect(page.locator('[data-timesheet-status-label]')).toHaveText('Not submitted')
   const submitted = page.waitForResponse(
     (response) =>
@@ -3325,9 +3331,9 @@ test('[e2e:timesheet-approval] [e2e:lock-policy] rejects, approves, reopens, pol
     'Needs changes: Clarify the delivery detail.',
   )
   await page.getByRole('button', { name: 'Next day' }).click()
-  await expect(page.locator('[data-day-label]')).toContainText('Tuesday, Aug 18')
+  await expect(page.locator('[data-day-label]')).toContainText('Tuesday, 18 Aug 2026')
   await page.getByRole('button', { name: 'Next day' }).click()
-  await expect(page.locator('[data-day-label]')).toContainText('Wednesday, Aug 19')
+  await expect(page.locator('[data-day-label]')).toContainText('Wednesday, 19 Aug 2026')
 
   const entryRow = page.locator('[data-day-rows] .day-row').filter({
     has: page.locator('[data-entry-note="901"]'),
@@ -3343,7 +3349,7 @@ test('[e2e:timesheet-approval] [e2e:lock-policy] rejects, approves, reopens, pol
   await editor.getByRole('button', { name: 'Save entry' }).click()
   expect((await corrected).ok()).toBe(true)
   await expect(editor).toBeHidden()
-  await expect(page.locator('[data-day-label]')).toContainText('Wednesday, Aug 19')
+  await expect(page.locator('[data-day-label]')).toContainText('Wednesday, 19 Aug 2026')
   await expect(page.locator('[data-entry-note="901"]')).toHaveText('Corrected delivery detail')
   const rejectedExpense = await page.evaluate(async () => {
     const response = await fetch('/api/v1/expenses/901')
@@ -3380,7 +3386,7 @@ test('[e2e:timesheet-approval] [e2e:lock-policy] rejects, approves, reopens, pol
   await page.goto('/?week=2026-08-17')
   await expect(page.locator('[data-timesheet-status-label]')).toHaveText('Approved')
   await page.getByRole('button', { name: 'Next day' }).click()
-  await expect(page.locator('[data-day-label]')).toContainText('Tuesday, Aug 18')
+  await expect(page.locator('[data-day-label]')).toContainText('Tuesday, 18 Aug 2026')
   await page.getByRole('button', { name: 'Next day' }).click()
   const lockedCell = page.locator('[data-day-rows] input[data-cell-key]')
   await expect(lockedCell).toBeDisabled()
@@ -3535,10 +3541,10 @@ test('[e2e:timesheet-approval] [e2e:lock-policy] rejects, approves, reopens, pol
   await expect(manualLockCard).toContainText('Monthly close verification')
 
   await page.goto('/?week=2026-08-17')
-  await expect(page.locator('[data-day-label]')).toContainText('Monday, Aug 17')
+  await expect(page.locator('[data-day-label]')).toContainText('Monday, 17 Aug 2026')
   await page.getByRole('button', { name: 'Next day' }).click()
   await page.getByRole('button', { name: 'Next day' }).click()
-  await expect(page.locator('[data-day-label]')).toContainText('Wednesday, Aug 19')
+  await expect(page.locator('[data-day-label]')).toContainText('Wednesday, 19 Aug 2026')
   const policyLockedRow = page.locator('[data-day-rows] .day-row').filter({
     has: page.locator('[data-entry-note="901"]'),
   })
@@ -3616,7 +3622,7 @@ test('[e2e:timesheet-approval] [e2e:lock-policy] rejects, approves, reopens, pol
   await expect(activeLockCard).toHaveCount(0)
 
   await page.goto('/?week=2026-08-17')
-  await expect(page.locator('[data-day-label]')).toContainText('Monday, Aug 17')
+  await expect(page.locator('[data-day-label]')).toContainText('Monday, 17 Aug 2026')
   await page.getByRole('button', { name: 'Next day' }).click()
   await page.getByRole('button', { name: 'Next day' }).click()
   const unlockedRow = page.locator('[data-day-rows] .day-row').filter({
@@ -3659,7 +3665,13 @@ test('[e2e:timesheet-approval] submits and approves an expense-only week', async
   await page.locator('[data-sign-in-form]').getByLabel('Email').fill(fixtureEmail)
   await page.getByLabel('Password', { exact: true }).fill(fixturePassword)
   await page.getByRole('button', { name: 'Sign in', exact: true }).click()
-  await expect(page.locator('[data-timesheet-status]')).toBeVisible()
+  // The band under the toolbar hides while it has nothing to add to the title
+  // row's button, so the signed-in shell is what says the week has loaded.
+  await expect(page.locator('[data-authenticated-shell]')).toBeVisible()
+  // The strip is drawn from the loaded week; the button is enabled with the
+  // session, a moment before the week it would submit is known.
+  await expect(page.locator('[data-day-totals] li')).toHaveCount(7)
+  await expect(page.getByRole('button', { name: 'Send to approval' })).toBeEnabled()
   await expect(page.locator('[data-timesheet-status-label]')).toHaveText('Not submitted')
   const periodTime = await page.evaluate(async () => {
     const response = await fetch('/api/v1/time-entries?from=2026-08-09&to=2026-08-15')
@@ -3718,6 +3730,8 @@ test('[e2e:keyboard #861] opens the command bar and the menu ready for the keybo
   await page.getByRole('button', { name: 'Sign in', exact: true }).click()
   const logTime = page.locator('[data-time-log-time]')
   await expect(logTime).toBeEnabled()
+  // Enabled with the session; Track time needs the week it would log on.
+  await expect(page.locator('[data-day-totals] li')).toHaveCount(7)
 
   const commandDialog = page.locator('[data-command-dialog]')
   const command = commandDialog.getByRole('combobox', { name: 'Command' })
@@ -3732,15 +3746,26 @@ test('[e2e:keyboard #861] opens the command bar and the menu ready for the keybo
   await page.keyboard.press('Escape')
   await expect(commandDialog).toBeHidden()
 
-  // Opened from the button, the query the last use left is selected, so
-  // typing replaces it; Escape hands focus back to the button.
+  // The toolbar's "+" opens Track time (the entry editor) ready to type the
+  // duration; Escape hands focus back to the button.
   await logTime.focus()
   await page.keyboard.press('Enter')
-  await expect(command).toBeFocused()
-  await page.keyboard.type('receipts')
-  await expect(command).toHaveValue('receipts')
+  const editor = page.locator('[data-entry-dialog]')
+  await expect(editor).toBeVisible()
+  await expect(editor.locator('[data-entry-title]')).toHaveText('Track time')
+  // Focus lands on the timing field the organization's mode offers (the
+  // duration, or the start time), either way inside the editor.
+  await expect
+    .poll(() =>
+      page.evaluate(
+        () =>
+          document.querySelector('[data-entry-dialog]')?.contains(document.activeElement) ===
+          true,
+      ),
+    )
+    .toBe(true)
   await page.keyboard.press('Escape')
-  await expect(commandDialog).toBeHidden()
+  await expect(editor).toBeHidden()
   await expect(logTime).toBeFocused()
 
   const menuTrigger = page.locator('[data-menu-trigger]')

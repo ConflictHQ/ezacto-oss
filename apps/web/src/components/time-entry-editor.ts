@@ -2,7 +2,8 @@ import type { TimeEntry } from '@conflict-hq/ezacto-client'
 
 export type TimeEntryMode = 'duration' | 'start_end'
 export type OrganizationClock = '12h' | '24h'
-export type EntryEditorContext = 'week-cell' | 'day' | 'quick-add' | 'edit' | 'timer'
+/** 'track' is the toolbar's "+": a fresh entry on today, no cell behind it. */
+export type EntryEditorContext = 'week-cell' | 'day' | 'quick-add' | 'edit' | 'timer' | 'track'
 
 export interface TimeEntrySettings {
   readonly time_entry_mode: TimeEntryMode
@@ -73,5 +74,6 @@ export const modeForEntryDraft = (
 
 export const contextLabel = (context: EntryEditorContext, editing: boolean): string => {
   if (context === 'timer') return editing ? 'Running timer' : 'Start a timer'
+  if (context === 'track' && !editing) return 'Track time'
   return editing ? 'Edit time entry' : 'Add time entry'
 }

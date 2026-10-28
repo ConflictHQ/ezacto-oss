@@ -606,7 +606,9 @@ describe('what the owed card is allowed to claim', () => {
     // what each admits is read again -- the invoice walk is one walk.
     expect(listInvoices).toHaveBeenCalledTimes(2)
     expect(getUninvoicedReport).toHaveBeenCalledTimes(1)
-    expect(listPendingTimesheetSubmissions).toHaveBeenCalledTimes(1)
+    // Once for the approvals card, once for the bell's count of what awaits
+    // review; neither reads it again when the gate opens.
+    expect(listPendingTimesheetSubmissions).toHaveBeenCalledTimes(2)
     // Team answered before the week card asked for capacity, so the week card
     // read once and got the number on that read. The second call to this
     // endpoint is the shell's own, for the week it starts the timesheet on --

@@ -551,7 +551,17 @@ test('[e2e:text-size] keeps the drawer and the command bar inside the window at 
   await page.keyboard.press('Escape')
 
   await page.setViewportSize({ width: 1280, height: 720 })
+  // The toolbar's "+" opens Track time (the entry editor); the command bar
+  // keeps its shortcut.
   await page.locator('[data-time-log-time]').click()
+  const editor = page.locator('[data-entry-dialog]')
+  await expect(editor).toBeVisible()
+  await page.waitForTimeout(250)
+  const editorBox = await box(page, '[data-entry-dialog]')
+  expect(editorBox.y + editorBox.height).toBeLessThanOrEqual(720)
+  expect(editorBox.x + editorBox.width).toBeLessThanOrEqual(1280)
+  await page.keyboard.press('Escape')
+  await page.keyboard.press('ControlOrMeta+k')
   const command = page.locator('[data-command-dialog]')
   await expect(command).toBeVisible()
   await page.waitForTimeout(250)

@@ -831,14 +831,24 @@ ${instancePalette ? `  <link rel="stylesheet" href="${INSTANCE_THEME_STYLESHEET_
           the reader can also operate, and naming the week twice on one row is
           the noise §6 asks screens to stop making.
         -->
+        <!--
+          The day stepper, which in Day view stands in the box the week stepper
+          has in Week view (the ezacto-ui toolbar names the day you are on
+          there). On a phone both show: the week to move weeks, the day to
+          move within one.
+        -->
+        <div class="day-switcher" data-day-switcher>
+          <button type="button" data-day-previous data-auth-action disabled aria-label="Previous day">${iconMarkup('chevron', { direction: 'left' })}</button>
+          <span class="day-switcher-label">${iconMarkup('calendar')}<strong data-day-label>—</strong></span>
+          <button type="button" data-day-next data-auth-action disabled aria-label="Next day">${iconMarkup('chevron')}</button>
+        </div>
         <div class="week-period" data-week-period>
           <h2 class="visually-hidden" id="week-heading">Timesheet week</h2>
         </div>
         <div class="week-actions">
           <button type="button" data-week-current data-auth-action disabled>${iconMarkup('calendar')}Today</button>
           ${renderTimeViews(options)}
-          <button class="primary-action" type="button" data-command-trigger data-auth-action data-time-log-time aria-label="Log time" title="Log time" disabled>${iconMarkup('plus')}</button>
-          <strong data-week-total>—</strong>
+          <button class="primary-action" type="button" data-track-time-trigger data-auth-action data-time-log-time aria-label="Log time" title="Log time" disabled>${iconMarkup('plus')}</button>
         </div>
       </header>
       <p class="week-hint" data-week-hint>Open any cell with its <span aria-hidden="true">✎</span> button, or <kbd>Alt</kbd>+<kbd>Enter</kbd> while it has focus, to edit the note or delete the entry. Clearing a cell to zero removes its entry.</p>
@@ -851,7 +861,14 @@ ${instancePalette ? `  <link rel="stylesheet" href="${INSTANCE_THEME_STYLESHEET_
           <p class="form-result" data-timesheet-result role="status"></p>
         </div>
       </aside>
-      <ol class="day-totals" data-day-totals aria-label="Hours by day"></ol>
+      <!--
+        The week's shape before you read a row (the ezacto-ui week bar): seven
+        days, and the week's total at the end of the same line.
+      -->
+      <div class="day-strip">
+        <ol class="day-totals" data-day-totals aria-label="Hours by day"></ol>
+        <div class="day-strip-total"><span>Week total</span><strong data-week-total>—</strong></div>
+      </div>
       <div class="week-grid-wrap" data-week-grid data-view="desktop">
         <table class="week-grid-table">
           <thead data-week-grid-head><tr><th>Project / task</th><th colspan="8">Loading week…</th></tr></thead>
@@ -864,11 +881,6 @@ ${instancePalette ? `  <link rel="stylesheet" href="${INSTANCE_THEME_STYLESHEET_
         <div data-calendar-grid></div>
       </section>
       <div class="day-list" data-day-list data-view="phone">
-        <header class="day-switcher">
-          <button type="button" data-day-previous data-auth-action disabled aria-label="Previous day">${iconMarkup('chevron', { direction: 'left' })}</button>
-          <strong data-day-label>—</strong>
-          <button type="button" data-day-next data-auth-action disabled aria-label="Next day">${iconMarkup('chevron')}</button>
-        </header>
         <div data-day-rows><p class="day-empty">Loading time entries…</p></div>
       </div>
       <!--
@@ -1210,24 +1222,49 @@ ${instancePalette ? `  <link rel="stylesheet" href="${INSTANCE_THEME_STYLESHEET_
       </div>
     </form>
   </dialog>
+  <!--
+    The time entry editor, laid out as the ezacto-ui Track time card: the
+    description first, the assignment as labelled rows, the timing in a
+    section of its own under a date chip, and the action as a bar across the
+    foot. One editor for every way in -- a cell, the day list, the timer chip,
+    the toolbar's "+" -- so the fields keep their marks and the browser code
+    its handles. Tags and a billable switch are not here because an entry has
+    neither: billable follows the task assignment, and tags do not exist.
+  -->
   <dialog class="entry-dialog" data-entry-dialog data-timer-dialog data-note-dialog aria-labelledby="entry-title">
     <form data-timer-form novalidate data-entry-form data-note-form>
-      <header><div><p class="eyebrow" data-entry-context>Time entry</p><h2 id="entry-title" data-entry-title data-note-title>Log time</h2></div><button type="button" data-dialog-close aria-label="Close">×</button></header>
-      <div class="entry-assignment">
-        <label>Project<select name="project" data-entry-project data-entry-project-options required></select></label>
-        <label>Task<select name="task" data-entry-task data-entry-task-options required></select></label>
+      <header class="entry-head">
+        <div class="entry-head-title">${iconMarkup('clock')}<p class="eyebrow" data-entry-context>Time entry</p><h2 id="entry-title" data-entry-title data-note-title>Log time</h2></div>
+        <button type="button" data-dialog-close aria-label="Close">×</button>
+      </header>
+      <div class="entry-description">
+        <label for="ez-entry-note" class="visually-hidden">Note</label>
+        <textarea id="ez-entry-note" name="notes" data-entry-note-input data-timer-note data-note-input rows="1" maxlength="10000" placeholder="Add description…" aria-describedby="note-hint note-result"></textarea>
+        <p class="hint" id="note-hint" data-entry-note-hint data-timer-note-hint data-note-hint>Optional. Up to 10,000 characters.</p>
       </div>
-      <label>Date<input name="spent_date" data-entry-date type="date" required></label>
-      <label data-entry-duration>Duration<input name="duration" data-entry-duration-input inputmode="decimal" autocomplete="off"></label>
-      <div class="entry-times" data-entry-times hidden>
-        <label>Start<input name="started_time" data-entry-start autocomplete="off" placeholder="9:00 AM"></label>
-        <label>End<input name="ended_time" data-entry-end autocomplete="off" placeholder="5:00 PM"></label>
+      <div class="entry-fields">
+        <label class="entry-field">${iconMarkup('folder')}<span class="entry-field-label">Project</span><select name="project" data-entry-project data-entry-project-options required></select>${iconMarkup('chevron', { direction: 'down' })}</label>
+        <label class="entry-field">${iconMarkup('list')}<span class="entry-field-label">Task</span><select name="task" data-entry-task data-entry-task-options required></select>${iconMarkup('chevron', { direction: 'down' })}</label>
       </div>
-      <p class="hint" data-entry-running hidden>This entry is running. Stop it before changing its assignment or timing.</p>
-      <label for="ez-entry-note">Note<textarea id="ez-entry-note" name="notes" data-entry-note-input data-timer-note data-note-input rows="5" maxlength="10000" aria-describedby="note-hint note-result"></textarea></label>
-      <p class="hint" id="note-hint" data-entry-note-hint data-timer-note-hint data-note-hint>Optional. Up to 10,000 characters.</p>
-      <p class="form-result" id="note-result" data-entry-result data-timer-result data-note-result role="status"></p>
-      <div class="timer-actions"><button class="primary-action" type="submit" data-entry-submit>Save entry</button><button type="button" data-stop-timer hidden>Stop running timer</button><button type="button" class="danger-action" data-entry-delete hidden>Delete entry</button></div>
+      <div class="entry-timing">
+        <div class="entry-date">
+          <button type="button" class="entry-date-chip" data-entry-date-chip title="Choose a date">${iconMarkup('calendar')}<span data-entry-date-label>—</span></button>
+          <label for="ez-entry-date" class="visually-hidden">Date</label>
+          <input id="ez-entry-date" class="entry-date-input" name="spent_date" data-entry-date type="date" required tabindex="-1">
+        </div>
+        <p class="hint" data-entry-running hidden>This entry is running. Stop it before changing its assignment or timing.</p>
+        <div class="entry-time-row">
+          <div class="entry-times" data-entry-times hidden>
+            <label><span class="visually-hidden">Start</span><input name="started_time" data-entry-start autocomplete="off" placeholder="9:00 AM"></label>
+            <span class="entry-time-arrow" aria-hidden="true">${iconMarkup('chevron')}</span>
+            <label><span class="visually-hidden">End</span><input name="ended_time" data-entry-end autocomplete="off" placeholder="5:00 PM"></label>
+          </div>
+          <label class="entry-duration" data-entry-duration>${iconMarkup('clock')}<span class="visually-hidden">Duration</span><input name="duration" data-entry-duration-input inputmode="decimal" autocomplete="off"></label>
+        </div>
+        <p class="form-result" id="note-result" data-entry-result data-timer-result data-note-result role="status"></p>
+        <div class="entry-secondary"><button type="button" data-stop-timer hidden>Stop running timer</button><button type="button" class="danger-action" data-entry-delete hidden>Delete entry</button></div>
+      </div>
+      <button class="entry-submit" type="submit" data-entry-submit><span data-entry-submit-label>Save entry</span><span class="entry-submit-duration" data-entry-submit-duration hidden></span><kbd aria-hidden="true">↵</kbd></button>
     </form>
   </dialog>
   <dialog class="menu-dialog" data-menu-dialog aria-labelledby="menu-title">

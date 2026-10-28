@@ -1394,6 +1394,42 @@ describe('week-grid browser behavior', () => {
     expect(document.querySelector('[data-row-result]')?.textContent).toContain('already on this week')
   })
 
+  it('[browser] tracks time from the toolbar\'s plus, and the entry brings its own row', async () => {
+    // The ezacto-ui "+" opens Track time on today with the assignment you
+    // logged on last. The entry it saves is what puts a row on the grid, so
+    // "Add row" is only for a row you want before there is time on it.
+    vi.useFakeTimers({ toFake: ['Date'] })
+    vi.setSystemTime(new Date('2026-09-16T12:00:00'))
+    renderBrowserShell()
+    const api = browserApi()
+    await mountShell(api)
+
+    document.querySelector<HTMLButtonElement>('[data-time-log-time]')!.click()
+    const dialog = document.querySelector<HTMLDialogElement>('[data-entry-dialog]')!
+    expect(dialog.open).toBe(true)
+    expect(dialog.dataset.entryContext).toBe('track')
+    expect(document.querySelector('[data-entry-title]')?.textContent).toBe('Track time')
+    expect(document.querySelector('[data-entry-submit-label]')?.textContent).toBe('Track time')
+    expect(document.querySelector<HTMLInputElement>('[data-entry-date]')!.value).toBe('2026-09-16')
+    expect(document.querySelector('[data-entry-date-label]')?.textContent).toBe('Wed, 16 Sep')
+    expect(document.querySelector<HTMLSelectElement>('[data-entry-project]')!.value).not.toBe('')
+
+    const duration = document.querySelector<HTMLInputElement>('[data-entry-duration-input]')!
+    duration.value = '1.5'
+    duration.dispatchEvent(new Event('input', { bubbles: true }))
+    // The action bar echoes what is being entered, as the reference's does.
+    expect(document.querySelector('[data-entry-submit-duration]')?.textContent).toBe('1.5')
+    document
+      .querySelector<HTMLFormElement>('[data-entry-form]')!
+      .dispatchEvent(new SubmitEvent('submit', { bubbles: true, cancelable: true }))
+    await vi.waitFor(() => expect(api.createTimeEntry).toHaveBeenCalledTimes(1))
+    expect(vi.mocked(api.createTimeEntry).mock.lastCall?.[0]).toMatchObject({
+      spent_date: '2026-09-16',
+      seconds: 5_400,
+    })
+    await vi.waitFor(() => expect(dialog.open).toBe(false))
+  })
+
   describe('a week cell two entries share (issue 904)', () => {
     // Two sessions on one task on one day is ordinary, not a conflict. The cell
     // used to be a disabled input labelled "Split" with its only explanation in
@@ -1430,7 +1466,7 @@ describe('week-grid browser behavior', () => {
       expect(document.documentElement.dataset.timeView).toBe('day')
       expect(new URL(globalThis.location.href).searchParams.get('view')).toBe('day')
       expect(new URL(globalThis.location.href).searchParams.get('week')).toBe('2026-08-28')
-      expect(document.querySelector('[data-day-label]')?.textContent).toBe('Wednesday, Aug 26')
+      expect(document.querySelector('[data-day-label]')?.textContent).toBe('Wednesday, 26 Aug 2026')
       const rows = [...document.querySelectorAll<HTMLElement>('[data-day-rows] .day-row')]
       expect(rows.map((row) => row.querySelector('[data-entry-note]')?.textContent)).toEqual([
         'Morning session',

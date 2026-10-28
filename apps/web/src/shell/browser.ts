@@ -331,6 +331,30 @@ const dayLabel = (value: string, compact = false): string =>
     timeZone: 'UTC',
   }).format(parseDate(value))
 
+const weekdayName = (value: string): string =>
+  new Intl.DateTimeFormat('en-US', { weekday: 'long', timeZone: 'UTC' }).format(parseDate(value))
+
+/** "14th", "22nd": the day of the month as the ezacto-ui week bar writes it. */
+const ordinalDay = (value: string): string => {
+  const day = parseDate(value).getUTCDate()
+  const tens = day % 100
+  const suffix =
+    tens >= 11 && tens <= 13 ? 'th' : (['th', 'st', 'nd', 'rd'][day % 10] ?? 'th')
+  return `${day}${suffix}`
+}
+
+const isWeekend = (value: string): boolean => {
+  const weekday = parseDate(value).getUTCDay()
+  return weekday === 0 || weekday === 6
+}
+
+/** "Thursday, 17 Sep 2026": the day as the ezacto-ui toolbar names it in Day view. */
+const switcherLabel = (value: string): string => {
+  const date = parseDate(value)
+  const month = new Intl.DateTimeFormat('en-US', { month: 'short', timeZone: 'UTC' }).format(date)
+  return `${weekdayName(value)}, ${date.getUTCDate()} ${month} ${date.getUTCFullYear()}`
+}
+
 /**
  * A column header is scanned down a row of seven, not read as a sentence.
  * "Tue, Apr 1" makes the weekday and the date compete on one line; stacking
@@ -999,6 +1023,8 @@ const renderDayTotals = (
       item.dataset.dayTotal = date
       if (date === today) item.dataset.today = ''
       if (index === selectedDay) item.dataset.selected = ''
+      // The reference greys the weekend: a day nobody expects hours on.
+      if (isWeekend(date)) item.dataset.weekend = ''
       // The strip already answers "which day am I short on"; making it the way
       // to go there closes the loop, rather than reading the answer here and
       // then hunting for it in a separate pair of arrows.
@@ -1006,8 +1032,12 @@ const renderDayTotals = (
       control.type = 'button'
       control.dataset.daySelect = String(index)
       control.setAttribute('aria-pressed', index === selectedDay ? 'true' : 'false')
+      // "MONDAY 14th", the weekday carrying the line and the date set small
+      // beside it, as the reference week bar names its days.
       const label = document.createElement('span')
-      label.textContent = dayLabel(date, true)
+      const ordinal = document.createElement('small')
+      ordinal.textContent = ordinalDay(date)
+      label.append(`${weekdayName(date)} `, ordinal)
       const hours = document.createElement('strong')
       const seconds = grid.dayTotals[index] ?? 0
       hours.textContent = formatSeconds(seconds)
@@ -1024,7 +1054,7 @@ const renderDayTotals = (
 
 const renderPhoneDay = (grid: WeekGrid, selectedDay: number, handlers: GridHandlers): void => {
   const date = grid.dates[selectedDay]!
-  required<HTMLElement>('[data-day-label]').textContent = dayLabel(date)
+  required<HTMLElement>('[data-day-label]').textContent = switcherLabel(date)
   const rows = required<HTMLElement>('[data-day-rows]')
   if (grid.rows.length === 0) {
     const empty = document.createElement('p')
@@ -1454,6 +1484,44 @@ export const mountShell = async (
   const entryNoteHint = required<HTMLElement>('[data-entry-note-hint]')
   const entryResult = required<HTMLElement>('[data-entry-result]')
   const entrySubmit = required<HTMLButtonElement>('[data-entry-submit]')
+  const entrySubmitLabel = required<HTMLElement>('[data-entry-submit-label]')
+  const entrySubmitDuration = required<HTMLElement>('[data-entry-submit-duration]')
+  const entryDateChip = required<HTMLButtonElement>('[data-entry-date-chip]')
+  const entryDateLabel = required<HTMLElement>('[data-entry-date-label]')
+  // The date as the ezacto-ui chip says it, "Thu, 18 Sep", over the native
+  // input that holds the value and opens the browser's own picker.
+  const chipDate = (value: string): string => {
+    if (!isCalendarDay(value)) return '—'
+    const date = new Date(`${value}T00:00:00.000Z`)
+    const weekday = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'][date.getUTCDay()] ?? ''
+    const month =
+      ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'][
+        date.getUTCMonth()
+      ] ?? ''
+    return `${weekday}, ${date.getUTCDate()} ${month}`
+  }
+  const syncEntryDateLabel = (): void => {
+    entryDateLabel.textContent = chipDate(entryDate.value)
+  }
+  // The action bar echoes the duration ("Track time · 1h") while the duration
+  // is what is being entered; start and end say their own sum on the grid.
+  const syncSubmitDuration = (): void => {
+    const text = entryDuration.hidden ? '' : entryDurationInput.value.trim()
+    entrySubmitDuration.textContent = text
+    entrySubmitDuration.hidden = text === ''
+  }
+  entryDate.addEventListener('change', syncEntryDateLabel)
+  entryDurationInput.addEventListener('input', syncSubmitDuration)
+  entryDateChip.addEventListener('click', () => {
+    if (entryDate.disabled) return
+    const picker = entryDate as HTMLInputElement & { showPicker?: () => void }
+    try {
+      if (typeof picker.showPicker === 'function') picker.showPicker()
+      else entryDate.focus()
+    } catch {
+      entryDate.focus()
+    }
+  })
   const stopTimer = required<HTMLButtonElement>('[data-stop-timer]')
   const deleteEntry = required<HTMLButtonElement>('[data-entry-delete]')
   const weekRemoved = required<HTMLElement>('[data-week-removed]')
@@ -4777,6 +4845,7 @@ export const mountShell = async (
       task: task === undefined ? String(next.taskId) : resourceLabel(task),
     })
     entryDate.value = next.spentDate
+    syncEntryDateLabel()
     entryDurationInput.value = initialDurationValue
     entryStart.value =
       next.entry?.started_time === null || next.entry?.started_time === undefined
@@ -4794,6 +4863,7 @@ export const mountShell = async (
     entryDuration.hidden = next.mode !== 'duration' || next.timer || running
     entryTimes.hidden = next.mode !== 'start_end' || next.timer || running
     entryRunning.hidden = !running
+    syncSubmitDuration()
     const immutable = running || next.entry?.is_locked === true
     for (const field of [
       entryProject,
@@ -4803,14 +4873,17 @@ export const mountShell = async (
       entryStart,
       entryEnd,
     ]) field.disabled = immutable
+    entryDateChip.disabled = immutable
     entryNoteInput.disabled = next.entry?.is_locked === true
     entrySubmit.hidden = next.entry?.is_locked === true
-    entrySubmit.textContent = running
+    entrySubmitLabel.textContent = running
       ? 'Save note'
       : next.timer
         ? 'Start timer'
         : next.entry === null
-          ? 'Log time'
+          ? next.context === 'track'
+            ? 'Track time'
+            : 'Log time'
           : 'Save entry'
     stopTimer.hidden = !running
     // Only where there is something to delete, and never on a running timer --
@@ -4953,6 +5026,39 @@ export const mountShell = async (
       if (currentIdentity !== null) openCommandPalette()
     })
   }
+  // The toolbar's "+" (the ezacto-ui add button): Track time on today, with
+  // the assignment you logged on most recently already chosen. The entry it
+  // saves puts its own row on the grid, so no row has to be added first.
+  required<HTMLButtonElement>('[data-track-time-trigger]').addEventListener('click', () => {
+    if (currentIdentity === null || snapshot === null) return
+    // A teammate's week (issue 917) is theirs; the "+" logs your own time.
+    if (viewedPerson !== null) {
+      setSessionStatus('Go back to your own timesheet to track time.', 'ready')
+      return
+    }
+    const latest = [...snapshot.entries].sort((left, right) =>
+      right.updated_at.localeCompare(left.updated_at),
+    )[0]
+    const option =
+      snapshot.catalog.timeEntryOptions.find(
+        (candidate) =>
+          latest !== undefined &&
+          candidate.project_id === latest.project_id &&
+          candidate.task_id === latest.task_id,
+      ) ?? snapshot.catalog.timeEntryOptions[0]
+    configureEntryEditor({
+      context: 'track',
+      entry: null,
+      projectId: option?.project_id ?? 0,
+      taskId: option?.task_id ?? 0,
+      spentDate: localDate(),
+      seconds: 0,
+      notes: null,
+      mode: snapshot.timeEntrySettings.time_entry_mode,
+      timer: false,
+      minimumNoteLength: option?.minimum_note_length ?? 0,
+    })
+  })
   required<HTMLButtonElement>('[data-timer-chip]').addEventListener('click', () => {
     if (currentIdentity === null || snapshot === null) return
     if (snapshot.running !== null) {
