@@ -48,6 +48,34 @@ describe('invoice generation browser behavior', () => {
     await vi.waitFor(() => expect(api.stopTimeEntry).toHaveBeenCalledWith(3, expect.anything()))
   })
 
+  it('[unit] hangs the running timer under the crumbs, with its clock and a Stop of its own', async () => {
+    // The ezacto-ui timer bar: the project, the task, the clock with seconds
+    // and Stop, under the breadcrumb row of whichever page is open, and gone
+    // again once nothing runs.
+    renderBrowserShell({ view: 'invoice-generation' })
+    const api = browserApi()
+    api.entries.push(
+      timeEntry(3, {
+        project_id: 1,
+        task_id: 1,
+        spent_date: '2026-08-28',
+        notes: 'Running under the crumbs',
+      }),
+    )
+
+    await mountShell(api)
+
+    const band = document.querySelector<HTMLElement>('[data-timer-band]')!
+    await vi.waitFor(() => expect(band.hidden).toBe(false))
+    expect(band.querySelector('[data-timer-band-project]')?.textContent).toBe('Northpeak')
+    expect(band.querySelector('[data-timer-band-task]')?.textContent).toBe('Development')
+    expect(band.querySelector('[data-timer-band-elapsed]')?.textContent).toMatch(/^\d+:\d\d:\d\d$/u)
+    expect(document.querySelector('[data-timer-elapsed]')?.textContent).toMatch(/^\d+:\d\d:\d\d$/u)
+    band.querySelector<HTMLButtonElement>('[data-timer-band-stop]')!.click()
+    await vi.waitFor(() => expect(api.stopTimeEntry).toHaveBeenCalledWith(3, expect.anything()))
+    await vi.waitFor(() => expect(band.hidden).toBe(true))
+  })
+
   it('[browser] bills the period the wizard stepped to, and refuses a half-typed one', async () => {
     // The fieldset used to carry two `required` date inputs, so "last month"
     // meant typing four digits and the browser itself refused an empty range.

@@ -1080,7 +1080,9 @@ describe('week-grid browser behavior', () => {
       '0:00',
       '2:16',
     ])
-    expect(durations.timerElapsed).toBe('0:00')
+    // The idle chip is the clock at zero: the timer reads with seconds while
+    // it runs, as the reference timer does, so its zero has them too.
+    expect(durations.timerElapsed).toBe('0:00:00')
   })
 
   it('[e2e:track-week] displays 12-hour times and submits canonical start/end values', async () => {

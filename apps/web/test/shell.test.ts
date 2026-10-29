@@ -253,6 +253,11 @@ describe('S-1 through S-5 application shell', () => {
     )
     expect(time).toContain('<span class="crumbs-bell-count" data-notifications-count hidden></span>')
     expect(time).toContain('<span class="crumbs-current">Time</span>')
+    // The running timer's band hangs under the crumbs on every page (the
+    // ezacto-ui timer bar), absent until the browser has a timer to put in it.
+    expect(time).toMatch(
+      /<div class="timer-band" data-timer-band hidden><span class="timer-band-dot" aria-hidden="true"><\/span><strong class="timer-band-project" data-timer-band-project><\/strong><span class="timer-band-task" data-timer-band-task><\/span><span class="timer-band-time" data-timer-band-elapsed>0:00:00<\/span><button type="button" class="timer-band-stop" data-timer-band-stop>Stop<\/button><\/div>/u,
+    )
     expect(time).toContain('data-notifications-page hidden')
 
     const notifications = renderAppShell({
@@ -278,8 +283,9 @@ describe('S-1 through S-5 application shell', () => {
       tabs: invoiceTabs('invoice-list'),
     })
     expect(invoices).toContain('<span class="crumbs-current">Invoices</span>')
+    // The section's strip hangs under the timer band, which hangs under the row.
     expect(invoices).toMatch(
-      /data-notifications-bell>(?:(?!<\/div>)[^])*<\/div><nav class="tabstrip" aria-label="Invoices views">/u,
+      /data-notifications-bell>(?:(?!<\/div>)[^])*<\/div><div class="timer-band" data-timer-band hidden>(?:(?!<\/div>)[^])*<\/div><nav class="tabstrip" aria-label="Invoices views">/u,
     )
     const settings = renderAppShell({
       environment: 'test',

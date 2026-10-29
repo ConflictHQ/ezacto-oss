@@ -3857,6 +3857,62 @@ html[data-time-view='calendar'] [data-time-views] {
   margin-bottom: 4px;
   padding: 16px 24px 0;
 }
+/* The running timer's band under the crumbs, as the ezacto-ui timer bar: a
+   blue dot, the project in the blue, the task quiet, the clock bold, and
+   Stop outlined at the right. Absent, not empty, while nothing runs. */
+.timer-band {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-width: 0;
+  padding: 8px 24px;
+  border-bottom: 1px solid var(--ez-blue-light);
+  background: var(--ez-orange-tint);
+  font-size: 13px;
+}
+.timer-band[hidden] {
+  display: none;
+}
+.timer-band-dot {
+  flex: none;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--ez-action);
+}
+.timer-band-project {
+  color: var(--ez-data);
+  font-weight: 600;
+}
+.timer-band-task {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--ez-muted);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.timer-band-time {
+  color: var(--ez-data);
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+.timer-band-stop {
+  flex: none;
+  margin-left: auto;
+  padding: 4px 12px;
+  border: 1px solid var(--ez-data);
+  border-radius: 6px;
+  background: transparent;
+  color: var(--ez-data);
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+}
+.timer-band-stop:hover,
+.timer-band-stop:focus-visible {
+  background: var(--ez-action);
+  color: var(--ez-action-fg);
+}
 .crumbs {
   display: flex;
   align-items: center;

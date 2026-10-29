@@ -1157,24 +1157,49 @@ const renderPhoneDay = (grid: WeekGrid, selectedDay: number, handlers: GridHandl
 
 let timerInterval: ReturnType<typeof globalThis.setInterval> | undefined
 
+/**
+ * A running timer reads as a clock, "3:42:19", the way the ezacto-ui timer
+ * does: seconds are what show it is alive. The totals keep the organization's
+ * format; this is the one figure on the page that is a clock and not a sum.
+ */
+const formatElapsed = (seconds: number): string => {
+  const whole = Math.max(0, Math.floor(seconds))
+  const hours = Math.floor(whole / 3_600)
+  const minutes = String(Math.floor((whole % 3_600) / 60)).padStart(2, '0')
+  const rest = String(whole % 60).padStart(2, '0')
+  return `${hours}:${minutes}:${rest}`
+}
+
 const renderTimer = (running: DisplayTimeEntry | null): void => {
   const chip = required<HTMLButtonElement>('[data-timer-chip]')
   const label = required<HTMLElement>('[data-timer-label]')
   const elapsed = required<HTMLElement>('[data-timer-elapsed]')
+  // The band under the crumbs says the same thing where the page is read
+  // (the ezacto-ui timer bar), and is only there while a timer runs.
+  const band = document.querySelector<HTMLElement>('[data-timer-band]')
+  const bandElapsed = band?.querySelector<HTMLElement>('[data-timer-band-elapsed]') ?? null
   if (timerInterval !== undefined) globalThis.clearInterval(timerInterval)
   if (running === null) {
     chip.dataset.state = 'stopped'
     label.textContent = 'Start timer'
-    // The idle placeholder sits in the same column of numbers as the totals, so
-    // it follows the setting too: a hardcoded 0:00 beside a 2.25 row total is
-    // the same mismatch, just at zero.
-    elapsed.textContent = formatSeconds(0)
+    // The idle placeholder is the clock at zero where the organization reads
+    // hours and minutes, and the setting's own zero on a decimal account: a
+    // hardcoded 0:00:00 beside a 2.25 row total is a mismatch, just at zero.
+    elapsed.textContent = activeTimeFormat === 'decimal' ? formatSeconds(0) : formatElapsed(0)
+    if (band !== null) band.hidden = true
     return
   }
   chip.dataset.state = 'running'
   label.textContent = `${running.project_label} / ${running.task_label}`
+  if (band !== null) {
+    band.querySelector<HTMLElement>('[data-timer-band-project]')!.textContent = running.project_label
+    band.querySelector<HTMLElement>('[data-timer-band-task]')!.textContent = running.task_label
+    band.hidden = false
+  }
   const update = (): void => {
-    elapsed.textContent = formatSeconds(runningElapsedSeconds(running))
+    const clock = formatElapsed(runningElapsedSeconds(running))
+    elapsed.textContent = clock
+    if (bandElapsed !== null) bandElapsed.textContent = clock
   }
   update()
   timerInterval = globalThis.setInterval(update, 1_000)
@@ -5165,6 +5190,11 @@ export const mountShell = async (
       timer: false,
       minimumNoteLength: option?.minimum_note_length ?? 0,
     })
+  })
+  // The band's Stop stops the timer it names, as the row's Stop does.
+  document.querySelector<HTMLButtonElement>('[data-timer-band-stop]')?.addEventListener('click', () => {
+    if (snapshot?.running === null || snapshot?.running === undefined) return
+    void stopRowTimer(snapshot.running.id)
   })
   required<HTMLButtonElement>('[data-timer-chip]').addEventListener('click', () => {
     if (currentIdentity === null || snapshot === null) return

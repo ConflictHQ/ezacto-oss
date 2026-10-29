@@ -227,6 +227,15 @@ const renderTabStrip = (options: AppShellOptions): string => {
     `${iconMarkup('bell')}` +
     `<span class="crumbs-bell-count" data-notifications-count hidden></span>` +
     `</a>` +
+    `</div>` +
+    // The running timer's band under the crumbs (the ezacto-ui timer bar):
+    // the project, the task, the clock and Stop, shown only while one runs.
+    `<div class="timer-band" data-timer-band hidden>` +
+    `<span class="timer-band-dot" aria-hidden="true"></span>` +
+    `<strong class="timer-band-project" data-timer-band-project></strong>` +
+    `<span class="timer-band-task" data-timer-band-task></span>` +
+    `<span class="timer-band-time" data-timer-band-elapsed>0:00:00</span>` +
+    `<button type="button" class="timer-band-stop" data-timer-band-stop>Stop</button>` +
     `</div>`
   // A section that declares no tabs gets no strip, rather than an empty bar.
   if (options.tabs === undefined || options.tabs.length === 0) return crumbs
