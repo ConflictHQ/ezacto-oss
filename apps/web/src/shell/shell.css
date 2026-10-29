@@ -4032,10 +4032,12 @@ html[data-time-view='calendar'] [data-time-views] {
 }
 .notif-icon[data-tone='blue'] {
   background: var(--ez-orange-tint);
-  color: var(--ez-action);
+  color: var(--ez-data);
 }
+/* The green tile is the paid band's pairing (see theme-contrast.test.ts):
+   `live_text` on `status_bg`, the one green-on-tint pair the gate certifies. */
 .notif-icon[data-tone='green'] {
-  background: color-mix(in srgb, var(--ez-live) 12%, var(--ez-ground));
+  background: var(--ez-status-bg);
   color: var(--ez-live-text);
 }
 .notif-icon[data-tone='amber'] {
@@ -4087,7 +4089,7 @@ html[data-time-view='calendar'] [data-time-views] {
   border: 0;
   border-radius: 6px;
   background: none;
-  color: var(--ez-action);
+  color: var(--ez-data);
   font-size: 12px;
   font-weight: 600;
   cursor: pointer;
@@ -6110,7 +6112,7 @@ button[data-auth-action]:disabled {
   padding: 0;
   border: 0;
   background: none;
-  color: var(--ez-action);
+  color: var(--ez-data);
   font-size: 13px;
   font-weight: 500;
   cursor: pointer;
@@ -6306,12 +6308,23 @@ html[data-time-view='calendar'] .week-grid-foot {
   color: var(--ez-data);
 }
 
-/* The row label is a sticky header cell in a dense grid, so Start sits inline
-   with the task and appears on hover or focus rather than adding a control to
-   every row at rest. Keyboard reaches it the same way: focus-within. */
+/* The row label is a sticky header cell in a dense grid, so Start sits at the
+   cell's right edge, centred on the row, and appears on hover or focus rather
+   than adding a control to every row at rest. It is taken out of the flow:
+   the name and the task are blocks, so an inline button fell to a third line
+   and made every row that could start a timer taller than the reference's
+   two-line row, hidden or not. The cell keeps room for it on the right so a
+   long name ellipsizes before the button rather than under it. Keyboard
+   reaches it the same way: focus-within. */
+.week-grid-table tbody th:has(.grid-row-start) {
+  padding-right: 80px;
+}
 .grid-row-start {
+  position: absolute;
+  top: 50%;
+  right: 16px;
   min-height: 28px;
-  margin-left: 8px;
+  translate: 0 -50%;
   padding: 0 10px;
   border: 1px solid var(--ez-border);
   border-radius: var(--ez-radius);
@@ -6356,7 +6369,7 @@ html[data-time-view='calendar'] .week-grid-foot {
   white-space: nowrap;
 }
 .week-grid-table thead th {
-  height: 48px;
+  height: 56px;
   padding: 0 8px;
   background: var(--ez-ground);
   color: var(--ez-muted);
@@ -6413,7 +6426,7 @@ html[data-time-view='calendar'] .week-grid-foot {
    the name. The hue is the project's own, set on the row; the lightness is
    fixed so the letters read on every hue. */
 .week-grid-table tbody th[data-mark] {
-  padding-left: 62px;
+  padding-left: 65px;
 }
 .week-grid-table tbody th[data-mark]::before,
 .day-row-label[data-mark]::before {
@@ -6422,14 +6435,14 @@ html[data-time-view='calendar'] .week-grid-foot {
   top: 50%;
   left: 24px;
   display: grid;
-  width: 28px;
-  height: 28px;
+  width: 30px;
+  height: 30px;
   place-items: center;
   translate: 0 -50%;
-  border-radius: 7px;
+  border-radius: 8px;
   background: hsl(var(--mark-hue) 58% 40%);
   color: var(--ez-action-fg);
-  font: 700 10px/1 var(--ez-font-body), sans-serif;
+  font: 700 11px/1 var(--ez-font-body), sans-serif;
   letter-spacing: 0.01em;
 }
 .week-grid-table tbody th strong {
@@ -6469,6 +6482,12 @@ html[data-time-view='calendar'] .week-grid-foot {
   min-width: 112px;
   padding: 0;
 }
+/* A row is the reference's: a 30px mark with 12px above and below it, so a
+   38px box sits in 8px of air on each side. */
+.week-grid-table tbody th,
+.week-grid-table tbody td {
+  height: 54px;
+}
 .week-grid-table tbody tr:last-child th,
 .week-grid-table tbody tr:last-child td {
   border-bottom: 0;
@@ -6505,6 +6524,12 @@ html[data-time-view='calendar'] .week-grid-foot {
 .week-grid-table tfoot td:last-child {
   color: var(--ez-data);
 }
+/* A sum of nothing is set in the placeholder's grey, as the reference greys
+   its empty totals: the figures that carry time are the ones that read. */
+.week-grid-table .row-total[data-zero],
+.week-grid-table tfoot td[data-zero] {
+  color: color-mix(in srgb, var(--ez-muted) 45%, var(--ez-ground));
+}
 .week-grid-table .grid-empty {
   padding: 24px 20px;
   color: var(--ez-muted);
@@ -6520,10 +6545,60 @@ html[data-time-view='calendar'] .week-grid-foot {
   background: transparent;
 }
 /* Today's column, marked its full height: a tinted column reads at a glance
-   without adding a line to a table whose whole discipline is hairlines. */
-.week-grid-table td[data-today],
-.week-grid-table th[data-today] {
+   without adding a line to a table whose whole discipline is hairlines. The
+   heading keeps the white ground and says it in the blue, as the reference. */
+.week-grid-table tbody td[data-today] {
   background: var(--ez-surface);
+}
+/* In the week grid the box stands centred under its heading, as the
+   reference draws it, and the pencil waits inside the box's right edge
+   rather than in a column of its own that pushed every box off centre. The
+   caption lines (saving, saved, a note wanted) take no room until they have
+   something to say, so a quiet row is the reference's 54px. */
+.week-grid-table .week-cell {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  min-height: 0;
+  padding: 8px 4px;
+}
+.week-grid-table .week-cell input {
+  width: 78px;
+  max-width: 100%;
+}
+.week-grid-table .week-cell .cell-note {
+  position: absolute;
+  top: 12px;
+  left: calc(50% + 15px);
+  width: 20px;
+  height: 30px;
+}
+.week-grid-table .cell-status:empty {
+  display: none;
+}
+.week-grid-table .cell-status,
+.week-grid-table .cell-lock-reason {
+  margin-top: 2px;
+  text-align: center;
+}
+/* A locked cell is the reference's disabled one: the figure alone, no box,
+   set in the muted grey. The reason stays in the field's title and behind the
+   mark that opens the entry to be read; Day view still prints it in full. */
+.week-grid-table .week-cell[data-cell-state='locked'] input {
+  border-color: transparent;
+  background: transparent;
+}
+.week-grid-table .week-cell[data-cell-state='locked'] .cell-status,
+.week-grid-table .week-cell[data-cell-state='locked'] .cell-lock-reason {
+  display: none;
+}
+/* The mark on a locked cell says "locked", not "has a note", so it waits for
+   the row's hover like the pencil does; a cell with a note of its own keeps
+   its mark at rest, as the rule above says. */
+.week-grid-table .week-cell[data-cell-state='locked'] .cell-note {
+  opacity: 0;
+  transition: opacity 0.12s;
 }
 
 /* A cell is the reference's box: a rounded field the hours sit in the middle
@@ -6604,7 +6679,7 @@ html[data-time-view='calendar'] .week-grid-foot {
     padding: 0 8px;
   }
   .week-grid-table .week-cell {
-    padding: 2px 2px 0;
+    padding: 8px 2px;
   }
   .week-grid-table .week-cell input {
     padding: 0 5px;
@@ -6706,8 +6781,15 @@ html[data-time-view='calendar'] .week-grid-foot {
   html[data-time-view='day'] .week-period {
     display: none;
   }
-  /* The reference week bar opens with the calendar's 64px ruler column in
-     both views, so Monday never sits flush against the page edge. */
+  /* The reference shows the week bar only beside a single day: in Week view
+     the grid's own header names the days and its total row carries the
+     sums, so the bar would say everything twice. The phone keeps it, where
+     it is the way to pick the day the list below shows. */
+  html[data-time-view='week'] .day-strip {
+    display: none;
+  }
+  /* The reference week bar opens with the calendar's 64px ruler column, so
+     Monday never sits flush against the page edge. */
   .day-strip::before {
     content: '';
     flex: none;
@@ -7307,7 +7389,7 @@ dialog textarea {
   border: 0;
   border-radius: 0;
   background: transparent;
-  color: var(--ez-action);
+  color: var(--ez-data);
   font-size: 14px;
   font-weight: 500;
   appearance: none;

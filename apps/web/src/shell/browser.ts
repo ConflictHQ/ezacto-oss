@@ -589,7 +589,9 @@ const cellInput = (
   input.dataset.view = view
   input.value = state?.rawValue ?? input.dataset.savedValue
   input.ariaLabel = `${dayLabel(cell.date)} hours`
-  input.placeholder = '0'
+  // The empty box shows the shape of what goes in it, in the account's own
+  // format: the reference grid's "0:00", or "0" on a decimal account.
+  input.placeholder = organizationTimeFormat === 'decimal' ? '0' : '0:00'
   if (state?.state === 'invalid') input.setAttribute('aria-invalid', 'true')
   const mode = modeForEntryDraft(cell.entries[0] ?? null, organizationMode)
   input.disabled = cell.isLocked || cell.isRunning || mode === 'start_end'
@@ -846,7 +848,7 @@ const renderDesktopGrid = (grid: WeekGrid, handlers: GridHandlers, today: string
   const heading = document.createElement('tr')
   const projectHeading = document.createElement('th')
   projectHeading.scope = 'col'
-  projectHeading.textContent = 'Project / task'
+  projectHeading.textContent = 'Project'
   heading.append(projectHeading)
   // Which column is today is the first thing you look for in a week grid, and
   // nothing said. The cells carry it too, so the marker runs the column's
@@ -981,6 +983,9 @@ const renderDesktopGrid = (grid: WeekGrid, handlers: GridHandlers, today: string
         const total = document.createElement('td')
         total.className = 'row-total'
         total.textContent = formatSeconds(row.totalSeconds)
+        // A zero total is set quiet, as the reference greys its empty sums,
+        // so the figures that carry time are the ones the eye lands on.
+        if (row.totalSeconds === 0) total.dataset.zero = ''
         tr.append(total)
         return tr
       }),
@@ -991,11 +996,12 @@ const renderDesktopGrid = (grid: WeekGrid, handlers: GridHandlers, today: string
   const totalRow = document.createElement('tr')
   const totalLabel = document.createElement('th')
   totalLabel.scope = 'row'
-  totalLabel.textContent = 'Total'
+  totalLabel.textContent = 'Week total'
   totalRow.append(totalLabel)
   for (const seconds of grid.dayTotals) {
     const td = document.createElement('td')
     td.textContent = formatSeconds(seconds)
+    if (seconds === 0) td.dataset.zero = ''
     totalRow.append(td)
   }
   const grandTotal = document.createElement('td')

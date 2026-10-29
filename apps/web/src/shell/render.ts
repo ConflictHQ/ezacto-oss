@@ -872,7 +872,7 @@ ${instancePalette ? `  <link rel="stylesheet" href="${INSTANCE_THEME_STYLESHEET_
       </div>
       <div class="week-grid-wrap" data-week-grid data-view="desktop">
         <table class="week-grid-table">
-          <thead data-week-grid-head><tr><th>Project / task</th><th colspan="8">Loading week…</th></tr></thead>
+          <thead data-week-grid-head><tr><th>Project</th><th colspan="8">Loading week…</th></tr></thead>
           <tbody data-week-grid-rows><tr><td colspan="9">Loading time entries…</td></tr></tbody>
           <tfoot data-week-grid-totals></tfoot>
         </table>

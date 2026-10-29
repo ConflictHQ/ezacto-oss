@@ -55,6 +55,13 @@ const liveTextRules: readonly {
     foreground: 'live_text',
     background: 'status_bg',
   },
+  // The notifications list's green tile paints `background: var(--ez-status-bg)`,
+  // the paid band's pairing, and sets its icon in the same words-green.
+  {
+    selector: ".notif-icon[data-tone='green']",
+    foreground: 'live_text',
+    background: 'status_bg',
+  },
   // `.week-cell` paints `background: var(--ez-ground)`.
   {
     selector: '.week-cell[data-cell-state="running"] .cell-status',
