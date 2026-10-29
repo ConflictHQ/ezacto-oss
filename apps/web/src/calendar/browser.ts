@@ -1,91 +1,167 @@
+import { formatDuration } from '../week-grid/model.js'
 import {
-  calendarAxisLabel,
-  calendarWeek,
+  calendarMonth,
+  monthLabel,
+  weekdayHeadings,
   type CalendarEntry,
-  type TimeEntryMode,
+  type WeekStartDay,
 } from './model.js'
 
-export interface CalendarController {
-  render(
-    dates: readonly string[],
-    entries: readonly CalendarEntry[],
-    mode: TimeEntryMode,
-  ): void
+/**
+ * The month as the ezacto-ui calendar draws it: a band naming the month with
+ * its total at the right, and under it a grid of weeks, a cell a day with the
+ * day's number and a chip an entry ("Project · 4:20"), today's number on a
+ * blue disc, the neighbouring months' days greyed. A chip opens its entry; a
+ * chip too narrow to read says the whole of it in a tip on hover or focus.
+ */
+
+export interface CalendarEntryDisplay extends CalendarEntry {
+  readonly project_label: string
+  readonly task_label: string
 }
 
-const formatHours = (seconds: number): string => {
-  const hours = seconds / 3_600
-  return `${Number.isInteger(hours) ? hours : hours.toFixed(2)} h`
+export interface CalendarRenderOptions<E extends CalendarEntryDisplay> {
+  readonly timeFormat: 'decimal' | 'hours_minutes'
+  readonly weekStartDay: WeekStartDay
+  readonly today: string
+  /** A chip was chosen: open its entry. */
+  readonly open?: (entry: E) => void
 }
+
+export interface CalendarController {
+  /** The month that holds `within`, drawn from the entries given. */
+  render<E extends CalendarEntryDisplay>(
+    within: string,
+    entries: readonly E[],
+    options: CalendarRenderOptions<E>,
+  ): void
+  /** Between months: the band keeps its place and says the grid is on its way. */
+  loading(within: string): void
+  failed(message: string): void
+}
+
+const element = <K extends keyof HTMLElementTagNameMap>(
+  tag: K,
+  className: string,
+  text?: string,
+): HTMLElementTagNameMap[K] => {
+  const node = document.createElement(tag)
+  node.className = className
+  if (text !== undefined) node.textContent = text
+  return node
+}
+
+const dayNumber = (date: string): string => String(Number(date.slice(8, 10)))
 
 export const createCalendarController = (): CalendarController => {
   const panel = document.querySelector<HTMLElement>('[data-calendar-week]')
-  if (panel === null) return { render: () => {} }
+  if (panel === null) return { render: () => {}, loading: () => {}, failed: () => {} }
   const grid = panel.querySelector<HTMLElement>('[data-calendar-grid]')!
   const status = panel.querySelector<HTMLElement>('[data-calendar-status]')!
 
+  const band = (within: string, total: string | null): HTMLElement => {
+    const row = element('div', 'cal-band')
+    row.dataset.calendarBand = ''
+    row.append(element('p', 'cal-band-title', `${monthLabel(within)} · logged time`))
+    const sum = element('div', 'cal-band-total')
+    sum.append(element('span', 'cal-band-total-label', 'Month total'))
+    const figure = element('strong', 'cal-band-total-figure', total ?? '—')
+    figure.dataset.calendarMonthTotal = ''
+    sum.append(figure)
+    row.append(sum)
+    return row
+  }
+
   return {
-    render(dates, entries, mode) {
-      const days = calendarWeek(dates, entries, mode)
-      const table = document.createElement('table')
-      table.className = 'calendar-table'
-      const caption = document.createElement('caption')
-      // The axis is not the same thing in both modes, so it is labelled rather
-      // than left for the reader to assume.
-      caption.textContent = `${calendarAxisLabel(mode)} — ${dates[0] ?? ''} to ${dates.at(-1) ?? ''}`
-      table.append(caption)
+    loading(within) {
+      grid.replaceChildren(band(within, null))
+      status.textContent = 'Loading calendar…'
+    },
+    failed(message) {
+      status.textContent = message
+    },
+    render(within, entries, options) {
+      const month = calendarMonth(within, options.weekStartDay, entries)
+      const surface = element('div', 'cal-month')
+      surface.dataset.calendarMonth = month.monthStart
+      surface.setAttribute('role', 'grid')
+      surface.setAttribute('aria-label', monthLabel(within))
 
-      const head = document.createElement('thead')
-      const headRow = document.createElement('tr')
-      for (const day of days) {
-        const cell = document.createElement('th')
-        cell.scope = 'col'
-        cell.textContent = day.date
-        headRow.append(cell)
+      // One tip for the whole grid, moved to whichever chip is under the
+      // pointer or has focus: above it, inside the grid's edges.
+      const tip = element('div', 'cal-tip')
+      tip.setAttribute('role', 'tooltip')
+      tip.dataset.calendarTip = ''
+      tip.hidden = true
+      const showTip = (chip: HTMLElement, text: string): void => {
+        tip.textContent = text
+        tip.hidden = false
+        const box = surface.getBoundingClientRect()
+        const chipBox = chip.getBoundingClientRect()
+        const width = tip.offsetWidth
+        const left = Math.max(
+          0,
+          Math.min(box.width - width, chipBox.left - box.left + (chipBox.width - width) / 2),
+        )
+        const above = chipBox.top - box.top - tip.offsetHeight - 6
+        tip.style.left = `${Math.round(left)}px`
+        tip.style.top = `${Math.round(above < 0 ? chipBox.bottom - box.top + 6 : above)}px`
       }
-      head.append(headRow)
-      table.append(head)
+      const hideTip = (): void => {
+        tip.hidden = true
+      }
 
-      const body = document.createElement('tbody')
-      const bodyRow = document.createElement('tr')
-      for (const day of days) {
-        const cell = document.createElement('td')
-        cell.dataset.calendarDay = day.date
-        const column = document.createElement('div')
-        column.className = 'calendar-column'
-        for (const block of day.blocks) {
-          const element = document.createElement('div')
-          element.className = 'calendar-block'
-          element.dataset.calendarBlock = String(block.id)
-          // Minutes drive the height directly, so a two-hour block is twice a
-          // one-hour block in either mode. Only the origin differs.
-          element.style.setProperty('--calendar-offset', String(block.offsetMinutes))
-          element.style.setProperty('--calendar-minutes', String(block.minutes))
-          element.textContent =
-            block.startedTime === null
-              ? formatHours(block.seconds)
-              : `${block.startedTime} · ${formatHours(block.seconds)}`
-          column.append(element)
-        }
-        cell.append(column)
-        if (day.unplaced.length > 0) {
-          // Named rather than silently folded in: these are hours worked that
-          // the clock axis cannot show, and a day that hides them reads short.
-          const untimed = document.createElement('p')
-          untimed.className = 'calendar-untimed'
-          untimed.dataset.calendarUntimed = day.date
-          untimed.textContent = `${day.unplaced.length} untimed`
-          cell.append(untimed)
-        }
-        const total = document.createElement('p')
-        total.className = 'calendar-total'
-        total.textContent = formatHours(day.totalSeconds)
-        cell.append(total)
-        bodyRow.append(cell)
+      const head = element('div', 'cal-month-head')
+      head.setAttribute('role', 'row')
+      for (const heading of weekdayHeadings(options.weekStartDay)) {
+        const cell = element('div', 'cal-month-heading', heading)
+        cell.setAttribute('role', 'columnheader')
+        head.append(cell)
       }
-      body.append(bodyRow)
-      table.append(body)
-      grid.replaceChildren(table)
+      surface.append(head)
+
+      for (const week of month.weeks) {
+        const row = element('div', 'cal-month-week')
+        row.setAttribute('role', 'row')
+        for (const day of week) {
+          const cell = element('div', 'cal-cell')
+          cell.setAttribute('role', 'gridcell')
+          cell.dataset.calendarDay = day.date
+          if (!day.inMonth) cell.dataset.outside = ''
+          if (day.date === options.today) cell.dataset.today = ''
+          cell.setAttribute('aria-label', day.date)
+          cell.append(element('span', 'cal-day-num', dayNumber(day.date)))
+          for (const entry of day.entries) {
+            const duration = formatDuration(entry.seconds, options.timeFormat)
+            const chip = element('button', 'cal-entry')
+            chip.type = 'button'
+            chip.dataset.calendarEntry = String(entry.id)
+            if (entry.is_running === true) chip.dataset.running = ''
+            chip.append(document.createTextNode(`${entry.project_label} · `))
+            chip.append(element('span', 'cal-entry-time', duration))
+            chip.setAttribute(
+              'aria-label',
+              `${entry.project_label} / ${entry.task_label}, ${duration} on ${day.date}`,
+            )
+            const description = `${entry.project_label} / ${entry.task_label}\n${duration}`
+            const show = (): void => showTip(chip, description)
+            chip.addEventListener('pointerenter', show)
+            chip.addEventListener('focus', show)
+            chip.addEventListener('pointerleave', hideTip)
+            chip.addEventListener('blur', hideTip)
+            chip.addEventListener('click', () => options.open?.(entry))
+            cell.append(chip)
+          }
+          row.append(cell)
+        }
+        surface.append(row)
+      }
+      surface.append(tip)
+
+      grid.replaceChildren(
+        band(within, formatDuration(month.totalSeconds, options.timeFormat)),
+        surface,
+      )
       status.textContent = ''
     },
   }

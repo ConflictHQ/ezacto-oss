@@ -1,108 +1,66 @@
 import { describe, expect, it } from 'vitest'
 import {
-  calendarAxisLabel,
-  calendarWeek,
+  calendarMonth,
+  calendarMonthRange,
+  monthEnd,
+  monthLabel,
+  monthStart,
+  weekdayHeadings,
   type CalendarEntry,
 } from '../src/calendar/model.js'
 
 const entry = (overrides: Partial<CalendarEntry> = {}): CalendarEntry => ({
   id: 1,
-  spent_date: '2026-09-07',
+  spent_date: '2026-09-15',
   seconds: 3_600,
-  started_time: null,
-  ended_time: null,
-  notes: null,
   project_id: 1,
   task_id: 1,
   ...overrides,
 })
 
-const week = ['2026-09-07', '2026-09-08']
+describe('calendar month', () => {
+  it('[unit] names the month and finds its ends from any day in it', () => {
+    expect(monthStart('2026-09-15')).toBe('2026-09-01')
+    expect(monthEnd('2026-09-15')).toBe('2026-09-30')
+    expect(monthEnd('2028-02-10')).toBe('2028-02-29')
+    expect(monthLabel('2026-09-15')).toBe('September 2026')
+    expect(() => monthStart('2026-02-30')).toThrow('invalid calendar date')
+  })
 
-describe('calendar placement', () => {
-  it('[unit] stacks duration entries without inventing a time of day', () => {
-    // The account this was written for has 30,684 entries and not one start
-    // time. Drawing the first at 09:00 because it was logged first would be a
-    // claim about someone's morning that nobody made.
-    const days = calendarWeek(
-      week,
-      [
-        entry({ id: 1, seconds: 7_200 }),
-        entry({ id: 2, seconds: 1_800 }),
-        entry({ id: 3, spent_date: '2026-09-08', seconds: 3_600 }),
-      ],
-      'duration',
-    )
+  it('[unit] draws the month in whole weeks, on the organization\'s week start', () => {
+    // September 2026 starts on a Tuesday and ends on a Wednesday: a Monday
+    // week runs from 31 Aug to 4 Oct, a Sunday week from 30 Aug to 3 Oct.
+    expect(calendarMonthRange('2026-09-15', 'monday')).toEqual({
+      from: '2026-08-31',
+      to: '2026-10-04',
+    })
+    expect(calendarMonthRange('2026-09-15', 'sunday')).toEqual({
+      from: '2026-08-30',
+      to: '2026-10-03',
+    })
+    expect(weekdayHeadings('monday')).toEqual(['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'])
+    expect(weekdayHeadings('sunday')[0]).toBe('Sun')
+    expect(weekdayHeadings('saturday')[0]).toBe('Sat')
+  })
 
-    expect(days[0]!.blocks).toEqual([
-      { id: 1, offsetMinutes: 0, minutes: 120, startedTime: null, seconds: 7_200 },
-      { id: 2, offsetMinutes: 120, minutes: 30, startedTime: null, seconds: 1_800 },
+  it('[unit] files each entry under its day and totals the month by its own days only', () => {
+    const month = calendarMonth('2026-09-15', 'monday', [
+      entry({ id: 1, spent_date: '2026-09-15', seconds: 7_200 }),
+      entry({ id: 2, spent_date: '2026-09-15', seconds: 1_800 }),
+      entry({ id: 3, spent_date: '2026-09-01', seconds: 600 }),
+      // On the grid, but August's: shown in its greyed cell, not in the total.
+      entry({ id: 4, spent_date: '2026-08-31', seconds: 36_000 }),
+      // Off the grid altogether: a generous fetch is allowed, and ignored.
+      entry({ id: 5, spent_date: '2026-10-20', seconds: 36_000 }),
     ])
-    expect(days[0]!.totalSeconds).toBe(9_000)
-    expect(days[1]!.blocks).toHaveLength(1)
-    // Nothing is unplaceable in duration mode: every entry has a length.
-    expect(days[0]!.unplaced).toEqual([])
-  })
-
-  it('[unit] places start/end entries on the clock, in clock order', () => {
-    const days = calendarWeek(
-      week,
-      [
-        entry({ id: 2, started_time: '13:30', ended_time: '14:00', seconds: 1_800 }),
-        entry({ id: 1, started_time: '09:00', ended_time: '11:00', seconds: 7_200 }),
-      ],
-      'start_end',
-    )
-
-    // Filed in one order, drawn in another: the axis is the clock, so the
-    // afternoon is below the morning whatever order they were entered.
-    expect(days[0]!.blocks.map((block) => block.id)).toEqual([1, 2])
-    expect(days[0]!.blocks[0]).toMatchObject({ offsetMinutes: 540, minutes: 120 })
-    expect(days[0]!.blocks[1]).toMatchObject({ offsetMinutes: 810, minutes: 30 })
-  })
-
-  it('[unit] lists a timeless entry beside the day rather than dropping it', () => {
-    // In an organization that records clock times, an entry without one cannot
-    // be placed. Dropping it would make a worked day read as unworked.
-    const days = calendarWeek(week, [entry({ id: 5, seconds: 3_600 })], 'start_end')
-
-    expect(days[0]!.blocks).toEqual([])
-    expect(days[0]!.unplaced.map((row) => row.id)).toEqual([5])
-    // It still counts toward the day, because the hours were worked.
-    expect(days[0]!.totalSeconds).toBe(3_600)
-  })
-
-  it('[unit] clamps an entry that ends before it starts to the end of its day', () => {
-    // A night shift crossing midnight. A block of negative height is not a
-    // drawing, and moving it to the next day would file it against a date
-    // nobody chose.
-    const days = calendarWeek(
-      week,
-      [entry({ id: 9, started_time: '23:00', ended_time: '02:00', seconds: 10_800 })],
-      'start_end',
-    )
-
-    expect(days[0]!.blocks[0]).toMatchObject({ offsetMinutes: 1_380, minutes: 60 })
-    expect(days[0]!.blocks[0]!.minutes).toBeGreaterThan(0)
-  })
-
-  it('[unit] totals a day by each entry in full, overlapping intervals included', () => {
-    // Issue 943: a duration organization holds intervals beside its durations,
-    // and two clients in the same hour is a real day. 09:00-11:00 and
-    // 10:00-12:00 beside an hour logged as a duration is five hours of work
-    // over a three-hour span, and the day says five in either mode.
-    const mixed = [
-      entry({ id: 1, seconds: 3_600 }),
-      entry({ id: 2, started_time: '09:00', ended_time: '11:00', seconds: 7_200 }),
-      entry({ id: 3, started_time: '10:00', ended_time: '12:00', seconds: 7_200 }),
-    ]
-    for (const mode of ['duration', 'start_end'] as const) {
-      expect(calendarWeek(week, mixed, mode)[0]!.totalSeconds).toBe(18_000)
-    }
-  })
-
-  it('[unit] says what the axis measures, because it is not the same in both modes', () => {
-    expect(calendarAxisLabel('start_end')).toBe('Time of day')
-    expect(calendarAxisLabel('duration')).toBe('Hours worked')
+    expect(month.monthStart).toBe('2026-09-01')
+    expect(month.weeks).toHaveLength(5)
+    expect(month.weeks[0]![0]).toMatchObject({ date: '2026-08-31', inMonth: false, totalSeconds: 36_000 })
+    expect(month.weeks[0]![1]).toMatchObject({ date: '2026-09-01', inMonth: true, totalSeconds: 600 })
+    const fifteenth = month.weeks.flat().find((cell) => cell.date === '2026-09-15')!
+    expect(fifteenth.entries.map((item) => item.id)).toEqual([1, 2])
+    expect(fifteenth.totalSeconds).toBe(9_000)
+    expect(month.weeks.at(-1)!.at(-1)!).toMatchObject({ date: '2026-10-04', inMonth: false })
+    expect(month.totalSeconds).toBe(9_600)
   })
 })

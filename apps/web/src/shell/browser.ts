@@ -65,13 +65,14 @@ import {
   type EntryEditorContext,
   type TimeEntryMode,
 } from '../components/time-entry-editor.js'
-import { createPeriodControl, isCalendarDay } from '../components/period.js'
+import { createPeriodControl, isCalendarDay, periodRange } from '../components/period.js'
 import { createClientDirectoryController } from '../clients/browser.js'
 import { createProjectDirectoryController } from '../projects/browser.js'
 import { createActivityController } from '../activity/browser.js'
 import { createNotificationsController } from '../notifications/browser.js'
 import { createDeliveriesController } from '../deliveries/browser.js'
 import { createCalendarController } from '../calendar/browser.js'
+import { calendarMonthRange, monthStart } from '../calendar/model.js'
 import { createDashboardController } from '../dashboard/browser.js'
 import { createReportsController } from '../reports/browser.js'
 import { canReadFinancialReports } from '../reports/model.js'
@@ -125,6 +126,7 @@ import {
 } from '../week-grid/model.js'
 import { canManageTeammateTime, canProfileUseApiScope, isApiScope } from '@ezacto/core'
 import {
+  displayEntries,
   canBrowseDirectories,
   commandShortcutModifier,
   createSameOriginShellApi,
@@ -1760,12 +1762,15 @@ export const mountShell = async (
    * the one screen where the period was already navigation rather than a filter
    * waiting on a button.
    */
+  // The calendar is a month (the ezacto-ui Month view), so its toolbar steps
+  // months and names one, "October 2026"; the timesheets step weeks.
+  const isCalendarView = (): boolean => document.documentElement.dataset.timeView === 'calendar'
   const weekPeriod = createPeriodControl({
-    label: 'Week',
-    kinds: ['week'],
+    label: isCalendarView() ? 'Month' : 'Week',
+    kinds: isCalendarView() ? ['month'] : ['week'],
     // The ezacto-ui toolbar: the week by its days, "Today" as the link beside
     // it, and the dates themselves the way to any other week.
-    summary: 'days',
+    summary: isCalendarView() ? 'compact' : 'days',
     jump: true,
     today: localDate,
     onChange: (range) => {
@@ -1773,6 +1778,12 @@ export const mountShell = async (
     },
   })
   required<HTMLElement>('[data-week-period]').appendChild(weekPeriod.element)
+  /** The control shows the month on the calendar and the week elsewhere, both around `within`. */
+  const syncWeekPeriod = (): void => {
+    weekPeriod.setRange(
+      isCalendarView() ? periodRange('month', within) : weekRange(within, weekStartDay),
+    )
+  }
   let supplementalRows: WeekRowSeed[] = []
   let selectedDay = Math.max(0, weekDates(within, weekStartDay).indexOf(localDate()))
   let snapshot: ShellSnapshot | null = null
@@ -2139,7 +2150,7 @@ export const mountShell = async (
     required<HTMLButtonElement>('[data-timer-chip]').dataset.state = 'signed-out'
     required<HTMLElement>('[data-timer-label]').textContent = 'Sign in required'
     required<HTMLElement>('[data-timer-elapsed]').textContent = '—'
-    weekPeriod.setRange(weekRange(within, weekStartDay))
+    syncWeekPeriod()
     required<HTMLElement>('[data-week-total]').textContent = '—'
     const unavailable = document.createElement('tr')
     const cell = document.createElement('td')
@@ -2159,7 +2170,7 @@ export const mountShell = async (
     snapshot = null
     grid = null
     cellStates.clear()
-    weekPeriod.setRange(weekRange(within, weekStartDay))
+    syncWeekPeriod()
     required<HTMLElement>('[data-week-total]').textContent = '—'
     const unavailable = document.createElement('tr')
     const cell = document.createElement('td')
@@ -3453,7 +3464,7 @@ export const mountShell = async (
     grid = buildWeekGrid(snapshot, within, supplementalRows)
     // Off the grid's own dates rather than recomputed: a label that disagreed
     // with the columns beneath it is the failure this control exists to end.
-    weekPeriod.setRange({ from: grid.dates[0]!, to: grid.dates.at(-1)! })
+    syncWeekPeriod()
     required<HTMLElement>('[data-week-total]').textContent = formatSeconds(grid.totalSeconds)
     const handlers: GridHandlers = {
       cellStates,
@@ -3472,9 +3483,6 @@ export const mountShell = async (
         ? {}
         : { restart: restartEntry }),
     }
-    // The same data the grid draws, laid out on whichever axis the
-    // organization's tracking mode makes true.
-    calendar.render(grid.dates, snapshot.entries, snapshot.timeEntrySettings.time_entry_mode)
     // The server's today, as near as the shell can get: the person's own zone,
     // then the organization's where the session can read it (the lock policy
     // is an administrator's), then the browser's clock. The browser's clock
@@ -3492,10 +3500,17 @@ export const mountShell = async (
       'data-on-today',
       document.documentElement.dataset.timeView === 'day'
         ? grid.dates[selectedDay] === today
-        : grid.dates.includes(today),
+        : isCalendarView()
+          ? // `today` can be empty while the zones that decide it are still
+            // unknown; an empty day is in no month rather than an error.
+            isCalendarDay(today) && monthStart(within) === monthStart(today)
+          : grid.dates.includes(today),
     )
     renderDesktopGrid(grid, handlers, today)
     renderPhoneDay(grid, selectedDay, handlers)
+    // The calendar is the month around the same date, drawn from its own
+    // fetch: a month is more than the week the grid holds.
+    if (isCalendarView()) loadMonth(today)
     renderTimer(snapshot.running)
     updateRowOptions()
     renderApprovalNavigation()
@@ -3615,6 +3630,76 @@ export const mountShell = async (
     }
   }
 
+  /**
+   * A calendar card opens its entry, as a cell's mark does on the grid: the
+   * same editor, with the same lock message said on arrival, and a teammate's
+   * entry written as theirs (issue 917).
+   */
+  const openCalendarEntry = (entry: DisplayTimeEntry): void => {
+    if (currentIdentity === null || snapshot === null) return
+    configureEntryEditor(
+      {
+        context: 'edit',
+        entry,
+        projectId: entry.project_id,
+        taskId: entry.task_id,
+        spentDate: entry.spent_date,
+        seconds: entry.seconds,
+        notes: entry.notes ?? null,
+        mode: modeForEntryDraft(entry, snapshot.timeEntrySettings.time_entry_mode),
+        timer: false,
+        minimumNoteLength: entry.minimum_note_length,
+        ...(viewedPerson === null
+          ? {}
+          : {
+              owner: {
+                userId: viewedPerson.id,
+                options: snapshot.catalog.timeEntryOptions,
+              },
+            }),
+      },
+      entry.is_locked === true
+        ? `This entry cannot be changed: ${entry.locked_reason ?? 'it is locked'}.`
+        : '',
+    )
+  }
+
+  /**
+   * The month on the calendar, fetched for its own range: whole weeks around
+   * the month `within` falls in. Fetched once per month and person, and again
+   * after the week reloads, which is how a save or a timer reaches it.
+   */
+  let monthShown = ''
+  const loadMonth = (today: string): void => {
+    const operation = sessionOperation()
+    if (operation === null || operation.userId === null || snapshot === null) return
+    const range = calendarMonthRange(within, weekStartDay)
+    const key = `${range.from}:${range.to}:${weekPersonId(operation)}`
+    if (monthShown === key) return
+    monthShown = key
+    const shown = within
+    calendar.loading(shown)
+    void api
+      .listTimeEntries(
+        viewedPerson === null ? range : { ...range, user_id: viewedPerson.id },
+        operation.signal,
+      )
+      .then((entries) => {
+        if (!isSessionCurrent(operation) || monthShown !== key || snapshot === null) return
+        calendar.render(shown, displayEntries(entries, snapshot.catalog), {
+          timeFormat: snapshot.timeEntrySettings.time_format,
+          weekStartDay,
+          today,
+          open: openCalendarEntry,
+        })
+      })
+      .catch((error: unknown) => {
+        if (handleSessionFailure(error, operation)) return
+        monthShown = ''
+        calendar.failed('The calendar could not load. Check the connection and retry.')
+      })
+  }
+
   const stoppingTimers = new Set<number>()
   const stopRowTimer = async (entryId: number): Promise<void> => {
     const operation = sessionOperation()
@@ -3707,6 +3792,9 @@ export const mountShell = async (
     }
     weekStartDay = loadedWeekStartDay
     weekPeriod.setWeekStartDay(loadedWeekStartDay)
+    // A fresh week means fresh entries: the month is drawn again from them,
+    // so a save made from a calendar chip shows on the chip.
+    monthShown = ''
     // The generation wizard offers Week too, and was computing Monday-Sunday
     // regardless of the setting -- so on a Saturday-start organisation a draft
     // claimed work across two of its weeks, and the wizard's own label

@@ -251,6 +251,23 @@ export const dayNamedRange = (range: PeriodRange): string => {
   return `${named(from)}${sameYear ? '' : ` ${from.getUTCFullYear()}`} – ${named(to)} ${to.getUTCFullYear()}`
 }
 
+/**
+ * The week as the ezacto-ui calendar toolbar names it: "Mon 14 – Sun 20 Sep",
+ * the month said once when both ends share it, and no year -- the calendar
+ * under it is the current one's, and the full form is a click away in the
+ * date picker.
+ */
+export const compactDayRange = (range: PeriodRange): string => {
+  if (!isCalendarDay(range.from) || !isCalendarDay(range.to)) return 'Choose a range'
+  const from = day(range.from)
+  const to = day(range.to)
+  const month = (date: Date): string => MONTH_NAMES[date.getUTCMonth()]!.slice(0, 3)
+  const sameMonth =
+    from.getUTCMonth() === to.getUTCMonth() && from.getUTCFullYear() === to.getUTCFullYear()
+  const start = `${WEEKDAY_NAMES[from.getUTCDay()] ?? ''} ${from.getUTCDate()}${sameMonth ? '' : ` ${month(from)}`}`
+  return `${start} – ${WEEKDAY_NAMES[to.getUTCDay()] ?? ''} ${to.getUTCDate()} ${month(to)}`
+}
+
 const namedDetail = (kind: Exclude<NamedPeriodKind, 'week'>, from: string): string => {
   const start = day(from)
   if (kind === 'semimonth') return formatDayRange(periodRange('semimonth', from))
@@ -323,9 +340,11 @@ export interface PeriodControlOptions {
    * 14 – 20 Apr 2025" while you stand in it and the dates alone once you have
    * stepped away; 'days' says the week by its days, "Mon 14 Apr – Sun 20 Apr
    * 2025", the way the ezacto-ui timesheet toolbar does, and leaves "today"
-   * to the link beside the control.
+   * to the link beside the control; 'compact' is the period as the ezacto-ui
+   * calendar toolbar says it, "Mon 14 – Sun 20 Sep" or "September 2026", with
+   * no "This week" or "This month" in front -- "Today" is the link beside it.
    */
-  readonly summary?: 'named' | 'days'
+  readonly summary?: 'named' | 'days' | 'compact'
   /**
    * Whether the summary is also the way to any other period: a button with a
    * calendar mark and a chevron that opens the browser's own date picker, and
@@ -484,7 +503,15 @@ export const createPeriodControl = (options: PeriodControlOptions): PeriodContro
     summary.textContent =
       options.summary === 'days' && kind === 'week'
         ? dayNamedRange(readRange())
-        : periodLabel(kind, readRange(), options.today())
+        : options.summary === 'compact' && kind === 'week'
+          ? compactDayRange(readRange())
+          : options.summary === 'compact' &&
+              kind !== 'custom' &&
+              kind !== 'all' &&
+              kind !== 'week' &&
+              isCalendarDay(readRange().from)
+            ? namedDetail(kind, readRange().from)
+            : periodLabel(kind, readRange(), options.today())
   }
 
   const apply = (range: PeriodRange): void => {

@@ -68,6 +68,18 @@ const liveTextRules: readonly {
     foreground: 'live_text',
     background: 'ground',
   },
+  // The calendar's running chip paints an 8% tint of `live` over `ground`,
+  // which reads as `ground` for the words-green on it and on its figure.
+  {
+    selector: '.cal-entry[data-running]',
+    foreground: 'live_text',
+    background: 'ground',
+  },
+  {
+    selector: '.cal-entry[data-running] .cal-entry-time',
+    foreground: 'live_text',
+    background: 'ground',
+  },
 ]
 
 describe('D16 theme AA contrast gate', () => {

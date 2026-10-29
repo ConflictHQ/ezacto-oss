@@ -10026,56 +10026,184 @@ dialog textarea {
   background: var(--ez-orange-tint);
 }
 
-/* The calendar. Height is minutes: a two-hour block is twice a one-hour block
-   in either mode, and only where the column starts differs between them. */
-.calendar-table {
-  width: 100%;
-  border-collapse: collapse;
-  table-layout: fixed;
+/* The calendar, as the ezacto-ui Month view draws it: a band naming the
+   month with its total at the right, then a grid of weeks in a rounded frame,
+   a cell a day with its number and a chip an entry, today's number on a blue
+   disc, the neighbouring months' days greyed. */
+[data-calendar-status]:empty {
+  display: none;
 }
-.calendar-table caption {
-  padding: 0 0 10px;
+/* A month has no week bar, no day to step and no cells to edit: the strip,
+   the phone's day stepper and the grid's keyboard hint stay off it. */
+html[data-time-view='calendar'] .day-strip,
+html[data-time-view='calendar'] .day-switcher,
+html[data-time-view='calendar'] .week-hint {
+  display: none;
+}
+.cal-band {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  border-bottom: 1px solid var(--ez-border);
+}
+.cal-band-title {
+  margin: 0;
+  padding: 24px 20px;
   color: var(--ez-muted);
   font-size: 13px;
-  text-align: left;
 }
-.calendar-table th,
-.calendar-table td {
-  padding: 6px;
-  border: 1px solid var(--ez-border);
-  vertical-align: top;
-  min-width: 0;
+.cal-band-total {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  align-self: stretch;
+  justify-content: center;
+  min-width: 120px;
+  padding: 10px 16px 8px;
+  border-left: 1px solid var(--ez-border);
+  text-align: right;
 }
-.calendar-column {
-  position: relative;
-  min-height: 120px;
-}
-.calendar-block {
-  position: absolute;
-  top: calc(var(--calendar-offset) * 0.5px);
-  left: 0;
-  right: 0;
-  /* A floor, so a six-minute entry is still a target you can hit rather than a
-     hairline nobody can click. */
-  min-height: 18px;
-  height: calc(var(--calendar-minutes) * 0.5px);
-  padding: 2px 4px;
-  overflow: hidden;
-  border-radius: var(--ez-radius);
-  background: var(--ez-status-bg);
-  color: var(--ez-status-fg);
-  font-size: 12px;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-.calendar-untimed,
-.calendar-total {
-  margin: 6px 0 0;
+.cal-band-total-label {
   color: var(--ez-muted);
   font-size: 12px;
-}
-.calendar-total {
   font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+.cal-band-total-figure {
+  color: var(--ez-ink);
+  font-size: 18px;
+  font-weight: 700;
+  letter-spacing: -0.5px;
+  font-variant-numeric: tabular-nums;
+}
+.calendar-week [data-calendar-grid] {
+  overflow-x: auto;
+}
+.cal-month {
+  position: relative;
+  min-width: 700px;
+  margin: 24px;
+  overflow: hidden;
+  border: 1px solid var(--ez-border);
+  border-radius: 12px;
+}
+.cal-month-head,
+.cal-month-week {
+  display: grid;
+  grid-template-columns: repeat(7, minmax(0, 1fr));
+}
+.cal-month-heading {
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--ez-border);
+  background: var(--ez-surface);
+  color: var(--ez-muted);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-align: center;
+  text-transform: uppercase;
+}
+.cal-cell {
+  min-width: 0;
+  min-height: 110px;
+  padding: 8px;
+  border-right: 1px solid var(--ez-border);
+  border-bottom: 1px solid var(--ez-border);
+  background: var(--ez-ground);
+}
+.cal-cell:nth-child(7n) {
+  border-right: 0;
+}
+.cal-month-week:last-child .cal-cell {
+  border-bottom: 0;
+}
+.cal-cell[data-outside] {
+  background: var(--ez-surface);
+}
+.cal-cell[data-today] {
+  background: var(--ez-orange-tint);
+}
+.cal-day-num {
+  display: block;
+  margin-bottom: 6px;
+  color: var(--ez-muted);
+  font-size: 12px;
+  font-weight: 600;
+}
+.cal-cell[data-today] .cal-day-num {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  background: var(--ez-action);
+  color: var(--ez-action-fg);
+  font-size: 11px;
+}
+/* A chip an entry: the project and the time, one line, the rest in the tip. */
+.cal-entry {
+  display: block;
+  width: 100%;
+  margin-bottom: 4px;
+  padding: 4px 8px;
+  overflow: hidden;
+  border: 1px solid var(--ez-blue-light);
+  border-radius: 6px;
+  background: var(--ez-orange-tint);
+  color: var(--ez-ink);
+  font-family: inherit;
+  font-size: 11px;
+  font-weight: 600;
+  line-height: normal;
+  text-align: left;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  cursor: pointer;
+  transition:
+    box-shadow 0.1s,
+    border-color 0.1s;
+}
+.cal-entry:hover,
+.cal-entry:focus-visible {
+  border-color: color-mix(in srgb, var(--ez-data) 40%, var(--ez-blue-light));
+  box-shadow: 0 2px 8px color-mix(in srgb, var(--ez-action) 10%, transparent);
+}
+.cal-entry-time {
+  color: var(--ez-data);
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+/* The running entry in the live green, as the reference: a tint of the hue
+   under the chip and its words in the words-green (theme-contrast.test.ts). */
+.cal-entry[data-running] {
+  border-color: color-mix(in srgb, var(--ez-live) 30%, var(--ez-ground));
+  background: color-mix(in srgb, var(--ez-live) 8%, var(--ez-ground));
+  color: var(--ez-live-text);
+}
+.cal-entry[data-running] .cal-entry-time {
+  color: var(--ez-live-text);
+}
+/* The tip over a chip under the pointer or the keyboard: the whole entry,
+   project, task and time, for the chips too narrow to read it off. */
+.cal-tip {
+  position: absolute;
+  z-index: 6;
+  max-width: 260px;
+  padding: 6px 9px;
+  border-radius: 6px;
+  background: var(--ez-ink);
+  color: var(--ez-ground);
+  font-size: 11px;
+  line-height: 1.4;
+  white-space: pre-line;
+  pointer-events: none;
+  box-shadow: 0 4px 12px var(--ez-shadow);
+}
+.cal-tip[hidden] {
+  display: none;
 }
 
 /* Issue 757. The organization timezone is its own setting rather than a field on

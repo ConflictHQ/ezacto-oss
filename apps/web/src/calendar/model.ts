@@ -1,142 +1,153 @@
 /**
- * Laying a week of time entries out as a calendar, in either tracking mode.
+ * Laying a month of time entries out as a calendar: the ezacto-ui Month view,
+ * a grid of weeks with each day's entries listed in its cell.
  *
- * The two modes are not a display preference, they are different data. An
- * organization in `start_end` records when work happened; one in `duration`
- * records only how long it took. A calendar that assumes the first renders an
- * empty grid for the second -- and the account this was written against has
- * 30,684 entries, none of which carries a start time.
- *
- * So the vertical axis means something different in each, and the surface says
- * which. In `start_end` it is the clock. In `duration` it is hours worked, and
- * blocks stack in the order they were entered. What is never done is inventing
- * a clock time for an entry that has none: a 2h entry drawn at 09:00 because it
- * happened to be logged first is a claim about someone's morning that nobody
- * made.
+ * A month on a calendar is drawn in whole weeks, so the grid runs from the
+ * first day of the week that holds the 1st to the last day of the week that
+ * holds the month's end, and the days outside the month are drawn greyed.
+ * Which day starts a week is an organization setting (see `weekDates`), not
+ * this module's to guess, so the caller supplies it.
  */
 
-export type TimeEntryMode = 'duration' | 'start_end'
+import { weekDates } from '../week-grid/model.js'
+
+export type WeekStartDay = 'saturday' | 'sunday' | 'monday'
 
 export interface CalendarEntry {
   readonly id: number
   readonly spent_date: string
   readonly seconds: number
-  // Optional as well as nullable: the shell's entry type leaves these off
-  // entirely in duration mode rather than carrying nulls, and a calendar that
-  // only accepted null would not compile against the data it is given.
-  readonly started_time?: string | null
-  readonly ended_time?: string | null
-  readonly notes?: string | null
   readonly project_id: number
   readonly task_id: number
+  readonly notes?: string | null
+  readonly is_running?: boolean
 }
 
-export interface CalendarBlock {
-  readonly id: number
-  /** Minutes from the top of the column. */
-  readonly offsetMinutes: number
-  readonly minutes: number
-  /** Only set in start_end mode, where the axis is a clock. */
-  readonly startedTime: string | null
-  readonly seconds: number
-}
-
-export interface CalendarDay {
+export interface CalendarCell<E extends CalendarEntry = CalendarEntry> {
   readonly date: string
-  readonly blocks: readonly CalendarBlock[]
+  /** False for the days that fill out the first and last weeks. */
+  readonly inMonth: boolean
+  readonly entries: readonly E[]
   readonly totalSeconds: number
-  /**
-   * Entries the mode cannot place on the axis: in start_end, the ones with no
-   * recorded time. They are listed rather than dropped -- an entry missing from
-   * a timesheet reads as unworked.
-   */
-  readonly unplaced: readonly CalendarEntry[]
 }
 
-const MINUTES_IN_DAY = 24 * 60
+export interface CalendarMonth<E extends CalendarEntry = CalendarEntry> {
+  /** The 1st of the month, as a calendar date. */
+  readonly monthStart: string
+  /** The grid's first and last days: whole weeks around the month. */
+  readonly from: string
+  readonly to: string
+  readonly weeks: readonly (readonly CalendarCell<E>[])[]
+  /** The month's own time: the greyed days of its neighbours do not count. */
+  readonly totalSeconds: number
+}
 
-const minutesFromClock = (value: string): number | null => {
-  const match = /^([0-2][0-9]):([0-5][0-9])$/u.exec(value)
-  if (match === null) return null
-  const hours = Number(match[1])
-  const minutes = Number(match[2])
-  if (hours > 23) return null
-  return hours * 60 + minutes
+const MONTH_NAMES = [
+  'January',
+  'February',
+  'March',
+  'April',
+  'May',
+  'June',
+  'July',
+  'August',
+  'September',
+  'October',
+  'November',
+  'December',
+] as const
+
+const WEEKDAY_NAMES = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'] as const
+
+const parse = (value: string): Date => {
+  const date = new Date(`${value}T00:00:00.000Z`)
+  if (!Number.isFinite(date.valueOf()) || date.toISOString().slice(0, 10) !== value)
+    throw new Error(`invalid calendar date: ${value}`)
+  return date
+}
+
+const iso = (date: Date): string => date.toISOString().slice(0, 10)
+
+const shift = (value: string, days: number): string => {
+  const date = parse(value)
+  date.setUTCDate(date.getUTCDate() + days)
+  return iso(date)
+}
+
+/** The 1st of the month a date falls in. */
+export const monthStart = (within: string): string => {
+  const date = parse(within)
+  return iso(new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), 1)))
+}
+
+/** The last day of the month a date falls in. */
+export const monthEnd = (within: string): string => {
+  const date = parse(within)
+  return iso(new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth() + 1, 0)))
+}
+
+/** "October 2026": the month as the toolbar and the band above the grid name it. */
+export const monthLabel = (within: string): string => {
+  const date = parse(within)
+  return `${MONTH_NAMES[date.getUTCMonth()]!} ${date.getUTCFullYear()}`
 }
 
 /**
- * The days of a week, each with its entries placed.
- *
- * `dates` is supplied rather than derived so the caller owns the week's start
- * day, which is an organization setting and not this module's to guess.
+ * The grid's range: whole weeks from the one holding the 1st to the one
+ * holding the month's last day.
  */
-export const calendarWeek = (
-  dates: readonly string[],
-  entries: readonly CalendarEntry[],
-  mode: TimeEntryMode,
-): readonly CalendarDay[] =>
-  dates.map((date) => {
-    const onThisDay = entries.filter((entry) => entry.spent_date === date)
-    const totalSeconds = onThisDay.reduce((total, entry) => total + entry.seconds, 0)
-    if (mode === 'duration') {
-      // Stacked in entry order, each block as tall as its own duration. The
-      // axis is cumulative hours, so nothing here asserts a time of day.
-      let offsetMinutes = 0
-      const blocks = onThisDay.map((entry) => {
-        const minutes = Math.round(entry.seconds / 60)
-        const block: CalendarBlock = {
-          id: entry.id,
-          offsetMinutes,
-          minutes,
-          startedTime: null,
-          seconds: entry.seconds,
-        }
-        offsetMinutes += minutes
-        return block
-      })
-      return { date, blocks, totalSeconds, unplaced: [] }
-    }
-    const blocks: CalendarBlock[] = []
-    const unplaced: CalendarEntry[] = []
-    for (const entry of onThisDay) {
-      const started =
-        entry.started_time === null || entry.started_time === undefined
-          ? null
-          : minutesFromClock(entry.started_time)
-      if (started === null) {
-        // Recorded without a clock time in an organization that records clock
-        // times. Listing it beside the day rather than dropping it: an entry
-        // missing from a timesheet reads as unworked.
-        unplaced.push(entry)
-        continue
-      }
-      const ended =
-        entry.ended_time === null || entry.ended_time === undefined
-          ? null
-          : minutesFromClock(entry.ended_time)
-      // An entry that ends before it starts crossed midnight. Clamping to the
-      // end of the day keeps it visible and on the day it was filed against,
-      // rather than drawing a block of negative height.
-      const spanMinutes =
-        ended === null || ended <= started
-          ? Math.min(Math.round(entry.seconds / 60), MINUTES_IN_DAY - started)
-          : ended - started
-      blocks.push({
-        id: entry.id,
-        offsetMinutes: started,
-        minutes: spanMinutes,
-        startedTime: entry.started_time ?? null,
-        seconds: entry.seconds,
-      })
-    }
-    return {
-      date,
-      blocks: blocks.sort((left, right) => left.offsetMinutes - right.offsetMinutes),
-      totalSeconds,
-      unplaced,
-    }
-  })
+export const calendarMonthRange = (
+  within: string,
+  weekStartDay: WeekStartDay,
+): { readonly from: string; readonly to: string } => ({
+  from: weekDates(monthStart(within), weekStartDay)[0]!,
+  to: weekDates(monthEnd(within), weekStartDay)[6]!,
+})
 
-/** What the vertical axis measures, which differs by mode and must be labelled. */
-export const calendarAxisLabel = (mode: TimeEntryMode): string =>
-  mode === 'start_end' ? 'Time of day' : 'Hours worked'
+/** The weekday headings in the week's own order: "Mon … Sun" for a Monday start. */
+export const weekdayHeadings = (weekStartDay: WeekStartDay): readonly string[] => {
+  const start = weekStartDay === 'sunday' ? 0 : weekStartDay === 'monday' ? 1 : 6
+  return Array.from({ length: 7 }, (_, index) => WEEKDAY_NAMES[(start + index) % 7]!)
+}
+
+/**
+ * The month's weeks, each day with its entries in the order they were given
+ * and its total. Entries outside the grid are ignored rather than refused:
+ * the caller fetches a range, and a range is allowed to be generous.
+ */
+export const calendarMonth = <E extends CalendarEntry>(
+  within: string,
+  weekStartDay: WeekStartDay,
+  entries: readonly E[],
+): CalendarMonth<E> => {
+  const start = monthStart(within)
+  const end = monthEnd(within)
+  const { from, to } = calendarMonthRange(within, weekStartDay)
+  const byDate = new Map<string, E[]>()
+  for (const entry of entries) {
+    const list = byDate.get(entry.spent_date)
+    if (list === undefined) byDate.set(entry.spent_date, [entry])
+    else list.push(entry)
+  }
+  const weeks: CalendarCell<E>[][] = []
+  let date = from
+  while (date <= to) {
+    const week: CalendarCell<E>[] = []
+    for (let day = 0; day < 7; day += 1) {
+      const onThisDay = byDate.get(date) ?? []
+      week.push({
+        date,
+        inMonth: date >= start && date <= end,
+        entries: onThisDay,
+        totalSeconds: onThisDay.reduce((total, entry) => total + entry.seconds, 0),
+      })
+      date = shift(date, 1)
+    }
+    weeks.push(week)
+  }
+  const totalSeconds = weeks
+    .flat()
+    .filter((cell) => cell.inMonth)
+    .reduce((total, cell) => total + cell.totalSeconds, 0)
+  return { monthStart: start, from, to, weeks, totalSeconds }
+}
