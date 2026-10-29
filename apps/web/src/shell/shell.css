@@ -5830,6 +5830,28 @@ button[data-auth-action]:disabled {
   border-color: var(--ez-action);
   color: var(--ez-ink);
 }
+/* The ordinary "connected" state is not a band between the title and the
+   toolbar (the reference page has none there): it is the page's quiet last
+   line, under the grid, the way the reference closes its page with a small
+   centred note. The page lays its parts out as a column so the line can be
+   sent to the end without moving in the markup. */
+.app-content[data-app-content] {
+  display: flex;
+  flex-direction: column;
+}
+[data-app-content] .session-status[data-quiet] {
+  display: flex;
+  order: 10;
+  justify-content: center;
+  margin: 0;
+  padding: 12px 24px;
+  border: 0;
+  border-radius: 0;
+  background: var(--ez-ground);
+  color: var(--ez-muted);
+  font-size: 12px;
+  text-align: center;
+}
 /*
  * A write being sent again after it failed (issue 953). Fixed to the corner, so
  * it reads the same beside the sidebar and under the top bar, and stays in view
@@ -5972,7 +5994,7 @@ button[data-auth-action]:disabled {
 .week-period .period-summary {
   flex: 0 1 auto;
   padding: 0;
-  color: var(--ez-ink);
+  color: var(--ez-data);
   font-size: 16px;
   font-weight: 600;
 }
@@ -6053,6 +6075,10 @@ button[data-auth-action]:disabled {
 .week-actions [data-week-current]:hover,
 .week-actions [data-week-current]:focus-visible {
   text-decoration: underline;
+}
+/* Faded while you are already on today (the reference link), still a link. */
+.week-actions [data-week-current][data-on-today] {
+  opacity: 0.4;
 }
 .week-actions [data-week-current] .ez-icon {
   display: none;
@@ -6667,6 +6693,7 @@ html[data-time-view='calendar'] .week-grid-foot {
     display: none;
   }
   html[data-time-view='day'] .week-toolbar .day-switcher {
+    position: relative;
     display: inline-flex;
     flex: 0 1 auto;
     gap: 6px;
@@ -6679,24 +6706,27 @@ html[data-time-view='calendar'] .week-grid-foot {
   html[data-time-view='day'] .week-period {
     display: none;
   }
-  /* The reference week bar opens with the calendar's 64px ruler column; in
-     Day view the bar keeps that gutter so the days line up as they do there. */
-  html[data-time-view='day'] .day-strip::before {
+  /* The reference week bar opens with the calendar's 64px ruler column in
+     both views, so Monday never sits flush against the page edge. */
+  .day-strip::before {
     content: '';
     flex: none;
     width: 64px;
     border-right: 1px solid var(--ez-border);
   }
-  .day-switcher button {
+  .day-switcher button:not(.day-switcher-label) {
     width: 28px;
     min-height: 28px;
     padding: 0;
     border-radius: 6px;
-    color: var(--ez-muted);
+    color: color-mix(in srgb, var(--ez-muted) 90%, var(--ez-ground));
   }
-  .day-switcher-label {
+  .day-switcher .day-switcher-label {
     min-width: 240px;
+    min-height: 0;
     padding: 3px 6px;
+    border: 0;
+    color: var(--ez-data);
   }
   .day-row {
     padding: 10px 24px;
@@ -6897,21 +6927,60 @@ html[data-time-view='calendar'] .week-grid-foot {
   justify-content: center;
   gap: 7px;
   min-width: 0;
-  color: var(--ez-ink);
+  padding: 3px 6px;
+  border: 0;
+  border-radius: 6px;
+  background: none;
+  color: var(--ez-data);
+  font: inherit;
   font-size: 16px;
   font-weight: 600;
   white-space: nowrap;
+  cursor: pointer;
+}
+.day-switcher-label:hover:not(:disabled),
+.day-switcher-label:focus-visible {
+  background: var(--ez-surface);
 }
 .day-switcher-label .ez-icon {
+  flex: none;
   width: 13px;
   height: 13px;
   color: var(--ez-muted);
   stroke-width: 2;
 }
+.day-switcher-label > .ez-icon:last-child {
+  width: 12px;
+  height: 12px;
+  stroke-width: 2.25;
+}
 .day-switcher-label strong {
   overflow: hidden;
   font-weight: inherit;
   text-overflow: ellipsis;
+}
+/* The arrows' marks at the reference's 14px, in its lighter grey. */
+.day-switcher button:not(.day-switcher-label) {
+  color: color-mix(in srgb, var(--ez-muted) 90%, var(--ez-ground));
+}
+.day-switcher button:not(.day-switcher-label) .ez-icon,
+.week-period .period-step .ez-icon {
+  width: 14px;
+  height: 14px;
+  stroke-width: 2;
+}
+.day-jump-date {
+  position: absolute;
+  bottom: 0;
+  left: 50%;
+  width: 1px;
+  height: 1px;
+  min-height: 0;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  opacity: 0;
+  pointer-events: none;
 }
 .day-row {
   min-height: 72px;

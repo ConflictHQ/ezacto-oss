@@ -839,7 +839,8 @@ ${instancePalette ? `  <link rel="stylesheet" href="${INSTANCE_THEME_STYLESHEET_
         -->
         <div class="day-switcher" data-day-switcher>
           <button type="button" data-day-previous data-auth-action disabled aria-label="Previous day">${iconMarkup('chevron', { direction: 'left' })}</button>
-          <span class="day-switcher-label">${iconMarkup('calendar')}<strong data-day-label>—</strong></span>
+          <button type="button" class="day-switcher-label" data-day-jump title="Choose a date">${iconMarkup('calendar')}<strong data-day-label>—</strong>${iconMarkup('chevron', { direction: 'down' })}</button>
+          <input class="day-jump-date" data-day-jump-date type="date" aria-label="Jump to date" tabindex="-1">
           <button type="button" data-day-next data-auth-action disabled aria-label="Next day">${iconMarkup('chevron')}</button>
         </div>
         <div class="week-period" data-week-period>

@@ -1907,9 +1907,14 @@ export const mountShell = async (
     message: string,
     state: 'ready' | 'signed-out' | 'loading' | 'error',
     retry = false,
+    // Said to the reader and kept for whoever asks, but not drawn as a band:
+    // "connected" is the page's normal state, and the reference page has no
+    // line for it. A notice, a loading line or an error still takes the band.
+    quiet = false,
   ): void => {
     statusMessage.textContent = message
     status.dataset.state = state
+    status.toggleAttribute('data-quiet', quiet)
     retryWeek.hidden = !retry
     retryWeek.disabled = false
   }
@@ -3475,6 +3480,14 @@ export const mountShell = async (
       ...(lockPolicy === null ? [] : [lockPolicy.timezone]),
     ])
     renderDayTotals(grid, selectedDay, selectDay, today)
+    // "Today" fades while you are already there (the reference link): on
+    // today's day in Day view, in today's week otherwise.
+    required<HTMLElement>('[data-week-current]').toggleAttribute(
+      'data-on-today',
+      document.documentElement.dataset.timeView === 'day'
+        ? grid.dates[selectedDay] === today
+        : grid.dates.includes(today),
+    )
     renderDesktopGrid(grid, handlers, today)
     renderPhoneDay(grid, selectedDay, handlers)
     renderTimer(snapshot.running)
@@ -3729,7 +3742,7 @@ export const mountShell = async (
     setSessionStatus('Loading your week…', 'loading')
     try {
       if (!(await refresh(operation))) return
-      setSessionStatus(`Connected. Changes save directly to ${brandName}.`, 'ready')
+      setSessionStatus(`Connected. Changes save directly to ${brandName}.`, 'ready', false, true)
     } catch (error) {
       if (handleSessionFailure(error, operation)) return
       renderWeekLoadFailure()
@@ -6133,7 +6146,7 @@ export const mountShell = async (
     void refresh(operation)
       .then((loaded) => {
         if (!loaded || !isSessionCurrent(operation)) return
-        setSessionStatus(`Connected. Changes save directly to ${brandName}.`, 'ready')
+        setSessionStatus(`Connected. Changes save directly to ${brandName}.`, 'ready', false, true)
       })
       .catch((error: unknown) => {
         if (handleSessionFailure(error, operation)) return
@@ -6201,6 +6214,43 @@ export const mountShell = async (
   }
   required<HTMLButtonElement>('[data-day-previous]').addEventListener('click', () => moveDay(-1))
   required<HTMLButtonElement>('[data-day-next]').addEventListener('click', () => moveDay(1))
+  // The day's name is also the way to any other day (the ezacto-ui period
+  // button): the browser's own picker behind it, and the chosen day's week
+  // loads with that day selected.
+  const dayJump = required<HTMLButtonElement>('[data-day-jump]')
+  const dayJumpDate = required<HTMLInputElement>('[data-day-jump-date]')
+  dayJump.addEventListener('click', () => {
+    if (currentIdentity === null || grid === null) return
+    dayJumpDate.value = grid.dates[selectedDay] ?? localDate()
+    const picker = dayJumpDate as HTMLInputElement & { showPicker?: () => void }
+    try {
+      if (typeof picker.showPicker === 'function') picker.showPicker()
+      else dayJumpDate.focus()
+    } catch {
+      dayJumpDate.focus()
+    }
+  })
+  dayJumpDate.addEventListener('change', () => {
+    const chosen = dayJumpDate.value
+    const operation = sessionOperation()
+    if (!isCalendarDay(chosen) || operation === null || operation.userId === null) return
+    const index = grid?.dates.indexOf(chosen) ?? -1
+    if (index >= 0) {
+      selectDay(index)
+      return
+    }
+    within = chosen
+    supplementalRows = loadSupplementalRows(weekPersonId(operation), within, weekStartDay)
+    cellStates.clear()
+    setWeekUrl(within, weekStartDay)
+    // The load keeps the day you had selected when the new week holds it and
+    // falls back to today; the chosen day is neither, so it is selected once
+    // the week is on screen.
+    void loadWeek(operation).then(() => {
+      const landed = grid?.dates.indexOf(chosen) ?? -1
+      if (landed >= 0) selectDay(landed)
+    })
+  })
   required<HTMLButtonElement>('[data-copy-last-week]').addEventListener('click', () => {
     const operation = sessionOperation()
     if (operation === null || operation.userId === null || grid === null) return
