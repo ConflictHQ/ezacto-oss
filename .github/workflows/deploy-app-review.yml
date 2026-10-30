@@ -59,10 +59,23 @@ jobs:
           ' | npx --no-install wrangler secret bulk --env prod
       - name: deploy the reviewed source
         working-directory: entries/worker
+        env:
+          # Empty keeps Apple sign-in to invited people; a project id lets the
+          # reviewer's own Apple ID sign up as a member of that project.
+          APPLE_SELF_SIGNUP_PROJECT_ID: ${{ vars.REVIEW_APPLE_SELF_SIGNUP_PROJECT_ID }}
         run: |
+          signup=()
+          if [[ -n "$APPLE_SELF_SIGNUP_PROJECT_ID" ]]; then
+            if [[ ! "$APPLE_SELF_SIGNUP_PROJECT_ID" =~ ^[1-9][0-9]{0,15}$ ]]; then
+              echo '::error::REVIEW_APPLE_SELF_SIGNUP_PROJECT_ID must be empty or a project id'
+              exit 1
+            fi
+            signup=(--var "APPLE_SELF_SIGNUP_PROJECT_ID:$APPLE_SELF_SIGNUP_PROJECT_ID")
+          fi
           npx --no-install wrangler deploy --env prod \
             --var "RELEASE:$GITHUB_SHA" \
-            --var 'OIDC_REDIRECT_ORIGIN:https://review.ezacto.io'
+            --var 'OIDC_REDIRECT_ORIGIN:https://review.ezacto.io' \
+            "${signup[@]}"
       - name: accept deployed bindings and exact release
         run: |
           node scripts/app-review-instance.mjs deployed

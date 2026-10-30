@@ -5,7 +5,9 @@ import type { ProviderIdentityAssertion } from '@ezacto/core'
 import {
   createContainerIdentityStore,
   createD1IdentityStore,
+  selfSignupProjectIdFromVariable,
   type IdentityStore,
+  type IdentityStoreOptions,
 } from '../src/identity.js'
 import { migrateContainer, migrateD1 } from '../src/migrate.js'
 
@@ -18,11 +20,13 @@ interface Harness {
   close(): Promise<void>
 }
 
-const containerHarness = async (): Promise<Harness> => {
+type HarnessOptions = Pick<IdentityStoreOptions, 'selfSignup'>
+
+const containerHarness = async (options: HarnessOptions = {}): Promise<Harness> => {
   const database = new BetterSqlite3(':memory:')
   migrateContainer(database)
   return {
-    store: createContainerIdentityStore(database, { now: () => timestamp }),
+    store: createContainerIdentityStore(database, { now: () => timestamp, ...options }),
     run: async (sql, ...bindings) => {
       database.prepare(sql).run(...bindings)
     },
@@ -34,7 +38,7 @@ const containerHarness = async (): Promise<Harness> => {
   }
 }
 
-const d1Harness = async (): Promise<Harness> => {
+const d1Harness = async (options: HarnessOptions = {}): Promise<Harness> => {
   const miniflare = new Miniflare({
     modules: true,
     script: 'export default { fetch() { return new Response("ok") } }',
@@ -43,7 +47,7 @@ const d1Harness = async (): Promise<Harness> => {
   const database = await miniflare.getD1Database('DB')
   await migrateD1(database)
   return {
-    store: createD1IdentityStore(database, { now: () => timestamp }),
+    store: createD1IdentityStore(database, { now: () => timestamp, ...options }),
     run: async (sql, ...bindings) => {
       await database
         .prepare(sql)
@@ -454,3 +458,187 @@ for (const [runtime, factory] of factories) {
     })
   })
 }
+
+describe('selfSignupProjectIdFromVariable', () => {
+  it('[unit] treats unset and blank as off', () => {
+    expect(selfSignupProjectIdFromVariable(undefined)).toBeNull()
+    expect(selfSignupProjectIdFromVariable('  ')).toBeNull()
+  })
+
+  it('[unit] reads a project id', () => {
+    expect(selfSignupProjectIdFromVariable(' 12 ')).toBe(12)
+  })
+
+  it.each(['0', '-1', '1.5', 'twelve', '12abc', '99999999999999999'])(
+    '[security] refuses %s rather than guessing a project',
+    (value) => {
+      expect(() => selfSignupProjectIdFromVariable(value)).toThrow(TypeError)
+    },
+  )
+})
+
+// The App Review instance: whoever signs in with Apple joins as a member of
+// one project. Nothing about it may reach other providers, unverified
+// addresses, or a project an administrator has archived.
+const signupProjectId = 7
+
+for (const [runtime, factory] of factories) {
+  describe(`identity store self sign-up (${runtime})`, () => {
+    let harness: Harness
+
+    beforeAll(async () => {
+      harness = await factory({ selfSignup: { provider: 'apple', projectId: signupProjectId } })
+      await harness.run(
+        `INSERT INTO organizations (id, name, modules, created_at, updated_at)
+          VALUES (1, 'eZacto Review', '{}', ?, ?)`,
+        timestamp,
+        timestamp,
+      )
+      await harness.run(
+        `INSERT INTO users (
+          id, first_name, last_name, profile, manager_grants, is_owner, created_at, updated_at
+        ) VALUES (1, 'App', 'Reviewer', 'administrator', '[]', 0, ?, ?)`,
+        timestamp,
+        timestamp,
+      )
+      await harness.run(
+        `INSERT INTO clients (id, name, currency, created_at, updated_at)
+          VALUES (1, 'Review Client', 'USD', ?, ?)`,
+        timestamp,
+        timestamp,
+      )
+      await harness.run(
+        `INSERT INTO projects (id, client_id, name, created_at, updated_at)
+          VALUES (?, 1, 'Default', ?, ?)`,
+        signupProjectId,
+        timestamp,
+        timestamp,
+      )
+    })
+
+    beforeEach(async () => {
+      await harness.run(`DELETE FROM user_assignments`)
+      await harness.run(`DELETE FROM user_identities`)
+      await harness.run(`DELETE FROM user_emails`)
+      await harness.run(`DELETE FROM users WHERE id <> 1`)
+      await harness.run(`UPDATE projects SET is_active = 1 WHERE id = ?`, signupProjectId)
+    })
+
+    afterAll(async () => harness.close())
+
+    // Apple sends the name on the first authorization only.
+    const appleWithoutName = (): ProviderIdentityAssertion => ({
+      provider: 'apple',
+      subject: '001234.reviewer',
+      email: 'x7k2q9@privaterelay.appleid.com',
+      emailVerified: true,
+    })
+
+    const apple = (changes: Partial<ProviderIdentityAssertion> = {}): ProviderIdentityAssertion => ({
+      ...appleWithoutName(),
+      firstName: 'Jamie',
+      lastName: 'Reviewer',
+      ...changes,
+    })
+
+    const nothingCreated = async (): Promise<void> => {
+      expect(await harness.rows(`SELECT id FROM users WHERE id <> 1`)).toEqual([])
+      expect(await harness.rows(`SELECT id FROM user_identities`)).toEqual([])
+      expect(await harness.rows(`SELECT id FROM user_emails`)).toEqual([])
+      expect(await harness.rows(`SELECT id FROM user_assignments`)).toEqual([])
+    }
+
+    it('[unit] signs up an unknown Apple ID as a member of the one project', async () => {
+      await expect(harness.store.resolveProvider(apple())).resolves.toEqual({
+        status: 'active',
+        matchedBy: 'created',
+        userId: 2,
+        profile: 'member',
+        managerGrants: [],
+      })
+      expect(
+        await harness.rows(`SELECT first_name, last_name, profile, is_owner FROM users WHERE id = 2`),
+      ).toEqual([{ first_name: 'Jamie', last_name: 'Reviewer', profile: 'member', is_owner: 0 }])
+      expect(
+        await harness.rows(
+          `SELECT address, verified_at IS NOT NULL AS verified FROM user_emails WHERE user_id = 2`,
+        ),
+      ).toEqual([{ address: 'x7k2q9@privaterelay.appleid.com', verified: 1 }])
+      expect(
+        await harness.rows(
+          `SELECT project_id, user_id, is_active, is_project_manager, use_default_rates
+            FROM user_assignments`,
+        ),
+      ).toEqual([
+        {
+          project_id: signupProjectId,
+          user_id: 2,
+          is_active: 1,
+          is_project_manager: 0,
+          use_default_rates: 1,
+        },
+      ])
+    })
+
+    it('[unit] names the account when Apple withholds the name on a later authorization', async () => {
+      await expect(
+        harness.store.resolveProvider(appleWithoutName()),
+      ).resolves.toMatchObject({ userId: 2, matchedBy: 'created' })
+      expect(await harness.rows(`SELECT first_name, last_name FROM users WHERE id = 2`)).toEqual([
+        { first_name: 'New', last_name: 'Member' },
+      ])
+    })
+
+    it('[unit] signs the same Apple ID back in without a second account or assignment', async () => {
+      await harness.store.resolveProvider(apple())
+      await expect(
+        harness.store.resolveProvider(appleWithoutName()),
+      ).resolves.toMatchObject({ userId: 2, matchedBy: 'subject' })
+      expect(await harness.rows(`SELECT id FROM users WHERE id <> 1`)).toEqual([{ id: 2 }])
+      expect(await harness.rows(`SELECT user_id FROM user_assignments`)).toEqual([{ user_id: 2 }])
+    })
+
+    it('[security] refuses an Apple address the provider has not verified', async () => {
+      await expect(harness.store.resolveProvider(apple({ emailVerified: false }))).resolves.toEqual({
+        status: 'provisioning_not_permitted',
+      })
+      await nothingCreated()
+    })
+
+    it('[security] keeps every other provider scoped to verified domains', async () => {
+      await expect(
+        harness.store.resolveProvider(
+          apple({ provider: 'google', subject: 'google-stranger', email: 'stranger@gmail.test' }),
+        ),
+      ).resolves.toEqual({ status: 'provisioning_not_permitted' })
+      await nothingCreated()
+    })
+
+    it('[security] closes sign-up once the project is archived', async () => {
+      await harness.run(`UPDATE projects SET is_active = 0 WHERE id = ?`, signupProjectId)
+      await expect(harness.store.resolveProvider(apple())).resolves.toEqual({
+        status: 'provisioning_not_permitted',
+      })
+      await nothingCreated()
+    })
+  })
+}
+
+describe('identity store self sign-up to a missing project', () => {
+  it.each(factories)('[security] refuses on %s rather than creating an unassigned member', async (_, factory) => {
+    const harness = await factory({ selfSignup: { provider: 'apple', projectId: 404 } })
+    try {
+      await expect(
+        harness.store.resolveProvider({
+          provider: 'apple',
+          subject: '001234.reviewer',
+          email: 'reviewer@icloud.com',
+          emailVerified: true,
+        }),
+      ).resolves.toEqual({ status: 'provisioning_not_permitted' })
+      expect(await harness.rows(`SELECT id FROM users`)).toEqual([])
+    } finally {
+      await harness.close()
+    }
+  })
+})

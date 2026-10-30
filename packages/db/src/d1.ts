@@ -142,7 +142,7 @@ export {
   type SignInMethodState,
 } from './sign-in-methods.js'
 export { createReportRepository, type ReportRepository } from './reports.js'
-export { createD1IdentityStore, type IdentityStore, type IdentityStoreOptions } from './identity.js'
+export { createD1IdentityStore, selfSignupProjectIdFromVariable, type IdentityStore, type IdentityStoreOptions, type SelfSignupPolicy } from './identity.js'
 export {
   createD1OidcTransactionStore,
   type CreateOidcTransactionInput,

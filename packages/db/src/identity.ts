@@ -17,9 +17,37 @@ export interface IdentityStore {
   resolveEmail(address: string): Promise<EmailSignInResolution>
 }
 
+/**
+ * Open sign-up for one provider. An unknown identity from it, with a verified
+ * address, becomes a member assigned to `projectId` even when its domain is not
+ * a verified provisioning domain. Only the App Review instance sets this: the
+ * reviewer signs in with an Apple ID nobody can know in advance, at a domain
+ * (icloud.com, the private relay) no instance can prove it owns.
+ */
+export interface SelfSignupPolicy {
+  provider: string
+  projectId: number
+}
+
 export interface IdentityStoreOptions {
   now?: () => string
+  selfSignup?: SelfSignupPolicy
 }
+
+/** `APPLE_SELF_SIGNUP_PROJECT_ID`: unset or blank is off; anything else must be a project id. */
+export const selfSignupProjectIdFromVariable = (value: string | undefined): number | null => {
+  if (value === undefined || value.trim() === '') return null
+  const trimmed = value.trim()
+  const projectId = /^[1-9][0-9]{0,15}$/u.test(trimmed) ? Number(trimmed) : Number.NaN
+  if (!Number.isSafeInteger(projectId)) {
+    throw new TypeError('APPLE_SELF_SIGNUP_PROJECT_ID must be a positive project id')
+  }
+  return projectId
+}
+
+/** Profile material for a self-signed-up user Apple sent no name for. */
+const SELF_SIGNUP_FIRST_NAME = 'New'
+const SELF_SIGNUP_LAST_NAME = 'Member'
 
 interface Operation {
   query: string
@@ -97,13 +125,16 @@ const linkVerifiedEmail = (
  * Provisioning is the one step scoped to a domain. The guard is part of the
  * INSERT rather than a read before it because the row it consults can be
  * deleted or un-verified between the two, and a stranger who wins that race
- * would otherwise get an account that no configuration permits.
+ * would otherwise get an account that no configuration permits. Self sign-up
+ * is the one alternative, and it is guarded the same way: the project it
+ * assigns to must still be active when the row is written.
  */
 const createUser = (
   input: NormalizedProviderIdentityAssertion,
   userId: number,
   timestamp: string,
   blockedKeys: readonly string[],
+  signupProjectId: number | null,
 ): Operation => {
   if (input.firstName === undefined || input.lastName === undefined) {
     throw new RangeError(
@@ -121,9 +152,12 @@ const createUser = (
       SELECT 1 FROM user_identities identity
       WHERE identity.provider = ? AND identity.provider_subject = ?
     )
-      AND EXISTS (
-        SELECT 1 FROM sso_provisioning_domains domain
-        WHERE domain.domain = ? AND domain.verified_at IS NOT NULL
+      AND (
+        EXISTS (
+          SELECT 1 FROM sso_provisioning_domains domain
+          WHERE domain.domain = ? AND domain.verified_at IS NOT NULL
+        )
+        OR EXISTS (SELECT 1 FROM projects WHERE id = ? AND is_active = 1)
       )
       -- #736. The linking branch above already refuses an unverified claim;
       -- provisioning did not, so a provider that lets someone set an
@@ -144,11 +178,66 @@ const createUser = (
     input.provider,
     input.subject,
     input.provisioningDomain,
+    signupProjectId,
     input.emailVerified ? 1 : 0,
     ...blockedKeys,
   ],
   }
 }
+
+/**
+ * The self-signed-up user's one project. Written only for the user this
+ * assertion's subject was just linked to, so a batch whose user INSERT was
+ * refused cannot hand the assignment to whoever holds the id instead.
+ */
+const assignSignupProject = (
+  input: NormalizedProviderIdentityAssertion,
+  userId: number,
+  projectId: number,
+  timestamp: string,
+): Operation => ({
+  query: `INSERT INTO user_assignments (
+      project_id, user_id, is_active, is_project_manager, use_default_rates,
+      created_at, updated_at
+    )
+    SELECT ?, ?, 1, 0, 1, ?, ?
+    WHERE EXISTS (SELECT 1 FROM projects WHERE id = ? AND is_active = 1)
+      AND EXISTS (
+        SELECT 1 FROM user_identities identity
+        WHERE identity.user_id = ? AND identity.provider = ? AND identity.provider_subject = ?
+      )
+    ON CONFLICT(project_id, user_id) DO NOTHING`,
+  bindings: [
+    projectId,
+    userId,
+    timestamp,
+    timestamp,
+    projectId,
+    userId,
+    input.provider,
+    input.subject,
+  ],
+})
+
+const activeProjectQuery = `SELECT 1 AS permitted FROM projects WHERE id = ? AND is_active = 1`
+
+const signupProjectFor = (
+  input: NormalizedProviderIdentityAssertion,
+  policy: SelfSignupPolicy | undefined,
+): number | null =>
+  policy !== undefined && input.provider === policy.provider ? policy.projectId : null
+
+const withSignupProfile = (
+  input: NormalizedProviderIdentityAssertion,
+  signupProjectId: number | null,
+): NormalizedProviderIdentityAssertion =>
+  signupProjectId === null
+    ? input
+    : {
+        ...input,
+        firstName: input.firstName ?? SELF_SIGNUP_FIRST_NAME,
+        lastName: input.lastName ?? SELF_SIGNUP_LAST_NAME,
+      }
 
 const createEmail = (
   input: NormalizedProviderIdentityAssertion,
@@ -269,12 +358,14 @@ const isUserIdCollision = (error: unknown): boolean =>
 
 export const createContainerIdentityStore = (
   database: BetterSqlite3.Database,
-  { now = () => new Date().toISOString() }: IdentityStoreOptions = {},
+  { now = () => new Date().toISOString(), selfSignup }: IdentityStoreOptions = {},
 ): IdentityStore => {
   database.pragma('foreign_keys = ON')
   return {
     resolveProvider: async (assertion) => {
-      const input = normalizeProviderIdentityAssertion(assertion)
+      const asserted = normalizeProviderIdentityAssertion(assertion)
+      const signupProjectId = signupProjectFor(asserted, selfSignup)
+      const input = withSignupProfile(asserted, signupProjectId)
       const timestamp = now()
       assertCanonicalTimestamp(timestamp)
       const secret = (database.prepare('SELECT secret FROM account_closure_security WHERE id=1').get() as {secret:string}).secret
@@ -295,12 +386,18 @@ export const createContainerIdentityStore = (
           return parseIdentity(row, 'verified_email')
         }
 
-        const permitted = database
-          .prepare(verifiedProvisioningDomainQuery)
-          .get(input.provisioningDomain) as { permitted: number } | undefined
+        const permitted =
+          (database
+            .prepare(verifiedProvisioningDomainQuery)
+            .get(input.provisioningDomain) as { permitted: number } | undefined) ??
+          (signupProjectId === null
+            ? undefined
+            : (database.prepare(activeProjectQuery).get(signupProjectId) as
+                | { permitted: number }
+                | undefined))
         if (permitted === undefined) return provisioningNotPermitted
 
-        const created = createUser(input, next.userId, timestamp, blockedKeys)
+        const created = createUser(input, next.userId, timestamp, blockedKeys, signupProjectId)
         const inserted = database.prepare(created.query).get(...created.bindings) as
           { userId: number } | undefined
         // The row read above can be gone by the time the INSERT runs its own
@@ -311,6 +408,10 @@ export const createContainerIdentityStore = (
         database.prepare(email.query).run(...email.bindings)
         const identity = linkCreatedUser(input, next.userId, timestamp)
         database.prepare(identity.query).run(...identity.bindings)
+        if (signupProjectId !== null) {
+          const assignment = assignSignupProject(input, next.userId, signupProjectId, timestamp)
+          database.prepare(assignment.query).run(...assignment.bindings)
+        }
         const row = database.prepare(identityQuery).get(input.provider, input.subject) as
           IdentityRow | undefined
         return parseIdentity(row, 'created')
@@ -327,10 +428,12 @@ export const createContainerIdentityStore = (
 
 export const createD1IdentityStore = (
   database: D1Database,
-  { now = () => new Date().toISOString() }: IdentityStoreOptions = {},
+  { now = () => new Date().toISOString(), selfSignup }: IdentityStoreOptions = {},
 ): IdentityStore => ({
   resolveProvider: async (assertion) => {
-    const input = normalizeProviderIdentityAssertion(assertion)
+    const asserted = normalizeProviderIdentityAssertion(assertion)
+    const signupProjectId = signupProjectFor(asserted, selfSignup)
+    const input = withSignupProfile(asserted, signupProjectId)
     const timestamp = now()
     assertCanonicalTimestamp(timestamp)
     const security = await database.prepare('SELECT secret FROM account_closure_security WHERE id=1').first<{secret:string}>()
@@ -366,19 +469,29 @@ export const createD1IdentityStore = (
       .first<IdentityRow>()
     if (concurrentlyLinked !== null) return parseIdentity(concurrentlyLinked, 'subject')
 
-    const permitted = await database
-      .prepare(verifiedProvisioningDomainQuery)
-      .bind(input.provisioningDomain)
-      .first<{ permitted: number }>()
+    const permitted =
+      (await database
+        .prepare(verifiedProvisioningDomainQuery)
+        .bind(input.provisioningDomain)
+        .first<{ permitted: number }>()) ??
+      (signupProjectId === null
+        ? null
+        : await database
+            .prepare(activeProjectQuery)
+            .bind(signupProjectId)
+            .first<{ permitted: number }>())
     if (permitted === null) return provisioningNotPermitted
 
     for (let attempt = 0; attempt < 4; attempt += 1) {
       const next = await database.prepare(nextUserIdQuery).first<{ userId: number }>()
       if (next === null) throw new Error('identity store could not allocate a user id')
       const operations = [
-        createUser(input, next.userId, timestamp, blockedKeys),
+        createUser(input, next.userId, timestamp, blockedKeys, signupProjectId),
         createEmail(input, next.userId, timestamp),
         linkCreatedUser(input, next.userId, timestamp),
+        ...(signupProjectId === null
+          ? []
+          : [assignSignupProject(input, next.userId, signupProjectId, timestamp)]),
       ]
       try {
         const results = await database.batch(

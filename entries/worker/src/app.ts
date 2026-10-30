@@ -277,6 +277,12 @@ export type AppEnv = Env & {
    * `/auth/apple` route is configured off and answers 404.
    */
   APPLE_CLIENT_ID?: string
+  /**
+   * App Review only. A project id: an Apple ID nobody has invited may sign up
+   * as a member assigned to that project. Unset keeps provisioning scoped to
+   * verified domains, which is what every other instance wants.
+   */
+  APPLE_SELF_SIGNUP_PROJECT_ID?: string
   APPLE_WEB_ENABLED?: string
   APPLE_WEB_SERVICES_ID?: string
   APPLE_WEB_CAPABILITY_KEYS?: string
