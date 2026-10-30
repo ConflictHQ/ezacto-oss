@@ -1957,6 +1957,9 @@ export const mountShell = async (
     statusMessage.textContent = message
     status.dataset.state = state
     status.toggleAttribute('data-quiet', quiet)
+    // The page says it is loading where the eye is: the spinner in the band,
+    // and the week, the day list or the month dimmed under it until it lands.
+    document.querySelector('[data-app-content]')?.toggleAttribute('data-loading', state === 'loading')
     retryWeek.hidden = !retry
     retryWeek.disabled = false
   }
@@ -2067,7 +2070,15 @@ export const mountShell = async (
     required<HTMLElement>('[data-timer-label]').textContent = 'Timer'
     required<HTMLElement>('[data-timer-elapsed]').textContent = '—'
     required<HTMLElement>('[data-week-total]').textContent = '—'
-    required<HTMLElement>('[data-week-grid-rows]').replaceChildren()
+    // The served skeleton again, not an empty table: the next week lands on
+    // the shimmer the page opened with rather than on nothing.
+    const loadingRow = document.createElement('tr')
+    const loadingCell = document.createElement('td')
+    loadingCell.colSpan = 9
+    loadingCell.className = 'grid-loading'
+    loadingCell.textContent = 'Loading time entries…'
+    loadingRow.append(loadingCell)
+    required<HTMLElement>('[data-week-grid-rows]').replaceChildren(loadingRow)
     required<HTMLElement>('[data-week-grid-totals]').replaceChildren()
     required<HTMLElement>('[data-day-rows]').replaceChildren()
     invoiceClient.replaceChildren()

@@ -5888,6 +5888,76 @@ button[data-auth-action]:disabled {
   border-color: var(--ez-action);
   color: var(--ez-ink);
 }
+/* While the week loads the band carries a spinner, and the part of the page
+   that is on its way -- the grid, the day list or the month -- waits dimmed
+   under it, so "loading" is seen where the eye already is. */
+.status-spinner {
+  display: none;
+  flex: none;
+  width: 14px;
+  height: 14px;
+  border: 2px solid var(--ez-border);
+  border-top-color: var(--ez-action);
+  border-radius: 50%;
+  animation: auth-spin 0.8s linear infinite;
+}
+.session-status[data-state="loading"] .status-spinner {
+  display: inline-block;
+}
+.session-status[data-state="loading"] [data-session-message] {
+  flex: 1 1 auto;
+}
+[data-app-content][data-loading] .week-grid-table tbody,
+[data-app-content][data-loading] .week-grid-table tfoot,
+[data-app-content][data-loading] .day-rows,
+[data-app-content][data-loading] .cal-month {
+  opacity: 0.45;
+  transition: opacity 0.15s;
+}
+/* Before the first week lands the grid's one row is a skeleton: three bars
+   that shimmer in the rows' place, the loading text kept for the reader. */
+.week-grid-table tbody td.grid-loading {
+  height: 180px;
+  padding: 0 24px;
+  color: transparent;
+  background:
+    linear-gradient(
+        90deg,
+        transparent 0%,
+        color-mix(in srgb, var(--ez-ground) 60%, transparent) 50%,
+        transparent 100%
+      )
+      0 0 / 40% 100% no-repeat,
+    repeating-linear-gradient(
+      to bottom,
+      transparent 0,
+      transparent 18px,
+      var(--ez-surface-2) 18px,
+      var(--ez-surface-2) 42px,
+      transparent 42px,
+      transparent 60px
+    );
+  background-clip: content-box;
+  animation: grid-shimmer 1.4s ease-in-out infinite;
+}
+@keyframes grid-shimmer {
+  from {
+    background-position:
+      -40% 0,
+      0 0;
+  }
+  to {
+    background-position:
+      140% 0,
+      0 0;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .status-spinner,
+  .grid-loading {
+    animation: none;
+  }
+}
 /* The ordinary "connected" state is not a band between the title and the
    toolbar (the reference page has none there): it is the page's quiet last
    line, under the grid, the way the reference closes its page with a small

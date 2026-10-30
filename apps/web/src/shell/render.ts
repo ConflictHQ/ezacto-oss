@@ -822,6 +822,7 @@ ${instancePalette ? `  <link rel="stylesheet" href="${INSTANCE_THEME_STYLESHEET_
       <button type="button" data-time-person-reset>Back to your timesheet</button>
     </aside>
     <aside class="session-status" data-session-status role="status">
+      <span class="status-spinner" aria-hidden="true"></span>
       <span data-session-message>Connecting to your ${escapeHtml(brand)} session…</span>
       <button type="button" data-retry-week hidden>Retry week</button>
     </aside>
@@ -882,7 +883,7 @@ ${instancePalette ? `  <link rel="stylesheet" href="${INSTANCE_THEME_STYLESHEET_
       <div class="week-grid-wrap" data-week-grid data-view="desktop">
         <table class="week-grid-table">
           <thead data-week-grid-head><tr><th>Project</th><th colspan="8">Loading week…</th></tr></thead>
-          <tbody data-week-grid-rows><tr><td colspan="9">Loading time entries…</td></tr></tbody>
+          <tbody data-week-grid-rows><tr><td colspan="9" class="grid-loading">Loading time entries…</td></tr></tbody>
           <tfoot data-week-grid-totals></tfoot>
         </table>
       </div>
