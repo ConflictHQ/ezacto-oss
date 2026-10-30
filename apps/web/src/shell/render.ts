@@ -1356,7 +1356,7 @@ ${instancePalette ? `  <link rel="stylesheet" href="${INSTANCE_THEME_STYLESHEET_
         <p class="form-result" id="note-result" data-entry-result data-timer-result data-note-result role="status"></p>
         <div class="entry-secondary"><button type="button" data-proposal-discard hidden>Discard proposal</button><button type="button" data-proposal-check hidden>Check proposal status</button><button type="button" data-stop-timer hidden>Stop running timer</button><button type="button" class="danger-action" data-entry-delete hidden>Delete entry</button></div>
       </div>
-      <button class="entry-submit" type="submit" data-entry-submit><span data-entry-submit-label>Save entry</span><span class="entry-submit-duration" data-entry-submit-duration hidden></span><kbd aria-hidden="true">↵</kbd></button>
+      <button class="entry-submit" type="submit" data-entry-submit><span data-entry-submit-label>Save entry</span><span class="entry-submit-duration" data-entry-submit-duration aria-hidden="true" hidden></span><kbd aria-hidden="true">↵</kbd></button>
     </form>
   </dialog>
   <dialog class="menu-dialog" data-menu-dialog aria-labelledby="menu-title">

@@ -100,7 +100,7 @@ for (const width of [390, 1280]) {
         expect(reads).toBe(0)
         const before = Number(await page.locator('[data-week-total]').textContent())
         await page
-          .locator('[data-time-views]')
+          .locator('[data-time-modes]')
           .getByRole('link', { name: 'Calendar', exact: true })
           .click()
         await expect(page.locator('[data-proposal-status]')).toContainText(
@@ -227,6 +227,9 @@ for (const width of [390, 1280]) {
         await expect(page.locator('[data-calendar-proposal="120104"]')).toHaveCount(1)
         await fixture('calendar-proposals-assert')
         await page.screenshot({ path: info.outputPath(`calendar-${width}.png`), fullPage: true })
+        // Beside the expanded sidebar, Sign out is in the account menu.
+        const accountMenu = page.locator('[data-account-menu-toggle]')
+        if (await accountMenu.isVisible()) await accountMenu.click()
         await page.getByRole('button', { name: 'Sign out', exact: true }).click()
         await expect(page.locator('[data-sign-in-form]')).toBeVisible()
         await expect(page.locator('[data-calendar-proposal]')).toHaveCount(0)

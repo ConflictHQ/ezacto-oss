@@ -4999,11 +4999,15 @@ button.primary-action.primary-action {
    off until a window narrower than about 1300px beside the sidebar. The
    padding is room for a focused segment's ring, which the scroller would
    otherwise clip; the negative margin keeps the segments where they stood. */
+/* The scroll is restated: the view-switch track (the ezacto-ui toggle) lets its
+   pills overflow, and without this the strip pushed every settings page as
+   wide as its thirteen segments. */
 .tabstrip.settings-sections {
   height: auto;
   margin: -6px -6px 2px;
   padding: 6px;
   border-bottom: 0;
+  overflow-x: auto;
   scrollbar-width: thin;
 }
 .tabstrip.settings-sections a {
@@ -6386,6 +6390,9 @@ button.primary-action.primary-action {
     opacity: 1;
     transform: none;
   }
+  /* Rows drawn 36px, 44px to the pointer (audit 995): 4px of transparent
+     border above and below that the hover ground stops short of, taken back
+     by the margin so the menu keeps its height. */
   [data-ez-nav='sidebar'][data-ez-sidebar='expanded'] .account-menu .identity-settings,
   [data-ez-nav='sidebar'][data-ez-sidebar='expanded'] .account-menu .identity-signout {
     position: relative;
@@ -6393,11 +6400,14 @@ button.primary-action.primary-action {
     align-items: center;
     gap: 10px;
     width: 100%;
-    min-height: 36px;
+    min-height: 44px;
+    margin-block: -4px;
     padding: 0 10px;
-    border: 0;
-    border-radius: 8px;
+    border: solid transparent;
+    border-width: 4px 0;
+    border-radius: 8px / 12px;
     background: transparent;
+    background-clip: padding-box;
     color: var(--ez-ink);
     font:
       400 13px/1.2 var(--ez-font-body),
@@ -6418,7 +6428,7 @@ button.primary-action.primary-action {
   /* Sign out is the one control here that ends something, so it is set apart
      by a rule and drawn in the theme's red. */
   [data-ez-nav='sidebar'][data-ez-sidebar='expanded'] .account-menu .identity-signout {
-    margin-top: 9px;
+    margin-top: 5px;
     color: var(--ez-red);
   }
   [data-ez-nav='sidebar'][data-ez-sidebar='expanded'] .account-menu .identity-signout .ez-icon {
@@ -6797,10 +6807,18 @@ button[data-auth-action]:disabled {
   border-radius: 8px;
   background: var(--ez-ground);
 }
+/* Drawn 28px, 44px tall to the finger (audit 995): the extra height is a
+   transparent border the background stops short of, the edge is an inset
+   ring, and the negative margin keeps the box the height of what it draws. */
 .week-period .period-step {
   width: 28px;
-  min-height: 28px;
-  border-radius: 6px;
+  min-height: 44px;
+  margin-block: -8px;
+  border-width: 8px 0;
+  border-color: transparent;
+  border-radius: 6px / 14px;
+  background-clip: padding-box;
+  box-shadow: inset 0 0 0 1px var(--ez-border);
   color: var(--ez-muted);
 }
 .week-period .period-row {
@@ -6917,11 +6935,13 @@ button[data-auth-action]:disabled {
   padding: 10px 24px;
   border-bottom: 1px solid var(--ez-border);
 }
+/* 44px to the finger (audit 995) in the 28px line they are drawn on. */
 .week-grid-foot button {
   display: inline-flex;
   align-items: center;
   gap: 6px;
-  min-height: 28px;
+  min-height: 44px;
+  margin-block: -8px;
   padding: 0;
   border: 0;
   background: none;
@@ -6964,6 +6984,32 @@ html[data-time-view='month'] .week-grid-foot {
 }
 .week-actions [data-time-log-time][hidden] {
   display: none;
+}
+/* Drawn 32px, a 44px square to the pointer (audit 995): 6px of padding the
+   ground stops short of, the edge drawn as an outline on the square you see
+   (the border keeps its colour at no width, so the edge stays the button's),
+   --ez-shadow-primary pulled 6px in to fall from that square, and the focus
+   ring moved in to sit where it did around it. */
+@media (min-width: 721px) {
+  .week-actions button[data-time-log-time] {
+    width: 44px;
+    min-height: 44px;
+    margin: -6px;
+    padding: 6px;
+    border-width: 0;
+    border-radius: 14px;
+    background-clip: content-box;
+    outline: 1px solid var(--ez-action-edge);
+    outline-offset: -7px;
+    box-shadow: 0 2px 8px -6px color-mix(in srgb, var(--ez-action) 35%, transparent);
+  }
+  .week-actions button[data-time-log-time]:disabled {
+    box-shadow: none;
+  }
+  .week-actions button[data-time-log-time]:focus-visible {
+    outline: 3px solid var(--ez-data);
+    outline-offset: -4px;
+  }
 }
 .week-actions [data-time-log-time] .ez-icon {
   width: 16px;

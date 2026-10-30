@@ -604,7 +604,9 @@ test('[e2e:text-size] keeps the drawer and the command bar inside the window at 
 
   await page.setViewportSize({ width: 1280, height: 720 })
   // The toolbar's "+" opens Track time (the entry editor); the command bar
-  // keeps its shortcut.
+  // keeps its shortcut. It is enabled with the session and does nothing until
+  // the week has loaded, so wait for the week first.
+  await expect(page.locator('[data-week-total]')).not.toHaveText('—')
   await page.locator('[data-time-log-time]').click()
   const editor = page.locator('[data-entry-dialog]')
   await expect(editor).toBeVisible()
