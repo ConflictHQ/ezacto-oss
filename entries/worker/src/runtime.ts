@@ -48,6 +48,7 @@ import {
   readEffectiveUserTimezone,
   updateUserTimezone,
   createD1IdentityStore,
+  selfSignupProjectIdFromVariable,
   createD1OidcTransactionStore,
   createD1OidcAppCodeStore,
   createD1StaffMagicLinkStore,
@@ -185,7 +186,7 @@ import {
 } from "@ezacto/db/d1";
 import { createPortalSessionService, type BandClaimBackfillPort, type CostRateBackfillPort,
 } from "@ezacto/api";
-import { deriveIdempotencySecret, emailBrandFrom, withEmailBrand } from "@ezacto/api";
+import { APPLE_PROVIDER_KEY, deriveIdempotencySecret, emailBrandFrom, withEmailBrand } from "@ezacto/api";
 import {
   createApiSessionService,
   createCloudflareAccessSessionResolver,
@@ -765,7 +766,10 @@ export const createRuntimeServices = async (
   const touchIntervalMs = lastSeenIntervalFromSeconds(env.LAST_SEEN_INTERVAL_SECONDS);
   const sessions = createApiSessionService(
     createD1SessionStore(database, { touchIntervalMs }));
-  const identities = createD1IdentityStore(database);
+  const signupProjectId = selfSignupProjectIdFromVariable(env.APPLE_SELF_SIGNUP_PROJECT_ID);
+  const identities = createD1IdentityStore(
+    database,
+    signupProjectId === null ? {} : { selfSignup: { provider: APPLE_PROVIDER_KEY, projectId: signupProjectId } });
   const access = cloudflareAccessConfig(env);
   const authenticationSessions =
     access === null

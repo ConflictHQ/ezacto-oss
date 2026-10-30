@@ -32,7 +32,25 @@ inherited environment values. It does not enable browser Apple sign-in or instal
 an Apple private key. The canonical instance origin remains
 `https://review.ezacto.io`; Apple credential custody stays in the separate
 first-party service. The workspace's normal sign-in and provisioning policies
-still apply.
+still apply, with one opt-in exception below.
+
+## Apple self sign-up
+
+App Review signs in with its own Apple ID. Nobody can invite that address in
+advance, and its domain (`icloud.com` or the private relay) is not one an
+instance can verify, so normal provisioning answers 403 and the app shows
+"This account cannot sign in here." Setting the `app-review` environment
+**variable** `REVIEW_APPLE_SELF_SIGNUP_PROJECT_ID` to a project id makes the
+deploy pass `APPLE_SELF_SIGNUP_PROJECT_ID`: any Apple ID with a verified address
+that matches no user then becomes a `member` assigned to that one project.
+Apple withholds the name after the first authorization; such an account is
+named "New Member".
+
+Create the project first (as the administrator, with at least one task), set
+the variable to its id, then dispatch the deploy. Sign-up applies to Apple
+only, and stops as soon as the project is archived or the variable is cleared
+and the instance redeployed. Empty or unset keeps Apple sign-in to invited
+people. No other deployment sets it.
 
 ## Provision and operate
 
