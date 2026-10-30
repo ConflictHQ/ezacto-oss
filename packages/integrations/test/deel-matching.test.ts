@@ -113,3 +113,26 @@ describe('matching ezacto people to Deel contracts', () => {
     ])
   })
 })
+
+describe('repeated Deel email addresses', () => {
+  const people = [{ userId: 7, emails: [{ address: 'ana.personal@example.test', kind: 'payroll' as const }] }]
+  const samePerson: DeelPerson = {
+    ...deelPeople[0]!,
+    emails: ['ana.personal@example.test', ' ANA.PERSONAL@EXAMPLE.TEST ', 'ana.personal@example.test'],
+  }
+
+  it('counts a repeated normalized address once within one person', () => {
+    expect(matchPayrollContracts({ people, deelPeople: [samePerson] })).toEqual({
+      matches: [{ userId: 7, payrollEmail: 'ana.personal@example.test', personId: 'per_ana', contractId: 'con_ana_hourly' }],
+      unmatched: [],
+    })
+  })
+
+  it.each(['per_other', 'per_ana'])('preserves ambiguity across directory rows even when a second row uses id %s', (id) => {
+    const second: DeelPerson = { ...samePerson, id, contracts: [{ id: 'different_contract', status: 'in_progress' }] }
+    expect(matchPayrollContracts({ people, deelPeople: [samePerson, second] })).toEqual({
+      matches: [],
+      unmatched: [{ userId: 7, reason: 'ambiguous_deel_person' }],
+    })
+  })
+})

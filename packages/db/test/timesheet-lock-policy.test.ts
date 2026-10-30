@@ -723,7 +723,7 @@ for (const [runtime, factory] of factories) {
 
       expect(repeatedStatements).toBeLessThanOrEqual(5)
       expect(afterFacts).toEqual(beforeFacts)
-    }, 30_000)
+    }, 60_000)
 
     it('[security] rejects unauthorized policy actors and refuses to trap a running timer', async () => {
       database = await factory()

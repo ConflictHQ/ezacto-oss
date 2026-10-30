@@ -1,5 +1,6 @@
 import { DEMO_MAIL_NOTE, demoUnavailable } from '../demo.js'
 import { invoiceOverflowTransitions } from './model.js'
+import { renderInvoiceProviderAlerts } from './provider-alerts-model.js'
 
 export const renderInvoicePaymentSection = (): string => `
       <section class="invoice-history invoice-payment-history" aria-labelledby="invoice-payment-heading">
@@ -10,7 +11,7 @@ export const renderInvoicePaymentSection = (): string => `
         <p class="hint" data-invoice-payment-readonly hidden>You have read-only invoice access. Payment changes require the invoices:write scope.</p>
         <p class="form-result" data-invoice-payment-status role="status" aria-live="polite"></p>
         <ul data-invoice-detail-payments></ul>
-      </section>`
+      </section>${renderInvoiceProviderAlerts()}`
 
 /**
  * The line items' heading on the detail page. Lines are changed on the edit
@@ -101,6 +102,7 @@ export const renderInvoiceComposerDialog = (): string => `
       <header><div><p class="eyebrow">Invoice message</p><h2 id="invoice-composer-title" data-invoice-composer-title>Send invoice</h2></div><button type="button" data-dialog-close aria-label="Close invoice message composer">×</button></header>
       <p class="hint">Recording the sent status and delivering the email are two different things, so this dialog does both in one order. The message below is always recorded on the invoice; ticking <strong>Also deliver by email</strong> queues the email after it.</p>
       <p class="hint" data-invoice-composer-owed hidden>The sent status is already recorded for this invoice and only the email is left, so nothing here can record a second sent message. Submit to retry that email, or untick <strong>Also deliver by email</strong> to finish without it.</p>
+      <p class="form-result" data-invoice-composer-hours-warning role="status" aria-live="polite" hidden></p>
       <div class="invoice-composer-layout">
         <section class="invoice-composer-fields">
           <label for="ez-invoice-recipients">To
@@ -182,6 +184,8 @@ export const renderInvoiceComposerDialog = (): string => `
             <div><dt><code>%invoice_payment_terms%</code></dt><dd>Payment terms, e.g. Net 30</dd></div>
             <div><dt><code>%invoice_purchase_order%</code></dt><dd>Purchase order number</dd></div>
             <div><dt><code>%invoice_issue_month_name%</code></dt><dd>Month of the issue date</dd></div>
+            <div><dt><code>%invoice_period%</code></dt><dd>Billing period, e.g. September 2026</dd></div>
+            <div><dt><code>%send_weekday%</code></dt><dd>Weekday it is sent, e.g. Friday</dd></div>
             <div><dt><code>%invoice_line_items%</code></dt><dd>The lines, quantity, rate, and amount</dd></div>
           </dl>
         </aside>
@@ -237,6 +241,7 @@ export const renderInvoiceEditPage = (view?: string): string => `
       <section class="editor-section" aria-labelledby="invoice-edit-lines-heading">
         <h2 id="invoice-edit-lines-heading">Line items</h2>
         <p class="hint">Amounts are worked out in exact cents, and the total, balance and payment state are reconciled when you save. A linked project has to be one of this client's.</p>
+        <p class="form-result" data-invoice-edit-hours-warning role="status" aria-live="polite" hidden></p>
         <div class="line-editor invoice-line-editor-table">
           <div class="line-editor-head" aria-hidden="true"><span>#</span><span>Item type</span><span>Description</span><span>Quantity</span><span data-invoice-edit-rate-heading>Unit price</span><span class="line-editor-numeric">Amount</span><span></span></div>
           <div class="line-editor-rows" data-invoice-edit-line-list></div>
@@ -288,6 +293,7 @@ export const renderInvoiceEditPage = (view?: string): string => `
           <label class="line-editor-project">Linked project<select data-invoice-edit-line-field="projectId"></select></label>
           <label class="editor-check"><input type="checkbox" data-invoice-edit-line-field="taxed">Tax 1</label>
           <label class="editor-check"><input type="checkbox" data-invoice-edit-line-field="taxed2">Tax 2</label>
+          <p class="hint invoice-hours-line" data-invoice-edit-linked-hours hidden></p>
         </div>
         <p class="line-editor-removed" data-invoice-edit-line-removed hidden><span>This line is removed when you save.</span><button type="button" class="editor-secondary" data-invoice-edit-line-restore>Keep this line</button></p>
       </fieldset>

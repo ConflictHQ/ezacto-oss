@@ -24,6 +24,37 @@ export const installTrackedResourceRoutes = <Bindings extends object>(
 }
 
 export {
+  installAllocationRoutes,
+  serializeAllocation,
+  serializeCapacity,
+  type AllocationFilters,
+  type AllocationRecord,
+  type AllocationRepository,
+  type AllocationRouteOptions,
+  type CapacityReportRecord,
+  type CreateAllocationRequest,
+  type UpdateAllocationRequest,
+} from './allocations.js'
+export {
+  installTimeOffRoutes,
+  serializeTimeOff,
+  type CreateTimeOffRequest,
+  type TimeOffFilters,
+  type TimeOffRecord,
+  type TimeOffRepository,
+  type TimeOffRouteOptions,
+  type UpdateTimeOffRequest,
+} from './time-off.js'
+export {
+  installCalendarProposalRoutes,
+  serializeCalendarProposal,
+  type AcceptCalendarProposalRequest,
+  type CalendarProposalFilters,
+  type CalendarProposalRecord,
+  type CalendarProposalRepository,
+  type CalendarProposalRouteOptions,
+} from './calendar-proposals.js'
+export {
   installExpenseRoutes,
   serializeExpense,
   type ExpenseRouteOptions,
@@ -50,3 +81,4 @@ export type {
   UpdateOrganizationTimeEntryNoteSettings,
   UpdateTimeEntryRequest,
 } from './tracked-repository.js'
+export { installResourceCalendarRoutes } from './resource-calendar.js'

@@ -4,6 +4,7 @@ import { createContainerDatabase } from '../src/adapters.js'
 import { migrateContainer } from '../src/migrate.js'
 import {
   createScheduledActionStore,
+  sweepExpiredRuns,
   type ScheduledActionStore,
 } from '../src/scheduled-actions.js'
 
@@ -234,9 +235,9 @@ describe('executing a confirmed run, exactly once per item (#62)', () => {
     const [first, second] = await store.outstanding(runId)
 
     // The first item ran; then the process died holding the second.
-    await store.claimItem(first!.id, t(11))
-    await store.completeItem(first!.id, t(11))
-    await store.claimItem(second!.id, t(11))
+    await store.claimItem(first!.id, t(11), 'test-owner')
+    await store.completeItem(first!.id, t(11), 'test-owner')
+    await store.claimItem(second!.id, t(11), 'test-owner')
 
     // What a resume picks up: the one left running, and not the one done.
     const afterCrash = await store.outstanding(runId)
@@ -248,12 +249,12 @@ describe('executing a confirmed run, exactly once per item (#62)', () => {
     const { sqlite: database, store } = await fixture()
     const runId = await confirmed(store)
     const [first] = await store.outstanding(runId)
-    await store.claimItem(first!.id, t(11))
-    await store.completeItem(first!.id, t(11))
+    await store.claimItem(first!.id, t(11), 'test-owner')
+    await store.completeItem(first!.id, t(11), 'test-owner')
 
     // Through the store it is simply unclaimable...
-    expect(await store.claimItem(first!.id, t(12))).toBe(false)
-    expect(await store.completeItem(first!.id, t(12))).toBe(false)
+    expect(await store.claimItem(first!.id, t(12), 'test-owner')).toBe(false)
+    expect(await store.completeItem(first!.id, t(12), 'test-owner')).toBe(false)
     // ...and the schema refuses it even to a writer going around the store,
     // which is what makes a resume safe to run as often as it likes.
     expect(() =>
@@ -265,10 +266,10 @@ describe('executing a confirmed run, exactly once per item (#62)', () => {
     const { store } = await fixture()
     const runId = await confirmed(store)
     const [first, second] = await store.outstanding(runId)
-    await store.claimItem(first!.id, t(11))
-    await store.completeItem(first!.id, t(11))
-    await store.claimItem(second!.id, t(11))
-    await store.failItem(second!.id, t(11), 'the client has no invoice address')
+    await store.claimItem(first!.id, t(11), 'test-owner')
+    await store.completeItem(first!.id, t(11), 'test-owner')
+    await store.claimItem(second!.id, t(11), 'test-owner')
+    await store.failItem(second!.id, t(11), 'the client has no invoice address', 'test-owner')
 
     const retry = await store.outstanding(runId)
     expect(retry.map((row) => row.id)).toEqual([second!.id])
@@ -282,8 +283,8 @@ describe('executing a confirmed run, exactly once per item (#62)', () => {
     const runId = await confirmed(store)
     const [first] = await store.outstanding(runId)
     for (const hour of [11, 12, 13]) {
-      await store.claimItem(first!.id, t(hour))
-      await store.failItem(first!.id, t(hour), 'still unreachable')
+      await store.claimItem(first!.id, t(hour), 'test-owner')
+      await store.failItem(first!.id, t(hour), 'still unreachable', 'test-owner')
     }
     expect((await store.outstanding(runId))[0]?.attemptCount).toBe(3)
   })
@@ -292,16 +293,16 @@ describe('executing a confirmed run, exactly once per item (#62)', () => {
     const { store } = await fixture()
     const runId = await confirmed(store)
     const [first, second] = await store.outstanding(runId)
-    await store.claimItem(first!.id, t(11))
-    await store.completeItem(first!.id, t(11))
+    await store.claimItem(first!.id, t(11), 'test-owner')
+    await store.completeItem(first!.id, t(11), 'test-owner')
 
     // A partial run stays visibly partial. Reporting it finished would leave
     // items nobody ever did and nobody was told about.
     expect(await store.settleRun(runId, t(12))).toBe(false)
     expect((await store.read(runId))?.state).toBe('confirmed')
 
-    await store.claimItem(second!.id, t(12))
-    await store.completeItem(second!.id, t(12))
+    await store.claimItem(second!.id, t(12), 'test-owner')
+    await store.completeItem(second!.id, t(12), 'test-owner')
     expect(await store.settleRun(runId, t(13))).toBe(true)
     expect((await store.read(runId))?.state).toBe('completed')
   })
@@ -313,7 +314,7 @@ describe('executing a confirmed run, exactly once per item (#62)', () => {
     const proposed = await propose(store)
     if (proposed.outcome !== 'proposed') throw new Error(proposed.outcome)
     const [first] = await store.outstanding(proposed.run.id)
-    await expect(store.claimItem(first!.id, t(11))).rejects.toThrow(/only a confirmed run/u)
+    await expect(store.claimItem(first!.id, t(11), 'test-owner')).rejects.toThrow(/only a confirmed run/u)
   })
 
   it('[money] a result must say when it finished or why it did not', async () => {
@@ -330,5 +331,94 @@ describe('executing a confirmed run, exactly once per item (#62)', () => {
         .prepare(`UPDATE run_items SET state = 'failed', failure_reason = NULL WHERE id = ?`)
         .run(first!.id),
     ).toThrow(/must say when or why/u)
+  })
+})
+
+describe('the expiry sweep, run from the cron and the tick (#63)', () => {
+  it('[container] settles a lapsed run with the reason recorded', async () => {
+    const { sqlite, store } = await fixture()
+    const proposed = await propose(store)
+    if (proposed.outcome !== 'proposed') throw new Error('expected a proposal')
+    expect(await sweepExpiredRuns(store, t(22), () => undefined)).toEqual([proposed.run.id])
+    const row = sqlite
+      .prepare('SELECT state, settled_reason FROM proposed_runs WHERE id = ?')
+      .get(proposed.run.id)
+    expect(row).toEqual({
+      state: 'expired',
+      settled_reason: 'nobody confirmed it before the deadline',
+    })
+  })
+
+  it('[container] leaves a run whose deadline has not passed', async () => {
+    const { store } = await fixture()
+    const proposed = await propose(store)
+    if (proposed.outcome !== 'proposed') throw new Error('expected a proposal')
+    expect(await sweepExpiredRuns(store, '2026-09-13T20:59:59.999Z', () => undefined)).toEqual([])
+    expect((await store.read(proposed.run.id))?.state).toBe('proposed')
+  })
+
+  it('[container] cannot be confirmed once swept', async () => {
+    const { store } = await fixture()
+    const proposed = await propose(store)
+    if (proposed.outcome !== 'proposed') throw new Error('expected a proposal')
+    await sweepExpiredRuns(store, t(22), () => undefined)
+    expect(await store.confirm(proposed.run.id, 1, t(22))).toEqual({ outcome: 'not_proposed' })
+  })
+
+  it('[unit] reports a failing sweep and does not throw, so the rest of the tick runs', async () => {
+    const failure = new Error('database is locked')
+    const reported: unknown[] = []
+    const result = await sweepExpiredRuns(
+      {
+        expire: async () => {
+          throw failure
+        },
+      },
+      t(22),
+      (error) => reported.push(error),
+    )
+    expect(result).toEqual([])
+    expect(reported).toEqual([failure])
+  })
+})
+
+describe('quantity and client on a manifest item (#63)', () => {
+  it('[unit] keeps hours and client name as data', async () => {
+    const { store } = await fixture()
+    const proposed = await propose(store, {
+      items: [{ ...items[0], quantitySeconds: 27_000, clientName: 'Kestrel Environmental' }],
+    })
+    if (proposed.outcome !== 'proposed') throw new Error('expected a proposal')
+    const [row] = await store.manifest(proposed.run.id)
+    expect(row?.quantitySeconds).toBe(27_000)
+    expect(row?.clientName).toBe('Kestrel Environmental')
+  })
+
+  it('[unit] allows null for a non-time action', async () => {
+    const { store } = await fixture()
+    const proposed = await propose(store)
+    if (proposed.outcome !== 'proposed') throw new Error('expected a proposal')
+    const [row] = await store.manifest(proposed.run.id)
+    expect(row?.quantitySeconds).toBeNull()
+    expect(row?.clientName).toBeNull()
+  })
+
+  it('[unit] refuses a negative quantity', async () => {
+    const { store } = await fixture()
+    await expect(
+      propose(store, { items: [{ ...items[0], quantitySeconds: -1 }] }),
+    ).rejects.toThrow()
+  })
+
+  it('[container] leaves items written without the new columns untouched', async () => {
+    const { sqlite, store } = await fixture()
+    const proposed = await propose(store)
+    if (proposed.outcome !== 'proposed') throw new Error('expected a proposal')
+    const rows = sqlite
+      .prepare('SELECT description, amount_cents FROM run_items WHERE run_id = ? ORDER BY id')
+      .all(proposed.run.id)
+    expect(rows).toEqual(
+      items.map((i) => ({ description: i.description, amount_cents: i.amountCents })),
+    )
   })
 })

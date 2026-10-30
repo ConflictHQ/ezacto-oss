@@ -1,0 +1,10 @@
+{
+  "id": 3002,
+  "name": "Sample tasks name 3002",
+  "billable_by_default": true,
+  "is_default": false,
+  "default_hourly_rate": null,
+  "is_active": true,
+  "created_at": "2024-02-03T10:20:30Z",
+  "updated_at": "2024-02-03T10:20:30Z"
+}

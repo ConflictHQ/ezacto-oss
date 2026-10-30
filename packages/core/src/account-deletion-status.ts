@@ -1,3 +1,4 @@
+import type { CalendarCleanupStatus } from './calendar-connection.js'
 import type { AppleCleanupStatus } from './apple-lifecycle.js'
 import type {
   AccountRetentionPolicy,
@@ -11,6 +12,7 @@ export interface AccountDeletionStatusAccess {
 }
 export interface AccountDeletionTrackingStatus {
   apple_cleanup?: AppleCleanupStatus;
+  calendar_cleanup?: CalendarCleanupStatus;
   request_id: string;
   status: AccountDeletionStatus;
   requested_at: string;

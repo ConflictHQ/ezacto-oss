@@ -1,3 +1,4 @@
+import type { ClientRateCardApi } from './rate-card-model.js'
 import type {
   ClientHierarchyNode,
   ClientInvoiceSendingInput,
@@ -20,7 +21,7 @@ export type ClientDirectoryPage<T = GeneralResource> = {
   readonly page: { readonly next_cursor: string | null }
 }
 
-export interface ClientDirectoryApi {
+export interface ClientDirectoryApi extends ClientRateCardApi {
   listDirectoryClients(
     cursor?: string,
     signal?: AbortSignal,
@@ -204,9 +205,11 @@ const compareClients = (left: GeneralResource, right: GeneralResource): number =
 /**
  * Produces a stable parent-first hierarchy. Invalid or missing parent links are
  * treated as roots, and the visited set keeps hostile/corrupt cycles bounded.
+ * The comparator orders siblings and roots; it never separates a child from its parent.
  */
 export const clientHierarchy = (
   clients: readonly GeneralResource[],
+  compare: (left: GeneralResource, right: GeneralResource) => number = compareClients,
 ): readonly ClientHierarchyRow[] => {
   const visibleIds = new Set(clients.map((client) => client.id))
   const children = new Map<number | null, GeneralResource[]>()
@@ -217,7 +220,7 @@ export const clientHierarchy = (
     group.push(client)
     children.set(key, group)
   }
-  for (const group of children.values()) group.sort(compareClients)
+  for (const group of children.values()) group.sort(compare)
 
   const rows: ClientHierarchyRow[] = []
   const visited = new Set<number>()
@@ -228,7 +231,7 @@ export const clientHierarchy = (
     for (const child of children.get(client.id) ?? []) append(child, depth + 1)
   }
   for (const root of children.get(null) ?? []) append(root, 0)
-  for (const client of [...clients].sort(compareClients)) append(client, 0)
+  for (const client of [...clients].sort(compare)) append(client, 0)
   return rows
 }
 

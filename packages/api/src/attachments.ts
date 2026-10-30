@@ -235,9 +235,9 @@ const owners: readonly OwnerDefinition[] = [
 
 const unavailable = (): never => {
   throw new ApiError({
-    status: 503,
-    code: "service_unavailable",
-    message: "Attachment storage is not configured.",
+    status: 403,
+    code: "feature_unavailable",
+    message: "File attachments are not enabled on this instance.",
   });
 };
 
@@ -721,3 +721,7 @@ export const installAttachmentRoutes = <Bindings extends object>(
     return context.body(null, 204);
   });
 };
+
+// Payable documents share the same bounded multipart parsing and content identity
+// as every other attachment; their ownership/version policy lives in staff-invoices.
+export { multipartFile as readAttachmentFile, hash as attachmentContentHash }

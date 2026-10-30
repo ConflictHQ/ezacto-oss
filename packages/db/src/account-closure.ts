@@ -42,14 +42,24 @@ const removedTables = new Set([
   'two_factor_challenges',
   'user_totp_enrolments',
   'user_recovery_codes',
+  'user_email_second_factors',
+  'two_factor_email_code_sends',
   'notification_preferences',
   'user_roles',
   'user_departments',
   'teammate_assignments',
   'saved_report_pins',
   'saved_report_shares',
+  'saved_report_role_shares',
   'saved_reports',
   'quickbooks_oauth_states',
+  'quickbooks_managed_grants',
+  'calendar_proposals',
+  'calendar_connections',
+  'planning_calendar_feeds',
+  'allocations',
+  'placeholder_assignment_keys',
+  'time_off',
 ])
 const closureTables = new Set([
   'organization_owner',
@@ -61,6 +71,7 @@ const closureTables = new Set([
   'closed_account_sign_in_guards',
 ])
 const category = (table: string): AccountRetentionCategory => {
+  if (table === 'quickbooks_managed_grants') return 'audit_and_security'
   if (
     [
       'time_entries',
@@ -73,11 +84,11 @@ const category = (table: string): AccountRetentionCategory => {
     ].includes(table)
   )
     return 'time_and_worker_attribution'
-  if (/invoice|estimate|payment|payout|expense|receivable|quickbooks|wise/.test(table))
+  if (/invoice|estimate|payment|payout|expense|receivable|quickbooks|wise|bank_deposit|bank_feed/.test(table))
     return 'billing_and_payments'
   return 'audit_and_security'
 }
-const credentialsQuery = `SELECT json_object('identities', json(COALESCE((SELECT json_group_array(json_object('provider',provider,'subject',provider_subject)) FROM (SELECT provider,provider_subject FROM user_identities WHERE user_id=? ORDER BY provider,provider_subject)), '[]')), 'emails', json(COALESCE((SELECT json_group_array(json_object('address',address,'verified',verified_at IS NOT NULL AND invalidated_at IS NULL)) FROM (SELECT address,verified_at,invalidated_at FROM user_emails WHERE user_id=? ORDER BY id)), '[]'))) AS snapshot`
+const credentialsQuery = `SELECT json_object('identities', json(COALESCE((SELECT json_group_array(json_object('provider',provider,'subject',provider_subject)) FROM (SELECT provider,provider_subject FROM user_identities WHERE user_id=? ORDER BY provider,provider_subject)), '[]')), 'emails', json(COALESCE((SELECT json_group_array(json_object('address',address,'verified',verified_at IS NOT NULL AND invalidated_at IS NULL)) FROM (SELECT address,verified_at,invalidated_at FROM user_emails WHERE user_id=? ORDER BY id)), '[]')), 'calendar_connections', json(COALESCE((SELECT json_group_array(json_object('provider',provider,'generation',generation,'credential_revision',credential_revision,'status',status,'instance',instance_nonce)) FROM (SELECT provider,generation,credential_revision,status,instance_nonce FROM calendar_connections WHERE user_id=? ORDER BY provider)), '[]')), 'calendar_cleanup', json(COALESCE((SELECT json_group_array(json_object('id',id,'status',status)) FROM (SELECT id,status FROM calendar_cleanup_obligations WHERE user_id=? AND instance_nonce=coalesce((SELECT c.instance_nonce FROM calendar_connections c WHERE c.user_id=calendar_cleanup_obligations.user_id AND c.provider=calendar_cleanup_obligations.provider),(SELECT nonce FROM calendar_sync_instance WHERE singleton=1)) ORDER BY id)), '[]'))) AS snapshot`
 
 export function createAccountClosureRepository(database: Database): AccountClosureStore {
   const client = (database as Database & { $client: Native }).$client
@@ -107,6 +118,7 @@ export function createAccountClosureRepository(database: Database): AccountClosu
     )
     const row = rows[0]
     if (!row) return null
+    const cleanup = (await all<{pending:number;manual_required:number;revoked:number;operator_confirmed:number}>(client,"SELECT coalesce(sum(status='pending'),0) AS pending,coalesce(sum(status='manual_required'),0) AS manual_required,coalesce(sum(status='revoked' AND NOT EXISTS(SELECT 1 FROM calendar_operator_cleanup_receipts r WHERE r.obligation_id=calendar_cleanup_obligations.id)),0) AS revoked,coalesce(sum(EXISTS(SELECT 1 FROM calendar_operator_cleanup_receipts r WHERE r.obligation_id=calendar_cleanup_obligations.id)),0) AS operator_confirmed FROM calendar_cleanup_obligations WHERE request_id=?",[requestId]))[0]!
     return {
       request_id: row.request_id,
       user_id: row.user_id,
@@ -115,6 +127,7 @@ export function createAccountClosureRepository(database: Database): AccountClosu
       policy_version: row.policy_version,
       policy_snapshot: parseAccountRetentionPolicy(JSON.parse(row.policy_snapshot)),
       inventory: JSON.parse(row.inventory_json) as AccountClosureInventoryItem[],
+      ...(cleanup.pending+cleanup.manual_required+cleanup.revoked+cleanup.operator_confirmed>0?{calendar_cleanup:cleanup}:{}),
       retained_identity: row.retained_identity === 1,
       apple_cleanup: row.apple_cleanup,
     }
@@ -160,6 +173,38 @@ export function createAccountClosureRepository(database: Database): AccountClosu
     entries.push(
       `json_object('location','email_log.recipients','count',(SELECT count(*) FROM email_log WHERE EXISTS (SELECT 1 FROM json_each(to_json) recipient JOIN user_emails address ON lower(address.address)=lower(json_extract(recipient.value,'$.email')) WHERE address.user_id=(SELECT id FROM subject))),'category','audit_and_security')`,
     )
+    for (const table of ['email_suppression_events', 'email_suppression_lifts'].filter((table) =>
+      tables.some(({ name }) => name === table),
+    ))
+      entries.push(
+        `json_object('location','${table}.address','count',(SELECT count(*) FROM ${table} suppression WHERE EXISTS (SELECT 1 FROM user_emails address WHERE address.user_id=(SELECT id FROM subject) AND lower(address.address)=suppression.address)),'category','audit_and_security')`,
+      )
+    if (tables.some(({ name }) => name === 'placeholder_assignment_keys'))
+      entries.push(
+        `json_object('location','placeholder_assignment_keys.assignment_target','count',(SELECT count(*) FROM placeholder_assignment_keys receipt WHERE receipt.actor_id<>(SELECT id FROM subject) AND CAST(json_extract(receipt.result_json,'$.allocation.userId') AS INTEGER)=(SELECT id FROM subject)),'category','audit_and_security')`,
+      )
+    if (tables.some(({ name }) => name === 'wise_signed_webhook_deliveries'))
+      entries.push(
+        `json_object('location','wise_all_webhook_deliveries.transfer_id','count',(SELECT count(*) FROM wise_all_webhook_deliveries delivery WHERE EXISTS (SELECT 1 FROM payout_transfers payout WHERE payout.external_transfer_id=delivery.transfer_id AND payout.user_id=(SELECT id FROM subject)) OR EXISTS (SELECT 1 FROM payment_run_items item WHERE item.transfer_id=delivery.transfer_id AND item.user_id=(SELECT id FROM subject))),'category','billing_and_payments')`,
+      )
+    entries.push(`json_object('location','calendar_connections.external_cleanup','count',
+      (SELECT count(*) FROM calendar_connections WHERE user_id=(SELECT id FROM subject) AND sealed_grant IS NOT NULL)
+      +(SELECT count(*) FROM calendar_cleanup_obligations WHERE user_id=(SELECT id FROM subject) AND instance_nonce=coalesce((SELECT c.instance_nonce FROM calendar_connections c WHERE c.user_id=calendar_cleanup_obligations.user_id AND c.provider=calendar_cleanup_obligations.provider),(SELECT nonce FROM calendar_sync_instance WHERE singleton=1)) AND status<>'revoked'),
+      'category','audit_and_security')`)
+    if (tables.some(({name}) => name === 'calendar_manual_cleanup_receipts'))
+      entries.push(`json_object('location','calendar_manual_cleanup_receipts','count',
+        (SELECT count(*) FROM calendar_manual_cleanup_receipts WHERE user_id=(SELECT id FROM subject)
+          AND instance_nonce=(SELECT nonce FROM calendar_sync_instance WHERE singleton=1)),
+        'category','audit_and_security')`)
+    if (tables.some(({name}) => name === 'calendar_operator_cleanup_receipts'))
+      entries.push(`json_object('location','calendar_operator_cleanup_receipts','count',
+        (SELECT count(*) FROM calendar_operator_cleanup_receipts WHERE (subject_user_id=(SELECT id FROM subject) AND instance_nonce=(SELECT nonce FROM calendar_sync_instance WHERE singleton=1)) OR (administrator_user_id=(SELECT id FROM subject) AND review_instance=(SELECT nonce FROM calendar_sync_instance WHERE singleton=1))),
+        'category','audit_and_security')`)
+    if (tables.some(({name}) => name === 'github_publications'))
+      entries.push(`json_object('location','github_publications.external_comments','count',
+        (SELECT count(DISTINCT CASE WHEN p.remote_id IS NOT NULL THEN p.connection_id||':'||p.repository_id||':'||p.remote_id ELSE 'pending:'||p.id END) FROM github_publications p
+          WHERE p.subject_user_id=(SELECT id FROM subject) AND p.subject_created_at=(SELECT created_at FROM users WHERE id=(SELECT id FROM subject)) AND (p.remote_id IS NOT NULL OR p.attempted_at IS NOT NULL OR p.pending_write IS NOT NULL)),
+        'category','audit_and_security')`)
     // D1 has tighter compound-SELECT and function-argument limits than SQLite.
     // Each bounded array contains objects, so trimming its outer brackets is exact.
     const groups: string[] = []
@@ -213,7 +258,7 @@ export function createAccountClosureRepository(database: Database): AccountClosu
       )
     )[0]!.secret
     const snapshot = (
-      await all<{ snapshot: string }>(client, credentialsQuery, [person.user_id, person.user_id])
+      await all<{ snapshot: string }>(client, credentialsQuery, [person.user_id, person.user_id, person.user_id, person.user_id])
     )[0]!.snapshot
     const reviewToken = accountClosureDigest(
       secret,
@@ -345,6 +390,8 @@ export function createAccountClosureRepository(database: Database): AccountClosu
           userId,
           reviewed.person.user_version,
           input.expectedPolicyVersion,
+          userId,
+          userId,
           userId,
           userId,
           userId,

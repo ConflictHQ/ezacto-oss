@@ -1,4 +1,5 @@
 import {
+  apiScopeProfiles,
   canViewMoneyField,
   DETAILED_TIME_PDF_ROW_LIMIT,
   detailedTimeDocument,
@@ -443,6 +444,19 @@ export interface DetailedTimeRowRecord {
   projectActive: boolean;
 }
 
+export interface DetailedTimeFacetRecord {
+  id: number;
+  name: string;
+}
+
+/** What each picker can narrow the report to, each ignoring its own filter. */
+export interface DetailedTimeFacetsRecord {
+  people: readonly DetailedTimeFacetRecord[];
+  tasks: readonly DetailedTimeFacetRecord[];
+  roles: readonly DetailedTimeFacetRecord[];
+  tags: readonly DetailedTimeFacetRecord[];
+}
+
 export interface DetailedTimeCurrencyRecord {
   currency: string;
   billableAmountCents: number | null;
@@ -473,6 +487,7 @@ export interface DetailedTimeReportRecord extends ReportDateRange {
   unclaimedSeconds: number;
   timeEntryCount: number;
   currencies: readonly DetailedTimeCurrencyRecord[];
+  facets: DetailedTimeFacetsRecord;
   rows: readonly DetailedTimeRowRecord[];
 }
 
@@ -645,9 +660,13 @@ interface SavedReportRecord {
   ownerUserId: number;
   ownerName: string;
   isCustom: boolean;
+  view: { report: string; query: string } | null;
   presentation: { result: "summary" | "detailed"; grouped: boolean; includeZeroValues: boolean };
   pinned: boolean;
   shared: boolean;
+  sharing: { users: readonly { userId: number; name: string }[]; profiles: readonly UserPrincipal["profile"][] };
+  ownedByViewer: boolean;
+  canDelete: boolean;
 }
 
 interface ReportRunnerResultRecord {
@@ -680,10 +699,12 @@ export interface ReportReader {
   listSavedReports(input: { viewerUserId: number; view?: "all" | "yours" | "shared"; query?: string; customOnly?: boolean }): Promise<readonly SavedReportRecord[]>;
   readSavedReport(reportId: string, viewerUserId: number): Promise<SavedReportRecord | null>;
   createSavedReport(input: { id: string; name: string; fields: SavedReportDefinitionRecord["fields"]; metrics: SavedReportDefinitionRecord["metrics"]; filters: SavedReportDefinitionRecord["filters"]; groupBy: SavedReportDefinitionRecord["groupBy"]; ownerUserId: number; presentation: SavedReportRecord["presentation"]; createdAt: string }): Promise<SavedReportRecord>;
-  updateSavedReport(input: { reportId: string; ownerUserId: number; expectedVersion: number; changes: SavedReportChanges; presentation?: SavedReportRecord["presentation"] }): Promise<"not_found" | "version_conflict" | SavedReportRecord>;
+  createReportView(input: { id: string; name: string; view: { report: string; query: string }; ownerUserId: number; createdAt: string }): Promise<SavedReportRecord>;
+  updateSavedReport(input: { reportId: string; ownerUserId: number; expectedVersion: number; changes: SavedReportChanges; view?: { report: string; query: string }; presentation?: SavedReportRecord["presentation"] }): Promise<"not_found" | "version_conflict" | SavedReportRecord>;
   shareSavedReport(reportId: string, ownerUserId: number, userId: number, shared: boolean, at: string): Promise<boolean>;
+  shareSavedReportWithProfile(reportId: string, ownerUserId: number, profile: UserPrincipal["profile"], shared: boolean, at: string): Promise<boolean>;
   pinSavedReport(reportId: string, viewerUserId: number, pinned: boolean, at: string): Promise<boolean>;
-  deleteSavedReport(reportId: string, ownerUserId: number): Promise<boolean>;
+  deleteSavedReport(reportId: string, actorUserId: number): Promise<boolean>;
   runSavedReport(reportId: string, viewerUserId: number, authority: { billableMoney: boolean; costMoney: boolean }): Promise<ReportRunnerResultRecord | null>;
   previewReport(definition: SavedReportDefinitionRecord, presentation: SavedReportRecord["presentation"], authority: { billableMoney: boolean; costMoney: boolean }): Promise<ReportRunnerResultRecord>;
   executeTimeAction(input: {
@@ -708,6 +729,7 @@ export interface ReportReader {
     clientId?: number;
   }): Promise<PaymentsReceivedReportRecord>;
   receivables(filter: {
+    dueState?: "not_due" | "past_due";
     asOf: string;
     clientId?: number;
   }): Promise<ReceivablesReportRecord>;
@@ -767,6 +789,8 @@ export interface ReportReader {
     /** `client` withholds a note a client may not read (D20); absent is `internal`. */
     audience?: "internal" | "client";
     activeProjectsOnly?: boolean;
+    /** Entries whose note contains this text, case-insensitively. */
+    notes?: string;
   }): Promise<DetailedTimeReportResult>;
   filterNames(ids: {
     clientId?: number;
@@ -808,7 +832,7 @@ const profitabilityKeys = new Set([
 ]);
 const invoicedKeys = new Set([...reportKeys, "client_id", "status"]);
 const paymentsReceivedKeys = new Set([...reportKeys, "client_id"]);
-const receivablesKeys = new Set(["as_of", "client_id"]);
+const receivablesKeys = new Set(["as_of", "client_id", "due_state"]);
 const invoicedStates: readonly InvoicedReportState[] = ["draft", "open", "paid", "closed"];
 const timeReportKeys = new Set([...reportKeys, "include_fixed_fee"]);
 // The payroll run is the one report with a file representation, so it is the
@@ -849,6 +873,7 @@ const detailedTimeKeys = new Set([
   "role_id",
   "tag_id",
   "invoice_state",
+  "notes",
 ]);
 // The report's own filters, every one, and the file it is wanted as. Built from
 // the report's set rather than listed again, so a filter added to the report is
@@ -970,6 +995,10 @@ const detailedTimeQuery = (
     "active_projects_only",
     parsed.errors,
   );
+  const notes = parsed.params.get("notes")?.trim();
+  if (notes !== undefined && notes.length > 200) {
+    parsed.errors.push({ field: "notes", code: "too_long", message: "notes must be at most 200 characters" });
+  }
   const includeFixedFee = queryBoolean(parsed.params, "include_fixed_fee", parsed.errors);
   const directClientOnly = queryBoolean(parsed.params, "direct_client_only", parsed.errors);
   const contractorsOnly = queryBoolean(parsed.params, "contractors_only", parsed.errors);
@@ -1007,6 +1036,7 @@ const detailedTimeQuery = (
       ...(audience === undefined ? {} : { audience }),
       ...(invoiceState === undefined ? {} : { invoiceState }),
       ...(activeProjectsOnly === undefined ? {} : { activeProjectsOnly }),
+      ...(notes === undefined || notes === "" ? {} : { notes }),
     },
   };
 };
@@ -1585,6 +1615,7 @@ const serializeDetailedExpense = (
 const serializeDetailedTime = (
   report: Readonly<DetailedTimeReportRecord>,
   viewer: Readonly<UserPrincipal>,
+  self = false,
 ) => {
   const money = canViewMoneyField(viewer, "billable_rate");
   return {
@@ -1612,6 +1643,14 @@ const serializeDetailedTime = (
       entries_without_billable_rate: currency.entriesWithoutBillableRate,
       ...(money ? { billable_amount_cents: currency.billableAmountCents } : {}),
     })),
+    // The people list ignores the person filter, so a My hours drilldown, which
+    // fixes that filter to the viewer, must not be handed every colleague.
+    facets: {
+      people: self ? report.facets.people.filter((person) => person.id === viewer.userId) : report.facets.people,
+      tasks: report.facets.tasks,
+      roles: report.facets.roles,
+      tags: report.facets.tags,
+    },
     rows: report.rows.map((row) => ({
       spent_date: row.spentDate,
       client_id: row.clientId,
@@ -1857,6 +1896,10 @@ const serializeProjectBudgetSummary = (
   };
 };
 
+// A report can only be shared with a role that can open reports at all, so the
+// list is the reports:read ceiling rather than a second copy of it.
+const savedReportProfiles = apiScopeProfiles["reports:read"];
+
 export const installReportRoutes = <Bindings extends object>(
   api: Hono<ApiContext<Bindings>>,
   reports: ReportReader,
@@ -1876,10 +1919,22 @@ export const installReportRoutes = <Bindings extends object>(
     },
     owner: { user_id: report.ownerUserId, name: report.ownerName },
     is_custom: report.isCustom,
+    view: report.view,
     pinned: report.pinned,
     shared: report.shared,
+    shared_with: {
+      users: report.sharing.users.map((user) => ({ user_id: user.userId, name: user.name })),
+      profiles: report.sharing.profiles,
+    },
+    owned_by_viewer: report.ownedByViewer,
+    can_delete: report.canDelete,
     created_at: report.definition.createdAt,
     updated_at: report.definition.updatedAt,
+  });
+  // A 422 names the field it is about; the reason is the validator's own words.
+  const invalidDefinition = (message: string): ApiError => new ApiError({
+    status: 422, code: "validation_failed", message: "The request contains invalid fields.",
+    fields: [{ field: "report", code: "invalid_report_definition", message }],
   });
   const savedId = (value: string): string => {
     if (!/^[A-Za-z0-9_-]{1,128}$/u.test(value)) throw notFound("saved report");
@@ -1893,7 +1948,7 @@ export const installReportRoutes = <Bindings extends object>(
       typeof record.grouped !== "boolean" ||
       typeof record.include_zero_values !== "boolean"
     ) {
-      throw new ApiError({ status: 422, code: "invalid_report_definition", message: "presentation is invalid" });
+      throw invalidDefinition("presentation is invalid");
     }
     return {
       result: record.result,
@@ -1961,7 +2016,30 @@ export const installReportRoutes = <Bindings extends object>(
       return context.json(reportEnvelope(context, saved(created)), 201);
     } catch (error) {
       if (error instanceof TypeError || error instanceof RangeError) {
-        throw new ApiError({ status: 422, code: "invalid_report_definition", message: error.message });
+        throw invalidDefinition(error.message);
+      }
+      throw error;
+    }
+  });
+
+  // Save the report on screen: its kind and its address, not a builder
+  // definition. Private to the author until they share it.
+  api.post("/report-views", async (context) => {
+    requireApiScope(context, "reports:read");
+    const body = await context.req.json<Record<string, unknown>>();
+    const principal = context.get("principal");
+    try {
+      const created = await reports.createReportView({
+        id: crypto.randomUUID(),
+        name: String(body.name ?? ""),
+        view: body.view as { report: string; query: string },
+        ownerUserId: principal.userId,
+        createdAt: new Date().toISOString(),
+      });
+      return context.json(reportEnvelope(context, saved(created)), 201);
+    } catch (error) {
+      if (error instanceof TypeError || error instanceof RangeError) {
+        throw invalidDefinition(error.message);
       }
       throw error;
     }
@@ -2009,13 +2087,22 @@ export const installReportRoutes = <Bindings extends object>(
         ? { groupBy: (body.group_by ?? null) as SavedReportDefinitionRecord["groupBy"] }
         : {}),
     };
-    const result = await reports.updateSavedReport({
-      reportId: savedId(context.req.param("reportId")),
-      ownerUserId: principal.userId,
-      expectedVersion: Number(version),
-      changes,
-      ...(body.presentation === undefined ? {} : { presentation: parsePresentation(body.presentation) }),
-    });
+    let result: Awaited<ReturnType<ReportReader["updateSavedReport"]>>;
+    try {
+      result = await reports.updateSavedReport({
+        reportId: savedId(context.req.param("reportId")),
+        ownerUserId: principal.userId,
+        expectedVersion: Number(version),
+        changes,
+        ...(body.view === undefined ? {} : { view: body.view as { report: string; query: string } }),
+        ...(body.presentation === undefined ? {} : { presentation: parsePresentation(body.presentation) }),
+      });
+    } catch (error) {
+      if (error instanceof TypeError || error instanceof RangeError) {
+        throw invalidDefinition(error.message);
+      }
+      throw error;
+    }
     if (result === "not_found") throw notFound("saved report");
     if (result === "version_conflict") {
       throw new ApiError({ status: 409, code: "report_version_conflict", message: "the saved report changed; reload before editing" });
@@ -2036,11 +2123,16 @@ export const installReportRoutes = <Bindings extends object>(
     const source = await reports.readSavedReport(savedId(context.req.param("reportId")), principal.userId);
     if (source === null) throw notFound("saved report");
     const at = new Date().toISOString();
-    const copy = await reports.createSavedReport({
-      id: crypto.randomUUID(), name: `${source.definition.name} copy`, fields: source.definition.fields,
-      metrics: source.definition.metrics, filters: source.definition.filters, groupBy: source.definition.groupBy,
-      ownerUserId: principal.userId, presentation: source.presentation, createdAt: at,
-    });
+    const name = `${source.definition.name} copy`;
+    const copy = source.view === null
+      ? await reports.createSavedReport({
+        id: crypto.randomUUID(), name, fields: source.definition.fields,
+        metrics: source.definition.metrics, filters: source.definition.filters, groupBy: source.definition.groupBy,
+        ownerUserId: principal.userId, presentation: source.presentation, createdAt: at,
+      })
+      : await reports.createReportView({
+        id: crypto.randomUUID(), name, view: source.view, ownerUserId: principal.userId, createdAt: at,
+      });
     return context.json(reportEnvelope(context, saved(copy)), 201);
   });
 
@@ -2062,10 +2154,38 @@ export const installReportRoutes = <Bindings extends object>(
     });
   }
 
+  api.on(["POST", "DELETE"], "/report-definitions/:reportId/role-shares/:profile", async (context) => {
+    requireApiScope(context, "reports:read");
+    const profile = context.req.param("profile");
+    if (!(savedReportProfiles as readonly string[]).includes(profile)) {
+      throw new ApiError({
+        status: 422, code: "validation_failed", message: "The request contains invalid fields.",
+        fields: [{ field: "profile", code: "invalid_report_role", message: `role must be one of ${savedReportProfiles.join(", ")}` }],
+      });
+    }
+    const ok = await reports.shareSavedReportWithProfile(
+      savedId(context.req.param("reportId")), context.get("principal").userId,
+      profile as UserPrincipal["profile"], context.req.method === "POST", new Date().toISOString());
+    if (!ok) throw notFound("saved report");
+    return context.body(null, 204);
+  });
+
   api.post("/report-definitions/:reportId/run", async (context) => {
     requireApiScope(context, "reports:read");
     const principal = context.get("principal");
-    const result = await reports.runSavedReport(savedId(context.req.param("reportId")), principal.userId, authority(principal));
+    let result: Awaited<ReturnType<ReportReader["runSavedReport"]>>;
+    try {
+      result = await reports.runSavedReport(savedId(context.req.param("reportId")), principal.userId, authority(principal));
+    } catch (error) {
+      // A saved view is the address of a report; that report's own route runs it.
+      if (error instanceof RangeError) {
+        throw new ApiError({
+          status: 422, code: "validation_failed", message: "The request contains invalid fields.",
+          fields: [{ field: "report_id", code: "report_view_not_runnable", message: error.message }],
+        });
+      }
+      throw error;
+    }
     if (result === null) throw notFound("saved report");
     return context.json(reportEnvelope(context, result));
   });
@@ -2181,10 +2301,12 @@ export const installReportRoutes = <Bindings extends object>(
       errors.push({ field: "as_of", code: "required", message: "as_of is required" });
     }
     const clientId = queryPositiveInteger(params, "client_id", errors);
+    const dueState = queryEnum(params, "due_state", ["not_due", "past_due"] as const, errors);
     assertFields(errors);
     const report = await reports.receivables({
       asOf: asOf!,
       ...(clientId === undefined ? {} : { clientId }),
+      ...(dueState === undefined ? {} : { dueState }),
     });
     return context.json(
       {
@@ -2259,7 +2381,7 @@ export const installReportRoutes = <Bindings extends object>(
     if (result.kind === "too_many_entries") throw detailedTimeTooWide(result.limit);
     return context.json(
       {
-        data: serializeDetailedTime(result.report, context.get("principal")),
+        data: serializeDetailedTime(result.report, context.get("principal"), query.self),
         links: {
           self:
             new URL(context.req.url).pathname + new URL(context.req.url).search,
@@ -2364,6 +2486,7 @@ export const installReportRoutes = <Bindings extends object>(
     }
     if (action === "mark_invoiced" || action === "mark_uninvoiced") {
       requireApiScope(context, "invoices:write");
+      if (principal.authentication.kind === "token") throw new ApiError({status:403,code:"invoice_elevation_required",message:"Invoice time links require the invoice-scoped elevated command. Use ez sudo invoice unlink-time for a draft invoice."});
     }
     if (typeof body.command_id !== "string" || !Array.isArray(body.entry_ids)) {
       throw new ApiError({ status: 422, code: "invalid_time_action", message: "command_id and entry_ids are required" });

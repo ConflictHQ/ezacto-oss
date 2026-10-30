@@ -1,42 +1,19 @@
+import { WORKER_BACKUP_CLEAR_TABLES, WORKER_BACKUP_REAUTHORIZE_TABLES } from '@ezacto/core'
+import { captureWorkerSnapshot, discardWorkerSnapshot, type WorkerBackupFile } from './worker-backup-snapshot.js'
 /**
  * D18 L1: nightly logical export. Produces the D18 bundle format as a set of
- * objects under an R2 prefix. The same format is consumed by `ez backup` (CLI)
+ * objects under an R2 prefix. The versioned Worker format is restored by `ez restore` (CLI)
  * and surfaced in the settings backup-status widget (A-4).
  */
 
 const SCHEMA_VERSION = 1
-const BUNDLE_VERSION = '0037'
+const BUNDLE_VERSION = '0038'
 
-/**
- * Tables a restore should skip, and why. Note what this is *not*: it is not a
- * list of tables to leave out of the bundle. The bundle takes everything.
- *
- * Those are two different decisions and conflating them was the earlier
- * mistake. Capturing is cheap and a backup is a record -- leaving a table out
- * destroys evidence you may want later, and "who held a session when this
- * happened" is exactly the question an incident asks. Loading is where the
- * judgement lives: restoring these would revive a session somebody revoked, a
- * password-reset link somebody already spent, a sign-in code already used.
- *
- * So they are captured, and named here so the restore can skip them.
+/** Captured for evidence, then cleared by the supported typed restore reader.
+ * Schema migration receipts are preserved; calendar connections are transformed
+ * into re-consent and cleanup custody, not silently dropped.
  */
-const EPHEMERAL_TABLES: readonly string[] = [
-  // Re-applied from source on first boot. Loading it would tell a fresh
-  // database it had already run migrations it has not run.
-  '_ezacto_migrations',
-  // Live credentials. Loading them revives what was deliberately killed.
-  'sessions',
-  'contact_sessions',
-  'auth_tokens',
-  'auth_first_run',
-  'auth_rate_limits',
-  'magic_link_tokens',
-  'staff_magic_links',
-  'two_factor_challenges',
-  'oidc_app_codes',
-  'oidc_transactions',
-  'quickbooks_oauth_states',
-]
+const EPHEMERAL_TABLES: readonly string[] = WORKER_BACKUP_CLEAR_TABLES
 
 /**
  * Every table the database has, in a stable order.
@@ -71,6 +48,8 @@ const backupTables = async (database: D1Database): Promise<readonly string[]> =>
 
 export interface BackupObjectStore {
   put(key: string, body: string): Promise<void>
+  get?(key: string): Promise<Uint8Array | null>
+  putBytes?(key: string, body: Uint8Array): Promise<void>
 }
 
 export interface BackupManifest {
@@ -86,6 +65,9 @@ export interface BackupManifest {
    * version of ezacto that wrote it.
    */
   restore_skips: readonly string[]
+  restore_reauthorizations?: readonly string[]
+  files?: Record<string, WorkerBackupFile>
+  capture_id?: string
 }
 
 export interface BackupRunRecord {
@@ -124,13 +106,13 @@ const sha256Hex = async (data: string): Promise<string> => {
 
 const RESTORE_MD = `# Restoring from this backup
 
-This backup was produced by ezacto's nightly export (D18 L1). Each table is
-a CSV file with a header row. You can open these in any spreadsheet, import
+This backup was produced by ezacto's nightly export (D18 L1). CSV files are human-readable views. The authoritative schema and typed rows
+preserve NULL, empty text, binary values, and numeric precision. You can open these in any spreadsheet, import
 them into any database, or use the ezacto CLI to restore.
 
 ## Handle this like the database itself
 
-The bundle carries everything a working instance needs, and that includes the
+The bundle carries database rows and verified attachment bytes, including the
 credential material: password hashes, authenticator seeds, recovery-code hashes
 and API-token hashes. It has to — an instance whose people cannot sign in has
 not been restored — but it means these files are exactly as sensitive as the
@@ -138,20 +120,23 @@ database they came from, and more portable. Store them accordingly.
 
 ## Tables to skip when loading
 
-Everything the database had is here, including live sessions, sign-in links and
-OAuth transactions. They are kept because a backup is a record and you may want
-to know who held a session when something happened -- but **do not load them**.
-Doing so revives a session somebody revoked, a password-reset link somebody
-already spent, a sign-in code already used.
+The snapshot retains credential evidence. The supported restore clears live
+sessions, API tokens, sign-in codes and OAuth transactions before publication;
+calendar grants become cleanup obligations requiring fresh consent. It preserves
+the migration ledger so schema migrations are not replayed into an existing schema.
 
-\`manifest.json\` names them in \`restore_skips\`, so whatever loads these CSVs can
-read the list rather than carry its own copy of it.
+\`restore_skips\` is the historical safety inventory, not an instruction to
+blindly import CSV or discard migration history. Use the typed snapshot reader.
+\`restore_reauthorizations\` names connections whose live grant becomes encrypted
+cleanup custody and which require fresh consent in the restored instance.
 
 ## Files
 
 - \`tables/<name>.csv\` — one file per table, UTF-8, RFC 4180 CSV.
 - \`manifest.json\` — metadata: schema version, export timestamp, row counts,
   and SHA-256 checksums for every file.
+- \`schema.json\`, \`rows/\` — lossless versioned schema and typed rows.
+- \`attachments/sha256/\` — verified file and brand asset bytes.
 - \`RESTORE.md\` — this file.
 
 ## Verify integrity
@@ -167,13 +152,18 @@ The bundle path is positional, and the database to write is required -- a
 restore never guesses which instance it is for.
 
 \`\`\`
-ez restore <path-to-this-directory> --database <target.sqlite>
+ez restore <path-to-this-directory> --database <target.sqlite> --attachments <new-attachments-directory>
 \`\`\`
 
-## Restore without ezacto
+The result is quarantined. Keep it offline and follow the current-evidence replay
+and reviewed release procedure in the repository RESTORE.md before serving traffic.
+Legacy Worker bundles (0037 and older) cannot be restored losslessly and are refused.
 
-Import the CSVs into any SQLite database. The column names in each CSV match
-the schema exactly. Refer to the ezacto source for the CREATE TABLE DDL.
+## Read without ezacto
+
+CSV files are for inspection, not lossless restoration. schema.json and rows/
+contain the versioned typed snapshot. Attachments are verified content-addressed
+bytes under attachments/sha256/. Keep every manifest-listed file together.
 `
 
 export const exportBundle = async (
@@ -182,28 +172,9 @@ export const exportBundle = async (
   prefix: string,
 ): Promise<BackupManifest> => {
   const exportedAt = new Date().toISOString()
-  const tables: BackupManifest['tables'] = {}
-  let totalRows = 0
-
-  const backedUp = await backupTables(database)
-  for (const table of backedUp) {
-    const { results } = await database
-      .prepare(`SELECT * FROM ${table}`)
-      .all<Record<string, unknown>>()
-
-    const columns = results.length > 0 ? Object.keys(results[0]!) : []
-    const lines = [toCsvRow(columns)]
-    for (const row of results) {
-      lines.push(toCsvRow(columns.map((col) => row[col])))
-    }
-    const csv = lines.join('\n') + '\n'
-    const hash = await sha256Hex(csv)
-
-    await store.put(`${prefix}tables/${table}.csv`, csv)
-    tables[table] = { row_count: results.length, sha256: hash }
-    totalRows += results.length
-  }
-
+  const snapshot = await captureWorkerSnapshot(database, store, prefix, toCsvRow)
+  const tables = snapshot.tables
+  const backedUp = Object.keys(tables)
   const manifest: BackupManifest = {
     schema_version: SCHEMA_VERSION,
     bundle_version: BUNDLE_VERSION,
@@ -213,13 +184,20 @@ export const exportBundle = async (
     // Carried in the manifest rather than left to a reader of the source: the
     // bundle outlives the version of ezacto that wrote it.
     restore_skips: EPHEMERAL_TABLES.filter((table) => backedUp.includes(table)),
-    total_rows: totalRows,
+    restore_reauthorizations: WORKER_BACKUP_REAUTHORIZE_TABLES.filter((table) => backedUp.includes(table)),
+    total_rows: snapshot.totalRows,
+    files: snapshot.files,
+    capture_id: snapshot.captureId,
   }
 
-  await store.put(`${prefix}manifest.json`, JSON.stringify(manifest, null, 2))
-  await store.put(`${prefix}RESTORE.md`, RESTORE_MD)
-
-  return manifest
+  try {
+    await store.put(`${prefix}RESTORE.md`, RESTORE_MD)
+    await store.put(`${prefix}manifest.json`, JSON.stringify(manifest, null, 2))
+    return manifest
+  } catch (error) {
+    await discardWorkerSnapshot(database,snapshot.captureId,prefix)
+    throw error
+  }
 }
 
 export const recordBackupStart = async (
@@ -244,22 +222,19 @@ export const completeBackupRun = async (
   prefix: string,
   now: string,
 ): Promise<void> => {
-  await database
-    .prepare(
-      `UPDATE backup_runs SET status = 'completed', completed_at = ?,
-       r2_prefix = ?, manifest_json = ?, table_count = ?, total_rows = ?,
-       updated_at = ? WHERE id = ?`,
-    )
-    .bind(
-      now,
-      prefix,
-      JSON.stringify(manifest),
-      manifest.table_count,
-      manifest.total_rows,
-      now,
-      runId,
-    )
-    .run()
+  if (manifest.bundle_version === '0038') {
+    if (!manifest.capture_id) throw new Error('Worker backup completion requires its capture receipt.')
+    const results = await database.batch([
+      database.prepare(`UPDATE backup_runs SET status='completed',completed_at=CASE WHEN status='completed' THEN completed_at ELSE ? END,r2_prefix=?,manifest_json=?,table_count=?,total_rows=?,updated_at=CASE WHEN status='completed' THEN updated_at ELSE ? END WHERE id=? AND ((status='running' AND EXISTS(SELECT 1 FROM worker_backup_snapshots WHERE id=? AND prefix=? AND state='ready')) OR (status='completed' AND r2_prefix=? AND manifest_json=?))`)
+        .bind(now,prefix,JSON.stringify(manifest),manifest.table_count,manifest.total_rows,now,runId,manifest.capture_id,prefix,prefix,JSON.stringify(manifest)),
+      database.prepare(`UPDATE worker_backup_snapshots SET state='completed' WHERE id=? AND EXISTS(SELECT 1 FROM backup_runs WHERE id=? AND status='completed' AND manifest_json=?)`).bind(manifest.capture_id,runId,JSON.stringify(manifest)),
+      database.prepare(`DELETE FROM worker_backup_snapshots WHERE id=? AND state='completed'`).bind(manifest.capture_id),
+    ])
+    if (!results[0]?.meta.changes) throw new Error('Worker backup was invalidated before completion.')
+    return
+  }
+  await database.prepare(`UPDATE backup_runs SET status='completed',completed_at=?,r2_prefix=?,manifest_json=?,table_count=?,total_rows=?,updated_at=? WHERE id=?`)
+    .bind(now,prefix,JSON.stringify(manifest),manifest.table_count,manifest.total_rows,now,runId).run()
 }
 
 export const failBackupRun = async (
@@ -271,7 +246,7 @@ export const failBackupRun = async (
   await database
     .prepare(
       `UPDATE backup_runs SET status = 'failed', completed_at = ?,
-       error_message = ?, updated_at = ? WHERE id = ?`,
+       error_message = ?, updated_at = ? WHERE id = ? AND status <> 'completed'`,
     )
     .bind(now, error, now, runId)
     .run()
@@ -292,14 +267,87 @@ export const getLatestBackupRuns = async (
   return results
 }
 
+export interface BackupRunFilter {
+  status?: BackupRunRecord['status']
+  trigger?: BackupRunRecord['trigger']
+}
+
+export interface BackupRunPageWindow extends BackupRunFilter {
+  /** Where the previous page ended, newest first; null on the first page. */
+  after: { startedAt: string; id: number } | null
+  /** Runs started later than this are left out, so a traversal holds still. */
+  startedThrough: string
+  take: number
+}
+
+const backupRunFilter = (
+  filter: BackupRunFilter,
+): { conditions: string[]; bindings: unknown[] } => {
+  const conditions: string[] = []
+  const bindings: unknown[] = []
+  if (filter.status !== undefined) {
+    conditions.push('status = ?')
+    bindings.push(filter.status)
+  }
+  if (filter.trigger !== undefined) {
+    conditions.push('trigger = ?')
+    bindings.push(filter.trigger)
+  }
+  return { conditions, bindings }
+}
+
+/** The latest start in the whole history, or null when nothing has run. */
+export const getBackupRunsSnapshot = async (database: D1Database): Promise<string | null> => {
+  const row = await database
+    .prepare('SELECT max(started_at) AS latest FROM backup_runs')
+    .first<{ latest: string | null }>()
+  return row?.latest ?? null
+}
+
+/** Backup runs, newest first, a keyset page at a time (issue 929). */
+export const pageBackupRuns = async (
+  database: D1Database,
+  window: BackupRunPageWindow,
+): Promise<BackupRunRecord[]> => {
+  const { conditions, bindings } = backupRunFilter(window)
+  conditions.push('started_at <= ?')
+  bindings.push(window.startedThrough)
+  if (window.after !== null) {
+    conditions.push('(started_at < ? OR (started_at = ? AND id < ?))')
+    bindings.push(window.after.startedAt, window.after.startedAt, window.after.id)
+  }
+  const { results } = await database
+    .prepare(
+      `SELECT id, status, trigger, started_at, completed_at, r2_prefix,
+       manifest_json, table_count, total_rows, error_message, created_at, updated_at
+       FROM backup_runs WHERE ${conditions.join(' AND ')}
+       ORDER BY started_at DESC, id DESC LIMIT ?`,
+    )
+    .bind(...bindings, window.take)
+    .all<BackupRunRecord>()
+  return results
+}
+
+export const countBackupRuns = async (
+  database: D1Database,
+  filter: BackupRunFilter,
+): Promise<number> => {
+  const { conditions, bindings } = backupRunFilter(filter)
+  const row = await database
+    .prepare(
+      `SELECT count(*) AS total FROM backup_runs
+       ${conditions.length === 0 ? '' : `WHERE ${conditions.join(' AND ')}`}`,
+    )
+    .bind(...bindings)
+    .first<{ total: number }>()
+  return row?.total ?? 0
+}
+
 /**
  * Returns true when no nightly backup has started today (UTC date boundary).
  * The scheduled handler calls this every minute but only proceeds when due.
  */
-export const shouldRunNightlyBackup = async (
-  database: D1Database,
-  now: Date,
-): Promise<boolean> => {
+export const shouldRunNightlyBackup = async (database: D1Database, now: Date): Promise<boolean> => {
   const todayStart = now.toISOString().slice(0, 10) + 'T00:00:00.000Z'
   const { results } = await database
     .prepare(

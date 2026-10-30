@@ -1,0 +1,55 @@
+{
+  "issue": 549,
+  "checked_at": "2026-10-27T00:08:23.030558+00:00",
+  "source_revision": "fb290964ab191eebecd6d47d2ebf190da1110747",
+  "production": {
+    "origin": "https://app.example.com",
+    "deployed_revision": "9d20989d5fdebce7772a38af10edcd8cf31a8d25",
+    "profiles": [
+      {
+        "profile": "administrator",
+        "manager_grants": [],
+        "people": 1,
+        "active": 1,
+        "contractors": 0
+      },
+      {
+        "profile": "member",
+        "manager_grants": [],
+        "people": 59,
+        "active": 13,
+        "contractors": 43
+      }
+    ],
+    "organization_count": 1,
+    "effective_own_money": false,
+    "rows_written": 0
+  },
+  "owner_decisions": {
+    "reference": "https://github.com/ConflictHQ/ezacto-pvt/issues/549#issuecomment-6390787615",
+    "D43": "Owner-provisioned dev identities on ezacto.io and read-only production configuration aggregate. No production denial probes.",
+    "D44": "CONFLICT own_money stays disabled permanently; document this operating policy."
+  },
+  "production_queries": [
+    "SELECT profile, manager_grants, COUNT(*) AS people, SUM(is_active) AS active, SUM(is_contractor) AS contractors FROM users GROUP BY profile,manager_grants ORDER BY profile,manager_grants",
+    "SELECT COUNT(*) AS organizations, MIN(COALESCE(json_extract(modules,'$.own_money'),0)) AS own_money_min, MAX(COALESCE(json_extract(modules,'$.own_money'),0)) AS own_money_max FROM organizations"
+  ],
+  "dev_fixture_inspection": {
+    "origin": "https://ezacto.io",
+    "deployed_revision": "9d20989d5fdebce7772a38af10edcd8cf31a8d25",
+    "published_accounts": "The existing public demo seed publishes administrator and non-contractor member sign-in accounts. No credentials are reproduced here.",
+    "contractors": 5,
+    "active_contractors": 4,
+    "contractor_password_accounts": 0,
+    "effective_own_money": false,
+    "rows_written": 0,
+    "limitation": "No designated usable contractor test session or credential was discovered. Absence of a password account does not rule out other owner-held credentials."
+  },
+  "remaining_acceptance": [
+    "Owner supplies or designates usable employee and contractor dev test identities and synthetic fixtures, as already decided in D43.",
+    "Run direct API and UI restrictions, including ID/filter manipulation, against the deployed dev identities; retain sanitized status/field assertions with its revision.",
+    "Do not infer individual intended profiles from aggregate counts or employment flags."
+  ],
+  "privacy": "Only role/grant/module and authentication-availability aggregates were read. No identity, price, invoice, financial payload, token or credential was printed or committed. No roles, modules or financial data were changed.",
+  "issue_status": "Remain open: current configuration proof and documented policy do not substitute for the outstanding deployed denial exercise."
+}

@@ -222,4 +222,26 @@ describe('keyboard access', () => {
     expect(selected).not.toHaveBeenCalled()
     element.remove()
   })
+
+  it('[unit] marks fit and wrap columns on the header and every body cell, and leaves the rest alone', () => {
+    // Without a way to say "this column is short", every column shares the width
+    // equally and the name is the one clipped beside half-empty neighbours.
+    const element = table({
+      columns: [
+        { key: 'name', label: 'Project', render: (row) => row.name },
+        { key: 'client', label: 'Client', fit: true, render: (row) => row.client },
+        { key: 'why', label: 'Why', wrap: true, render: (row) => row.name },
+      ],
+    })
+    const header = (key: string) => element.querySelector(`thead th[data-column="${key}"]`)!
+    const cells = (key: string) => [...element.querySelectorAll(`tbody td[data-column="${key}"]`)]
+    expect(header('client').classList.contains('is-fit')).toBe(true)
+    expect(cells('client').every((cell) => cell.classList.contains('is-fit'))).toBe(true)
+    expect(cells('client')).toHaveLength(rows.length)
+    expect(cells('why').every((cell) => cell.classList.contains('is-wrap'))).toBe(true)
+    for (const key of ['name']) {
+      expect(header(key).classList.contains('is-fit')).toBe(false)
+      expect(cells(key).some((cell) => cell.classList.contains('is-fit') || cell.classList.contains('is-wrap'))).toBe(false)
+    }
+  })
 })

@@ -1,4 +1,15 @@
+export { installCalendarConnectionRoutes, type CalendarConnectionPort } from './calendar-connections.js'
+export { installCalendarFeedRoutes, installCalendarSubscriptionRoute } from './calendar-feeds.js'
+export { installDeelPaymentStatusRoutes } from './deel-payment-status.js'
+export { createManagedDeelConnectionCommands, type ManagedDeelConnectionOptions,
+} from './managed-deel.js'
+export { createManagedBillConnectionCommands, type ManagedBillConnectionOptions, type ManagedBillConnectCommand, type ManagedBillDisconnectInput,
+} from './managed-bill.js'
+export { createManagedQuickBooksGrantCommands, type ManagedQuickBooksGrantOptions,
+} from './managed-quickbooks.js'
+export { installScheduledJobRoutes } from './scheduled-jobs.js'
 export { createApiApp } from './app.js'
+export { createApiIdempotencyAuthorization } from './idempotency-auth.js'
 export {
   captureRequestActivity,
   type ActivityActor,
@@ -6,10 +17,40 @@ export {
   type ActivityRecorder,
 } from './activity-log.js'
 export {
+  deriveIdempotencySecret,
+  IDEMPOTENCY_KEY_HEADER,
+  IDEMPOTENCY_KEY_LIFETIME_HEADER,
+  IDEMPOTENCY_KEY_LIFETIME_SECONDS,
+  IDEMPOTENCY_LEASE_MS,
+  IDEMPOTENCY_WAIT_MS,
+  IDEMPOTENT_REPLAYED_HEADER,
+  MAX_STORED_RESPONSE_BYTES,
+  MAX_IDEMPOTENCY_REQUEST_BYTES,
+  withIdempotency,
+  type IdempotencyClaim,
+  type IdempotencyOptions,
+  type IdempotencyRecord,
+  type IdempotencyStore,
+  type IdempotentExecution,
+  type SealedIdempotentResponse,
+} from './idempotency.js'
+export {
   installBackupStatusRoutes,
+  type BackupRunFilter,
+  type BackupRunPageWindow,
   type BackupStatusReader,
   type BackupStatusRecord,
+  type BackupStatusRouteOptions,
 } from './backup-status.js'
+export {
+  BACKUP_DOWNLOAD_PATH,
+  installBackupDownloadMintRoute,
+  installBackupDownloadRedeemRoute,
+  type BackupDownloadOptions,
+  type BackupDownloadRedeemOptions,
+  type BackupDownloadSecondFactor,
+  type BackupDownloadService,
+} from './backup-download.js'
 export {
   installClientTreeRoutes,
   type ClientHierarchyNode,
@@ -55,6 +96,10 @@ export {
   type StoredBrandAsset,
 } from './brand-assets.js'
 export {
+  emailBrandFrom,
+  withEmailBrand,
+  type EmailBrandSource } from './email-brand.js'
+export {
   installInstanceThemeRoutes,
   installInstanceThemeStylesheetRoute,
   instanceThemeCssVariable,
@@ -62,11 +107,11 @@ export {
   type InstanceThemeRecord,
   type InstanceThemeSurface,
 } from './instance-theme.js'
+export { installMailgunWebhookRoute } from './mailgun-webhook.js'
 export {
   installStripeRoutes,
   installStripeWebhookRoute,
-  type StripeService,
-} from './stripe.js'
+  type StripeService } from './stripe.js'
 export {
   installInvoiceDocumentPreferenceRoutes,
   type InvoiceDocumentPreferenceService,
@@ -89,12 +134,16 @@ export {
   type InvoiceHoursReportService,
 } from './invoice-hours-report.js'
 export {
+  installInvoiceHoursReconciliationRoutes,
+  type InvoiceHoursReconciliationService,
+} from './invoice-hours-reconciliation.js'
+export {
   installInvoiceTimeClaimRoutes,
   type InvoiceTimeClaimService,
   type ReleaseTimeOutcome,
 } from './invoice-time-claims.js'
 export {
-  installPayoutAccountRoutes,
+  installPayoutAccountRoutes, type PayoutProviderEnablement, type PayoutPreferenceService,
   type PayoutAccount,
   type PayoutAccountService,
   type PayoutLinkResult,
@@ -102,8 +151,7 @@ export {
 export {
   installBillRoutes,
   type BillService,
-  type BillStatus,
-} from './bill.js'
+  type BillStatus } from './bill.js'
 export {
   apiContractOperations,
   apiContractSchemas,
@@ -140,18 +188,39 @@ export {
   type SignInMethodState,
 } from './sign-in-methods.js'
 export {
+  installModuleGate,
+  moduleAvailability,
+  moduleDisabled,
+  moduleForPath,
+  OPERATOR_MODULE_FLAGS,
+  OPERATOR_MODULES,
+  type ModuleAvailability,
+  type OperatorModule,
+  type OperatorModuleEnv,
+} from './module-availability.js'
+export {
   installTwoFactorChallengeRoutes,
   issueSessionOrChallenge,
   TWO_FACTOR_CHALLENGE_COOKIE,
   type TwoFactorChallengeRouteOptions,
   type TwoFactorChallengeVerdict,
+  type TwoFactorEmailCodeDelivery,
+  type TwoFactorEmailCodeMailer,
   type TwoFactorGate,
+  type TwoFactorMethod,
 } from './two-factor-challenge.js'
+export { createQueuedTwoFactorEmailCodeMailer } from './two-factor-email-code-email.js'
 export {
   createQueuedAuthMailer,
   type AuthEmailTemplate,
   type AuthEmailTemplateSource,
 } from './auth-email.js'
+export {
+  installHarvestV2Routes,
+  type HarvestExpenseSource,
+  type HarvestTimeEntrySource,
+  type HarvestV2RouteOptions,
+} from './harvest-v2/routes.js'
 export {
   installGeneralResourceRoutes,
   type GeneralResourceRouteOptions,
@@ -214,11 +283,11 @@ export {
 export {
   installEmailLogRoutes,
   type EmailLogReader,
+  type EmailLogRouteOptions,
 } from './email-log.js'
 export {
   installEmailHealthRoutes,
-  type EmailHealthReader,
-} from './email-health.js'
+  type EmailHealthReader } from './email-health.js'
 export {
   installEmailConfigurationRoutes,
   type EmailConfigurationRouteOptions,
@@ -232,11 +301,17 @@ export {
 } from './email-configuration.js'
 export {
   installOutboxRoutes,
+  type ActivityRollOutcome,
+  type ActivityRollPort,
+  type RollableActivityYear,
   type ActivityLogActor,
   type ActivityLogResource,
+  type OutboxDeliveryFilter,
+  type OutboxDeliveryPageWindow,
   type OutboxDeliveryResource,
   type OutboxDeliveryStatus,
   type OutboxMonitor,
+  type OutboxRouteOptions,
 } from './outbox.js'
 export {
   createCompositeSessionResolver,
@@ -250,6 +325,7 @@ export {
   type MagicLinkMailer,
   type MagicLinkRouteOptions,
   type MagicLinkService,
+  type PortalEstimateService,
   type PortalInvoiceSummary,
   type PortalSessionIssuer,
   type PortalSessionStore,
@@ -386,7 +462,17 @@ export {
   type SsoProvisioningDomain,
   type SsoProvisioningDomainService,
 } from './sso-domains.js'
-export { installTeamRoutes, type TeamRouteOptions } from './team.js'
+export { installTeamRoutes, type CostRateBackfillPort, type TeamRouteOptions } from './team.js'
+export {
+  installWorkItemRoutes,
+  serializeWorkItemLink,
+  type WorkItemActor,
+  type WorkItemConnectionRecord,
+  type WorkItemLinkFilters,
+  type WorkItemLinkRecord,
+  type WorkItemRepository,
+  type WorkItemRouteOptions,
+} from './work-items.js'
 export {
   installUserEmailRoutes,
   type UserEmailRouteOptions,
@@ -397,6 +483,8 @@ export {
   installQuickBooksWebhookRoute,
   type QuickBooksConnectionStatus,
   type QuickBooksInvoiceSyncState,
+  type QuickBooksReconciliation,
+  type QuickBooksReconciliationRow,
   type QuickBooksService,
   type QuickBooksSyncResult,
   type QuickBooksTokenSet,
@@ -417,10 +505,15 @@ export {
 } from './wise.js'
 
 export * from './thank-you-subscriber.js'
+export * from './notification-mail.js'
 
 export * from './thank-you-preference.js'
 export * from './reminder-settings.js'
+export * from './notification-settings.js'
+export * from './timesheet-auto-approval.js'
+export * from './notification-preferences.js'
 export * from './invoice-defaults.js'
+export * from './invoice-view.js'
 
 export * from './recurring-repair.js'
 export {
@@ -430,8 +523,10 @@ export {
 } from './payment-url.js'
 
 export { installStaffPaymentRoutes } from './staff-payments.js'
+export { installDeelSyncRoutes, type DeelSyncApiDependencies } from './deel-sync.js'
 
 export { installPaymentRunRoutes } from './payment-runs.js'
+export { installScheduledRunRoutes } from './scheduled-runs.js'
 
 export * from './account-retention.js'
 
@@ -457,4 +552,48 @@ export {
   type AppleWebRouteOptions,
 } from './apple-web.js'
 
-export { createAppleWebLifecycle, assertAppleWebCustodyConfig, APPLE_WEB_CONNECTION_COOKIE, type AppleWebCustodyConfig } from './apple-web-lifecycle.js'
+export { createAppleWebLifecycle, assertAppleWebCustodyConfig, APPLE_WEB_CONNECTION_COOKIE, type AppleWebCustodyConfig,
+} from './apple-web-lifecycle.js'
+export { installMyPaymentRoutes } from './my-payments.js'
+
+export {
+  installClientRateCardRoutes,
+  type ClientRateCardRepository,
+  type ClientRateCardRouteOptions,
+} from './client-rate-cards.js'
+
+export { installStaffInvoiceRoutes } from './staff-invoices.js'
+
+export { installContractorReviewRoutes } from './contractor-review.js'
+
+export { createQueuedPortalMagicLinkMailer } from './portal-magic-link-email.js'
+
+export * from './email-suppressions.js'
+
+export * from './estimate-templates.js'
+
+export * from './invoice-elevations.js'
+
+export * from './migration-loads.js'
+
+export { installOrganizationHolidayRoutes } from './organization-holidays.js'
+export { installOutboundWebhookRoutes } from './outbound-webhooks.js'
+
+export { installPlaceholderPlanningRoutes, type PlaceholderPlanningRepository,
+} from './resources/placeholder-allocations.js'
+
+export { installDeelStagingRoutes, type DeelStagingApiRuntime } from './deel-staging.js'
+export * from './csv-import-staging-contract.js'
+export * from './csv-import-staging-port.js'
+export { isCsvStagingPath, csvStagingAuthority, csvStagingSafeFailure } from './csv-import-staging.js'
+
+export * from './csv-import-apply-port.js'
+export { installInvoiceProviderAlertRoutes, type InvoiceProviderAlertService } from './invoice-provider-alerts.js'
+export { installHarvestInvoiceRoutes, serializeHarvestInvoice, parseHarvestInvoiceQuery, type HarvestInvoiceSource, type HarvestInvoiceRecord, type HarvestInvoiceFilters } from './harvest-v2/invoices.js'
+
+export { installBankDepositRoutes, type BankDepositReviewApi } from './bank-deposits.js'
+export { installCalendarAuthorizationRoutes, type CalendarAuthorizationPort } from './calendar-oauth.js'
+
+export { installCalendarOperatorCleanupRoutes } from './calendar-operator-cleanup.js'
+
+export * from './github-reader.js'

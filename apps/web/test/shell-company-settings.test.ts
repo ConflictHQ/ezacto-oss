@@ -1,8 +1,11 @@
 /** @vitest-environment happy-dom */
+import type { OffsiteBackupStatus } from '@ezacto/core'
 
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { EzactoClient } from '@conflict-hq/ezacto-client'
+import type { LogPageResult } from '../src/components/paged-log.js'
 import { createShellApi } from '../src/shell/model.js'
+import type { CompanySettingsApi, NotificationSettingsState } from '../src/module-settings/model.js'
 import {
   EzactoApiError,
   authenticationError,
@@ -101,6 +104,7 @@ describe('company settings', () => {
     last_failed: ReturnType<typeof backupRun> | null
     recent_runs: ReturnType<typeof backupRun>[]
     has_failure: boolean
+    offsite?: OffsiteBackupStatus
   } = {
     last_completed: backupRun(),
     last_failed: null,
@@ -134,11 +138,40 @@ describe('company settings', () => {
     })),
     removeSsoDomain: vi.fn(async () => undefined),
     getBackupStatus: vi.fn(async () => backupStatusPayload),
+    listBackupRuns: vi
+      .fn<
+        (query: {
+          per_page: number
+          cursor?: string
+        }) => Promise<LogPageResult<ReturnType<typeof backupRun>>>
+      >()
+      .mockImplementation(async () => ({
+        data: backupStatusPayload.recent_runs,
+        links: { next: null },
+        page: {
+          per_page: 50,
+          next_cursor: null,
+          total: backupStatusPayload.recent_runs.length,
+        },
+      })),
     getInvoiceReminders: vi.fn(async () => ({ first_after_days: 3, every_days: 7 })),
     updateInvoiceReminders: vi.fn(
       async (policy: { first_after_days: number; every_days: number } | null) => ({
         policy,
         applied: policy === null ? 0 : 2,
+      }),
+    ),
+    getNotificationSettings: vi.fn(async () => ({
+      budget_alerts_include_admins: false,
+      submission_reminder: null,
+    })),
+    updateNotificationSettings: vi.fn(
+      async (patch: {
+        budget_alerts_include_admins?: boolean
+        submission_reminder?: NotificationSettingsState['submission_reminder']
+      }) => ({
+        budget_alerts_include_admins: patch.budget_alerts_include_admins ?? false,
+        submission_reminder: patch.submission_reminder ?? null,
       }),
     ),
     getEmailHealth: vi.fn(async () => ({
@@ -150,10 +183,12 @@ describe('company settings', () => {
         bounce_rate_ppm: 7_200,
         complaint_rate_ppm: 2_400,
       },
+      identities: [],
     })),
   })
 
   afterEach(async () => {
+    delete backupStatusPayload.offsite
     // happy-dom delivers hashchange on a timer. The controllers this file has
     // mounted keep listening, and each answers the cleared hash by reading the
     // first section, so the event is let through before fetch is unstubbed
@@ -184,6 +219,8 @@ describe('company settings', () => {
       company_address: null,
       notes: null,
       subject: null,
+      estimate_validity_days: null,
+      view_receipts: false,
       ...patch,
     }))
     const api: ShellApi = {
@@ -193,6 +230,8 @@ describe('company settings', () => {
         company_address: null,
         notes: null,
         subject: null,
+        estimate_validity_days: null,
+        view_receipts: false,
       })),
       updateInvoiceDefaults,
     }
@@ -211,6 +250,7 @@ describe('company settings', () => {
       '100 Example Ave, STE 200\nSpringfield, IL, 62701'
     document.querySelector<HTMLTextAreaElement>('[data-invoice-defaults-notes]')!.value =
       'Beneficiary:\n*CONFLICT LLC*'
+    document.querySelector<HTMLInputElement>('[data-invoice-defaults-estimate-days]')!.value = '30'
     form.requestSubmit()
     await vi.waitFor(() =>
       expect(document.querySelector('[data-invoice-defaults-result]')?.textContent).toBe('Saved.'),
@@ -222,6 +262,8 @@ describe('company settings', () => {
         company_address: '100 Example Ave, STE 200\nSpringfield, IL, 62701',
         subject: null,
         notes: 'Beneficiary:\n*CONFLICT LLC*',
+        estimate_validity_days: 30,
+        view_receipts: false,
       },
       expect.any(AbortSignal),
     )
@@ -237,6 +279,8 @@ describe('company settings', () => {
       company_address: '1 Example Way',
       notes: null,
       subject: null,
+      estimate_validity_days: null,
+      view_receipts: false,
     }
     const setOrganizationInvoiceDocuments = vi.fn(
       async (input: Record<string, unknown>) => ({
@@ -267,7 +311,7 @@ describe('company settings', () => {
     await vi.waitFor(() => expect(form.hidden).toBe(false))
     // A third section of the same form, under its own heading.
     const heading = [...form.querySelectorAll('h3')].map((item) => item.textContent)
-    expect(heading).toEqual(['Company information', 'Default values', 'Sending'])
+    expect(heading).toEqual(['Company information', 'Default values', 'Online invoice', 'Sending'])
     const pdf = form.querySelector<HTMLInputElement>('[data-invoice-defaults-attach-pdf]')!
     const files = form.querySelector<HTMLInputElement>('[data-invoice-defaults-attach-files]')!
     const journal = form.querySelector<HTMLInputElement>('[data-invoice-defaults-attach-journal]')!
@@ -325,6 +369,8 @@ describe('company settings', () => {
       company_address: '1 Example Way',
       notes: 'Pay to account 000-000.',
       subject: null,
+      estimate_validity_days: null,
+      view_receipts: false,
     }
     const setOrganizationInvoiceDocuments = vi.fn(async (input: Record<string, unknown>) => ({
       attach_pdf: false,
@@ -463,7 +509,7 @@ describe('company settings', () => {
     stubModulesEndpoint()
     renderBrowserShell({ view: 'settings-company' })
     globalThis.location.hash = '#invoices'
-    const defaults = { company_name: 'Northwind Studio', company_address: null, notes: null, subject: null }
+    const defaults = { company_name: 'Northwind Studio', company_address: null, notes: null, subject: null, estimate_validity_days: null, view_receipts: false }
     const api: ShellApi = {
       ...companyApi(),
       getInvoiceDefaults: vi.fn(async () => defaults),
@@ -496,7 +542,7 @@ describe('company settings', () => {
     stubModulesEndpoint()
     renderBrowserShell({ view: 'settings-company' })
     globalThis.location.hash = '#invoices'
-    const defaults = { company_name: 'Northwind Studio', company_address: '1 Example Way', notes: null, subject: null }
+    const defaults = { company_name: 'Northwind Studio', company_address: '1 Example Way', notes: null, subject: null, estimate_validity_days: null, view_receipts: false }
     const api: ShellApi = {
       ...companyApi(),
       getInvoiceDefaults: vi.fn(async () => defaults),
@@ -537,7 +583,7 @@ describe('company settings', () => {
     stubModulesEndpoint()
     renderBrowserShell({ view: 'settings-company' })
     globalThis.location.hash = '#invoices'
-    const defaults = { company_name: 'Northwind Studio', company_address: '1 Example Way', notes: null, subject: null }
+    const defaults = { company_name: 'Northwind Studio', company_address: '1 Example Way', notes: null, subject: null, estimate_validity_days: null, view_receipts: false }
     const setOrganizationInvoiceDocuments = vi.fn(async (input: Record<string, unknown>) => ({
       ...sendingDocuments,
       ...input,
@@ -618,7 +664,7 @@ describe('company settings', () => {
     stubModulesEndpoint()
     renderBrowserShell({ view: 'settings-company' })
     globalThis.location.hash = '#invoices'
-    const defaults = { company_name: 'Northwind Studio', company_address: null, notes: null, subject: null }
+    const defaults = { company_name: 'Northwind Studio', company_address: null, notes: null, subject: null, estimate_validity_days: null, view_receipts: false }
     const api: ShellApi = {
       ...companyApi(),
       getInvoiceDefaults: vi.fn(async () => defaults),
@@ -648,7 +694,7 @@ describe('company settings', () => {
     stubModulesEndpoint()
     renderBrowserShell({ view: 'settings-company' })
     globalThis.location.hash = '#invoices'
-    const defaults = { company_name: 'Northwind Studio', company_address: '1 Example Way', notes: null, subject: null }
+    const defaults = { company_name: 'Northwind Studio', company_address: '1 Example Way', notes: null, subject: null, estimate_validity_days: null, view_receipts: false }
     const api: ShellApi = {
       ...companyApi(),
       getInvoiceDefaults: vi.fn(async () => defaults),
@@ -698,6 +744,21 @@ describe('company settings', () => {
     expect(await api.setOrganizationInvoiceSending!(stored, signal)).toEqual(stored)
     expect(generated.getOrganizationInvoiceSending).toHaveBeenCalledWith({ signal })
     expect(generated.setOrganizationInvoiceSending).toHaveBeenCalledWith({ body: stored, signal })
+  })
+
+  it('[unit] binds the notification settings to their operations', async () => {
+    const stored = { budget_alerts_include_admins: true, submission_reminder: null }
+    const generated = {
+      getNotificationSettings: vi.fn(async () => ({ data: stored })),
+      setNotificationSettings: vi.fn(async () => ({ data: stored })),
+    }
+    const api = createShellApi(generated as unknown as EzactoClient)
+    const signal = new AbortController().signal
+
+    expect(await api.getNotificationSettings!(signal)).toEqual(stored)
+    expect(await api.updateNotificationSettings!(stored, signal)).toEqual(stored)
+    expect(generated.getNotificationSettings).toHaveBeenCalledWith({ signal })
+    expect(generated.setNotificationSettings).toHaveBeenCalledWith({ body: stored, signal })
   })
 
   it('[browser #801] shows the payment reminder default, saves a change, and switches it off', async () => {
@@ -793,6 +854,7 @@ describe('company settings', () => {
     // policy is the Time section's own read.
     expect(api.getTimeEntryNoteSettings).not.toHaveBeenCalled()
     expect(api.getInvoiceReminders).not.toHaveBeenCalled()
+    expect(api.getNotificationSettings).not.toHaveBeenCalled()
     expect(api.listSenderIdentities).not.toHaveBeenCalled()
     expect(api.getEmailHealth).not.toHaveBeenCalled()
     expect(api.getBackupStatus).not.toHaveBeenCalled()
@@ -920,6 +982,56 @@ describe('company settings', () => {
     // and an operator who reads it as 7,200 bounces panics for nothing.
     expect(reputation.textContent).toContain('0.72%')
     expect(reputation.textContent).toContain('0.24%')
+  })
+
+  it('[browser #42] shows rates per sender and refreshing a bounce changes only that sender', async () => {
+    stubModulesEndpoint()
+    openCompanySettings('email')
+    let bounced = 0
+    const getEmailHealth = vi.fn<CompanySettingsApi['getEmailHealth']>(async () => ({
+      reputation: {
+        sent: 200,
+        bounced,
+        complained: 0,
+        failed: 0,
+        bounce_rate_ppm: bounced * 5000,
+        complaint_rate_ppm: 0,
+      },
+      identities: [
+        {
+          sender: 'a@example.test',
+          sent: 100,
+          bounced,
+          complained: 0,
+          failed: 0,
+          bounce_rate_ppm: bounced * 10000,
+          complaint_rate_ppm: 0,
+        },
+        {
+          sender: 'b@example.test',
+          sent: 100,
+          bounced: 0,
+          complained: 0,
+          failed: 0,
+          bounce_rate_ppm: 0,
+          complaint_rate_ppm: 0,
+        },
+      ],
+    }))
+    const api = { ...companyApi([senderIdentity()], []), getEmailHealth }
+    await mountShell(api)
+    const row = (address: string) =>
+      document.querySelector<HTMLElement>(
+        `[data-settings-email-identities-health] tr[data-row-key="${address}"]`,
+      )!
+    await vi.waitFor(() => expect(row('a@example.test')).not.toBeNull())
+    const untouched = row('b@example.test').textContent
+    bounced = 2
+    document.querySelector<HTMLButtonElement>('[data-settings-refresh="email"]')!.click()
+    await vi.waitFor(() => expect(row('a@example.test').textContent).toContain('2 (2.00%)'))
+    expect(row('a@example.test').textContent).toContain('Bounce recorded')
+    expect(row('a@example.test').textContent).toContain('Review sender reputation')
+    expect(row('b@example.test').textContent).toBe(untouched)
   })
 
   it('[browser #104] offers one Connect button, and sends the operator to Intuit', async () => {
@@ -1210,7 +1322,7 @@ describe('company settings', () => {
     // A domain nobody has looked up and a domain whose record was looked for
     // and not found are both unverified, and one label for both is how an
     // operator who has not published the record yet concludes SSO is broken.
-    expect(ssoStatuses()).toEqual(['Awaiting first check', 'Record not found', 'Verified'])
+    expect(ssoStatuses()).toEqual(['Record not found', 'Awaiting first check', 'Verified'])
     expect(ssoTable().textContent).toContain('_ezacto-challenge.northpeak.test')
     expect(ssoTable().textContent).toContain('ezacto-verification=zLp7c4Qk')
   })
@@ -1451,7 +1563,7 @@ describe('company settings', () => {
     await settled()
 
     expect(ssoResult()).not.toContain('is verified')
-    expect(ssoStatuses()).toEqual(['Awaiting first check'])
+    expect(ssoStatuses()).toEqual([])
   })
 
   it('[security] does not paint a remove that answers after the next person signs in', async () => {
@@ -1574,6 +1686,19 @@ describe('company settings', () => {
       false,
     )
   })
+  it('[data-tools #67] retries a failed capability read without starting an export', async () => {
+    openCompanySettings('import-export')
+    vi.stubGlobal('fetch',vi.fn(async()=>new Response(JSON.stringify({error:{code:'unavailable'}}),{status:503,headers:{'content-type':'application/json'}})))
+    const download=vi.fn(async()=>({blob:new Blob(),filename:'unused.csv'}))
+    await mountShell({...companyApi(),downloadDetailedTimeReport:download})
+    await vi.waitFor(()=>expect(document.querySelector('[data-settings-retry="import-export"]')).not.toBeNull(),{timeout:5000})
+    expect(download).not.toHaveBeenCalled()
+    stubModulesEndpoint()
+    document.querySelector<HTMLButtonElement>('[data-settings-retry="import-export"]')!.click()
+    await vi.waitFor(()=>expect(document.querySelector<HTMLElement>('[data-settings-data-content]')!.hidden).toBe(false))
+    expect(download).not.toHaveBeenCalled()
+  })
+
   it('[browser] reports when this instance last backed itself up', async () => {
     // The endpoint has served this since it was written and no screen asked it,
     // so whether the nightly export worked was a question only a terminal could
@@ -1598,6 +1723,98 @@ describe('company settings', () => {
     expect(document.querySelector('[data-settings-backup-runs]')?.textContent).toContain(
       'nightly',
     )
+  })
+
+  it('[browser] pages the whole backup history, not just the latest runs (#929)', async () => {
+    // The status carries the latest twenty runs, which is enough to say whether
+    // the last one worked and not enough to find the one before it.
+    stubModulesEndpoint()
+    openCompanySettings('backup')
+    const api = companyApi()
+    api.listBackupRuns
+      .mockResolvedValueOnce({
+        data: [backupRun({ id: 9 })],
+        links: { next: '/api/v1/backup/runs?per_page=50&cursor=b1' },
+        page: { per_page: 50, next_cursor: 'b1', total: 61 },
+      })
+      .mockResolvedValueOnce({
+        data: [backupRun({ id: 8, trigger: 'manual' })],
+        links: { next: null },
+        page: { per_page: 50, next_cursor: null, total: 61 },
+      })
+    await mountShell(api)
+
+    await vi.waitFor(() =>
+      expect(document.querySelector('[data-settings-backup-runs] .log-pager-count')?.textContent).toBe(
+        'Rows 1–1 of 61',
+      ),
+    )
+    const older = [
+      ...document.querySelectorAll<HTMLButtonElement>('[data-settings-backup-runs] button'),
+    ].find((button) => button.textContent === 'Older')!
+    older.click()
+    await vi.waitFor(() =>
+      expect(api.listBackupRuns).toHaveBeenLastCalledWith(
+        { per_page: 50, cursor: 'b1' },
+        expect.anything(),
+      ),
+    )
+    await vi.waitFor(() =>
+      expect(document.querySelector('[data-settings-backup-runs]')?.textContent).toContain('manual'),
+    )
+    // The place is in the address, beside the section the page is on.
+    expect(globalThis.location.search).toBe('?backup_cursor=b1&backup_offset=1')
+    expect(globalThis.location.hash).toBe('#backup')
+  })
+
+  it('[browser] says when a backup started in the organization timezone (#929)', async () => {
+    stubModulesEndpoint()
+    openCompanySettings('backup')
+    const api = {
+      ...companyApi(),
+      getTimesheetLockPolicy: vi.fn(async () => ({
+        auto_lock: false,
+        timesheet_deadline: null,
+        timezone: 'America/Costa_Rica',
+        week_start_day: 'monday' as const,
+        updated_at: timestamp,
+      })),
+    }
+    await mountShell(api)
+    await vi.waitFor(() =>
+      expect(
+        document.querySelector('[data-settings-backup-runs] th[data-column="started"]')?.textContent,
+      ).toBe('Started (America/Costa_Rica)'),
+    )
+    // 03:00 UTC is the evening before at UTC-6.
+    expect(
+      document.querySelector('[data-settings-backup-runs] td[data-column="started"]')?.textContent,
+    ).toBe('2026-09-07 21:00')
+  })
+
+  it('[offsite #38] shows L1 success alongside a missing L2 copy and offers an explicit destination check', async () => {
+    stubModulesEndpoint()
+    openCompanySettings('backup')
+    backupStatusPayload = {last_completed:backupRun(),last_failed:null,recent_runs:[backupRun()],has_failure:false,
+      offsite:{configured:true,state:'failed',destination:'s3.example.test/backup',last_completed:null,latest:null,error:{code:'E14',message:'Check bucket permissions.'}}}
+    const check = vi.fn(async()=>({verified:true,checked_at:timestamp}))
+    const api = {...companyApi(),checkOffsiteBackupDestination:check}
+    await mountShell(api)
+    const button=document.querySelector<HTMLButtonElement>('[data-backup-offsite-check]')!
+    await vi.waitFor(()=>expect(document.querySelector<HTMLElement>('[data-backup-offsite-check-row]')!.hidden).toBe(false))
+    const facts=document.querySelector('[data-settings-backup-facts]')!.textContent
+    expect(facts).toContain('Last completed (L1)')
+    expect(facts).toContain('Last off-site copy (L2)Never')
+    expect(facts).toContain('Copy failed')
+    expect(document.querySelector('[data-settings-backup-status]')!.textContent).toContain('E14: Check bucket permissions.')
+    expect(check).not.toHaveBeenCalled()
+    button.click()
+    await vi.waitFor(()=>expect(document.querySelector('[data-backup-offsite-check-result]')!.textContent).toContain('did not create a backup'))
+    expect(check).toHaveBeenCalledOnce()
+    await vi.waitFor(()=>expect(button.disabled).toBe(false))
+    check.mockRejectedValueOnce(new EzactoApiError(503,{error:{code:'offsite_backup_unavailable',message:'E14: Check the configured bucket permissions.'}},'preflight-fixture'))
+    button.click()
+    await vi.waitFor(()=>expect(document.querySelector('[data-backup-offsite-check-result]')!.textContent).toBe('E14: Check the configured bucket permissions.'))
   })
 
   it('[browser] raises the last failure above the table rather than in it', async () => {
@@ -1640,6 +1857,62 @@ describe('company settings', () => {
     const alarm = document.querySelector<HTMLElement>('[data-settings-backup-alarm]')!
     await vi.waitFor(() => expect(alarm.hidden).toBe(false))
     expect(alarm.textContent).toContain('nothing to restore from')
+  })
+
+  it('[offsite #38] explains the container backup boundary when its reader route is absent', async () => {
+    stubModulesEndpoint()
+    openCompanySettings('backup')
+    const api={...companyApi(),getBackupStatus:vi.fn(async()=>{throw new EzactoApiError(404,{error:{code:'not_found'}},'container-backup-fixture')})}
+    await mountShell(api)
+    await vi.waitFor(()=>expect(document.querySelector('[data-settings-backup-status]')!.textContent).toContain('operator-managed backups'))
+    expect(document.querySelector('[data-settings-backup-status]')!.textContent).toContain('RESTORE.md')
+    expect(document.querySelector('[data-settings-retry="backup"]')).toBeNull()
+  })
+
+  it.each(['replace','abort'])('[backup-session] clears minted links and private backup controls on %s', async mode => {
+    stubModulesEndpoint();openCompanySettings('backup')
+    backupStatusPayload={last_completed:backupRun(),last_failed:null,recent_runs:[backupRun()],has_failure:false,
+      offsite:{configured:true,state:'waiting',destination:'private-backup.example.test/company',last_completed:null,latest:null,error:null}}
+    const mint=vi.fn(async()=>({id:9,run_id:1,url:'/backup-download/backup-session-fixture',expires_at:'2099-01-01T00:00:00.000Z'})),check=vi.fn(async()=>({verified:true,checked_at:timestamp}))
+    const controller=createModuleSettingsController({...companyApi(),createBackupDownloadLink:mint,checkOffsiteBackupDestination:check} as never)
+    const owner = new AbortController()
+    await controller.activate(identity,owner.signal,()=>false)
+    document.querySelector<HTMLButtonElement>('[data-backup-download-mint]')!.click()
+    await vi.waitFor(()=>expect(document.querySelector<HTMLInputElement>('[data-backup-download-link]')!.value).toContain('backup-session-fixture'))
+    if(mode==='abort') owner.abort()
+    else await controller.activate(secondIdentity,new AbortController().signal,()=>false)
+    expect(document.querySelector<HTMLInputElement>('[data-backup-download-link]')!.value).toBe('')
+    expect(document.querySelector('[data-settings-backup-facts]')!.textContent).toBe('')
+    expect(document.querySelector('[data-settings-backup-runs]')!.textContent).toBe('')
+    expect(document.querySelector<HTMLElement>('[data-backup-offsite-check-row]')!.hidden).toBe(true)
+    document.querySelector<HTMLButtonElement>('[data-backup-download-mint]')!.click()
+    document.querySelector<HTMLButtonElement>('[data-backup-offsite-check]')!.click()
+    expect(mint).toHaveBeenCalledOnce();expect(check).not.toHaveBeenCalled()
+  })
+  it('[backup-session] ignores a minted bearer link that arrives after identity replacement',async()=>{
+    stubModulesEndpoint();openCompanySettings('backup')
+    const pending=deferred<{id:number;run_id:number;url:string;expires_at:string}>()
+    const mint=vi.fn(async()=>pending.promise),controller=createModuleSettingsController({...companyApi(),createBackupDownloadLink:mint} as never)
+    await controller.activate(identity,new AbortController().signal,()=>false)
+    document.querySelector<HTMLButtonElement>('[data-backup-download-mint]')!.click()
+    await vi.waitFor(()=>expect(mint).toHaveBeenCalledOnce())
+    await controller.activate(secondIdentity,new AbortController().signal,()=>false)
+    pending.resolve({id:10,run_id:1,url:'/backup-download/stale-backup-session-fixture',expires_at:'2099-01-01T00:00:00.000Z'})
+    await new Promise(resolve=>setTimeout(resolve,0))
+    expect(document.querySelector<HTMLInputElement>('[data-backup-download-link]')!.value).toBe('')
+    expect(document.querySelector('[data-backup-download-result]')!.textContent).not.toContain('Link created')
+  })
+  it('[backup-session] cancels the old history presenter even when its supplied signal was not aborted',async()=>{
+    stubModulesEndpoint();openCompanySettings('backup')
+    const pending=deferred<LogPageResult<ReturnType<typeof backupRun>>>()
+    const history=vi.fn(async()=>pending.promise),controller=createModuleSettingsController({...companyApi(),listBackupRuns:history} as never)
+    const first=controller.activate(identity,new AbortController().signal,()=>false)
+    await vi.waitFor(()=>expect(history).toHaveBeenCalledOnce())
+    await controller.activate(secondIdentity,new AbortController().signal,()=>false)
+    pending.resolve({data:[backupRun()],links:{next:null},page:{per_page:50,next_cursor:null,total:1}})
+    await first
+    expect(document.querySelector('[data-settings-backup-runs]')!.textContent).toBe('')
+    expect(document.querySelector<HTMLElement>('[data-settings-backup-controls]')!.hidden).toBe(true)
   })
 
   it('[browser] says where backups live when the deployment does not keep them', async () => {

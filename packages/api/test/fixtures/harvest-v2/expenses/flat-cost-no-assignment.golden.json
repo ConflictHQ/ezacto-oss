@@ -1,0 +1,37 @@
+{
+  "id": 9101,
+  "notes": null,
+  "total_cost": 19.99,
+  "units": null,
+  "is_closed": false,
+  "approval_status": "unsubmitted",
+  "is_locked": false,
+  "is_billed": false,
+  "locked_reason": null,
+  "spent_date": "2024-03-08",
+  "created_at": "2024-01-05T10:00:00Z",
+  "updated_at": "2024-03-09T16:45:30Z",
+  "billable": false,
+  "user": {
+    "id": 401,
+    "name": "Sample Sample-Worker"
+  },
+  "user_assignment": null,
+  "project": {
+    "id": 301,
+    "name": "Sample Rollout",
+    "code": "SMP-1"
+  },
+  "expense_category": {
+    "id": 802,
+    "name": "Sample Lodging",
+    "unit_name": null,
+    "unit_price": null
+  },
+  "client": {
+    "id": 101,
+    "name": "Sample Widgets Ltd",
+    "currency": "USD"
+  },
+  "invoice": null
+}

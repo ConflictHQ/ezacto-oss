@@ -58,6 +58,11 @@ QUICKBOOKS_WEBHOOK_VERIFIER_TOKEN=
 # LIVE BOOKS.
 QUICKBOOKS_ENVIRONMENT=sandbox
 
+# --- Mailgun bounce and complaint feedback (issue 42) ---
+# The HTTP webhook signing key from Mailgun's Webhooks page (not the API key).
+# Without it /webhooks/mailgun is NOT MOUNTED and no unsigned post is read.
+MAILGUN_WEBHOOK_SIGNING_KEY=
+
 # --- Payouts: paying contractors from the organisation's Wise account (#543) ---
 # The organisation's own API token. NOT an OAuth pair: it authenticates as the
 # business that sends the money, and a contractor supplies a destination rather
@@ -71,6 +76,12 @@ WISE_PROFILE_ID=
 # <APP_BASE_URL>/webhooks/wise. Without it the webhook route is NOT MOUNTED: an
 # unverifiable claim about money is not one to act on.
 WISE_WEBHOOK_PUBLIC_KEY=
+
+# --- Issue tracker links (issue 1008) ---
+# The GitHub credential work-item links will use. Connecting GitHub under
+# /api/v1/settings/work-item-connections is refused without it. Nothing calls
+# GitHub yet. The credential is never returned by any API.
+GITHUB_WORK_ITEMS_CREDENTIAL=
 
 # --- migrate package (dev, against the live Harvest account) ---
 HARVEST_ACCOUNT_ID=

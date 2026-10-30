@@ -6,6 +6,8 @@ export const hasPaymentActivity = (row: StaffPaymentRow): boolean =>
   (row.amount_cents !== null && row.amount_cents !== 0) ||
   row.paid_cents !== 0 ||
   (row.reserved_cents ?? 0) > 0 ||
+  (row.deel_staging?.staged_entries ?? 0) > 0 ||
+  (row.deel_staging?.unresolved_entries ?? 0) > 0 ||
   row.events.some((event) => event.month === row.month && event.kind === 'payment')
 
 export const staffPaymentStatus = (row: StaffPaymentRow): string => {

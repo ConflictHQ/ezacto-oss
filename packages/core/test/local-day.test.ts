@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { dateInTimeZone, timeInTimeZone } from "../src/local-day.js";
+import { dateInTimeZone, startOfDayInTimeZone, timeInTimeZone } from "../src/local-day.js";
 
 /**
  * Issue 651. A running timer is filed against "today", and today is the
@@ -40,5 +40,40 @@ describe("the day an instant falls on", () => {
   it("[unit] pads to the stored shape", () => {
     expect(dateInTimeZone("2026-01-05T12:00:00.000Z", "UTC")).toBe("2026-01-05");
     expect(timeInTimeZone("2026-01-05T04:05:00.000Z", "UTC")).toBe("04:05");
+  });
+});
+
+describe("the instant a day begins", () => {
+  it("[unit] is midnight UTC in UTC, and later west of it", () => {
+    expect(startOfDayInTimeZone("2026-09-08", "UTC")).toBe("2026-09-08T00:00:00.000Z");
+    expect(startOfDayInTimeZone("2026-09-08", "America/Costa_Rica")).toBe(
+      "2026-09-08T06:00:00.000Z",
+    );
+  });
+
+  it("[unit] is earlier east of UTC, on the previous UTC day", () => {
+    expect(startOfDayInTimeZone("2026-09-08", "Asia/Tokyo")).toBe("2026-09-07T15:00:00.000Z");
+  });
+
+  it("[unit] follows the offset in force on that day, not today's", () => {
+    expect(startOfDayInTimeZone("2026-01-15", "America/New_York")).toBe(
+      "2026-01-15T05:00:00.000Z",
+    );
+    expect(startOfDayInTimeZone("2026-07-15", "America/New_York")).toBe(
+      "2026-07-15T04:00:00.000Z",
+    );
+    // The day the clocks went forward began before the change, at UTC-5.
+    expect(startOfDayInTimeZone("2026-03-08", "America/New_York")).toBe(
+      "2026-03-08T05:00:00.000Z",
+    );
+    // The day after began at UTC-4.
+    expect(startOfDayInTimeZone("2026-03-09", "America/New_York")).toBe(
+      "2026-03-09T04:00:00.000Z",
+    );
+  });
+
+  it("[unit] refuses what is not a real calendar day", () => {
+    expect(() => startOfDayInTimeZone("2026-02-30", "UTC")).toThrow(RangeError);
+    expect(() => startOfDayInTimeZone("2026-2-3", "UTC")).toThrow(RangeError);
   });
 });

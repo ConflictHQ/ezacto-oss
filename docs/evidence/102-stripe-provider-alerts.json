@@ -1,0 +1,60 @@
+{
+  "issue": 102,
+  "source_commit": "cc2aa1ca",
+  "migration": "0173_stripe_payment_alerts",
+  "scope": {
+    "owner_decision": "D26: log and notify; no automatic receipt change",
+    "paypal": "Deferred D27",
+    "external_provider_requests": false,
+    "production_financial_writes": false
+  },
+  "native_proofs": [
+    "Signed actual Worker route on migrated Miniflare D1: payment receipt followed by refund/dispute reports, replay, forged report, mismatch and amount refusal; receipt/invoice/outbox unchanged",
+    "Signed actual Container route on migrated SQLite: checkout receipt, refund/replay, native session list and administrator review; money unchanged",
+    "SQLite and D1: immutable evidence, durable notice once and queue-recovery record, native-session revocation and reviewed audit identity"
+  ],
+  "checks": {
+    "stripe_parser_and_runtime_tests": 32,
+    "sqlite_d1_custody_and_notification_cases": 6,
+    "signed_worker_chain_cases": 5,
+    "signed_container_report_review_case": 1,
+    "api_boundary_and_contract_cases": 8,
+    "typecheck": [
+      "db",
+      "api",
+      "integrations",
+      "worker",
+      "container"
+    ],
+    "build": [
+      "core",
+      "db",
+      "api",
+      "integrations",
+      "client",
+      "mailer",
+      "web",
+      "container",
+      "worker dry-run"
+    ],
+    "touched_lint": "passed",
+    "review_race_cases": 8,
+    "non_stripe_claim_lease_cases": 6,
+    "early_report_native_runtime_cases": 2,
+    "review_full_sqlite_d1_cases": 16,
+    "concurrent_duplicate_cases": 2
+  },
+  "remaining": "Root-owned invoice UI integration and independent final review; no live Stripe acceptance claimed",
+  "migration_at_source": "0174_stripe_payment_alerts",
+  "migration_note": "Unreleased migration renumbered to173 after reserving171 for CSV and172 for calendar. Original cc2aa1ca evidence used174; no deployed migration changed.",
+  "review_followup": {
+    "unmatched_custody": "5000 report cap, 30-day expiry, reconcile on receipt and bounded minute sweep",
+    "privacy": "atomic administrator/verified address admission and provider-attempt claim; stale notice terminally refused",
+    "session_expiry": "current database time at review write",
+    "duplicate_delivery": "concurrent inbox transfer rechecks finalized evidence",
+    "notification_url": "by-id path, fixture invoice number differs from id",
+    "independent_review": "No remaining blockers in source review; root-owned full UI proof follows integration.",
+    "source_commit": "33c14b4b",
+    "validation": "Full16-case SQLite/D1 file passed; latest concurrent inbox-transfer patch also passed2 targeted cases; migration rename is DDL-identical and will receive final contiguous-chain verification in root integration."
+  }
+}

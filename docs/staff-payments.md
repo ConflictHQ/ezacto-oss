@@ -23,7 +23,7 @@ The preferred provider preselects the source when recording a payment. Each rece
 
 Setting changes require an administrator session and a reason. They have immutable history, actor, timestamp, request ID, idempotency and version checks. **Provider settings history** shows changes across all dates. Monthly exports include current preferences and both providers’ readiness; audit exports include all provider-setting changes alongside the selected month's payment events.
 
-The existing optional Deel adapter remains available for people/contract matching, timesheet submission and transfer-log deduplication. See [`packages/integrations`](../packages/integrations/README.md). Selecting Deel here does not configure credentials, submit timesheets or confirm a payout automatically; organizations configure that integration separately.
+The existing optional Deel adapter remains available for people/contract matching, timesheet submission and transfer-log deduplication. See [`packages/integrations`](../packages/integrations/README.md). Selecting Deel here does not configure credentials or confirm a payout. Once an organization sets `DEEL_TOKEN` and `DEEL_SYNC_START_DATE` (see [Integrations](integrations.md)), the daily sync submits one Deel timesheet per person-day of approved time for people whose provider is Deel, never twice for the same entry; an entry edited after it was sent is reported, not resent.
 
 ## Sorting tables
 
@@ -100,8 +100,8 @@ a partial payment against the whole month's earnings, confirm all hours and
 change the payment amount at the separate **Pay now → review → send/schedule** step.
 
 Historical settlements block actuals imports until explicitly reopened. Contractor
-invoices and advance credits are separate follow-up capabilities; importing actuals
-does not generate invoices or record deposits.
+invoices and advance credits have their own audit tabs; importing actuals does
+not generate invoices or record deposits.
 
 ### Correcting a work-month allocation
 
@@ -145,3 +145,247 @@ confirmed earnings; amounts, reservations and payment history also keep a person
 visible. A blanket historical settlement by itself does not count as activity.
 Monthly and filtered report exports follow this checkbox; the full audit export
 keeps all records. The filter changes visibility only, not ledger records.
+
+## Payment allocations
+
+An allocation links part of one payment to the earnings it pays. It is an
+additive layer: monthly totals, payments and payment runs are unchanged, and
+existing monthly payments stay unallocated until an administrator allocates them
+explicitly. Hour splits are never inferred.
+
+- **Payment**: a recorded payment, or a payment run item (reserved while
+  scheduled or processing, applied once paid).
+- **Target**: the whole work month (amount only, the reconciliation path for
+  existing payments), a project, or one reviewed time entry with optional hours.
+  Hours are valued at the rate captured in the confirmed actuals review; the
+  allocation taking the last hours takes the remaining cents. An explicit amount
+  needs the reason every allocation carries.
+- **Invariants** (database triggers, identical on SQLite and D1): same person,
+  month and currency as the payment; never more than the payment, the month's
+  earnings, the project's or the entry's reviewed earnings or hours.
+- **History**: rows are append-only. A reversal (with a reason), a void of the
+  payment, or a failed or cancelled run item releases the allocation; nothing is
+  deleted. Allocations snapshot the review, and the report flags entries whose
+  source time no longer matches (`source_changed`) or that are over-allocated
+  after a later review, for explicit reversal and re-allocation. On the
+  Allocations tab a flagged entry offers "Review change": reviewed against
+  current hours and rate, then one action that reverses the entry's
+  allocations, confirms the person's earnings again from the current hours
+  (selection never rises above what was reviewed) and allocates again. Each step
+  carries an identifier derived from one adjustment identifier, so a retry
+  after a failed step repeats nothing.
+- **API**: `GET /api/v1/staff-payments/allocations?month=` reconciles earned,
+  paid, reserved and remaining by person, project and entry, and lists
+  unallocated payments; `POST .../allocations/preview`, `POST .../allocations`
+  and `POST .../allocations/reversals` (administrator sessions only).
+- **Screen**: the Allocations tab on Payments loads the report for the work
+  month. Choosing a payment, target and hours or amount and selecting **Review
+  allocation** calls the preview endpoint and shows the selected hours, captured
+  rate, amount, what is already allocated and what remains on the payment and
+  the earnings. **Confirm allocation** appears only for the reviewed command and
+  sends that same command; changing any input withdraws the review.
+  **Reconcile to month** on an unallocated payment prefills a whole-month,
+  amount-only allocation of its unallocated cents, which is the explicit path
+  for existing monthly payments. Neither step moves money.
+- **Payments report** (`/payments/report`) and **Export filtered CSV** include
+  earned, allocated paid, allocated reserved and remaining amounts for each
+  reviewed project and time entry. They use the same person, currency, status
+  and work-month filters as balances. Source-change and over-allocation flags
+  travel with entry rows. Project totals include entry allocations; the two
+  levels must not be added together. Monthly payments remain unassigned until
+  explicitly reconciled, and project payments are never inferred onto entries.
+  CSV allocation rows identify their level, person/project/entry IDs and
+  selected/remaining seconds; all money columns are integer cents.
+- A work-month correction is refused while allocations are live; reverse them
+  first.
+
+People see only their own figures, read-only, at `/my-payments` (`GET /api/v1/me/payments`) when the `own_money` setting is on; see [`contractor-payments.md`](contractor-payments.md). These administrator routes are unchanged.
+
+
+### Contractor advances (#900)
+
+The **Advances** tab prepares an advance/deposit before work or an invoice exists.
+Only administrators with a session may prepare/approve transfers or manage credit;
+API tokens and other profiles cannot use these routes. Choose an active contractor,
+Wise destination, recipient/source currencies, amount, intended work month and a
+reason. Review the verified recipient and maximum source cost including fees, then
+explicitly confirm the transfer. The normal payment-run processor handles retries,
+scheduling and reconciliation. Advances are labeled in History and transfer reports.
+The preview API also accepts an optional intended `advance_project_id`.
+
+Pending transfers reserve advance funds, **not a work month's payable balance**.
+Only confirmed settlement creates credit. No future hours automatically consume it.
+Existing payments and monthly balances are not migrated or reinterpreted.
+
+Load credit by activity dates to see settled, applied, returned and unapplied amounts,
+plus **opening + settlements − net applications − returns = closing credit** for each
+advance/currency. Current pending and available amounts are separate from historical
+statement dates. Reversals are negative applications in their activity period.
+
+To apply credit, choose a reviewed earning month and an eligible month, project or
+entry; enter the partial amount and a reason, review the remaining earnings, and
+confirm. One atomic database command consumes credit and projects its settlement
+onto the monthly register/allocation ledger with source `advance_credit`, referencing
+the original advance. It creates no new earning, payment run or provider transfer.
+A payee sees **Advance credit applied (no new transfer)**, rather than another paycheck.
+Month/project allocations never invent a split across time entries.
+
+Reversing an application requires a reason and restores both credit and the payable
+balance; the application, allocation and reversal history remain. Recording a return
+requires the amount, bank reference and confirmation that the money was already
+returned; this action sends no funds. Duplicate return references on one advance are
+refused. Credit still applied must be reversed before it can be returned. A confirmed
+provider refund reverses outstanding applications and returns the remaining credit
+atomically. Cancellation before settlement releases pending funds without credit.
+
+Routes (administrator sessions only):
+
+- `GET /api/v1/payment-runs/advances?from=YYYY-MM-DD&to=YYYY-MM-DD`
+- `POST /api/v1/payment-runs/advances/applications`
+- `POST /api/v1/payment-runs/advances/reversals`
+- `POST /api/v1/payment-runs/advances/returns`
+
+Advance selections use `purpose: "advance"`, explicit `currency`, `advance_reason`
+and optional `advance_project_id` on the existing payment-run preview command.
+An application's `id` is its retry key; changing the content under that ID is refused.
+Person/currency, settled capacity, reviewed earnings, reservations and allocation
+limits are checked inside the database transaction on SQLite and D1. Source-hour
+changes retain the captured allocation and are reviewed through the Allocations tab.
+No customer-specific correction or live transfer is part of the migration or fixtures.
+
+### Contractor payable invoices (#901)
+
+**Contractor invoices** on Payments documents existing earning obligations. These
+are payable documents, separate from customer receivable invoices, numbering and
+tax. Recording, correcting, receiving or voiding one never changes earnings,
+payments, advances or allocations. A contractor reference is unique across all
+periods/currencies for that contractor (trimmed, ASCII case-insensitive). A retry
+with the same command replays; a different document using that reference is
+refused. Correct the existing document through a new optimistic-versioned command.
+
+Draft from a confirmed actuals review, including signed correction hours, or
+record received lines explicitly. Lines may reference an entry or a project.
+Project summaries match only a single captured rate; mixed rates require entry
+references. Partial quantities are supported. Missing references, wrong rates,
+excess hours/rounded cents and overlapping received claims are flagged for review.
+Project-level and entry-level claims on the same project are conservatively flagged
+instead of inventing a split. Drafts do not consume invoiced capacity; voided
+documents release it. A monthly amount that differs from the reviewed earning
+snapshot also requires review before matching.
+
+The report separates earned, actual received-document totals, matched invoice
+amounts, paid for the work month, and earnings without a matched invoice. The last
+figure is earned minus matched received lines, not a new payable balance. Unmatched
+invoice lines remain visible without becoming earnings. Currency rows never net.
+There is no historical invoice inferred from an old payment or settlement cutoff.
+
+Every correction preserves earlier versions, lines, earning-review IDs, documents,
+reasons and actors. Work-period and currency corrections change the document only;
+earlier payment allocations stay in their original period. Existing or historically
+recorded payments require explicit acknowledgement before a correction. Contractor
+identity and reference stay fixed; void an erroneous identity/reference and record
+the correct document. A received invoice cannot silently become a draft again.
+
+A PDF or other file can be uploaded after the invoice has an identity, then included
+in a new version. Uploads use the shared multipart/file validation, a 25 MiB file
+limit and content-addressed storage. Staged files remain administrator-only until a
+received version explicitly includes them. Download ownership is checked each time;
+files download as attachments with `no-store` and `nosniff`. The public demo refuses
+uploads before parsing or object writes. File objects participate in the existing
+backup/export machinery, and document/version metadata is immutable.
+
+Administrators use session-authenticated `GET/POST /api/v1/staff-invoices` and the
+`/staff-invoices/:invoiceId/documents` upload/content routes. API tokens and other
+profiles cannot record or correct documents. A person with own-money viewing enabled
+can read their received/voided documents at `GET /api/v1/me/staff-invoices?month=…`
+and on **My payments**. The subject comes only from their session; drafts, other
+people's documents, and unpublished uploads are excluded. Reasons entered on a
+received invoice are shared with that contractor.
+
+
+## Combined contractor review (#902)
+
+`GET /api/v1/staff-payments/contractor-review?month=YYYY-MM` is an
+administrator-session-only, uncached read available on Worker and container.
+It joins captured-hours proposals, the latest immutable actuals review (actor,
+reason and version), recorded obligations and receipts, contractor invoice
+versions, allocation evidence, advance credit and payment-run item states.
+Currency rows are independent. The `credit_period` states the date range of the
+credit statement; payable balances and transfer states describe current records.
+
+`version` identifies the exact financial/source review content deterministically.
+Repeated reads do not create earnings, invoices, allocations, credit applications
+or payments. It changes when those sources change, not merely when the request
+clock advances. Entry-rate/source changes and unfinished work months block
+monetary proposals; historical settlements stay settled, and explicit amount or
+selection overrides retain their evidence.
+
+Monthly allocation proposals link existing unassigned payments to reviewed monthly
+earnings without inferring a project/entry split. Those payments take capacity
+before a proposed credit application; both consume one shared reviewed-earnings
+capacity. Credit proposals use only settled available credit in the same currency
+and respect intended work month. Project-specific or differently intended advances
+remain visible for explicit target review. The remaining-to-pay figure never
+assumes that a proposal has already executed. Unknown balances remain unknown.
+
+On **Payments → Reconcile**, load the selected work month to review one row per
+person/currency. The sortable summary separates recorded earnings, hours-based
+earnings, paid/reserved amounts, current payable and the projected balance after
+proposed credits. Expand a person for review reasons, captured hours, invoice
+versions/documents, receipts, recorded allocations, advance intent and payment
+attempts. Confirm the selected monthly receipt allocations and settled credit
+applications here with a reason, or use the related-section buttons for actuals and invoice
+changes. Payment progress links to **History**, whose existing **Check status**
+only reconciles an already prepared provider operation; it never resets it to a
+new transfer. Cancellation is limited to unsent items. The existing processor
+still handles at most ten due items and three durable stages per tick. Refreshes
+and month changes clear prior figures before loading, stale responses are discarded and session end clears
+the evidence.
+
+### Explicit acceptance and recovery
+
+`POST /api/v1/staff-payments/contractor-review/acceptances` accepts the displayed
+person/currency, its `review_version` and `source_revision`, selected allocation
+and/or credit changes, an identifier and a reason. Only an administrator session
+can confirm. The server derives exact monthly commands from the fresh review;
+callers cannot supply amounts, provider commands or another actor. Changed hours,
+missing rates, unsettled months and blocked proposals require review first.
+
+Migration 0138 tracks source revisions for shared configuration, each contractor
+and each work month. A consistent read retries at most three times if sources
+move while it loads. Unrelated contractors' hours do not invalidate a person's
+confirmation. The insertion rechecks the person's revision inside the database,
+then existing allocation/advance triggers execute all selected changes in the
+same SQLite statement on both runtimes. If any check fails, every change and the
+acceptance roll back. No partial application needs a second executor.
+
+`GET .../contractor-review/acceptances?month=…` returns completed immutable
+confirmations, with actor/reason/time and links to their allocation/application
+identities. After a lost response, retrying the same identifier and exact intent
+returns the original confirmation, even after later refunds. Changing the
+identifier/intent cannot spend an old review twice. The screen retains the
+original intent for a manual retry; reload obtains current balances and history.
+Confirming these links never creates an invoice, replaces an earnings override,
+creates/funds a transfer or approves a payment run.
+
+The synthetic SQLite/D1 lifecycle in `packages/db/test/contractor-review.test.ts`
+covers an advance before hours, reviewed earnings, a received invoice, partial
+receipt, accepted credit, final receipt, settlement and confirmed provider refund,
+with payment-report totals before/after the refund. It also covers concurrent
+same/different-identifier retries, stale-read-to-write rejection, missing rates,
+independent contractors and full rollback after a later step fails. Chromium
+covers the explicit confirmation and same-identifier retry after a lost response.
+
+### Scheduled-action seam
+
+Reconciliation is a **proposal producer**, currently triggered by the authenticated
+read. General scheduled actions (#61/#62/#63) can use the same reader to prepare a
+manifest keyed by person, work month and source version. Their notification or
+confirmation never becomes authority to create/fund a payout. Accepted monetary
+work continues through the immutable ledger commands and existing payment-run
+preview/approval, with `processDue` on the existing Worker cron/container timer.
+This slice adds no job type, scheduler, transfer executor or automatic application
+of credit. A later scheduler integration must retain that single execution seam.
+
+The scheduled-action integration itself remains owned by #61/#62/#63. This
+contractor flow reuses the current payout execution and recovery seam.

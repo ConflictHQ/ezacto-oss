@@ -38,8 +38,11 @@ export const SIDEBAR_COOKIE = 'ezacto_sidebar'
 export const resolveSidebarState = (stored: string | null | undefined): SidebarState =>
   stored === 'collapsed' ? 'collapsed' : DEFAULT_SIDEBAR_STATE
 
+/** The root attributes a remembered layout choice is rendered onto. */
+export type RootPreferenceAttribute = 'data-ez-nav' | 'data-ez-sidebar' | 'data-ez-time-layout'
+
 export interface NavLayoutTarget {
-  setAttribute(name: 'data-ez-nav' | 'data-ez-sidebar', value: string): void
+  setAttribute(name: RootPreferenceAttribute, value: string): void
 }
 
 export interface PreferenceRuntime<Value extends string> {
@@ -53,8 +56,8 @@ export interface PreferenceRuntime<Value extends string> {
  * The default is stored as no cookie at all, so a default that changes later
  * reaches everyone who never chose.
  */
-const createRootPreference = <Value extends string>(options: {
-  readonly attribute: 'data-ez-nav' | 'data-ez-sidebar'
+export const createRootPreference = <Value extends string>(options: {
+  readonly attribute: RootPreferenceAttribute
   readonly resolve: (stored: string | null) => Value
   readonly fallback: Value
   readonly store: ThemePreferenceStore

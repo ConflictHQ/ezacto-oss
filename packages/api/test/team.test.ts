@@ -1,11 +1,15 @@
+import { cp, mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import BetterSqlite3 from "better-sqlite3";
 import { Miniflare } from "miniflare";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 import {
   createContainerDatabase,
   createD1Database,
 } from "../../db/src/adapters.js";
 import { migrateContainer, migrateD1 } from "../../db/src/migrate.js";
+import { backfillCostRates } from "../../db/src/cost-rate-backfill.js";
 import { createTeamRepository } from "../../db/src/team.js";
 import {
   createApiApp,
@@ -178,80 +182,148 @@ const seedStatements = [
   },
 ] as const;
 
+const d1Worker = {
+  modules: true,
+  script: 'export default { fetch() { return new Response("ok") } }',
+  d1Databases: ["DB"],
+} as const;
+
+// Replay the real D1 ledger once. Every case still gets a separate physical
+// copy and its own Miniflare, rather than sharing mutable database state.
+let migratedD1Snapshot: Promise<string> | null = null;
+const migratedD1Directory = (): Promise<string> => {
+  migratedD1Snapshot ??= (async () => {
+    const directory = await mkdtemp(join(tmpdir(), "ezacto-team-d1-ledger-"));
+    let miniflare: Miniflare | undefined;
+    try {
+      miniflare = new Miniflare({ ...d1Worker, d1Persist: directory });
+      await migrateD1(await miniflare.getD1Database("DB"));
+      // Closing the worker checkpoints its WAL before any case copies files.
+      await miniflare.dispose();
+      miniflare = undefined;
+      return directory;
+    } catch (error) {
+      try {
+        try {
+          await miniflare?.dispose();
+        } finally {
+          await rm(directory, { recursive: true, force: true });
+        }
+      } catch (cleanupError) {
+        throw new AggregateError([error, cleanupError], "D1 snapshot setup and cleanup failed", { cause: cleanupError });
+      }
+      throw error;
+    }
+  })();
+  return migratedD1Snapshot;
+};
+
+afterAll(async () => {
+  const directory = await migratedD1Snapshot?.catch(() => null);
+  if (directory) await rm(directory, { recursive: true, force: true });
+});
+
 const createHarness = async (kind: "SQLite" | "D1"): Promise<Harness> => {
-  let close: () => Promise<void>;
+  let close: (() => Promise<void>) | undefined;
   let run: (sql: string, params: readonly unknown[]) => Promise<void>;
   let rows: <Row>(sql: string, params: readonly unknown[]) => Promise<Row[]>;
   let repository: ReturnType<typeof createTeamRepository>;
-  if (kind === "SQLite") {
-    const sqlite = new BetterSqlite3(":memory:");
-    migrateContainer(sqlite);
-    repository = createTeamRepository(createContainerDatabase(sqlite));
-    run = async (sql, params) => {
-      sqlite.prepare(sql).run(...params);
-    };
-    rows = async <Row>(sql: string, params: readonly unknown[]) =>
-      sqlite.prepare(sql).all(...params) as Row[];
-    close = async () => {
-      sqlite.close();
-    };
-  } else {
-    const miniflare = new Miniflare({
-      modules: true,
-      script: 'export default { fetch() { return new Response("ok") } }',
-      d1Databases: ["DB"],
-    });
-    const d1 = await miniflare.getD1Database("DB");
-    await migrateD1(d1);
-    repository = createTeamRepository(createD1Database(d1));
-    run = async (sql, params) => {
-      await d1.prepare(sql).bind(...params).run();
-    };
-    rows = async <Row>(sql: string, params: readonly unknown[]) =>
-      (await d1.prepare(sql).bind(...params).all<Row>()).results;
-    close = async () => miniflare.dispose();
-  }
-  for (const statement of seedStatements) await run(statement.sql, statement.params);
-  const app = createApiApp({
-    authentication,
-    installApi: (api) =>
-      installTeamRoutes(api, {
-        repository,
-        cursorSigningKey: signingKey,
-        isTeamModuleEnabled: async () => {
-          const result = await rows<{ enabled: number | boolean }>(
-            `SELECT COALESCE(json_extract(modules, '$.team'), 0) AS enabled
+  let drizzle: Parameters<typeof backfillCostRates>[0];
+  try {
+    if (kind === "SQLite") {
+      const sqlite = new BetterSqlite3(":memory:");
+      close = async () => {
+        sqlite.close();
+      };
+      migrateContainer(sqlite);
+      drizzle = createContainerDatabase(sqlite);
+      repository = createTeamRepository(drizzle);
+      run = async (sql, params) => {
+        sqlite.prepare(sql).run(...params);
+      };
+      rows = async <Row>(sql: string, params: readonly unknown[]) =>
+        sqlite.prepare(sql).all(...params) as Row[];
+    } else {
+      const directory = await mkdtemp(join(tmpdir(), "ezacto-team-d1-case-"));
+      const resource: { miniflare?: Miniflare } = {};
+      close = async () => {
+        try {
+          await resource.miniflare?.dispose();
+        } finally {
+          await rm(directory, { recursive: true, force: true });
+        }
+      };
+      await cp(await migratedD1Directory(), directory, { recursive: true });
+      resource.miniflare = new Miniflare({ ...d1Worker, d1Persist: directory });
+      const d1 = await resource.miniflare.getD1Database("DB");
+      drizzle = createD1Database(d1);
+      repository = createTeamRepository(drizzle);
+      run = async (sql, params) => {
+        await d1
+          .prepare(sql)
+          .bind(...params)
+          .run();
+      };
+      rows = async <Row>(sql: string, params: readonly unknown[]) =>
+        (
+          await d1
+            .prepare(sql)
+            .bind(...params)
+            .all<Row>()
+        ).results;
+    }
+    for (const statement of seedStatements) await run(statement.sql, statement.params);
+    const app = createApiApp({
+      authentication,
+      installApi: (api) =>
+        installTeamRoutes(api, {
+          repository,
+          costRateBackfill: { backfill: (input) => backfillCostRates(drizzle, input) },
+          cursorSigningKey: signingKey,
+          isTeamModuleEnabled: async () => {
+            const result = await rows<{ enabled: number | boolean }>(
+              `SELECT COALESCE(json_extract(modules, '$.team'), 0) AS enabled
              FROM organizations WHERE id = 1`,
-            [],
-          );
-          return result[0]?.enabled === 1 || result[0]?.enabled === true;
-        },
-        clock: () => now,
-      }),
-  });
-  return {
-    request: async (path, options = {}) => {
-      const headers = new Headers({
-        origin: "https://api.test",
-        "x-test-profile": options.profile ?? "administrator",
-        "x-test-user-id": String(options.userId ?? 1),
-        "x-test-manager-grants": (options.managerGrants ?? []).join(","),
-      });
-      if (options.authentication === "token")
-        headers.set("authorization", "Bearer team-test-token");
-      if (options.idempotencyKey !== undefined)
-        headers.set("idempotency-key", options.idempotencyKey);
-      if (options.body !== undefined) headers.set("content-type", "application/json");
-      return app.request(`https://api.test/api/v1${path}`, {
-        method: options.method ?? "GET",
-        headers,
-        ...(options.body === undefined ? {} : { body: JSON.stringify(options.body) }),
-      });
-    },
-    run: (sql, ...params) => run(sql, params),
-    rows: <Row>(sql: string, ...params: unknown[]) => rows<Row>(sql, params),
-    close,
-  };
+              [],
+            );
+            return result[0]?.enabled === 1 || result[0]?.enabled === true;
+          },
+          clock: () => now,
+        }),
+    });
+    return {
+      request: async (path, options = {}) => {
+        const headers = new Headers({
+          origin: "https://api.test",
+          "x-test-profile": options.profile ?? "administrator",
+          "x-test-user-id": String(options.userId ?? 1),
+          "x-test-manager-grants": (options.managerGrants ?? []).join(","),
+        });
+        if (options.authentication === "token")
+          headers.set("authorization", "Bearer team-test-token");
+        if (options.idempotencyKey !== undefined)
+          headers.set("idempotency-key", options.idempotencyKey);
+        if (options.body !== undefined) headers.set("content-type", "application/json");
+        return app.request(`https://api.test/api/v1${path}`, {
+          method: options.method ?? "GET",
+          headers,
+          ...(options.body === undefined ? {} : { body: JSON.stringify(options.body) }),
+        });
+      },
+      run: (sql, ...params) => run(sql, params),
+      rows: <Row>(sql: string, ...params: unknown[]) => rows<Row>(sql, params),
+      close: async () => {
+        await close?.();
+      },
+    };
+  } catch (error) {
+    try {
+      await close?.();
+    } catch (cleanupError) {
+      throw new AggregateError([error, cleanupError], "Team fixture setup and cleanup failed", { cause: cleanupError });
+    }
+    throw error;
+  }
 };
 
 const factories = [
@@ -262,7 +334,16 @@ const factories = [
 for (const [runtime, factory] of factories) {
   describe(`Team API (${runtime})`, () => {
     let harness: Harness | undefined;
-    afterEach(async () => harness?.close());
+    if (runtime === "D1") {
+      // The one-time infrastructure migration has its own setup allowance;
+      // every isolated test keeps the existing 20-second assertion budget.
+      beforeAll(async () => { await migratedD1Directory(); }, 60_000);
+    }
+    afterEach(async () => {
+      const active = harness;
+      harness = undefined;
+      await active?.close();
+    });
 
     it("uses authoritative rounded time and restricts project-manager visibility", async () => {
       harness = await factory();
@@ -321,10 +402,11 @@ for (const [runtime, factory] of factories) {
       expect(peopleBody.data.departments).toEqual([{ id: 1, name: "Product" }]);
       expect(peopleBody.data.project_assignments).toHaveLength(1);
       expect(peopleBody.data.notifications).toMatchObject({
-        delivery_active: false,
+        delivery_active: true,
         daily_reminder_enabled: false,
         channels: { email: false, desktop: false, slack: false },
-        include_in_team_reminders: false,
+        // New people start in, so that opting out means something (issue 935).
+        include_in_team_reminders: true,
         weekly_digest: false,
         notify_project_deleted: false,
       });
@@ -443,7 +525,7 @@ for (const [runtime, factory] of factories) {
         version: 3,
         roles: [{ id: 2, name: "Engineer" }],
         departments: [{ id: 2, name: "Operations" }],
-        notifications: { delivery_active: false, reminder_time: null },
+        notifications: { delivery_active: true, reminder_time: null },
       });
       expect(data.data.project_assignments).toEqual(
         expect.arrayContaining([
@@ -646,6 +728,63 @@ for (const [runtime, factory] of factories) {
       expect(refused.status).toBe(403);
     });
 
+    it("[money] rehearses, then applies, a cost rate over unpriced history, once", async () => {
+      // #750. Entries 1 and 2 were tracked before the person had a cost rate.
+      harness = await factory();
+      const body = {
+        from: "2026-08-01",
+        to: "2026-09-30",
+        cost_rate_cents: 6000,
+        reason: "Opening cost rate for history before the rate existed",
+      };
+      const post = (extra: Record<string, unknown>, key: string, init = {}) =>
+        harness!.request("/team/people/4/cost-rate-backfill", {
+          method: "POST",
+          body: { ...body, ...extra },
+          idempotencyKey: key,
+          ...init,
+        });
+
+      const rehearsal = await post({}, "cost.run.1");
+      expect(rehearsal.status, await rehearsal.clone().text()).toBe(200);
+      expect(((await rehearsal.json()) as { data: unknown }).data).toMatchObject({
+        applied: false,
+        entry_count: 2,
+        seconds: 5400,
+        cost_cents: 9000,
+        periods: [
+          { month: "2026-08", entry_count: 1, seconds: 3600, cost_cents: 6000 },
+          { month: "2026-09", entry_count: 1, seconds: 1800, cost_cents: 3000 },
+        ],
+      });
+      expect(
+        await harness.rows("SELECT id FROM time_entries WHERE cost_rate_cents IS NOT NULL"),
+      ).toEqual([]);
+
+      const applied = await post({ apply: true }, "cost.run.2");
+      expect(applied.status, await applied.clone().text()).toBe(200);
+      expect(
+        await harness.rows(
+          "SELECT run_id, actor_user_id, cost_rate_cents FROM time_entry_rate_reprices ORDER BY id",
+        ),
+      ).toEqual([
+        { run_id: "cost.run.2", actor_user_id: 1, cost_rate_cents: 6000 },
+        { run_id: "cost.run.2", actor_user_id: 1, cost_rate_cents: 6000 },
+      ]);
+
+      const again = await post({ apply: true }, "cost.run.3");
+      expect(((await again.json()) as { data: { entry_count: number } }).data.entry_count).toBe(0);
+
+      // Cost rates are an administrator's, and the range is never defaulted.
+      expect((await post({}, "cost.run.4", { profile: "people_admin", userId: 2 })).status).toBe(403);
+      const unbounded = await harness.request("/team/people/4/cost-rate-backfill", {
+        method: "POST",
+        body: { cost_rate_cents: 6000, reason: "no range" },
+        idempotencyKey: "cost.run.5",
+      });
+      expect(unbounded.status).toBe(422);
+    });
+
     it("allows exactly one same-version command even when timestamps are identical", async () => {
       harness = await factory();
       const [left, right] = await Promise.all([
@@ -671,6 +810,53 @@ for (const [runtime, factory] of factories) {
           "SELECT count(*) AS count FROM team_command_ledger WHERE target_user_id = 4",
         ),
       ).toEqual([{ count: 1 }]);
+    });
+
+    it("keeps an administrator's status and assignments out of reach of the people profiles (issue 740)", async () => {
+      harness = await factory();
+      const replace = (profile: UserProfile, key: string, version = 0) =>
+        harness!.request("/team/people/2/project-assignments/replace", {
+          method: "POST",
+          body: { expected_version: version, assignments: [{ project_id: 2, is_project_manager: true }] },
+          profile,
+          userId: 4,
+          idempotencyKey: key,
+        });
+      const deactivate = (profile: UserProfile, key: string, version = 0) =>
+        harness!.request("/team/people/2", {
+          method: "PATCH",
+          body: { expected_version: version, is_active: false },
+          profile,
+          userId: 4,
+          idempotencyKey: key,
+        });
+
+      for (const profile of ["people_admin", "executive_manager"] as const) {
+        const denied = await deactivate(profile, `team.admin-target.deactivate.${profile}`);
+        expect(denied.status, profile).toBe(403);
+        expect(await denied.json()).toMatchObject({ error: { code: "profile_forbidden" } });
+        expect((await replace(profile, `team.admin-target.replace.${profile}`)).status, profile).toBe(403);
+      }
+      // Nothing moved: the refusals came before any write.
+      expect(await (await harness.request("/team/people/2")).json()).toMatchObject({
+        data: { version: 0, is_active: true, project_assignments: [] },
+      });
+
+      // The same profiles still manage everyone who is not an administrator.
+      const member = await harness.request("/team/people/4", {
+        method: "PATCH",
+        body: { expected_version: 0, is_active: false },
+        profile: "people_admin",
+        userId: 2,
+        idempotencyKey: "team.admin-target.member",
+      });
+      expect(member.status, await member.clone().text()).toBe(200);
+
+      // An administrator still can.
+      const assigned = await replace("administrator", "team.admin-target.replace.admin");
+      expect(assigned.status, await assigned.clone().text()).toBe(200);
+      const removed = await deactivate("administrator", "team.admin-target.deactivate.admin", 1);
+      expect(removed.status, await removed.clone().text()).toBe(200);
     });
 
     it("protects the owner, profile boundary, Slack truthfulness, and session-only writes", async () => {
@@ -707,37 +893,57 @@ for (const [runtime, factory] of factories) {
       });
       expect(slack.status).toBe(422);
 
-      const unavailableDelivery = await harness.request("/team/people/4/notifications", {
+      // What still has no delivery is refused rather than stored: desktop, and
+      // the project-deletion notice (issue 935).
+      const noDelivery = {
+        expected_version: 0,
+        daily_reminder_enabled: false,
+        reminder_time: null,
+        reminder_days: [],
+        channels: { email: false, desktop: false, slack: false },
+        include_in_team_reminders: true,
+        weekly_digest: false,
+        notify_project_deleted: false,
+      };
+      const desktop = await harness.request("/team/people/4/notifications", {
+        method: "POST",
+        body: { ...noDelivery, channels: { email: false, desktop: true, slack: false } },
+        idempotencyKey: "team.notifications.desktop",
+      });
+      expect(desktop.status).toBe(422);
+      expect(await desktop.json()).toMatchObject({
+        error: { fields: expect.arrayContaining([expect.objectContaining({ code: "unavailable" })]) },
+      });
+      const deletion = await harness.request("/team/people/4/notifications", {
+        method: "POST",
+        body: { ...noDelivery, notify_project_deleted: true },
+        idempotencyKey: "team.notifications.project-deleted",
+      });
+      expect(deletion.status).toBe(422);
+      // A daily reminder needs a time, a day, and the one channel that delivers.
+      const noMail = await harness.request("/team/people/4/notifications", {
         method: "POST",
         body: {
-          expected_version: 0,
-          daily_reminder_enabled: false,
-          reminder_time: null,
-          reminder_days: [],
-          channels: { email: true, desktop: false, slack: false },
-          include_in_team_reminders: false,
-          weekly_digest: false,
-          notify_project_deleted: false,
+          ...noDelivery,
+          daily_reminder_enabled: true,
+          reminder_time: "17:00",
+          reminder_days: ["monday"],
         },
-        idempotencyKey: "team.notifications.delivery-unavailable",
+        idempotencyKey: "team.notifications.daily-without-mail",
       });
-      expect(unavailableDelivery.status).toBe(422);
-      expect(await unavailableDelivery.json()).toMatchObject({
-        error: {
-          fields: expect.arrayContaining([
-            expect.objectContaining({ code: "delivery_unavailable" }),
-          ]),
-        },
+      expect(noMail.status).toBe(422);
+      expect(await noMail.json()).toMatchObject({
+        error: { fields: expect.arrayContaining([expect.objectContaining({ code: "incomplete" })]) },
       });
       const unchanged = await harness.request("/team/people/4");
       expect(await unchanged.json()).toMatchObject({
         data: {
           version: 0,
           notifications: {
-            delivery_active: false,
+            delivery_active: true,
             daily_reminder_enabled: false,
             channels: { email: false, desktop: false, slack: false },
-            include_in_team_reminders: false,
+            include_in_team_reminders: true,
             weekly_digest: false,
             notify_project_deleted: false,
           },
@@ -751,6 +957,39 @@ for (const [runtime, factory] of factories) {
         idempotencyKey: "team.token.denied",
       });
       expect(token.status).toBe(403);
+    });
+
+    it("saves the daily reminder, the mail channel, team reminders and the weekly digest (issue 935)", async () => {
+      harness = await factory();
+      const saved = await harness.request("/team/people/4/notifications", {
+        method: "POST",
+        body: {
+          expected_version: 0,
+          daily_reminder_enabled: true,
+          reminder_time: "17:00",
+          reminder_days: ["monday", "friday"],
+          channels: { email: true, desktop: false, slack: false },
+          include_in_team_reminders: false,
+          weekly_digest: true,
+          notify_project_deleted: false,
+        },
+        idempotencyKey: "team.notifications.deliverable",
+      });
+      expect(saved.status, await saved.clone().text()).toBe(200);
+      const refreshed = await harness.request("/team/people/4");
+      expect(await refreshed.json()).toMatchObject({
+        data: {
+          version: 1,
+          notifications: {
+            daily_reminder_enabled: true,
+            reminder_time: "17:00",
+            reminder_days: ["monday", "friday"],
+            channels: { email: true, desktop: false, slack: false },
+            include_in_team_reminders: false,
+            weekly_digest: true,
+          },
+        },
+      });
     });
 
     it("supports safe deactivation and Active/All filtering", async () => {

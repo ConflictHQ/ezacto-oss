@@ -1,5 +1,8 @@
+import { setRequestBusy } from '../request-feedback.js'
 import { renderDataTable } from '../components/data-table.js'
+import { loadedRowsSortNotice } from '../components/table-sort.js'
 import { isDemoDeployment } from '../demo.js'
+import { attachmentsAvailable, ATTACHMENTS_UNAVAILABLE } from '../attachments-availability.js'
 import { moneyText } from '../money-display.js'
 import { icon } from '../components/icons.js'
 import { createPeriodControl } from '../components/period.js'
@@ -204,6 +207,11 @@ export const createExpenseWorkflowController = (
     onChange: () => {},
   })
   required<HTMLElement>('[data-expense-period]').appendChild(period.element)
+  const createOpen = required<HTMLButtonElement>('[data-expense-create-open]')
+  const createClose = required<HTMLButtonElement>('[data-expense-create-close]')
+  const emptyCreate = required<HTMLButtonElement>('[data-expense-empty-create]')
+  const createNotice = required<HTMLElement>('[data-expense-create-notice]')
+  let createOpener = createOpen
   const createPanel = required<HTMLElement>('[data-expense-create-panel]')
   const createForm = required<HTMLFormElement>('[data-expense-create-form]')
   const createSubmit = required<HTMLButtonElement>('[data-expense-create-submit]')
@@ -253,6 +261,62 @@ export const createExpenseWorkflowController = (
     !active.signal.aborted
       ? active
       : null
+
+  const canOpenCreate = (): boolean =>
+    listPage &&
+    current() !== null &&
+    moduleAvailable &&
+    catalogReady &&
+    api.createWorkflowExpense !== undefined
+
+  const syncCreateControls = (): void => {
+    if (!mutationPending) setRequestBusy(createResult, false)
+    const canOpen = canOpenCreate()
+    createOpen.hidden = !moduleAvailable
+    createOpen.disabled = !canOpen || mutationPending
+    emptyCreate.disabled = !canOpen || mutationPending
+    createClose.disabled = mutationPending
+    const ready =
+      canOpen &&
+      !createPanel.hidden &&
+      catalog.categories.some((item) => item.is_active) &&
+      catalog.projects.some((item) => item['is_active'] !== false)
+    for (const field of [...createForm.elements]) {
+      if (
+        field instanceof HTMLInputElement ||
+        field instanceof HTMLSelectElement ||
+        field instanceof HTMLTextAreaElement ||
+        field instanceof HTMLButtonElement
+      ) {
+        field.disabled = !ready || mutationPending
+      }
+    }
+  }
+  const setCreateExpanded = (expanded: boolean): void => {
+    createPanel.hidden = !expanded
+    createOpen.setAttribute('aria-expanded', String(expanded))
+    emptyCreate.setAttribute('aria-expanded', String(expanded))
+    syncCreateControls()
+  }
+  const restoreCreateFocus = (): void => {
+    if (current() === null || !moduleAvailable) return
+    const target = !createOpener.hidden && !createOpener.disabled ? createOpener : createOpen
+    if (!target.hidden && !target.disabled) target.focus()
+  }
+  const openCreate = (opener: HTMLButtonElement): void => {
+    if (!canOpenCreate() || mutationPending) return
+    createOpener = opener
+    createNotice.hidden = true
+    setCreateExpanded(true)
+    if (
+      !catalog.categories.some((item) => item.is_active) ||
+      !catalog.projects.some((item) => item['is_active'] !== false)
+    ) {
+      createResult.textContent =
+        'Create an active project and expense category before adding an expense.'
+      createResult.focus()
+    } else formSelect(createForm, 'project_id').focus()
+  }
 
   const apiErrorCode = (error: unknown): string | null => {
     if (!(error instanceof EzactoApiError) || typeof error.body !== 'object' || error.body === null) {
@@ -327,6 +391,10 @@ export const createExpenseWorkflowController = (
   }
 
   const syncDetailControls = (): void => {
+    if (!mutationPending) {
+      setRequestBusy(editResult, false)
+      setRequestBusy(attachmentStatus, false)
+    }
     const hasDetail = current() !== null && moduleAvailable && currentExpense !== null
     const editable =
       hasDetail && currentExpense !== null && expenseIsEditable(currentExpense)
@@ -342,7 +410,8 @@ export const createExpenseWorkflowController = (
     for (const field of [...attachmentForm.elements]) {
       if (field instanceof HTMLInputElement) field.disabled = demo || !hasDetail || mutationPending
     }
-    attachmentSubmit.disabled = demo || !hasDetail || mutationPending
+    attachmentForm.hidden = !attachmentsAvailable() || demo
+    attachmentSubmit.disabled = !attachmentsAvailable() || demo || !hasDetail || mutationPending
   }
 
   const clearPrivatePresentation = (): void => {
@@ -358,6 +427,7 @@ export const createExpenseWorkflowController = (
     period.setWeekStartDay('monday')
     listPending = false
     mutationPending = false
+    for (const region of [createResult, editResult, attachmentStatus, listStatus, detailStatus]) setRequestBusy(region, false)
     attachmentCommand = null
     moduleAvailable = true
     catalogReady = false
@@ -371,6 +441,10 @@ export const createExpenseWorkflowController = (
     list.replaceChildren()
     attachmentList.replaceChildren()
     createResult.textContent = ''
+    createNotice.replaceChildren()
+    createNotice.hidden = true
+    emptyCreate.hidden = true
+    createOpener = createOpen
     editResult.textContent = ''
     attachmentStatus.textContent = ''
     lockMessage.textContent = ''
@@ -392,7 +466,7 @@ export const createExpenseWorkflowController = (
       '[data-expense-detail-total]',
     ]) required<HTMLElement>(selector).textContent = '—'
 
-    createPanel.hidden = false
+    setCreateExpanded(false)
     filterForm.hidden = false
     list.hidden = false
     for (const notice of moduleNotices) notice.hidden = true
@@ -411,7 +485,9 @@ export const createExpenseWorkflowController = (
     list.replaceChildren()
     attachmentList.replaceChildren()
     detailArticle.hidden = true
-    createPanel.hidden = true
+    setCreateExpanded(false)
+    emptyCreate.hidden = true
+    createNotice.hidden = true
     filterForm.hidden = true
     list.hidden = true
     loadMore.hidden = true
@@ -538,12 +614,24 @@ export const createExpenseWorkflowController = (
         // read: one heading, then the days under it.
         groupBy: (expense) => expenseWeekLabel(expense.spent_date, weekStartDay),
         empty: 'No expenses match these filters.',
+        // Rows sort inside their weeks (issue 852). The list arrives newest
+        // first, so Date descending is the order it already has.
+        table: 'expenses',
+        defaultSort: { column: 'date', direction: 'descending' },
         columns: [
-          { key: 'date', label: 'Date', render: expenseDateLink },
+          {
+            key: 'date',
+            label: 'Date',
+            fit: true,
+            render: expenseDateLink,
+            sortValue: (expense) => [expense.spent_date, expense.id],
+          },
           {
             key: 'work',
             label: 'Client / Project',
             render: (expense) =>
+              `${expenseClientLabel(expense.project_id, catalog.projects, catalog.clients)} · ${expenseProjectLabel(expense.project_id, catalog.projects)}`,
+            sortValue: (expense) =>
               `${expenseClientLabel(expense.project_id, catalog.projects, catalog.clients)} · ${expenseProjectLabel(expense.project_id, catalog.projects)}`,
           },
           {
@@ -551,22 +639,37 @@ export const createExpenseWorkflowController = (
             label: 'Category',
             render: (expense) =>
               expenseCategoryLabel(expense.expense_category_id, catalog.categories),
+            sortValue: (expense) =>
+              expenseCategoryLabel(expense.expense_category_id, catalog.categories),
           },
           {
             key: 'notes',
             label: 'Notes',
             render: (expense) => expense.notes?.trim() || 'No notes',
+            sortValue: (expense) => expense.notes?.trim() || null,
           },
           {
             key: 'billing',
+            fit: true,
             label: 'Billing',
             render: expenseBillingCell,
           },
-          { key: 'status', label: 'Status', render: expenseStatusPill },
+          {
+            key: 'status',
+            label: 'Status',
+            fit: true,
+            render: expenseStatusPill,
+            sortValue: (expense) => expenseApprovalDisplay(expense).label,
+          },
           {
             key: 'amount',
             label: 'Amount',
             numeric: true,
+            // A currency and then an amount: two currencies are never added.
+            sortValue: (expense) => [
+              expenseCurrency(expense.project_id, catalog.projects, catalog.clients),
+              expense.total_cost_cents,
+            ],
             render: (expense) =>
               moneyText(
                 expenseMoney(
@@ -612,6 +715,7 @@ export const createExpenseWorkflowController = (
     const filters = { ...currentFilters }
     const cursor = append ? nextCursor ?? undefined : undefined
     if (!append) {
+      emptyCreate.hidden = true
       listedExpenses = []
       nextCursor = null
       renderList()
@@ -619,6 +723,7 @@ export const createExpenseWorkflowController = (
     }
     listPending = true
     listStatus.textContent = append ? 'Loading more expenses…' : 'Loading expenses…'
+    setRequestBusy(listStatus, true)
     listRetry.hidden = true
     loadMore.disabled = true
     try {
@@ -631,11 +736,13 @@ export const createExpenseWorkflowController = (
       listedExpenses = append ? [...listedExpenses, ...page.data] : [...page.data]
       renderList()
       nextCursor = page.page.next_cursor
+      emptyCreate.hidden = listedExpenses.length > 0 || !canOpenCreate()
+      syncCreateControls()
       loadMore.hidden = nextCursor === null
       const expenseCount = list.querySelectorAll('tbody tr[data-row]').length
       listStatus.textContent = expenseCount === 0
         ? 'No expenses match these filters.'
-        : `${expenseCount} ${expenseCount === 1 ? 'expense' : 'expenses'} shown by week.`
+        : `${expenseCount} ${expenseCount === 1 ? 'expense' : 'expenses'} shown by week.${nextCursor === null ? '' : loadedRowsSortNotice}`
     } catch (error) {
       if (current() !== session || requestGeneration !== listRequestGeneration) return
       if (sessionFailure(error, session)) return
@@ -648,6 +755,7 @@ export const createExpenseWorkflowController = (
     } finally {
       if (current() === session && requestGeneration === listRequestGeneration) {
         listPending = false
+        setRequestBusy(listStatus, false)
         loadMore.disabled = false
       }
     }
@@ -730,21 +838,26 @@ export const createExpenseWorkflowController = (
       session === null ||
       expenseId === null ||
       api.getWorkflowExpense === undefined ||
-      api.listWorkflowExpenseAttachments === undefined
+      (attachmentsAvailable() && api.listWorkflowExpenseAttachments === undefined)
     ) return
     const requestGeneration = ++detailRequestGeneration
     detailStatus.textContent = 'Loading expense…'
+    setRequestBusy(detailStatus, true)
     detailArticle.hidden = true
     detailRetry.hidden = true
     try {
       const [expense, attachments] = await Promise.all([
         api.getWorkflowExpense(expenseId, session.signal),
-        api.listWorkflowExpenseAttachments(expenseId, session.signal),
+        attachmentsAvailable()
+          ? api.listWorkflowExpenseAttachments!(expenseId, session.signal)
+          : Promise.resolve([]),
       ])
       if (current() !== session || requestGeneration !== detailRequestGeneration) return
       renderDetail(expense)
       renderAttachments(expense.id, attachments)
-      attachmentStatus.textContent = attachments.length === 0 ? '' : `${attachments.length} receipt ${attachments.length === 1 ? 'file' : 'files'}.`
+      attachmentStatus.textContent = !attachmentsAvailable()
+        ? ATTACHMENTS_UNAVAILABLE
+        : attachments.length === 0 ? '' : `${attachments.length} receipt ${attachments.length === 1 ? 'file' : 'files'}.`
     } catch (error) {
       if (current() !== session || requestGeneration !== detailRequestGeneration) return
       if (sessionFailure(error, session)) return
@@ -755,6 +868,8 @@ export const createExpenseWorkflowController = (
       detailStatus.textContent = apiMessage(error)
       detailArticle.hidden = true
       detailRetry.hidden = false
+    } finally {
+      if (current() === session && requestGeneration === detailRequestGeneration) setRequestBusy(detailStatus, false)
     }
   }
 
@@ -786,9 +901,7 @@ export const createExpenseWorkflowController = (
     period.setWeekStartDay(configuredWeekStart)
     populateCatalogs()
     applyFilterValues()
-    createSubmit.disabled =
-      categories.every((item) => !item.is_active) ||
-      projects.every((item) => item['is_active'] === false)
+    syncCreateControls()
     return true
   }
 
@@ -847,36 +960,60 @@ export const createExpenseWorkflowController = (
     )
   })
 
+  createOpen.addEventListener('click', () => openCreate(createOpen))
+  emptyCreate.addEventListener('click', () => openCreate(emptyCreate))
+  createClose.addEventListener('click', () => {
+    if (mutationPending || current() === null) return
+    setCreateExpanded(false)
+    restoreCreateFocus()
+  })
+
   createForm.addEventListener('submit', (event) => {
     event.preventDefault()
     const session = current()
-    if (session === null || mutationPending || api.createWorkflowExpense === undefined) return
+    if (session === null || !moduleAvailable || !catalogReady || createPanel.hidden || mutationPending || api.createWorkflowExpense === undefined) return
     let payload: ExpenseInput
     try {
       payload = expensePayload(createForm, catalog.categories)
     } catch (error) {
       createResult.textContent = apiMessage(error)
+      createResult.focus()
       return
     }
+    let created = false
+    let focusError = false
     mutationPending = true
-    createSubmit.disabled = true
+    syncCreateControls()
     createResult.textContent = 'Adding expense…'
+    setRequestBusy(createResult, true)
     api.createWorkflowExpense(payload, session.signal).then((expense) => {
       if (current() !== session) return
       createForm.reset()
       formInput(createForm, 'spent_date').value = localDate()
       populateCatalogs()
-      createResult.textContent = `Expense added. Open expense #${expense.id} to attach a receipt.`
+      createResult.textContent = ''
+      createNotice.hidden = false
+      const link = document.createElement('a')
+      link.href = `/expenses/${expense.id}`
+      link.textContent = `Open expense #${expense.id}`
+      createNotice.replaceChildren('Expense added. ', link)
+      created = true
+      setCreateExpanded(false)
       void loadList()
     }).catch((error: unknown) => {
       if (current() !== session) return
       if (sessionFailure(error, session)) return
       if (apiErrorCode(error) === 'module_disabled') showModuleUnavailable()
-      else createResult.textContent = apiMessage(error)
+      else {
+        createResult.textContent = apiMessage(error)
+        focusError = true
+      }
     }).finally(() => {
       if (current() === session && moduleAvailable) {
         mutationPending = false
-        createSubmit.disabled = false
+        syncCreateControls()
+        if (created) restoreCreateFocus()
+        else if (focusError) createResult.focus()
       }
     })
   })
@@ -907,6 +1044,7 @@ export const createExpenseWorkflowController = (
     mutationPending = true
     syncDetailControls()
     editResult.textContent = 'Saving expense…'
+    setRequestBusy(editResult, true)
     api.updateWorkflowExpense(currentExpense.id, payload, session.signal).then((expense) => {
       if (current() !== session) return
       renderDetail(expense)
@@ -934,6 +1072,7 @@ export const createExpenseWorkflowController = (
     if (
       session === null ||
       currentExpense === null ||
+      !attachmentsAvailable() ||
       mutationPending ||
       api.uploadWorkflowExpenseAttachment === undefined ||
       api.listWorkflowExpenseAttachments === undefined
@@ -952,6 +1091,7 @@ export const createExpenseWorkflowController = (
     const command = attachmentCommand
     const expenseId = currentExpense.id
     attachmentStatus.textContent = 'Uploading receipt…'
+    setRequestBusy(attachmentStatus, true)
     api.uploadWorkflowExpenseAttachment(expenseId, command, data, session.signal).then(async () => {
       if (current() !== session) return
       const attachments = await api.listWorkflowExpenseAttachments!(expenseId, session.signal)

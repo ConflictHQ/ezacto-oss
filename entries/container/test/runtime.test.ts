@@ -1,3 +1,10 @@
+import { createContainerSessionStore } from '../../../packages/db/src/sessions.js'
+import { scheduledJobConfig } from '@ezacto/core'
+import { seedMonthEndJobFixture } from '../../../packages/db/test/support/month-end-job-fixture.js'
+import { createContainerEmailFeedbackLedger } from '@ezacto/db'
+import { createContainerDatabase } from '@ezacto/db'
+import { createTimesheetApprovalRepository } from '../../../packages/db/src/timesheet-approvals.js'
+import { seedAutomaticApprovalFixture } from '../../../packages/db/test/support/automatic-approval-fixture.js'
 import { mkdtemp, realpath, rm, symlink } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -9,6 +16,7 @@ import type { EmailMessage, HttpEmailProvider } from '@ezacto/mailer'
 import { createApp } from '../../worker/src/app.js'
 import {
   UNDOCUMENTED_ROUTES,
+  GITHUB_PUBLICATION_ROUTES,
   WORKER_ONLY_ROUTES,
   expectedApiRoutes,
   mountedApiRoutes,
@@ -448,12 +456,37 @@ describe('container runtime composition', () => {
     await second.close()
   }, 30_000)
 
+  it('[native #1217] renders BILL-only and disabled accounting from actual SQLite runtime metadata', async () => {
+    const root = await temporary()
+    const base = config(root)
+    delete base.quickBooks
+    delete base.wise
+    const configuration = { ...base, bill: { devKey: 'private-dev-key-1217', companyId: 'private-company-1217', username: 'private-user-1217', password: 'private-password-1217' } }
+    const outbound = vi.spyOn(globalThis, 'fetch').mockRejectedValue(new Error('provider calls are forbidden'))
+    try {
+      for (const enabled of [true, false]) {
+        const configured = { ...configuration, appEnv: { ...configuration.appEnv, ACCOUNTING_ENABLED: String(enabled) } }
+        const runtime = await createContainerRuntime(configured, { emailProvider: provider([]) })
+        try {
+          const response = await createApp(runtime.services, runtime.brandAssets, runtime.instanceTheme).request('/settings/company', {}, configured.appEnv)
+          expect(response.status).toBe(200)
+          const html = await response.text()
+          expect(html.includes('data-accounting-unavailable')).toBe(!enabled)
+          expect(html).toContain('data-quickbooks-unavailable')
+          expect(html).toContain(`data-accounting-provider="bill" data-provider-available="${String(enabled)}"`)
+          for (const secret of Object.values(configuration.bill)) expect(html).not.toContain(secret)
+          expect(outbound).not.toHaveBeenCalled()
+        } finally { await runtime.close() }
+      }
+    } finally { outbound.mockRestore() }
+  })
+
   // The Worker entry has the same guard over its own composition. Both are
   // needed: the app is shared but the services are not, and a service this
   // runtime leaves out is a documented operation this deployment 404s.
   it('[contract] answers every documented operation the container composes', async () => {
     const root = await temporary()
-    const runtime = await createContainerRuntime(config(root), {
+    const runtime = await createContainerRuntime({ ...config(root), githubTimePublicationEnabled: true }, {
       emailProvider: provider([]),
     })
     try {
@@ -515,7 +548,7 @@ describe('container runtime composition', () => {
   // services are not, and the difference was invisible.
   it('[contract] answers exactly the surface declared for this entry', async () => {
     const root = await temporary()
-    const runtime = await createContainerRuntime(config(root), {
+    const runtime = await createContainerRuntime({ ...config(root), githubTimePublicationEnabled: true }, {
       emailProvider: provider([]),
     })
     try {
@@ -526,7 +559,7 @@ describe('container runtime composition', () => {
             (operation) => `${operation.method} ${operation.path}`,
           ),
           'container',
-          { portal: false, quickBooks: true, wise: true },
+          { portal: false, quickBooks: true, wise: true, githubPublication: true },
         ),
       )
 
@@ -534,6 +567,16 @@ describe('container runtime composition', () => {
     } finally {
       await runtime.close()
     }
+  })
+
+  it('[contract] omits only the declared publication routes by default', async () => {
+    const root = await temporary()
+    const runtime = await createContainerRuntime(config(root), { emailProvider: provider([]) })
+    try {
+      const mounted = mountedApiRoutes(createApp(runtime.services, runtime.brandAssets, runtime.instanceTheme).routes)
+      expect(routeDifference(mounted, expectedApiRoutes(apiContractOperations.map(operation => `${operation.method} ${operation.path}`), 'container', { portal: false, quickBooks: true, wise: true, githubPublication: false }))).toEqual({ unexpected: [], missing: [] })
+      for (const route of GITHUB_PUBLICATION_ROUTES) expect(mounted.has(route)).toBe(false)
+    } finally { await runtime.close() }
   })
 
   // The portal was mounted nowhere: `services.portalAuth` was optional and no
@@ -700,4 +743,311 @@ describe('outbound mail and startup', () => {
     // And never the credential: SMTP_URL carries a password.
     expect(reported).not.toContain('hunter2')
   }, 30_000)
+})
+
+it('passes fixed reminder bounds through the container service', async () => {
+  const root = await temporary()
+  const runtime = await createContainerRuntime(config(root), { emailProvider: provider([]) })
+  // Keep the automatic current-time scheduler outside this explicit future pass.
+  const at = '2099-10-08T03:00:00.000Z'
+  try {
+    runtime.database.prepare("INSERT INTO organizations (name, modules, created_at, updated_at) VALUES ('Fixture', '{}', ?, ?)").run(at, at)
+    runtime.database.prepare("INSERT INTO clients (id, name, currency, created_at, updated_at) VALUES (1, 'Fixture', 'USD', ?, ?)").run(at, at)
+    for (const id of [1, 2, 3]) {
+      runtime.database.prepare(`INSERT INTO invoices (id, client_id, number, currency, issue_date, due_date, state, created_at, updated_at)
+        VALUES (?, 1, ?, 'USD', '2026-10-01', '2026-10-01', 'draft', ?, ?)`).run(id, `F${id}`, at, at)
+      runtime.database.prepare(`INSERT INTO scheduled_reminders
+        (id, invoice_id, scheduled_at, interval_days, status, template, causation_event_id, created_at, updated_at)
+        VALUES (?, ?, ?, 7, 'pending', 'reminder', ?, ?, ?)`).run(id, id, at, `fixture-${id}`, at, at)
+    }
+    expect(await runtime.services.reminders!.processDue(at, { limit: 1, selection: { afterId: 1, throughId: 2 } }))
+      .toEqual({ examined: 1, sent: 0, scheduled: 0, lastExaminedId: 2 })
+    expect(runtime.database.prepare('SELECT id, status FROM scheduled_reminders ORDER BY id').all()).toEqual([
+      { id: 1, status: 'pending' }, { id: 2, status: 'cancelled' }, { id: 3, status: 'pending' },
+    ])
+  } finally { await runtime.close() }
+})
+
+
+it('[integration #1009] container maintenance approves once and queues the durable submitter notice', async () => {
+  const root = await temporary()
+  const captured: EmailMessage[] = []
+  const runtime = await createContainerRuntime(config(root), { emailProvider: provider(captured) })
+  try {
+    await runtime.drainOutbox()
+    const at = Date.now()
+    const submitted = await seedAutomaticApprovalFixture(async (statement, ...bindings) => {
+      runtime.database.prepare(statement).run(...bindings)
+    }, new Date(at).toISOString())
+    await createTimesheetApprovalRepository(createContainerDatabase(runtime.database)).submit(
+      1,
+      '2026-08-24',
+      '2026-08-30',
+      submitted,
+    )
+    vi.useFakeTimers({ toFake: ['Date'] })
+    vi.setSystemTime(at + 120000)
+    await runtime.drainOutbox()
+    expect(
+      runtime.database
+        .prepare('SELECT count(*) AS n FROM timesheet_automatic_approval_receipts')
+        .get(),
+    ).toEqual({ n: 1 })
+    vi.setSystemTime(at + 240000)
+    await runtime.drainOutbox()
+    await vi.waitFor(() =>
+      expect(captured.filter((mail) => mail.template === 'auto_approval_notice:v1')).toHaveLength(
+        1,
+      ),
+    )
+    expect(captured.find((mail) => mail.template === 'auto_approval_notice:v1')!.to).toEqual([
+      { email: 'maya@example.test', name: 'Maya Member' },
+    ])
+  } finally {
+    vi.useRealTimers()
+    await runtime.close()
+  }
+})
+
+it('[security #1010] composes real contact mail, consumes its token once and keeps staff auth separate', async () => {
+  const root = await temporary()
+  const captured: EmailMessage[] = []
+  const runtime = await createContainerRuntime(
+    { ...config(root), portalMagicLinkSigningKey: new Uint8Array(32).fill(0x21) },
+    { emailProvider: provider(captured) },
+  )
+  try {
+    const stamp = new Date().toISOString()
+    runtime.database
+      .prepare(
+        "INSERT INTO clients(id,name,currency,created_at,updated_at) VALUES(1,'Contact Client','USD',?,?)",
+      )
+      .run(stamp, stamp)
+    runtime.database
+      .prepare(
+        "INSERT INTO contacts(id,client_id,first_name,last_name,email,created_at,updated_at) VALUES(1,1,'Contact','Tester','contact@example.test',?,?)",
+      )
+      .run(stamp, stamp)
+    const app = createApp(runtime.services, runtime.brandAssets, runtime.instanceTheme)
+    const request = (path: string, init?: RequestInit) =>
+      app.request(`http://localhost:3000${path}`, init)
+    expect(
+      (await request('/portal/magic-link', body({ email: 'contact@example.test' }))).status,
+    ).toBe(202)
+    await vi.waitFor(() =>
+      expect(captured.some((message) => message.template === 'portal_magic_link_signin:v1')).toBe(
+        true,
+      ),
+    )
+    const mail = captured.find((message) => message.template === 'portal_magic_link_signin:v1')!
+    expect(mail).toBeDefined()
+    const link = new URL(mail.text!.split('\n').find((line) => line.startsWith('http'))!)
+    expect(link.pathname).toBe('/portal/estimate-review')
+    expect(link.search).toBe('')
+    const token = new URLSearchParams(link.hash.slice(1)).get('token')!
+    const exchange = await request('/portal/verify', body({ token }))
+    expect(exchange.status).toBe(200)
+    const cookie = exchange.headers.get('set-cookie')!.split(';', 1)[0]!
+    const estimates = await request('/portal/estimates', { headers: { cookie } })
+    expect(estimates.status).toBe(200)
+    expect((await request('/portal/verify', body({ token }))).status).toBe(401)
+    expect((await request('/api/v1/clients', { headers: { cookie } })).status).toBe(401)
+    expect(
+      captured.filter((message) => message.template === 'portal_magic_link_signin:v1'),
+    ).toHaveLength(1)
+  } finally {
+    await runtime.close()
+  }
+})
+
+it('[reliability #42] the running SMTP queue refuses suppressed recipients and resumes only fresh jobs after review', async () => {
+  const root = await temporary()
+  const captured: EmailMessage[] = []
+  const runtime = await createContainerRuntime(config(root), { emailProvider: provider(captured) })
+  try {
+    const now = new Date().toISOString()
+    runtime.database
+      .prepare(
+        `INSERT INTO users(id,first_name,last_name,profile,manager_grants,created_at,updated_at)
+VALUES(1,'Admin','Reviewer','administrator','[]',?,?)`,
+      )
+      .run(now, now)
+    const log = runtime.services.emailLog
+    const suppressions = runtime.services.emailSuppressions!
+    const old = await log.createQueued({
+      from: { email: 'billing@example.test' },
+      to: [{ email: 'suppressed@example.test' }],
+      template: 'verify_email',
+      subject: 'Earlier message',
+      text: 'Earlier body',
+    })
+    await log.claimAttempt(old.id, 'smtp', 'old-send', 60)
+    await log.markSent(old.id, 'smtp', { messageId: 'smtp-earlier' }, 'old-send')
+    const ledger = createContainerEmailFeedbackLedger(runtime.database)
+    await ledger.claim({
+      eventId: 'container-bounce',
+      signatureToken: 'container-fixture-token',
+      eventType: 'failed',
+      severity: 'permanent',
+      recipient: 'suppressed@example.test',
+      providerMessageId: 'smtp-earlier',
+      deliveryId: old.id,
+      now,
+    })
+    await ledger.finish('container-bounce', now, 'bounced', null)
+    const enqueue = () =>
+      runtime.services.deploymentAuthMailer!.enqueue({
+        kind: 'verify_email',
+        to: 'suppressed@example.test',
+        token: `ezacto_verify_${'a'.repeat(16)}_${'b'.repeat(43)}`,
+        expiresAt: new Date(Date.now() + 60000).toISOString(),
+      })
+    await enqueue()
+    await vi.waitFor(async () =>
+      expect(await log.list({ status: 'failed' })).toEqual([
+        expect.objectContaining({ failureReason: 'recipient_suppressed:BOUNCE' }),
+      ]),
+    )
+    expect(captured).toHaveLength(0)
+    await suppressions.lift(
+      {
+        eventId: await suppressions.snapshot(),
+        actorId: 1,
+        note: 'Recipient verified address',
+        confirmation: '',
+      },
+      new Date().toISOString(),
+    )
+    await enqueue()
+    await vi.waitFor(() => expect(captured).toHaveLength(1))
+    await vi.waitFor(async () => expect(await log.list({ status: 'sent' })).toHaveLength(2))
+    // Lifting does not silently retry the refused job.
+    expect(await log.list({ status: 'failed' })).toHaveLength(1)
+  } finally {
+    await runtime.close()
+  }
+})
+
+
+it('[integration #63] the container maintenance tick materializes due jobs once without executing them', async () => {
+  const root = await temporary(),
+    captured: EmailMessage[] = []
+  vi.useFakeTimers({ toFake: ['Date'] })
+  const at = Date.parse('2026-10-15T12:00:00.000Z')
+  vi.setSystemTime(at)
+  const configuration = config(root)
+  const runtime = await createContainerRuntime(configuration, { emailProvider: provider(captured) })
+  try {
+    await runtime.drainOutbox()
+    const now = new Date(),
+      period = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 0))
+        .toISOString()
+        .slice(0, 7)
+    await seedMonthEndJobFixture(
+      createContainerDatabase(runtime.database),
+      period,
+      now.toISOString(),
+    )
+    const service = runtime.services.scheduledJobs!
+    const session = await createContainerSessionStore(runtime.database).issue(1)
+    const app = createApp(runtime.services, runtime.brandAssets, runtime.instanceTheme)
+    const headers = {
+      'content-type': 'application/json',
+      origin: configuration.appBaseUrl,
+      cookie: `__Host-ezacto_session=${session.token}`,
+    }
+    const created = await app.request(
+      `${configuration.appBaseUrl}/api/v1/scheduled-jobs`,
+      {
+        method: 'POST',
+        headers,
+        body: JSON.stringify(
+          scheduledJobConfig({
+            name: 'Monthly A',
+            cadence: '0 0 1 * *',
+            scope: { client_ids: [1] },
+          }),
+        ),
+      },
+      configuration.appEnv,
+    )
+    expect(created.status).toBe(201)
+    expect(await created.json()).toMatchObject({ data: { id: 1, version: 0, created_by: 1 } })
+    vi.setSystemTime(at + 120000)
+    await runtime.drainOutbox()
+    vi.setSystemTime(at + 240000)
+    await runtime.drainOutbox()
+    expect(
+      runtime.database
+        .prepare('SELECT job_id,occurrence_key,state,confirmed_by_user_id FROM proposed_runs')
+        .all(),
+    ).toEqual([
+      { job_id: 1, occurrence_key: period, state: 'proposed', confirmed_by_user_id: null },
+    ])
+    expect(
+      runtime.database.prepare('SELECT target,state,attempt_count FROM run_items').all(),
+    ).toEqual([{ target: 'a@example.test', state: 'pending', attempt_count: 0 }])
+    expect(captured).toHaveLength(0)
+    const paused = await app.request(
+      `${configuration.appBaseUrl}/api/v1/scheduled-jobs/1`,
+      { method: 'PATCH', headers, body: JSON.stringify({ expected_version: 0, is_active: false }) },
+      configuration.appEnv,
+    )
+    expect(paused.status).toBe(200)
+    expect(await paused.json()).toMatchObject({ data: { version: 1, is_active: false } })
+    vi.setSystemTime(Date.parse('2026-11-15T12:00:00.000Z'))
+    await runtime.drainOutbox()
+    expect(runtime.database.prepare('SELECT state FROM proposed_runs').all()).toEqual([
+      { state: 'expired' },
+    ])
+    expect((await service.read(1))?.last_checked_at).toBeNull()
+    expect(captured).toHaveLength(0)
+  } finally {
+    vi.useRealTimers()
+    await runtime.close()
+  }
+})
+
+it('[integration #58 #61 #62] authenticated confirmation is durably dispatched by maintenance with real disk attachments and one provider send per item', async () => {
+  const root=await temporary(),captured:EmailMessage[]=[]
+  vi.useFakeTimers({toFake:['Date']})
+  const at=Date.parse('2026-10-15T12:00:00.000Z')
+  vi.setSystemTime(at)
+  const configuration=config(root)
+  const runtime=await createContainerRuntime(configuration,{emailProvider:provider(captured)})
+  try{
+    await runtime.drainOutbox()
+    await seedMonthEndJobFixture(createContainerDatabase(runtime.database),'2026-09',new Date().toISOString())
+    const {createContainerEmailConfigurationStore}=await import('@ezacto/db')
+    const email=createContainerEmailConfigurationStore(runtime.database),now=new Date().toISOString()
+    await email.createSenderIdentity({id:10,email:'billing@example.test',displayName:'Billing',provider:'smtp',providerIdentity:'billing@example.test',actorUserId:1,commandId:'month-end-smtp',occurredAt:now})
+    await email.recordSenderEvidence({id:10,expectedEvidenceVersion:0,evidence:{source:'deployment_config',identityKind:'email_address',verificationStatus:'operator_configured',dkimStatus:'not_applicable',mailFromDomain:null,mailFromStatus:'not_configured',observedAt:now},actorUserId:1,commandId:'month-end-smtp-evidence',occurredAt:now})
+    await email.setDefaultSenderIdentity({id:10,expectedVersion:0,actorUserId:1,commandId:'month-end-smtp-default',occurredAt:now})
+    await runtime.services.scheduledJobs!.create(1,scheduledJobConfig({name:'Native complete pack',cadence:'0 0 1 * *'}),now)
+    vi.setSystemTime(at+120000);await runtime.drainOutbox()
+    const session=await createContainerSessionStore(runtime.database).issue(1)
+    const app=createApp(runtime.services,runtime.brandAssets,runtime.instanceTheme)
+    const headers={origin:configuration.appBaseUrl,cookie:`__Host-ezacto_session=${session.token}`}
+    const confirmed=await app.request(`${configuration.appBaseUrl}/api/v1/scheduled-runs/1/confirm`,{method:'POST',headers},configuration.appEnv)
+    expect(confirmed.status).toBe(200)
+    expect(captured).toHaveLength(0)
+    vi.setSystemTime(at+240000);await runtime.drainOutbox()
+    // drainOutbox joins an active pass; a subsequent drain begins a fresh maintenance pass.
+    await runtime.drainOutbox()
+    expect((await runtime.services.scheduledRuns!.read(1))?.state, JSON.stringify({run:await runtime.services.scheduledRuns!.read(1),mail:runtime.database.prepare('SELECT status,failure_reason FROM email_log').all()})).toBe('completed')
+    await vi.waitFor(()=>expect(captured).toHaveLength(2))
+    expect(captured.map(message=>message.to[0]!.email)).toEqual(['a@example.test','b@example.test'])
+    for(const message of captured){
+      expect(message.attachments).toHaveLength(1)
+      expect(new TextDecoder().decode(message.attachments![0]!.content)).toContain('Scheduled Job Fixture')
+    }
+    expect(runtime.database.prepare('SELECT invoice_id,count(*) AS count FROM invoice_attachments GROUP BY invoice_id ORDER BY invoice_id').all()).toEqual([{invoice_id:1,count:1},{invoice_id:2,count:1}])
+    expect((await runtime.services.scheduledRuns!.read(1))?.state).toBe('completed')
+    vi.setSystemTime(at+360000);await runtime.drainOutbox()
+    expect(captured).toHaveLength(2)
+    const trail=runtime.database.prepare("SELECT event.event_type FROM activity_log activity JOIN event_outbox event ON event.id=activity.event_id WHERE event.aggregate_type='scheduled_run' ORDER BY event.aggregate_sequence").all() as {event_type:string}[]
+    expect(trail.map(event=>event.event_type)).toContain('scheduled_run.confirmed')
+    expect(trail.map(event=>event.event_type)).toContain('scheduled_run.item_completed')
+    expect(trail.map(event=>event.event_type)).toContain('scheduled_run.completed')
+  }finally{vi.useRealTimers();await runtime.close()}
 })

@@ -1,7 +1,15 @@
+import { renderCalendarConnections } from '../calendar-connections/render.js'
+import { renderAccountingProviders, type AccountingProviderAvailability } from '../accounting-providers.js'
+import { renderWebhookSettings } from './webhooks-render.js'
+import { renderCompanyDataTools } from './data-tools.js'
+import { renderEmailSuppressionReview } from './email-suppressions-render.js'
+import { renderTimeRoundingSection } from './time-rounding-render.js'
+import { renderGithubReaderSettings } from './github-reader-render.js'
 import { renderRetentionSection } from './retention.js'
 import { iconMarkup } from '../components/icons.js'
 import { demoUnavailable } from '../demo.js'
-import { COMPANY_SETTINGS_SECTIONS } from '../settings-sections.js'
+import { COMPANY_SETTINGS_SECTIONS, USER_SETTINGS_SECTIONS } from '../settings-sections.js'
+import { renderNotificationFields } from '../team/notification-fields.js'
 
 /**
  * One link per section, and one section shown at a time (issue 800). The
@@ -18,7 +26,16 @@ const renderCompanySectionStrip = (): string =>
   ).join('') +
   `</nav>`
 
-export const renderModuleSettingsPage = (view?: string): string => `
+const renderUserSectionStrip = (): string =>
+  `<nav class="tabstrip view-switch settings-sections" aria-label="Your settings sections" data-settings-user-sections>` +
+  USER_SETTINGS_SECTIONS.map(
+    (section) => `<a href="#${section.id}" data-settings-user-link="${section.id}">${section.label}</a>`,
+  ).join('') +
+  `</nav>`
+
+const userPane = (id: string): string => `<div class="settings-user-pane" data-settings-user-pane="${id}" hidden>`
+
+export const renderModuleSettingsPage = (view?: string, providers?: AccountingProviderAvailability): string => `
   <main class="app-content module-settings-workspace page--settings" data-module-settings-page${view === 'settings-company' ? '' : ' hidden'}>
     <header class="context-row module-settings-header">
       <div><p class="eyebrow">Settings</p><h1>Company</h1></div>
@@ -38,6 +55,8 @@ export const renderModuleSettingsPage = (view?: string): string => `
       <p class="form-result" data-settings-sign-in-status role="status" aria-live="polite">Loading sign-in methods&hellip;</p>
       <section class="module-settings-list" data-settings-sign-in-list aria-label="Sign-in methods" hidden></section>
     </section>
+    ${renderWebhookSettings()}
+    ${renderGithubReaderSettings()}
     ${renderRetentionSection()}
     <section class="settings-section" data-settings-section="time" aria-labelledby="settings-time-title">
       <header><h2 id="settings-time-title">Time tracking</h2>
@@ -51,14 +70,30 @@ export const renderModuleSettingsPage = (view?: string): string => `
         </label>
         <button class="primary-action" type="submit" data-note-settings-submit>Save notes policy</button>
       </form>
-      <p class="form-result" data-note-settings-result role="status" aria-live="polite"></p>
+      <p class="form-result" data-note-settings-result role="status" aria-live="polite"></p>${renderTimeRoundingSection()}
+    </section>
+    <section class="settings-section" data-settings-section="approval" aria-labelledby="settings-approval-title">
+      <header><h2 id="settings-approval-title">Automatic approval</h2>
+      <p>Off unless you turn it on. When on, a submitted week that nobody has approved or rejected within the number of calendar days you choose is approved for you. The days are counted from the moment the week was submitted, and start again if it is rejected and submitted again. A rejected week is never approved this way, and weeks submitted before you turn this on are left for a person to decide. The system records the decision with the review window and the administrator who authorized the policy. The submitter receives a confirmation; reviewers with email enabled receive a warning before the deadline.</p></header>
+      <p class="form-result" data-auto-approval-status role="status" aria-live="polite">Loading automatic approval…</p>
+      <form class="settings-form" data-auto-approval-form hidden>
+        <label class="settings-toggle"><input name="enabled" type="checkbox" data-auto-approval-enabled>Approve submitted timesheets automatically</label>
+        <label>Days to wait before approving
+          <input name="window_days" type="number" min="1" max="60" step="1" inputmode="numeric" data-auto-approval-days>
+        </label>
+        <p class="hint" data-auto-approval-since></p>
+        <button class="primary-action" type="submit" data-auto-approval-submit>Save automatic approval</button>
+      </form>
+      <p class="form-result" data-auto-approval-result role="status" aria-live="polite"></p>
     </section>
     <section class="settings-section" data-settings-section="email" aria-labelledby="settings-email-title">
-      <header><h2 id="settings-email-title">Email delivery</h2>
+      <header><div class="settings-section-heading"><h2 id="settings-email-title">Email delivery</h2><button type="button" class="settings-refresh" data-settings-refresh="email">Refresh email delivery</button></div>
       <p>Who this instance sends as, and how that mail has been landing. Transport credentials stay in the deployment; what is shown here is the state they produce.</p></header>
       <p class="form-result" data-settings-email-status role="status" aria-live="polite">Loading email delivery…</p>
       <div class="settings-table" data-settings-sender-identities hidden></div>
       <dl class="settings-facts" data-settings-email-reputation hidden></dl>
+      <div class="settings-table" data-settings-email-identities-health hidden></div>
+      ${renderEmailSuppressionReview()}
     </section>
     <section class="settings-section" data-settings-section="invoices" aria-labelledby="settings-invoices-title">
       <header><h2 id="settings-invoices-title">Invoices</h2>
@@ -83,11 +118,18 @@ export const renderModuleSettingsPage = (view?: string): string => `
           <textarea name="notes" data-invoice-defaults-notes rows="9" maxlength="100000"></textarea>
         </label>
         <p class="hint">Printed below the line items: how to pay, bank and wire details, terms. Formatting: <code>*bold*</code> and <code>_italic_</code>.</p>
+        <label>Estimate validity, in days
+          <input name="estimate_validity_days" type="number" min="1" max="3650" step="1" inputmode="numeric" data-invoice-defaults-estimate-days aria-describedby="settings-estimate-days-hint">
+        </label>
+        <p class="hint" id="settings-estimate-days-hint">How long a customer can answer an estimate, counted from the day it is first sent. Leave blank for estimates that do not expire. An expiry set on an estimate overrides this.</p>
+        <h3>Online invoice</h3>
+        <label class="invoice-defaults-check"><input type="checkbox" name="view_receipts" data-invoice-defaults-view-receipts aria-describedby="settings-invoice-view-receipts-hint">Link the invoice online in the email, and record when it is first opened</label>
+        <p class="hint" id="settings-invoice-view-receipts-hint">Off, the email is exactly what it is today. On, its &ldquo;View invoice&rdquo; line opens a private page for that email: the invoice, its PDF, and a pay button where online payment is set up. The first time someone opens it, the invoice's History and Settings &rsaquo; Deliveries show when. There is no tracking image, and a mail scanner that only fetches the link does not count. An invoice email goes to everyone on it, so this shows that the email was opened, not by whom.</p>
         <h3 data-invoice-defaults-sending hidden>Sending</h3>
         <label class="invoice-defaults-check" data-invoice-defaults-sending hidden><input type="checkbox" name="attach_pdf" data-invoice-defaults-attach-pdf>Attach the invoice PDF by default</label>
         <label class="invoice-defaults-check" data-invoice-defaults-sending hidden><input type="checkbox" name="attach_journal" data-invoice-defaults-attach-journal>Attach the hours report by default</label>
         <label data-invoice-defaults-journal-detail hidden>Hours report detail
-          <select class="invoice-defaults-select" name="journal_level" data-invoice-defaults-journal-level>
+          <select name="journal_level" data-invoice-defaults-journal-level>
             <option value="detailed">Every entry</option>
             <option value="summary">Summary</option>
           </select>
@@ -125,19 +167,88 @@ export const renderModuleSettingsPage = (view?: string): string => `
       </form>
       <p class="form-result" data-reminder-settings-result role="status" aria-live="polite"></p>
     </section>
+    <section class="settings-section" data-settings-section="notifications" aria-labelledby="settings-notifications-title">
+      <header><h2 id="settings-notifications-title">Notifications</h2>
+      <p>Mail this instance sends the people who work in it. A project that has &ldquo;Notify when over budget&rdquo; on emails its project managers once each time its budget crosses the threshold set on the project. If a project has no manager with an address, the administrators are told instead, so an alert never goes to nobody.</p></header>
+      <p class="form-result" data-settings-notifications-status role="status" aria-live="polite">Loading notification settings…</p>
+      <form class="settings-form" data-notification-settings-form hidden>
+        <label class="settings-toggle"><input name="budget_alerts_include_admins" type="checkbox" data-notification-settings-admins>Also email administrators when a project goes over budget</label>
+        <label>Remind everyone to submit last week's time
+          <select name="submission_day" data-notification-settings-day>
+            <option value="">Never</option>
+            <option value="monday">Monday</option>
+            <option value="tuesday">Tuesday</option>
+            <option value="wednesday">Wednesday</option>
+            <option value="thursday">Thursday</option>
+            <option value="friday">Friday</option>
+            <option value="saturday">Saturday</option>
+            <option value="sunday">Sunday</option>
+          </select>
+        </label>
+        <label>At, on each person's own clock
+          <input name="submission_time" type="time" data-notification-settings-time>
+        </label>
+        <p class="hint">Needs the Approval module. On a Friday to Sunday it is about the week now ending; on a Monday to Thursday, about the week before. Each person can opt out under Settings, and people who approve timesheets can ask for a weekly digest of who has not submitted.</p>
+        <button class="primary-action" type="submit" data-notification-settings-submit>Save notification settings</button>
+      </form>
+      <p class="form-result" data-notification-settings-result role="status" aria-live="polite"></p>
+    </section>
     <section class="settings-section" data-settings-section="payouts" data-settings-wise data-settings-unavailable aria-labelledby="settings-wise-title" hidden>
       <header><div class="settings-section-heading"><h2 id="settings-wise-title">Payouts</h2><button type="button" class="settings-refresh" data-settings-refresh="payouts">Refresh</button></div>
       <p>Which Wise profile money leaves from, how many people it can currently pay, and whether Wise can tell this instance what became of a transfer. The token itself stays in the deployment; what is shown here is the state it produces.</p></header>
       <p class="form-result" data-settings-wise-status role="status" aria-live="polite">Loading payout connection…</p>
       <dl class="settings-facts" data-settings-wise-facts hidden></dl>
       <p class="form-result settings-backup-alarm" data-settings-wise-alarm role="status" aria-live="polite" hidden></p>
+      <fieldset class="settings-payout-providers" data-settings-payout-providers hidden>
+        <legend>Payout providers</legend>
+        <p class="hint">Turn a provider on to let people be paid through it. A person can be linked to every provider that is on, and picks one as primary. Turning one off stops new links; destinations already set are kept.</p>
+        <label><input type="checkbox" data-settings-provider-toggle="wise"> Wise</label>
+        <label><input type="checkbox" data-settings-provider-toggle="deel"> Deel (people are matched by the email they use in Deel)</label>
+        <p class="form-result" data-settings-provider-result role="status" aria-live="polite"></p>
+      </fieldset>
     </section>
+    ${renderCompanyDataTools()}
     <section class="settings-section" data-settings-section="backup" aria-labelledby="settings-backup-title">
       <header><h2 id="settings-backup-title">Backups</h2>
       <p>When this instance last exported itself, and whether the last attempt worked. A backup nobody looks at is a backup nobody knows is broken, which is the state it stays in until it is needed.</p></header>
       <p class="form-result" data-settings-backup-status role="status" aria-live="polite">Loading backup status…</p>
       <p class="form-result settings-backup-alarm" data-settings-backup-alarm role="status" aria-live="polite" hidden></p>
       <dl class="settings-facts" data-settings-backup-facts hidden></dl>
+      <div data-backup-offsite-check-row hidden>
+        <p class="hint">Scheduled off-site copies protect logical database rows. Attachment bytes require a separate full backup; see RESTORE.md.</p>
+        <button class="secondary-action" type="button" data-backup-offsite-check>Check off-site destination</button>
+        <p class="form-result" data-backup-offsite-check-result role="status" aria-live="polite"></p>
+      </div>
+      <div class="settings-form" data-settings-backup-download hidden>
+        <p class="hint">The download is a complete copy of the database. It contains password hashes and authenticator seeds, so treat the file and the link like a credential. The link works once and stops working after ten minutes.</p>
+        <label data-backup-download-code-row hidden>Verification code
+          <input type="text" inputmode="numeric" autocomplete="one-time-code" maxlength="64" data-backup-download-code>
+        </label>
+        <button class="primary-action" type="button" data-backup-download-mint>Download latest backup</button>
+        <p class="form-result" data-backup-download-result role="status" aria-live="polite"></p>
+        <label data-backup-download-link-row hidden>Download link
+          <input type="text" readonly data-backup-download-link>
+        </label>
+      </div>
+      <div class="activity-log-toolbar" data-settings-backup-controls hidden>
+        <label for="ez-backup-status-filter">Result
+          <select id="ez-backup-status-filter" data-log-filter="status">
+            <option value="" selected>Every result</option>
+            <option value="completed">Completed</option>
+            <option value="failed">Failed</option>
+            <option value="running">Running</option>
+          </select>
+        </label>
+        <label for="ez-backup-trigger-filter">Trigger
+          <select id="ez-backup-trigger-filter" data-log-filter="trigger">
+            <option value="" selected>Every trigger</option>
+            <option value="nightly">Nightly</option>
+            <option value="manual">Manual</option>
+          </select>
+        </label>
+        <button type="button" data-log-clear>Clear filters</button>
+      </div>
+      <p class="form-result" data-settings-backup-runs-status role="status" aria-live="polite"></p>
       <div class="settings-table" data-settings-backup-runs hidden></div>
     </section>
     <section class="settings-section" data-settings-section="brand" aria-labelledby="settings-brand-title">
@@ -154,16 +265,19 @@ export const renderModuleSettingsPage = (view?: string): string => `
       <p>These are the light theme, and they are what everyone sees by default, whatever their computer is set to. Somebody who picks Dim or Dark in their own settings sees that built-in theme instead.</p></header>
       <p class="form-result" data-settings-theme-status role="status" aria-live="polite">Loading appearance&hellip;</p>
       <div class="settings-theme" data-settings-theme-slots hidden></div>
-      <div class="settings-form" data-settings-theme-actions hidden>
+      <div class="settings-actions" data-settings-theme-actions hidden>
         <button class="primary-action" type="button" data-theme-save>Save colours</button>
-        <button type="button" data-theme-revert>Undo my changes</button>
+        <button class="editor-secondary" type="button" data-theme-revert>Undo my changes</button>
         <button type="button" class="danger-action" data-theme-reset hidden>Back to the built-in theme</button>
       </div>
       <p class="form-result" data-settings-theme-result role="status" aria-live="polite"></p>
     </section>
     <section class="settings-section" data-settings-section="integrations" aria-labelledby="settings-integrations-title">
       <header><div class="settings-section-heading"><h2 id="settings-integrations-title">Accounting</h2><button type="button" class="settings-refresh" data-settings-refresh="integrations">Refresh</button></div>
-      <p>Invoices raised here are copied into QuickBooks Online, and payments recorded there come back. Your client tree becomes customers and sub-customers, so a subsidiary is filed under its parent rather than beside it. Connecting is a grant over your whole book, so only an administrator can do it.</p></header>
+      <p>Native accounting and financial integrations available on this deployment. Configuration is separate from an authorized connection. Only an administrator can manage connections.</p></header>
+      ${renderAccountingProviders(providers)}
+      <div data-accounting-quickbooks${providers?.quickbooks === false ? ' hidden' : ''}>
+      <h3>QuickBooks Online</h3>
       <p class="form-result" data-settings-quickbooks-status role="status" aria-live="polite">Loading accounting integrations…</p>
       <dl class="settings-facts" data-settings-quickbooks-facts hidden></dl>
       <div class="settings-form" data-settings-quickbooks-actions hidden>
@@ -174,6 +288,13 @@ export const renderModuleSettingsPage = (view?: string): string => `
         <button type="button" class="danger-action" data-quickbooks-disconnect hidden>Disconnect QuickBooks</button>
       </div>
       <p class="form-result" data-settings-quickbooks-result role="status" aria-live="polite"></p>
+      <div class="settings-form" data-quickbooks-reconcile-panel hidden>
+        <p>Compare the invoices here with the QuickBooks company. Differences are listed for you to look at; nothing is changed on either side.</p>
+        <button class="editor-secondary" type="button" data-quickbooks-reconcile>Compare with QuickBooks</button>
+        <p class="form-result" data-quickbooks-reconcile-result role="status" aria-live="polite"></p>
+        <div class="settings-table" data-quickbooks-reconcile-table hidden></div>
+      </div>
+      </div>
     </section>
     <section class="settings-section" data-settings-section="sso" aria-labelledby="settings-sso-title">
       <header><h2 id="settings-sso-title">SSO provisioning domains</h2>
@@ -195,8 +316,25 @@ export const renderModuleSettingsPage = (view?: string): string => `
     </header>
     ${renderSettingsTabs('user')}
     <p class="module-settings-intro">Your own account. Everything here is yours alone; the company settings beside it apply to everyone.</p>
+    ${renderUserSectionStrip()}
     <p class="form-result module-settings-status" data-settings-user-status role="status" aria-live="polite">Loading your account…</p>
     <dl class="settings-facts" data-settings-user-facts hidden></dl>
+    ${userPane('calendars')}
+    ${renderCalendarConnections()}
+    </div>
+    ${userPane('reminders')}
+    <section class="settings-notifications" data-settings-notifications aria-labelledby="settings-notifications-heading" hidden>
+      <h2 id="settings-notifications-heading">Your reminders</h2>
+      <p class="hint">Whether and when this instance emails you to log your time, and to submit your week. They are yours to switch off.</p>
+      <p class="form-result" data-settings-notifications-status role="status" aria-live="polite">Loading your reminders…</p>
+      <form class="team-person-form" data-settings-notifications-form hidden>
+        ${renderNotificationFields()}
+        <p class="form-result" data-settings-notifications-result role="status" aria-live="polite"></p>
+        <button class="primary-action" type="submit" data-settings-notifications-submit>Save my reminders</button>
+      </form>
+    </section>
+    </div>
+    ${userPane('payouts')}
     <section class="settings-payout" data-settings-payout aria-labelledby="settings-payout-heading" hidden>
       <h2 id="settings-payout-heading">Where you are paid</h2>
       <p class="hint" data-settings-payout-unconfigured hidden>Wise is not connected on this instance, so there is nowhere to send a payout yet.</p>
@@ -214,13 +352,39 @@ export const renderModuleSettingsPage = (view?: string): string => `
         <p class="form-result" data-settings-payout-result role="status" aria-live="polite"></p>
         <button class="primary-action" type="submit" data-settings-payout-submit>Save payout destination</button>
       </form>
+      <form class="settings-payout-default" data-settings-payout-default-form hidden>
+        <label for="ez-settings-payout-default">Pay me through<select id="ez-settings-payout-default" name="default_provider" data-settings-payout-default></select></label>
+        <p class="hint">Your default is where every payout to you goes. You can choose any provider you hold an account at; leave it on the organization default to follow the instance.</p>
+        <p class="form-result" data-settings-payout-default-result role="status" aria-live="polite"></p>
+        <button class="primary-action" type="submit">Save default</button>
+      </form>
+      <section class="settings-payout-deel" data-settings-payout-deel hidden>
+        <h3>Deel</h3>
+        <p data-settings-payout-deel-summary></p>
+        <button type="button" class="danger-action" data-settings-payout-deel-remove hidden>Remove Deel destination</button>
+        <form data-settings-payout-deel-form hidden>
+          <p class="hint">If you are paid through Deel, enter the email address you use in Deel. Payouts are matched on it.</p>
+          <label for="ez-settings-payout-deel-email">Email in Deel<input id="ez-settings-payout-deel-email" name="email" type="email" autocomplete="email" maxlength="254" required></label>
+          <p class="form-result" data-settings-payout-deel-result role="status" aria-live="polite"></p>
+          <button class="primary-action" type="submit">Save Deel destination</button>
+        </form>
+      </section>
     </section>
+    </div>
+    ${userPane('two-factor')}
     <section class="settings-two-factor" data-settings-2fa aria-labelledby="settings-2fa-heading" hidden>
       <h2 id="settings-2fa-heading">Two-step sign-in</h2>
-      <p class="hint">A code from an authenticator app, on top of your password. Setting one up has been impossible from inside this app until now, which is awkward for an instance that can require it.</p>
+      <p class="hint">A code on top of your password: from an authenticator app, or sent to your email address. Setting one up has been impossible from inside this app until now, which is awkward for an instance that can require it.</p>
       <p class="form-result" data-settings-2fa-status role="status" aria-live="polite">Loading two-step sign-in…</p>
       <dl class="settings-facts" data-settings-2fa-facts hidden></dl>
       <button type="button" class="primary-action" data-settings-2fa-begin hidden>Set up two-step sign-in</button>
+      <div class="settings-2fa-email" data-settings-2fa-email hidden>
+        <h3>Emailed code</h3>
+        <p class="hint" data-settings-2fa-email-hint>At sign-in with your password, a six-digit code is sent to your email address. It never contains a link. It is weaker than an authenticator app: anyone who holds both your password and your mailbox gets in. Signing in by emailed link or through your identity provider never asks for it.</p>
+        <p class="form-result" data-settings-2fa-email-result role="status" aria-live="polite"></p>
+        <button type="button" class="primary-action" data-settings-2fa-email-on hidden>Turn on emailed codes</button>
+        <button type="button" class="danger-action" data-settings-2fa-email-off hidden>Turn off emailed codes</button>
+      </div>
       <div class="settings-2fa-enrolment" data-settings-2fa-enrolment hidden>
         <h3>Add this to your authenticator</h3>
         <p class="hint">Type the key in, or paste the setup link. Both describe the same secret.</p>
@@ -245,6 +409,8 @@ export const renderModuleSettingsPage = (view?: string): string => `
         <button class="danger-action" type="submit" data-settings-2fa-disable-submit>Turn off two-step sign-in</button>
       </form>
     </section>
+    </div>
+    ${userPane('tokens')}
     <section class="settings-tokens" data-settings-tokens aria-labelledby="settings-tokens-heading" hidden>
       <h2 id="settings-tokens-heading">API tokens</h2>
       <p class="hint">Tokens act as you, with only the scopes you tick, and they are how the CLI and anything else outside this app signs in. Issuing one has been a terminal job until now.</p>
@@ -254,7 +420,7 @@ export const renderModuleSettingsPage = (view?: string): string => `
         <label for="ez-settings-token-name">Name<input id="ez-settings-token-name" name="name" autocomplete="off" maxlength="100" placeholder="Laptop CLI" required aria-describedby="settings-token-name-hint"></label>
         <p class="hint" id="settings-token-name-hint">What it is for, so a token you find later can be revoked without guessing.</p>
         <label for="ez-settings-token-expires">Expires<input id="ez-settings-token-expires" name="expires_at" type="date" aria-describedby="settings-token-expiry-hint"></label>
-        <p class="hint" id="settings-token-expiry-hint">Optional. A token with no expiry is one nobody ever has to come back to, which is also one nobody notices is still live.</p>
+        <p class="hint" id="settings-token-expiry-hint">Optional. Left blank, a token lasts one year, which is also the longest you can ask for; only an administrator can issue one that lasts longer or never expires.</p>
         <fieldset><legend>Scopes</legend><div class="team-option-grid"><label class="team-check"><input type="checkbox" name="scopes" value="time_entries:read">Read time</label><label class="team-check"><input type="checkbox" name="scopes" value="time_entries:write">Write time</label><label class="team-check"><input type="checkbox" name="scopes" value="projects:read">Read projects</label><label class="team-check"><input type="checkbox" name="scopes" value="projects:write">Write projects</label><label class="team-check"><input type="checkbox" name="scopes" value="clients:read">Read clients</label><label class="team-check"><input type="checkbox" name="scopes" value="clients:write">Write clients</label><label class="team-check"><input type="checkbox" name="scopes" value="invoices:read">Read invoices</label><label class="team-check"><input type="checkbox" name="scopes" value="invoices:write">Write invoices</label><label class="team-check"><input type="checkbox" name="scopes" value="expenses:read">Read expenses</label><label class="team-check"><input type="checkbox" name="scopes" value="expenses:write">Write expenses</label><label class="team-check"><input type="checkbox" name="scopes" value="team:read">Read team</label><label class="team-check"><input type="checkbox" name="scopes" value="schedule:read">Read schedule</label><label class="team-check"><input type="checkbox" name="scopes" value="schedule:write">Write schedule</label><label class="team-check"><input type="checkbox" name="scopes" value="reports:read">Read reports</label></div></fieldset>
         <p class="form-result" data-settings-token-result role="status" aria-live="polite"></p>
         <button class="primary-action" type="submit" data-settings-token-submit>Issue token</button>
@@ -273,6 +439,8 @@ export const renderModuleSettingsPage = (view?: string): string => `
         </form>
       </dialog>
     </section>
+    </div>
+    ${userPane('appearance')}
     <section class="settings-density" aria-labelledby="settings-scheme-heading">
       <h2 id="settings-scheme-heading">Theme</h2>
       <p class="hint">Light, a dim slate, dark, or whatever this computer is set to. Yours and this browser's, like row density; invoices and the other documents your clients receive stay on white paper. If this instance has colours of its own, System keeps them, and Dim and Dark switch to the built-in themes.</p>
@@ -309,6 +477,7 @@ export const renderModuleSettingsPage = (view?: string): string => `
         <button type="button" data-text-size-choice="larger" aria-pressed="false">Larger</button>
       </div>
     </section>
+    </div>
   </main>`
 
 /**
@@ -360,13 +529,33 @@ export const renderActivityLogPage = (view?: string): string => `
         <input id="ez-activity-to" type="date" data-activity-to>
       </label>
       <label for="ez-activity-type">Event
-        <select id="ez-activity-type" data-activity-type>
-          <option value="" selected>Every event</option>
+        <input id="ez-activity-type" type="text" list="ez-activity-type-options" placeholder="Every event" autocomplete="off" data-activity-type>
+        <datalist id="ez-activity-type-options" data-activity-type-options></datalist>
+      </label>
+      <label for="ez-activity-actor">Who
+        <select id="ez-activity-actor" data-activity-actor>
+          <option value="" selected>Anyone</option>
         </select>
       </label>
+      <label for="ez-activity-entity">About
+        <select id="ez-activity-entity" data-activity-entity>
+          <option value="" selected>Anything</option>
+        </select>
+      </label>
+      <label for="ez-activity-entity-id">Record number
+        <input id="ez-activity-entity-id" type="number" min="1" step="1" inputmode="numeric" data-activity-entity-id>
+      </label>
+      <button type="button" data-activity-clear>Clear filters</button>
+      <button type="button" data-activity-export>Export CSV</button>
     </div>
+    <section class="activity-roll" data-activity-roll hidden>
+      <h2>Archive a finished year</h2>
+      <p class="module-settings-intro">Entries from a finished year can be moved out of the live log into their own archive table. Nothing is deleted: archived entries stay append-only and still appear here. The archive takes everything recorded up to the moment you roll.</p>
+      <div data-activity-roll-years></div>
+    </section>
     <p class="form-result module-settings-status" data-activity-log-status role="status" aria-live="polite">Loading activity…</p>
     <div data-activity-log-list></div>
+    <p><button type="button" data-activity-more hidden>Load more</button></p>
   </main>
 
 `
@@ -396,9 +585,9 @@ export const renderDeliveriesPage = (view?: string): string => `
 
     <section class="deliveries-section">
       <h2>Email</h2>
-      <div class="activity-log-toolbar">
+      <div class="activity-log-toolbar" data-email-log-controls>
         <label for="ez-email-log-status-filter">Status
-          <select id="ez-email-log-status-filter" data-email-log-status-filter>
+          <select id="ez-email-log-status-filter" data-email-log-status-filter data-log-filter="status">
             <option value="" selected>Every status</option>
             <option value="queued">Queued</option>
             <option value="sent">Sent</option>
@@ -407,6 +596,27 @@ export const renderDeliveriesPage = (view?: string): string => `
             <option value="complained">Complained</option>
           </select>
         </label>
+        <label for="ez-email-log-kind-filter">Kind
+          <select id="ez-email-log-kind-filter" data-log-filter="kind">
+            <option value="" selected>Every kind</option>
+            <option value="invoice">Invoice</option>
+            <option value="invoice_preview">Invoice preview</option>
+            <option value="reminder">Reminder</option>
+            <option value="thank_you">Thank-you</option>
+            <option value="sign_in">Sign-in</option>
+            <option value="account">Account mail</option>
+          </select>
+        </label>
+        <label for="ez-email-log-from">From
+          <input id="ez-email-log-from" type="date" data-log-filter="from">
+        </label>
+        <label for="ez-email-log-to">To
+          <input id="ez-email-log-to" type="date" data-log-filter="to">
+        </label>
+        <label for="ez-email-log-q">Recipient
+          <input id="ez-email-log-q" type="search" maxlength="200" placeholder="Address or name" data-log-filter="q">
+        </label>
+        <button type="button" data-log-clear>Clear filters</button>
       </div>
       <p class="form-result module-settings-status" data-email-log-status role="status" aria-live="polite">Loading email…</p>
       <div data-email-log-list></div>
@@ -414,9 +624,9 @@ export const renderDeliveriesPage = (view?: string): string => `
 
     <section class="deliveries-section">
       <h2>Event deliveries</h2>
-      <div class="activity-log-toolbar">
+      <div class="activity-log-toolbar" data-outbox-controls>
         <label for="ez-outbox-status-filter">Status
-          <select id="ez-outbox-status-filter" data-outbox-status-filter>
+          <select id="ez-outbox-status-filter" data-outbox-status-filter data-log-filter="status">
             <option value="" selected>Every status</option>
             <option value="pending">Pending</option>
             <option value="processing">Processing</option>
@@ -424,6 +634,16 @@ export const renderDeliveriesPage = (view?: string): string => `
             <option value="failed">Failed</option>
           </select>
         </label>
+        <label for="ez-outbox-type-filter">Event
+          <input id="ez-outbox-type-filter" type="text" maxlength="128" placeholder="invoice.paid" data-log-filter="type">
+        </label>
+        <label for="ez-outbox-from">From
+          <input id="ez-outbox-from" type="date" data-log-filter="from">
+        </label>
+        <label for="ez-outbox-to">To
+          <input id="ez-outbox-to" type="date" data-log-filter="to">
+        </label>
+        <button type="button" data-log-clear>Clear filters</button>
       </div>
       <p class="form-result module-settings-status" data-outbox-status role="status" aria-live="polite">Loading deliveries…</p>
       <div data-outbox-list></div>

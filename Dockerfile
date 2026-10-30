@@ -1,5 +1,6 @@
 # syntax=docker/dockerfile:1.7
-FROM node:22-bookworm-slim AS build
+# Pinned to Node 22.23.4: earlier 22.x lacks the October 2026 security fixes (Brotli RCE, TLS hostname bypasses).
+FROM node:22.23.4-bookworm-slim AS build
 
 RUN apt-get update \
   && apt-get install --no-install-recommends --yes g++ make python3 \
@@ -44,7 +45,7 @@ RUN npm run build -w @ezacto/web \
   && npm run build -w ezacto-container \
   && npm prune --omit=dev
 
-FROM node:22-bookworm-slim AS runtime
+FROM node:22.23.4-bookworm-slim AS runtime
 
 ENV NODE_ENV=production \
     HOST=0.0.0.0 \

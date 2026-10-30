@@ -1,0 +1,83 @@
+{
+  "expense": {
+    "id": 6004,
+    "createdAt": "2024-02-03T10:20:30Z",
+    "updatedAt": "2024-02-03T10:20:30Z",
+    "spentDate": "2024-02-03",
+    "notes": "Sample expenses notes 6004",
+    "billable": true,
+    "state": {
+      "approvalStatus": "unsubmitted",
+      "invoiceId": 10268,
+      "isBilled": true,
+      "isLocked": true,
+      "lockedReason": "Sample expenses locked_reason 6004",
+      "lockedReasonCode": null
+    },
+    "totalCostCents": 222,
+    "units": 2
+  },
+  "context": {
+    "user": {
+      "id": 4060,
+      "firstName": "Sample users first_name 4060",
+      "lastName": "Sample users last_name 4060",
+      "createdAt": "2024-02-03T10:20:30Z",
+      "updatedAt": "2024-02-03T10:20:30Z"
+    },
+    "project": {
+      "id": 2022,
+      "createdAt": "2024-02-03T10:20:30Z",
+      "updatedAt": "2024-02-03T10:20:30Z",
+      "name": "Sample projects name 2022",
+      "code": "SMP-2022",
+      "isActive": true,
+      "clientId": 1005,
+      "billingMethod": "time_materials",
+      "billBy": "people",
+      "hourlyRateCents": null,
+      "budgetSeconds": 93600,
+      "budgetBy": "person",
+      "budgetIsMonthly": true,
+      "notifyWhenOverBudget": false,
+      "overBudgetPct": 2,
+      "showBudgetToAll": false,
+      "startsOn": "2024-02-03",
+      "endsOn": null,
+      "notes": "",
+      "costBudgetCents": null,
+      "costBudgetIncludeExpenses": false,
+      "feeCents": null
+    },
+    "client": {
+      "id": 1005,
+      "createdAt": "2024-02-03T10:20:30Z",
+      "updatedAt": "2024-02-03T10:20:30Z",
+      "name": "Sample clients name 1005",
+      "isActive": true,
+      "address": "Sample clients address 1005",
+      "currency": "USD"
+    },
+    "userAssignment": {
+      "id": 7104,
+      "createdAt": "2024-02-03T10:20:30Z",
+      "updatedAt": "2024-02-03T10:20:30Z",
+      "isProjectManager": true,
+      "isActive": true,
+      "hourlyRateCents": 200,
+      "budgetSeconds": 93600
+    },
+    "isBilled": true,
+    "lockedReason": "Sample expenses locked_reason 6004",
+    "invoice": {
+      "id": 10268,
+      "number": "10268"
+    },
+    "expenseCategory": {
+      "id": 9001,
+      "name": "Sample category 9001",
+      "unitName": null,
+      "unitPriceCents": null
+    }
+  }
+}

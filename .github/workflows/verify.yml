@@ -19,7 +19,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        node: [22, 25]
+        node: [22, 26]
     steps:
       - uses: actions/checkout@v4
       - uses: ./.github/actions/node-workspace
@@ -35,6 +35,28 @@ jobs:
       - uses: actions/checkout@v4
       - uses: ./.github/actions/node-workspace
       - run: npm run typecheck
+
+  # Stdlib guards need no dependency install.
+  tracked-symlinks:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+      - name: SQL backup and monthly restore safety checks
+        run: node --test scripts/restore-drill.test.mjs scripts/monthly-restore-drill.test.mjs
+      - name: load-verify gate and shard list match the verify matrix
+        run: node --test scripts/load-verify.test.mjs
+      - name: Harvest collection adapter refuses unsafe execution
+        run: node --test scripts/harvest-postman-read-subset.test.mjs
+      - name: Financial access probe refuses unsafe targets and output
+        run: node --test scripts/verify-dev-money-isolation.test.mjs
+      - name: no tracked symlink points outside the repo or into node_modules
+        run: |
+          node --test scripts/check-tracked-symlinks.test.mjs
+          node scripts/check-tracked-symlinks.mjs
 
   lint:
     runs-on: ubuntu-latest
@@ -61,6 +83,8 @@ jobs:
       - run: npm run build
       - name: install and exercise the packed public CLI outside the workspace
         run: npm run test:package -w @conflict-hq/ezacto-cli
+      - name: install and exercise the packed migrate CLI outside the workspace
+        run: npm run test:package -w @conflict-hq/ezacto-migrate
       - name: publish versioned OpenAPI artifact
         uses: actions/upload-artifact@v4
         with:
@@ -71,36 +95,54 @@ jobs:
   test:
     name: test (${{ matrix.name }})
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: ${{ matrix.timeout_minutes || 20 }}
     strategy:
       fail-fast: false
       matrix:
         include:
-          # @ezacto/db is over half the suite: 39 files, each replaying the
-          # migration ledger through a Miniflare D1. Sharded until no shard is
-          # the reason the run is slow. --shard splits by file count, not by
-          # duration, so at 8 the hot shard ran 6m08s against another's 1m49s
-          # and set the whole gate's clock. Finer splits spread the slow files.
-          - { name: db 1, workspaces: -w @ezacto/db, shard: 1/12 }
-          - { name: db 2, workspaces: -w @ezacto/db, shard: 2/12 }
-          - { name: db 3, workspaces: -w @ezacto/db, shard: 3/12 }
-          - { name: db 4, workspaces: -w @ezacto/db, shard: 4/12 }
-          - { name: db 5, workspaces: -w @ezacto/db, shard: 5/12 }
-          - { name: db 6, workspaces: -w @ezacto/db, shard: 6/12 }
-          - { name: db 7, workspaces: -w @ezacto/db, shard: 7/12 }
-          - { name: db 8, workspaces: -w @ezacto/db, shard: 8/12 }
-          - { name: db 9, workspaces: -w @ezacto/db, shard: 9/12 }
-          - { name: db 10, workspaces: -w @ezacto/db, shard: 10/12 }
-          - { name: db 11, workspaces: -w @ezacto/db, shard: 11/12 }
-          - { name: db 12, workspaces: -w @ezacto/db, shard: 12/12 }
-          - { name: api 1, workspaces: -w @ezacto/api, shard: 1/3 }
-          - { name: api 2, workspaces: -w @ezacto/api, shard: 2/3 }
-          - { name: api 3, workspaces: -w @ezacto/api, shard: 3/3 }
-          - { name: migrate, workspaces: -w ezacto-migrate }
-          - { name: worker, workspaces: -w ezacto-worker }
+          # D1 cases replay the full migration ledger. Keep every shard/test;
+          # schema growth pushed a healthy shard past the old 20-minute job
+          # deadline (#745). A bounded 30 minutes leaves completion headroom.
+          - { name: db 1, workspaces: -w @ezacto/db, shard: 1/12, timeout_minutes: 30 }
+          # Run 40448030202 passed all 306 DB2 tests at 30m, then hit the job cap.
+          # Leave test limits and sharding intact; allow completion and cleanup.
+          - { name: db 2, workspaces: -w @ezacto/db, shard: 2/12, timeout_minutes: 35 }
+          - { name: db 3, workspaces: -w @ezacto/db, shard: 3/12, timeout_minutes: 30 }
+          - { name: db 4, workspaces: -w @ezacto/db, shard: 4/12, timeout_minutes: 30 }
+          # Run 40433991573 was still completing passing DB5 cases at 30m.
+          # Keep all cases and their own limits; allow this shard to finish.
+          - { name: db 5, workspaces: -w @ezacto/db, shard: 5/12, timeout_minutes: 40 }
+          - { name: db 6, workspaces: -w @ezacto/db, shard: 6/12, timeout_minutes: 30 }
+          - { name: db 7, workspaces: -w @ezacto/db, shard: 7/12, timeout_minutes: 30 }
+          - { name: db 8, workspaces: -w @ezacto/db, shard: 8/12, timeout_minutes: 30 }
+          - { name: db 9, workspaces: -w @ezacto/db, shard: 9/12, timeout_minutes: 30 }
+          - { name: db 10, workspaces: -w @ezacto/db, shard: 10/12, timeout_minutes: 30 }
+          - { name: db 11, workspaces: -w @ezacto/db, shard: 11/12, timeout_minutes: 30 }
+          - { name: db 12, workspaces: -w @ezacto/db, shard: 12/12, timeout_minutes: 30 }
+          # reports.test.ts did not finish before the 20-minute limit while
+          # sharing two CPUs with general-resources (399s) in run 39658039722.
+          # Keep the complete suite; give reports its own worker and partition
+          # every other API file across the existing three shards.
+          - { name: api 1, workspaces: -w @ezacto/api, shard: 1/3, exclude: test/reports.test.ts, exclude_secondary: test/money-resources.test.ts }
+          - { name: api 2, workspaces: -w @ezacto/api, shard: 2/3, exclude: test/reports.test.ts, exclude_secondary: test/money-resources.test.ts }
+          - { name: api 3, workspaces: -w @ezacto/api, shard: 3/3, exclude: test/reports.test.ts, exclude_secondary: test/money-resources.test.ts }
+          - { name: api reports, workspaces: -w @ezacto/api, filter: test/reports.test.ts, max_workers: 1, timeout_minutes: 30 }
+          # The combined money suite exceeded 30m in run40144622189. Run both
+          # existing runtime groups separately, retaining every case and the
+          # same per-test, worker and job limits.
+          - { name: api money SQLite, workspaces: -w @ezacto/api, filter: test/money-resources.test.ts, test_name_pattern: 'money resource API [(]SQLite[)]', max_workers: 1, timeout_minutes: 30 }
+          - { name: api money D1, workspaces: -w @ezacto/api, filter: test/money-resources.test.ts, test_name_pattern: 'money resource API [(]D1[)]', max_workers: 1, timeout_minutes: 30 }
+          - { name: migrate, workspaces: -w @conflict-hq/ezacto-migrate }
+          # One worker, not two. The worker suite's two-factor and backup-download
+          # tests derive passwords through the isolate's KDF limiter, and two
+          # files deriving at once on a two-vCPU runner overflow its queue
+          # (PasswordDerivationOverloadedError, #745). Each file passes alone.
+          - { name: worker, workspaces: -w ezacto-worker, max_workers: 1, timeout_minutes: 30 }
           # Six files that npm run verify has always covered and this matrix
           # never did, so the merge gate was weaker than the deploy gate.
           - { name: container, workspaces: -w ezacto-container }
+          # Catch generated-site failures before merge, not only in docs CD.
+          - { name: docs, workspaces: -w ezacto-docs }
           # This matrix names its workspaces explicitly, so a new package is
           # NOT covered by being in the `packages/*` glob -- it has to be added
           # here or its suite never runs in CI, silently. @ezacto/integrations
@@ -111,7 +153,9 @@ jobs:
             }
           # The only suite that drives a browser, so the only one that pays for
           # Chromium.
-          - { name: web, workspaces: -w @ezacto/web, playwright: 'true' }
+          # Run 40047697593 exhausted 20m after 659s of passing unit tests
+          # and only 52/91 native cases. Keep the complete suite and its assertions.
+          - { name: web, workspaces: -w @ezacto/web, playwright: 'true', timeout_minutes: 30 }
     steps:
       - uses: actions/checkout@v4
       - uses: ./.github/actions/node-workspace
@@ -120,7 +164,14 @@ jobs:
       - name: test
         env:
           WORKSPACES: ${{ matrix.workspaces }}
+          # The dedicated job runs the same four cases concurrently. Local verify keeps them.
+          EZACTO_SKIP_CONTROL_STYLE_AUDIT: ${{ matrix.name == 'web' && '1' || '' }}
           SHARD: ${{ matrix.shard }}
+          TEST_FILTER: ${{ matrix.filter }}
+          TEST_NAME_PATTERN: ${{ matrix.test_name_pattern }}
+          TEST_EXCLUDE: ${{ matrix.exclude }}
+          TEST_EXCLUDE_SECONDARY: ${{ matrix.exclude_secondary }}
+          MAX_WORKERS: ${{ matrix.max_workers || 2 }}
           # apps/web's browser suite mounts the whole shell about eighty times
           # and retains roughly 28 MB per test -- measured and linear, so it
           # needs over two gigabytes to finish. A developer machine gives it
@@ -135,14 +186,45 @@ jobs:
           # nothing, while the same limit in NODE_OPTIONS killed the run.
           NODE_OPTIONS: --max-old-space-size=4096
         run: |
+          # pipefail so tee does not hide a red suite; the log is what the
+          # annotation step below classifies (issue 745).
+          set -o pipefail
           # Two vCPUs on ubuntu-latest, so two workers. This belongs to the
           # runner, not to a package.json: the same suite on a developer
           # machine should use the cores it has.
-          if [ -n "$SHARD" ]; then
-            npm test $WORKSPACES -- --shard="$SHARD" --maxWorkers=2
-          else
-            npm test $WORKSPACES -- --maxWorkers=2
-          fi
+          test_args=(--maxWorkers="$MAX_WORKERS")
+          if [ -n "$SHARD" ]; then test_args+=(--shard="$SHARD"); fi
+          if [ -n "$TEST_FILTER" ]; then test_args+=("$TEST_FILTER"); fi
+          if [ -n "$TEST_NAME_PATTERN" ]; then test_args+=(--testNamePattern="$TEST_NAME_PATTERN"); fi
+          if [ -n "$TEST_EXCLUDE" ]; then test_args+=(--exclude "$TEST_EXCLUDE"); fi
+          if [ -n "$TEST_EXCLUDE_SECONDARY" ]; then test_args+=(--exclude "$TEST_EXCLUDE_SECONDARY"); fi
+          npm test $WORKSPACES -- "${test_args[@]}" 2>&1 | tee "$RUNNER_TEMP/test.log"
+      - name: classify the failure against the ledger
+        if: failure()
+        run: node scripts/ci-failure-ledger.mjs --classify "$RUNNER_TEMP/test.log" --job "test (${{ matrix.name }})"
+
+  control-style-audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/node-workspace
+        with:
+          playwright: 'true'
+      - name: build the native browser fixture
+        run: npm run browser:prepare -w @ezacto/web
+      - name: audit all four control-style scenarios
+        run: npm run controls:audit -w @ezacto/web -- --output test-results
+      - name: retain owned control-style audit evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: control-style-audit-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            apps/web/test-results/control-style-guard*/*.png
+            apps/web/test-results/control-style-guard*/control-style-observations.json
+          if-no-files-found: warn
+          retention-days: 7
 
   secrets:
     runs-on: ubuntu-latest

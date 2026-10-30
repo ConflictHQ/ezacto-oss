@@ -1,6 +1,13 @@
+import { createPayoutDefaultsPanel } from './payout-defaults-browser.js'
+import { createPayoutProvidersPanel } from './payout-providers-browser.js'
 import { renderDataTable } from '../components/data-table.js'
 import { demoUnavailable, isDemoDeployment } from '../demo.js'
 import { markMoney } from '../money-display.js'
+import {
+  notificationFieldsProblem,
+  paintNotificationFields,
+  readNotificationFields,
+} from './notification-fields.js'
 import {
   payoutFailure,
   payoutSummary,
@@ -11,7 +18,6 @@ import {
   EzactoApiError,
   type TeamCatalog,
   type TeamCommandReceipt,
-  type TeamNotificationInput,
   type TeamPerson,
   type TeamPersonPatch,
   type TeamPersonSummary,
@@ -135,6 +141,7 @@ export const createTeamDirectoryController = (
   const listPageElement = required<HTMLElement>('[data-team-list-page]')
   const personPageElement = required<HTMLElement>('[data-team-person-page]')
   const listStatus = required<HTMLElement>('[data-team-list-status]')
+  const payoutDefaults = createPayoutDefaultsPanel(required<HTMLElement>('[data-team-defaults]'), api)
   const list = required<HTMLElement>('[data-team-list]')
   const listRetry = required<HTMLButtonElement>('[data-team-list-retry]')
   const search = required<HTMLInputElement>('[data-team-search]')
@@ -151,6 +158,17 @@ export const createTeamDirectoryController = (
   const payoutForm = required<HTMLFormElement>('[data-team-payout-form]')
   const payoutResult = required<HTMLElement>('[data-team-payout-result]')
   const payoutSubmit = required<HTMLButtonElement>('[data-team-payout-submit]')
+  const emailFactorSection = required<HTMLElement>('[data-team-email-factor]')
+  const emailFactorState = required<HTMLElement>('[data-team-email-factor-state]')
+  const emailFactorOff = required<HTMLButtonElement>('[data-team-email-factor-off]')
+  const emailFactorResult = required<HTMLElement>('[data-team-email-factor-result]')
+  const emailFactorDialog = required<HTMLDialogElement>('[data-team-email-factor-dialog]')
+  const emailFactorForm = required<HTMLFormElement>('[data-team-email-factor-form]')
+  const emailFactorDialogResult = required<HTMLElement>(
+    '[data-team-email-factor-dialog-result]',
+  )
+  const emailFactorConfirm = required<HTMLButtonElement>('[data-team-email-factor-confirm]')
+  const emailFactorCancel = required<HTMLButtonElement>('[data-team-email-factor-cancel]')
   const personStatus = required<HTMLElement>('[data-team-person-status]')
   const personRetry = required<HTMLButtonElement>('[data-team-person-retry]')
   const editor = required<HTMLElement>('[data-team-person-editor]')
@@ -178,7 +196,6 @@ export const createTeamDirectoryController = (
   const demo = isDemoDeployment()
   const notificationsForm = required<HTMLFormElement>('[data-team-notifications-form]')
   const notificationsResult = required<HTMLElement>('[data-team-notifications-result]')
-  const slackStatus = required<HTMLElement>('[data-team-slack-status]')
   const rateDialog = required<HTMLDialogElement>('[data-team-rate-dialog]')
   const rateForm = required<HTMLFormElement>('[data-team-rate-form]')
   const rateTitle = required<HTMLElement>('[data-team-rate-title]')
@@ -208,6 +225,7 @@ export const createTeamDirectoryController = (
   personPageElement.hidden = !personPage
 
   let session: ActiveSession | null = null
+  let moduleReady = false
   let removeSessionAbortListener: (() => void) | null = null
   let people: readonly TeamPersonSummary[] = []
   let person: TeamPerson | null = null
@@ -238,9 +256,12 @@ export const createTeamDirectoryController = (
   // to be conflicted on, so it guards only its own dialog.
   let addPersonPending = false
   const commandIds = new Map<string, string>()
+  // The person whose emailed sign-in code the Permissions panel is showing.
+  let emailFactorUserId: number | null = null
+  let emailFactorPending = false
 
   const currentSession = (): ActiveSession | null =>
-    session === null || session.signal.aborted ? null : session
+    !moduleReady || session === null || session.signal.aborted ? null : session
 
   const readDenialMessage = (active: ActiveSession): string =>
     active.identity.authentication.kind === 'token' &&
@@ -263,6 +284,7 @@ export const createTeamDirectoryController = (
   const closeDialogs = (): void => {
     if (rateDialog.open) rateDialog.close()
     if (deactivateDialog.open) deactivateDialog.close()
+    if (emailFactorDialog.open) emailFactorDialog.close()
     if (addPersonDialog.open) addPersonDialog.close()
   }
 
@@ -301,6 +323,9 @@ export const createTeamDirectoryController = (
   }
 
   const clearPrivatePresentation = (): void => {
+    moduleReady = false
+    required<HTMLElement>('[data-team-defaults]').hidden = true
+    required<HTMLElement>('[data-team-defaults-rows]').replaceChildren()
     listGeneration += 1
     people = []
     person = null
@@ -347,7 +372,6 @@ export const createTeamDirectoryController = (
     statusAction.textContent = ''
     statusAction.hidden = true
     ownerProfileNote.hidden = true
-    slackStatus.textContent = 'Slack is unavailable because no connector is configured.'
     infoResult.textContent = ''
     projectsResult.textContent = ''
     permissionsResult.textContent = ''
@@ -355,6 +379,12 @@ export const createTeamDirectoryController = (
     rateResult.textContent = ''
     deactivateResult.textContent = ''
     addPersonResult.textContent = ''
+    emailFactorUserId = null
+    emailFactorSection.hidden = true
+    emailFactorOff.hidden = true
+    emailFactorState.textContent = ''
+    emailFactorResult.textContent = ''
+    emailFactorDialogResult.textContent = ''
     closeDialogs()
   }
 
@@ -514,26 +544,42 @@ export const createTeamDirectoryController = (
     list.replaceChildren(
       renderDataTable<TeamPersonSummary>({
         caption: 'People',
+        table: 'team',
+        // Bands keep employees before contractors; inside a band, by name.
+        defaultSort: { column: 'name', direction: 'ascending' },
         rows: visible,
         rowKey: (value) => String(value.id),
         groupBy: cohort,
         renderGroup: (value) => `${cohort(value)} (${bandCounts.get(cohort(value)) ?? 0})`,
         columns: [
-          { key: 'name', label: 'Name', render: personIdentity },
+          {
+            key: 'name',
+            label: 'Name',
+            sortValue: (value) => `${value.first_name} ${value.last_name}`,
+            render: personIdentity,
+          },
           // Each band carries its own Hours, Capacity and Billable the way the
           // old one did -- a cohort you cannot total is a label, not a section.
           {
             key: 'hours',
             label: 'Hours',
             numeric: true,
+            sortValue: (value) => value.total_seconds,
             render: (value) => teamHours(value.total_seconds),
             total: (rows) => teamHours(sumOf(rows, (value) => value.total_seconds)),
           },
-          { key: 'utilization', label: 'Utilization', numeric: true, render: personUtilization },
+          {
+            key: 'utilization',
+            label: 'Utilization',
+            numeric: true,
+            sortValue: (value) => value.utilization_ppm,
+            render: personUtilization,
+          },
           {
             key: 'capacity',
             label: 'Capacity',
             numeric: true,
+            sortValue: (value) => value.weekly_capacity,
             render: (value) => teamHours(value.weekly_capacity),
             total: (rows) => teamHours(sumOf(rows, (value) => value.weekly_capacity)),
           },
@@ -541,6 +587,7 @@ export const createTeamDirectoryController = (
             key: 'billable',
             label: 'Billable',
             numeric: true,
+            sortValue: (value) => value.billable_seconds,
             render: (value) => teamHours(value.billable_seconds),
             total: (rows) => teamHours(sumOf(rows, (value) => value.billable_seconds)),
           },
@@ -548,6 +595,7 @@ export const createTeamDirectoryController = (
             key: 'nonbillable',
             label: 'Non-billable',
             numeric: true,
+            sortValue: (value) => value.nonbillable_seconds,
             render: (value) => teamHours(value.nonbillable_seconds),
             total: (rows) => teamHours(sumOf(rows, (value) => value.nonbillable_seconds)),
           },
@@ -609,6 +657,9 @@ export const createTeamDirectoryController = (
   // that has just written a person has to say what the reader can now see, and
   // "it reloaded" is not the same answer as "the request came back".
   const loadPeople = async (active: ActiveSession): Promise<boolean> => {
+    if (currentSession() !== active) return false
+    // Payment defaults for everyone are an administrator's view (issue 1152).
+    if (active.identity.profile === 'administrator') void payoutDefaults.load(active.signal)
     if (!active.capabilities.canRead) {
       listStatus.textContent = readDenialMessage(active)
       list.replaceChildren()
@@ -907,7 +958,7 @@ export const createTeamDirectoryController = (
   }
 
   /**
-   * Take back a rate nobody meant to add (#727).
+   * Take back a rate nobody meant to add (issue 727).
    *
    * No confirmation dialog: the schema only admits a rate that has priced
    * nothing, so the button cannot destroy anything anybody was charged under,
@@ -1110,39 +1161,18 @@ export const createTeamDirectoryController = (
     }
   }
 
-  const renderNotifications = (value: TeamPerson): void => {
-    const preferences = value.notifications
-    formInput(notificationsForm, 'daily_reminder_enabled').checked =
-      preferences.daily_reminder_enabled
-    formInput(notificationsForm, 'reminder_time').value = preferences.reminder_time ?? ''
-    for (const day of notificationsForm.querySelectorAll<HTMLInputElement>(
-      '[name="reminder_days"]',
-    )) {
-      day.checked = preferences.reminder_days.includes(
-        day.value as TeamNotificationInput['reminder_days'][number],
-      )
-    }
-    formInput(notificationsForm, 'channel_email').checked = preferences.channels.email
-    formInput(notificationsForm, 'channel_desktop').checked = preferences.channels.desktop
-    const slack = formInput(notificationsForm, 'channel_slack')
-    slack.checked = preferences.channels.slack
-    slack.disabled = true
-    slackStatus.textContent = preferences.channels.slack
-      ? 'An inactive Slack preference was imported. Slack remains unavailable because no connector is configured.'
-      : 'Slack is unavailable because no connector is configured.'
-    formInput(notificationsForm, 'include_in_team_reminders').checked =
-      preferences.include_in_team_reminders
-    formInput(notificationsForm, 'weekly_digest').checked = preferences.weekly_digest
-    formInput(notificationsForm, 'notify_project_deleted').checked =
-      preferences.notify_project_deleted
-    for (const control of notificationsForm.elements) {
-      if (control instanceof HTMLInputElement && control !== slack) {
-        control.disabled = true
-      }
-    }
+  const renderNotifications = (active: ActiveSession, value: TeamPerson): void => {
+    // Whoever may edit a person may edit their reminders; everybody else who can
+    // see the person sees what is set. The person can always change their own
+    // under Settings.
+    const editable = active.capabilities.canManagePeople && !demo
+    paintNotificationFields(notificationsForm, value.notifications, editable)
     const submit = required<HTMLButtonElement>('[data-team-notifications-submit]')
-    submit.hidden = true
-    submit.disabled = true
+    submit.hidden = !active.capabilities.canManagePeople
+    submit.disabled = !editable || mutationPending
+    if (demo && active.capabilities.canManagePeople) {
+      notificationsResult.textContent = demoUnavailable('Changing reminder preferences')
+    }
   }
 
   const syncInfoControls = (active: ActiveSession, value: TeamPerson): void => {
@@ -1172,12 +1202,16 @@ export const createTeamDirectoryController = (
     active.identity.user_id === userId || active.capabilities.canManagePeople
 
   let payoutUserId: number | null = null
+  // Wise's form hides when an administrator has turned Wise off (issue 1152).
+  let payoutWiseEnabled = true
+  const payoutPanelRoot = required<HTMLElement>('[data-team-panel="payout"]')
+  const payoutProviders = createPayoutProvidersPanel(payoutPanelRoot, api)
 
   const paintPayout = (state: PayoutDestinationState): void => {
     payoutUnconfigured.hidden = state.configured
     const destination = state.destination
     payoutCurrent.hidden = destination === null
-    payoutForm.hidden = destination !== null || !state.configured
+    payoutForm.hidden = destination !== null || !state.configured || !payoutWiseEnabled
     if (destination === null) {
       payoutStatus.textContent = state.configured
         ? 'No payout destination yet.'
@@ -1198,6 +1232,8 @@ export const createTeamDirectoryController = (
     if (read === undefined || payoutTab.hidden) return
     payoutCurrent.hidden = true
     payoutForm.hidden = true
+    const providers = await payoutProviders.load(userId, active.signal, active.identity.profile === 'administrator')
+    payoutWiseEnabled = providers.wise
     // The public demo pays nobody (issue 931). It has no Wise to ask, so the
     // read could only fail; the panel says why instead, and offers no form.
     if (isDemoDeployment()) {
@@ -1277,6 +1313,97 @@ export const createTeamDirectoryController = (
     })()
   })
 
+  /**
+   * The emailed sign-in code (issue 770). An administrator's lockout recovery
+   * for someone who lost their mailbox, so it shows to administrators only and
+   * the public demo, which signs nobody in for real, refuses it like the other
+   * mutations. Its own request and its own message: a state that will not
+   * load does not take the person off the screen.
+   */
+  const loadEmailFactor = async (active: ActiveSession, userId: number): Promise<void> => {
+    emailFactorUserId = userId
+    const read = api.getUserEmailFactor
+    emailFactorOff.hidden = true
+    emailFactorResult.textContent = ''
+    emailFactorSection.hidden =
+      !active.capabilities.canChangeProfile || read === undefined
+    if (emailFactorSection.hidden || read === undefined) return
+    if (demo) {
+      emailFactorState.textContent = demoUnavailable('Turning off an emailed sign-in code')
+      return
+    }
+    emailFactorState.textContent = 'Checking…'
+    try {
+      const enabled = await read(userId, active.signal)
+      if (currentSession() !== active || emailFactorUserId !== userId) return
+      emailFactorState.textContent = enabled
+        ? 'On. A code is emailed to this person when they sign in with a password.'
+        : 'Off. This person is not sent a code by email when they sign in.'
+      emailFactorOff.hidden = !enabled || api.disableUserEmailFactor === undefined
+    } catch {
+      if (currentSession() !== active || emailFactorUserId !== userId) return
+      emailFactorState.textContent = 'Whether this person gets an emailed code could not be loaded.'
+    }
+  }
+
+  emailFactorOff.addEventListener('click', () => {
+    if (demo || emailFactorPending) return
+    emailFactorDialogResult.textContent = ''
+    emailFactorDialog.showModal()
+    // Cancel takes the focus, not the destructive button.
+    emailFactorCancel.focus()
+  })
+
+  for (const control of [
+    required<HTMLButtonElement>('[data-team-email-factor-close]'),
+    emailFactorCancel,
+  ]) {
+    control.addEventListener('click', () => {
+      if (emailFactorPending) return
+      emailFactorDialog.close()
+    })
+  }
+
+  emailFactorForm.addEventListener('submit', (event) => {
+    event.preventDefault()
+    const active = currentSession()
+    const userId = emailFactorUserId
+    const disable = api.disableUserEmailFactor
+    if (active === null || userId === null || disable === undefined || demo) return
+    if (emailFactorPending) return
+    emailFactorPending = true
+    emailFactorConfirm.disabled = true
+    emailFactorCancel.disabled = true
+    emailFactorDialogResult.textContent = 'Turning off…'
+    void (async () => {
+      try {
+        await disable(userId, active.signal)
+        if (currentSession() !== active) return
+        emailFactorDialog.close()
+        emailFactorResult.textContent = 'Emailed code turned off.'
+        await loadEmailFactor(active, userId)
+        // loadEmailFactor clears the line it shares with this one.
+        emailFactorResult.textContent = 'Emailed code turned off.'
+      } catch (error) {
+        if (currentSession() !== active) return
+        // 404: someone turned it off first. Say so and show the truth.
+        if (error instanceof EzactoApiError && error.status === 404) {
+          emailFactorDialog.close()
+          await loadEmailFactor(active, userId)
+          emailFactorResult.textContent = 'It was already off.'
+          return
+        }
+        emailFactorDialogResult.textContent = messageFor(error)
+      } finally {
+        emailFactorPending = false
+        if (currentSession() === active) {
+          emailFactorConfirm.disabled = false
+          emailFactorCancel.disabled = false
+        }
+      }
+    })()
+  })
+
   const renderPerson = (active: ActiveSession, value: TeamPerson): void => {
     personName.textContent = `${value.first_name} ${value.last_name}`
     formInput(infoForm, 'first_name').value = value.first_name
@@ -1304,10 +1431,11 @@ export const createTeamDirectoryController = (
     renderRates(active, value)
     renderProjects(active, value)
     renderProfiles(active, value)
-    renderNotifications(value)
+    renderNotifications(active, value)
     // Not awaited. The payout destination is a second request and a slow or
     // refusing one must not keep the rest of the person off the screen.
     void loadPayout(active, value.id)
+    void loadEmailFactor(active, value.id)
     editor.hidden = false
     personStatus.textContent = `${value.is_active ? 'Active' : 'Inactive'} · version ${value.version}`
   }
@@ -1329,6 +1457,7 @@ export const createTeamDirectoryController = (
   }
 
   const loadPerson = async (active: ActiveSession): Promise<boolean> => {
+    if (currentSession() !== active) return false
     if (!active.capabilities.canRead) {
       personStatus.textContent = readDenialMessage(active)
       return false
@@ -1643,17 +1772,40 @@ export const createTeamDirectoryController = (
     )
   })
 
-  const slack = formInput(notificationsForm, 'channel_slack')
-  slack.addEventListener('change', () => {
-    if (slack.checked) slack.checked = false
-    slack.disabled = true
-    slackStatus.textContent = 'Slack delivery is unavailable because no connector is configured.'
-  })
   notificationsForm.addEventListener('input', () => resetCommand('notifications'))
   notificationsForm.addEventListener('submit', (event) => {
     event.preventDefault()
-    notificationsResult.textContent =
-      'Notification delivery is not active in this release.'
+    const active = currentSession()
+    const current = person
+    if (
+      active === null ||
+      current === null ||
+      demo ||
+      !active.capabilities.canManagePeople ||
+      api.updateTeamPersonNotifications === undefined
+    ) {
+      return
+    }
+    const preferences = readNotificationFields(notificationsForm)
+    const problem = notificationFieldsProblem(preferences)
+    if (problem !== null) {
+      notificationsResult.textContent = problem
+      return
+    }
+    void mutate(
+      active,
+      'notifications',
+      notificationsResult,
+      'Saving notification preferences…',
+      'Notification preferences saved.',
+      (id) =>
+        api.updateTeamPersonNotifications!(
+          current.id,
+          id,
+          { expected_version: current.version, ...preferences },
+          active.signal,
+        ),
+    )
   })
 
   for (const button of document.querySelectorAll<HTMLButtonElement>('[data-team-add-rate]')) {
@@ -1853,7 +2005,7 @@ export const createTeamDirectoryController = (
         identity,
         capabilities: teamCapabilities(identity),
         signal,
-        ...sessionPresenter(() => currentSession() === active, onSessionFailure),
+        ...sessionPresenter(() => session === active && !signal.aborted, onSessionFailure),
       }
       session = active
       const abort = (): void => {
@@ -1868,6 +2020,28 @@ export const createTeamDirectoryController = (
       const removeAbortListener = (): void => signal.removeEventListener('abort', abort)
       removeSessionAbortListener = removeAbortListener
       signal.addEventListener('abort', abort, { once: true })
+      if (!active.capabilities.canRead) {
+        listStatus.textContent = readDenialMessage(active)
+        personStatus.textContent = readDenialMessage(active)
+        return
+      }
+      listStatus.textContent = 'Team is unavailable.'
+      personStatus.textContent = 'Team is unavailable.'
+      if (api.getTeamStatus !== undefined) {
+        try {
+          const status = await api.getTeamStatus(signal)
+          if (session !== active || signal.aborted) return
+          if (status.enabled !== true) return
+        } catch (error) {
+          active.presentFailure(error, () => {
+            listStatus.textContent = 'Team is unavailable.'
+            personStatus.textContent = 'Team is unavailable.'
+          })
+          return
+        }
+      }
+      if (session !== active || signal.aborted) return
+      moduleReady = true
       if (listPage) {
         syncAddPersonControls(active)
         if (api.getTeamWeekStartDay !== undefined) {

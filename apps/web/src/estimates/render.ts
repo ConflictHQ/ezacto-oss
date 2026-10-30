@@ -1,3 +1,4 @@
+import { renderEstimateComposer } from './composer.js'
 /**
  * The estimates pane behind the Invoices strip (issue 485).
  *
@@ -22,6 +23,7 @@ export const renderEstimatesPage = (view?: string): string => `
     <header class="context-row">
       <div><p class="eyebrow">Money</p><h1>Estimates</h1></div>
     </header>
+    ${renderEstimateComposer()}
     <section data-estimate-list-view aria-labelledby="estimate-list-heading">
       <h2 class="visually-hidden" id="estimate-list-heading">Estimates</h2>
       <p class="invoice-intro">What was quoted, and what happened to it. An accepted estimate can be turned into an invoice.</p>
@@ -62,6 +64,20 @@ export const renderEstimatesPage = (view?: string): string => `
         <section class="recurring-lines" aria-labelledby="estimate-lines-heading">
           <h3 id="estimate-lines-heading">What was quoted</h3>
           <div data-estimate-lines></div>
+        </section>
+        <section class="recurring-lines" aria-labelledby="estimate-expiry-heading">
+          <h3 id="estimate-expiry-heading">Expiry</h3>
+          <p data-estimate-expiry>—</p>
+          <form class="estimate-convert-form" data-estimate-expiry-form hidden>
+            <label>Last day to answer<input name="expires_on" type="date" data-estimate-expiry-date></label>
+            <button class="primary-action" type="submit" data-estimate-write data-estimate-expiry-save>Save expiry</button>
+            <button class="invoice-load-more" type="button" data-estimate-write data-estimate-expiry-clear>Use the default</button>
+          </form>
+          <p class="form-result" data-estimate-expiry-result role="status" aria-live="polite"></p>
+        </section>
+        <section class="recurring-lines" aria-labelledby="estimate-response-heading">
+          <h3 id="estimate-response-heading">Customer response</h3>
+          <p data-estimate-response>—</p>
         </section>
         <section class="recurring-issue" data-estimate-convert-section hidden aria-labelledby="estimate-convert-heading">
           <h3 id="estimate-convert-heading">Turn this into an invoice</h3>

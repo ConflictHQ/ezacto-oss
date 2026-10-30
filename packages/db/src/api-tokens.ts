@@ -1,3 +1,4 @@
+import { outsideClaim } from './idempotency.js'
 import { sql } from 'drizzle-orm'
 import type { BetterSQLite3Database } from 'drizzle-orm/better-sqlite3'
 import type { DrizzleD1Database } from 'drizzle-orm/d1'
@@ -8,6 +9,7 @@ import {
   type UserProfile,
 } from '@ezacto/core'
 import type * as schema from './schema.js'
+import { LAST_SEEN_INTERVAL_MS } from './sessions.js'
 
 type Database = BetterSQLite3Database<typeof schema> | DrizzleD1Database<typeof schema>
 
@@ -74,6 +76,12 @@ export interface CreateApiTokenStoreOptions {
    * what every ordinary instance wants.
    */
   maxLifetimeMs?: number
+  /**
+   * Last use is written only once the stored value is at least this old
+   * (#951); inside the interval an authentication is a read. Zero writes on
+   * every request.
+   */
+  touchIntervalMs?: number
 }
 
 interface TokenRow {
@@ -317,8 +325,12 @@ export const authenticateApiToken = async (
   database: Database,
   token: string,
   usedAt: string,
+  touchIntervalMs: number = LAST_SEEN_INTERVAL_MS,
 ): Promise<AuthenticatedApiToken | null> => {
   assertCanonicalTimestamp(usedAt, 'usedAt')
+  if (!Number.isSafeInteger(touchIntervalMs) || touchIntervalMs < 0) {
+    throw new RangeError('touchIntervalMs must be a non-negative safe integer')
+  }
   const presentedHash = await sha256Hex(token)
   const match = tokenPattern.exec(token)
   const selector = match?.[1]
@@ -352,37 +364,52 @@ export const authenticateApiToken = async (
     sql`, `,
   )
 
-  // This conditional write is the revocation race boundary: middleware only
-  // accepts the principal if the token is still active when last-use is recorded.
-  const updated = await database.all<{
-    id: number
-    userId: number
-    profile: UserProfile | null
-    managerGrants: string | null
-  }>(sql`
-    UPDATE api_tokens
-    SET last_used_at = CASE
-        WHEN last_used_at IS NULL AND julianday(created_at) > julianday(${usedAt}) THEN created_at
-        WHEN last_used_at IS NULL OR julianday(last_used_at) < julianday(${usedAt}) THEN ${usedAt}
-        ELSE last_used_at
-      END,
-      updated_at = CASE
-        WHEN julianday(updated_at) < julianday(${usedAt}) THEN ${usedAt}
-        ELSE updated_at
-      END
-    WHERE id = ${row.id} AND revoked_at IS NULL
+  // The final statement is the revocation race boundary: middleware only
+  // accepts the principal if the token is still active when that statement
+  // runs. A token last used within the interval is re-checked by a read that
+  // carries the same conditions, so only a stale last use costs a write (#951).
+  const active = sql`
+    id = ${row.id} AND revoked_at IS NULL
       AND (expires_at IS NULL OR julianday(expires_at) > julianday(${usedAt}))
       AND EXISTS (
         SELECT 1 FROM users
         WHERE id = ${row.userId} AND is_active = 1
           AND profile IN (${permittedProfileSql})
-    )
-    RETURNING id, user_id AS userId,
+      )
+  `
+  const principalColumns = sql`
+    id, user_id AS userId,
       (SELECT profile FROM users
         WHERE users.id = api_tokens.user_id AND is_active = 1) AS profile,
       (SELECT manager_grants FROM users
         WHERE users.id = api_tokens.user_id AND is_active = 1) AS managerGrants
-  `)
+  `
+  const recentlyUsed =
+    row.lastUsedAt !== null &&
+    Date.parse(row.lastUsedAt) > Date.parse(usedAt) - touchIntervalMs
+  const updated = await database.all<{
+    id: number
+    userId: number
+    profile: UserProfile | null
+    managerGrants: string | null
+  }>(
+    recentlyUsed
+      ? sql`SELECT ${principalColumns} FROM api_tokens WHERE ${active}`
+      : sql`
+          UPDATE api_tokens
+          SET last_used_at = CASE
+              WHEN last_used_at IS NULL AND julianday(created_at) > julianday(${usedAt}) THEN created_at
+              WHEN last_used_at IS NULL OR julianday(last_used_at) < julianday(${usedAt}) THEN ${usedAt}
+              ELSE last_used_at
+            END,
+            updated_at = CASE
+              WHEN julianday(updated_at) < julianday(${usedAt}) THEN ${usedAt}
+              ELSE updated_at
+            END
+          WHERE ${active}
+          RETURNING ${principalColumns}
+        `,
+  )
   const current = updated[0]
   if (
     current === undefined ||
@@ -431,9 +458,13 @@ export const createApiTokenStore = (
   {
     now = () => new Date().toISOString(),
     maxLifetimeMs,
+    touchIntervalMs = LAST_SEEN_INTERVAL_MS,
   }: CreateApiTokenStoreOptions = {},
 ): ApiTokenStore => ({
-  authenticate: (token) => authenticateApiToken(database, token, now()),
+  // The last-use write is authentication's, not the request's own work: it
+  // must not claim an Idempotency-Key (#952).
+  authenticate: (token) =>
+    outsideClaim(() => authenticateApiToken(database, token, now(), touchIntervalMs)),
   issue: (input) => {
     const createdAt = now()
     // Spread rather than assigned: `exactOptionalPropertyTypes` makes an

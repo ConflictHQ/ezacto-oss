@@ -1,3 +1,11 @@
+import type { EmailSuppressionReason } from '@ezacto/core'
+export { EmailSuppressionError } from '@ezacto/core'
+export type {
+  EmailSuppressionReason,
+  EmailSuppressionRecord,
+  EmailSuppressionLift,
+  EmailSuppressionStore,
+} from '@ezacto/core'
 import {
   senderIdentityEligibilityFailure,
   senderIdentityUnavailableMessage,
@@ -19,6 +27,17 @@ export {
   type MailgunConfig,
   type MailgunOptions,
 } from './mailgun.js'
+export {
+  MAILGUN_SIGNATURE_WINDOW_SECONDS,
+  createMailgunFeedbackService,
+  type EmailFeedbackClaim,
+  type EmailFeedbackClaimInput,
+  type EmailFeedbackLedger,
+  type EmailFeedbackOutcome,
+  type MailgunFeedbackOptions,
+  type MailgunFeedbackResult,
+  type MailgunFeedbackService,
+} from './mailgun-feedback.js'
 export {
   SesMailer,
   type SesAccountHealth,
@@ -134,6 +153,59 @@ export type EmailFailureCode =
   | 'provider_timeout'
   | 'provider_rejected'
 
+/** The kinds of mail the log can be narrowed to (issue 929). */
+export const EMAIL_LOG_KINDS = [
+  'invoice',
+  'invoice_preview',
+  'reminder',
+  'thank_you',
+  'sign_in',
+  'account',
+] as const
+export type EmailLogKind = (typeof EMAIL_LOG_KINDS)[number]
+
+/**
+ * Which template names make up each kind. A template is recorded as
+ * `<name>:<version>`, so a kind is a set of names, matched whole.
+ */
+export const EMAIL_LOG_KIND_TEMPLATES: Readonly<Record<EmailLogKind, readonly string[]>> = {
+  invoice: ['invoice', 'month-end-pack'],
+  invoice_preview: ['invoice_preview'],
+  reminder: ['reminder'],
+  thank_you: ['thank_you'],
+  sign_in: ['staff_magic_link_signin', 'portal_magic_link_signin', 'two_factor_email_code'],
+  account: ['auth_email_verification', 'auth_password_reset', 'account_deletion_request'],
+}
+
+export interface EmailLogFilter {
+  status?: EmailDeliveryStatus
+  kind?: EmailLogKind
+  /** First instant included. */
+  createdFrom?: string
+  /** First instant excluded. */
+  createdBefore?: string
+  /** Part of an address or a name, in To or Cc. Case does not matter. */
+  recipient?: string
+}
+
+export interface EmailLogPageWindow extends EmailLogFilter {
+  order: 'newest' | 'oldest'
+  /** Where the previous page ended in `order`; null on the first page. */
+  after: { createdAt: string; id: number } | null
+  /** Rows created later than this are left out, so a traversal holds still. */
+  createdThrough: string
+  take: number
+}
+
+/** Keyset reads of the log, in either direction. */
+export interface EmailLogPager {
+  /** The latest creation instant in the whole log, or null when it is empty. */
+  snapshot(): Promise<string | null>
+  page(window: EmailLogPageWindow): Promise<EmailLogRecord[]>
+  /** How many rows the filter matches, whatever page it is read from. */
+  count(filter: EmailLogFilter): Promise<number>
+}
+
 export interface EmailLogStore {
   createQueued(message: EmailMessage): Promise<EmailLogRecord>
   get(deliveryId: number): Promise<EmailLogRecord | null>
@@ -173,6 +245,12 @@ export interface EmailLogStore {
   markComplained(deliveryId: number): Promise<EmailLogRecord>
   getByProviderMessageId(providerMessageId: string): Promise<EmailLogRecord | null>
   countByStatus(): Promise<Record<EmailDeliveryStatus, number>>
+  /**
+   * The same counts as `countByStatus`, one entry per sender address (the
+   * From of the message, lower-cased), ordered by address. A message logged
+   * without a sender is in the aggregate only.
+   */
+  countByStatusPerSender(): Promise<EmailSenderStatusCounts[]>
   list(input?: {
     status?: EmailDeliveryStatus
     limit?: number
@@ -734,6 +812,8 @@ export const processQueuedEmail = async (
     createAttemptId?: () => string
     /** Fetches attachment bytes at send time. The entry supplies the store. */
     resolveAttachment?: EmailAttachmentResolver
+    /** Local policy applies to every recipient and transport before a provider call. */
+    getRecipientSuppression?: (recipients: readonly string[]) => Promise<EmailSuppressionReason | null>
   } = {},
 ): Promise<EmailQueueDisposition> => {
   if (
@@ -754,8 +834,12 @@ export const processQueuedEmail = async (
   if (job.message.attachments !== undefined) {
     throw new TypeError('a queued email job must carry attachments by reference, not by value')
   }
+  const suppressed =
+    (await options.getRecipientSuppression?.(
+      [...message.to, ...(message.cc ?? [])].map((recipient) => recipient.email),
+    )) ?? null
   const references = job.attachments ?? []
-  if (references.length > 0) {
+  if (references.length > 0 && suppressed === null) {
     if (options.resolveAttachment === undefined) {
       throw new TypeError('a queued email job names attachments and no resolver was supplied')
     }
@@ -827,6 +911,8 @@ export const processQueuedEmail = async (
 
   let delivered: EmailProviderReceipt
   try {
+    if (suppressed !== null)
+      throw new EmailProviderTerminalError(`recipient_suppressed:${suppressed.toUpperCase()}`)
     delivered = await providerCall(
       provider,
       message,
@@ -928,6 +1014,11 @@ export interface EmailFeedbackEvent {
   providerMessageId: string
   timestamp?: string
   details?: string
+}
+
+export interface EmailSenderStatusCounts {
+  sender: string
+  counts: Record<EmailDeliveryStatus, number>
 }
 
 export interface EmailReputationSnapshot {

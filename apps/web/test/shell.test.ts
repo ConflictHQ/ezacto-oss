@@ -114,6 +114,7 @@ const memoryApi = (
         project_id: 1,
         task_id: 1,
         minimum_note_length: minimumNoteLength,
+        time_rounding: { mode: 'exact' as const, minutes: 15 as const, source: 'organization' as const },
       },
     ]),
     getTimeEntrySettings: vi.fn(async () => ({
@@ -121,6 +122,7 @@ const memoryApi = (
       time_format: 'decimal' as const,
       clock: '12h' as const,
       week_start_day: 'monday' as const,
+      time_rounding: { mode: 'exact' as const, minutes: 15 as const },
     })),
     listTimeEntries: vi.fn(async (query) =>
       query.is_running === true ? entries.filter((item) => item.is_running) : [...entries],
@@ -353,7 +355,8 @@ describe('S-1 through S-5 application shell', () => {
         // Issue 485 added Estimates: seven API paths served since the API
         // shipped with no screen calling any of them.
         '<a href="/invoices/estimates">Estimates</a>' +
-        '<a href="/invoices/retainers">Retainers</a>',
+        '<a href="/invoices/retainers">Retainers</a>' +
+        '<a href="/invoices/bank-deposits">Bank deposits</a>',
     )
 
     const recurring = renderAppShell({

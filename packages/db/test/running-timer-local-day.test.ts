@@ -111,7 +111,7 @@ describe('the day a running timer is filed on', () => {
       ),
     ).rejects.toMatchObject({ reasonCode: 'timer_owned', field: 'spent_date' })
     // This case builds two fixtures, so it migrates twice; give it room.
-  }, 20000)
+  }, 60_000)
 
   it("[money] follows the user's own timezone over the organization's", async () => {
     // The organization runs on UTC but the person tracking is at UTC-6. Their

@@ -19,7 +19,7 @@ Quick reference:
 - Repo and identity are read, never hardcoded: `gh repo view --json nameWithOwner
   -q .nameWithOwner` and `git config user.email`.
 - Green before you open: `npm run verify` — the same definition `verify.yml`
-  runs for the merge and the deploy. `npm run test:container` and the gitleaks
+  runs for the merge. Deployment checks its source receipt. `npm run test:container` and the gitleaks
   history scan are separate CI jobs and are not part of it.
 - Checks surface as `verify / <job>`; `ci.yml` has no push trigger, so nothing
   runs until the PR exists.

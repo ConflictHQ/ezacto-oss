@@ -64,6 +64,8 @@ export type PdfOperation =
       readonly y2: number;
       readonly width?: number;
       readonly grey?: number;
+      /** Red, green and blue, each 0 to 1; takes the place of `grey`. */
+      readonly rgb?: readonly [number, number, number];
     }
   | {
       readonly kind: "rect";
@@ -318,7 +320,9 @@ const contentStream = (
     }
     if (operation.kind === "line") {
       parts.push(
-        `${number(grey(operation.grey))} G`,
+        operation.rgb === undefined
+          ? `${number(grey(operation.grey))} G`
+          : `${operation.rgb.map((value) => number(channel(value))).join(" ")} RG`,
         `${number(operation.width ?? 1)} w`,
         `${number(operation.x1)} ${number(operation.y1)} m ${number(operation.x2)} ${number(operation.y2)} l S`,
       );

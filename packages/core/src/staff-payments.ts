@@ -1,7 +1,17 @@
 import type { PaymentActuals, ConfirmPaymentActuals } from './payment-actuals.js'
+import type { PaymentReconciliation } from './payment-reconciliation.js'
+import type {
+  AllocatePayment,
+  PaymentAllocationPreview,
+  PaymentAllocationReport,
+  ReversePaymentAllocation,
+} from './payment-allocations.js'
 /** Monthly staff payment register. Recording a payment never initiates a transfer. */
 export type StaffPaymentKind = 'amount' | 'payment' | 'void' | 'opening' | 'reopen' | 'note'
 export type StaffPaymentProvider = 'wise' | 'deel'
+/** The note written when a first account link sets a person's default provider. */
+export const AUTOMATIC_PREFERENCE_NOTE = 'Set automatically when the first account was linked.'
+
 export interface StaffPaymentProviderCommand {
   id: string
   user_id: number | null
@@ -36,7 +46,8 @@ export interface StaffPaymentCommand {
   payment_id: string | null
   source: StaffPaymentProvider | 'historical'
 }
-export interface StaffPaymentEvent extends StaffPaymentCommand {
+export interface StaffPaymentEvent extends Omit<StaffPaymentCommand, 'source'> {
+  source: StaffPaymentCommand['source'] | 'advance_credit'
   version: number
   actor_id: number
   actor_name: string
@@ -53,7 +64,35 @@ export interface StaffPaymentPerson {
   provider_override?: StaffPaymentProvider | null
   provider_version?: number
 }
+/** Local staging receipts and cached provider observations for this person's
+ * existing, stopped time in the selected month. Only an explicit provider paid
+ * response contributes to paid_entries; staging alone never does.
+ */
+export interface StaffPaymentDeelStaging {
+  status:
+    "not_staged" | "partially_staged" | "staged" | "attention" | "no_hours" | "partially_paid" | "paid" | "processing";
+  paid_entries: number
+  paid_seconds: number
+  processing_entries: number
+  pending_entries: number
+  approved_entries: number
+  rejected_entries: number
+  unchecked_entries: number
+  status_checked_at: string | null
+  status_check_failed: boolean
+  staged_entries: number;
+  unstaged_entries: number;
+  unresolved_entries: number;
+  changed_entries: number;
+  zero_duration_entries: number;
+  unsyncable_entries: number;
+  staged_seconds: number;
+  unstaged_seconds: number;
+  last_staged_at: string | null;
+}
 export interface StaffPaymentRow extends StaffPaymentPerson {
+  deel_staging?: StaffPaymentDeelStaging
+  is_contractor?: boolean
   deel_ready: boolean
   payout_provider: StaffPaymentProvider
   provider_override: StaffPaymentProvider | null
@@ -83,7 +122,12 @@ export interface StaffPaymentReport {
 }
 export interface StaffPaymentStore {
   actuals?(month: string, today: string): Promise<PaymentActuals>
+  reconciliation?(month: string, today: string): Promise<PaymentReconciliation>
   confirmActuals?(command: ConfirmPaymentActuals, actorId: number, requestId: string, now: string): Promise<void>
+  previewAllocation?(command: AllocatePayment): Promise<PaymentAllocationPreview>
+  allocatePayment?(command: AllocatePayment, actorId: number, requestId: string, now: string): Promise<void>
+  reverseAllocation?(command: ReversePaymentAllocation, actorId: number, requestId: string, now: string): Promise<void>
+  allocationReport?(month: string): Promise<PaymentAllocationReport>
   configureProvider(
     command: StaffPaymentProviderCommand,
     actorId: number,

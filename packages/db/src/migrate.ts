@@ -1,3 +1,48 @@
+import { githubPublicationMigration } from './migrations/0180_github_publication.js'
+import { githubReaderMigration } from './migrations/0179_github_reader.js'
+import { calendarOperatorCleanupMigration } from './migrations/0178_calendar_operator_cleanup.js'
+import { workerBackupCaptureMigration } from './migrations/0176_worker_backup_capture.js'
+import { staffCodeRequesterMigration } from './migrations/0175_staff_code_requester.js'
+import { calendarConnectionsMigration } from './migrations/0172_calendar_connections.js'
+import { calendarOAuthMigration } from './migrations/0177_calendar_oauth.js'
+import { stripePaymentAlertsMigration } from './migrations/0173_stripe_payment_alerts.js'
+import { bankDepositReviewMigration } from './migrations/0174_bank_deposit_review.js'
+import { deelStatusThrottleMigration } from './migrations/0167_deel_status_throttle.js'
+import { csvWorkerStagingMigration } from './migrations/0171_csv_worker_staging.js'
+import { planningCalendarFeedsMigration } from './migrations/0168_planning_calendar_feeds.js'
+import { deelPaymentStatusMigration } from './migrations/0166_deel_payment_status.js'
+import { isOrdinaryD1SchemaStatement } from './internal/d1-cold-migrations.js'
+import { csvStagingInstanceMigration } from './migrations/0169_csv_staging_instance.js'
+import { csvApplyRuntimeMigration } from './migrations/0170_csv_apply_runtime.js'
+import { csvBrowserDatasetMigration } from './migrations/0164_csv_browser_dataset.js'
+import { nonzeroStoppedTimeMigration } from './migrations/0165_nonzero_stopped_time.js'
+import { placeholderPlanningMigration } from './migrations/0163_placeholder_planning.js'
+import { planningRevisionsMigration } from './migrations/0162_planning_revisions.js'
+import { managedDeelConnectionMigration } from './migrations/0160_managed_deel_connection.js'
+import { managedBillConnectionMigration } from './migrations/0161_managed_bill_connection.js'
+import { managedQuickBooksRevocationsMigration } from './migrations/0159_managed_quickbooks_revocations.js'
+import { placeholderAllocationsMigration } from './migrations/0158_placeholder_allocations.js'
+import { managedQuickBooksGrantsMigration } from './migrations/0157_managed_quickbooks_grants.js'
+import { wiseSignedDeliveriesMigration } from './migrations/0156_wise_signed_deliveries.js'
+import { organizationHolidaysMigration } from './migrations/0155_organization_holidays.js'
+import { quickBooksRetryMigration } from './migrations/0154_quickbooks_retry.js'
+import { exampleProjectsMigration } from './migrations/0153_example_projects.js'
+import { outboundWebhooksMigration } from './migrations/0151_outbound_webhooks.js'
+import { queuedMigrationsMigration } from './migrations/0150_queued_migrations.js'
+import { invoiceElevationsMigration } from './migrations/0149_invoice_elevations.js'
+import { estimateTemplatesMigration } from './migrations/0148_estimate_templates.js'
+import { offsiteBackupSyncMigration } from './migrations/0147_offsite_backup_sync.js'
+import { scheduledWorkflowSweepMigration } from './migrations/0146_scheduled_workflow_sweep.js'
+import { scheduledReviewLinksMigration } from './migrations/0145_scheduled_review_links.js'
+import { scheduledRunDeliveryMigration } from './migrations/0144_scheduled_run_delivery.js'
+import { scheduledRunLeasesMigration } from './migrations/0143_scheduled_run_leases.js'
+import { scheduledJobControlsMigration } from './migrations/0142_scheduled_job_controls.js'
+import { atomicRunManifestsMigration } from './migrations/0141_atomic_run_manifests.js'
+import { emailSuppressionsMigration } from './migrations/0140_email_suppressions.js'
+import { timesheetAutomaticReceiptsMigration } from './migrations/0139_timesheet_automatic_receipts.js'
+import { contractorAcceptanceMigration } from './migrations/0138_contractor_acceptance.js'
+import { staffInvoicesMigration } from './migrations/0137_staff_invoices.js'
+import { contractorAdvancesMigration } from './migrations/0136_contractor_advances.js'
 import { accountRetentionReviewMigration } from './migrations/0106_account_retention_review.js'
 import { appleLifecycleMigration } from './migrations/0104_apple_lifecycle.js'
 import { accountClosureMigration } from './migrations/0103_account_closure.js'
@@ -8,6 +53,36 @@ import { appleWebCustodyMigration } from './migrations/0105_apple_web_custody.js
 import { bandedInvoiceCreateMigration } from './migrations/0098_banded_invoice_create.js'
 import { invoiceSendingMigration } from './migrations/0099_invoice_sending.js'
 import { durationTimedEntriesMigration } from './migrations/0100_duration_timed_entries.js'
+import { idempotencyKeysMigration } from './migrations/0107_idempotency_keys.js'
+import { idempotencyAuthorizationMigration } from './migrations/0108_idempotency_authorization.js'
+import { expenseDeleteReceiptsMigration } from './migrations/0109_expense_delete_receipts.js'
+import { costRateBackfillMigration } from './migrations/0110_cost_rate_backfill.js'
+import { invoiceTotalsPerInvoiceMigration } from './migrations/0111_invoice_totals_per_invoice.js'
+import { timeRoundingSettingsMigration } from './migrations/0112_time_rounding_settings.js'
+import { projectBudgetAlertsMigration } from './migrations/0113_project_budget_alerts.js'
+import { timeRemindersMigration } from './migrations/0114_time_reminders.js'
+import { endClientInvoicesMigration } from './migrations/0115_end_client_invoices.js'
+import { twoFactorChallengeEmailCodeMigration } from './migrations/0116_two_factor_challenge_email_code.js'
+import { calendarProposalsMigration } from './migrations/0117_calendar_proposals.js'
+import { timesheetAutoApprovalMigration } from './migrations/0118_timesheet_auto_approval.js'
+import { allocationsMigration } from './migrations/0119_allocations.js'
+import { estimateCustomerResponseMigration } from './migrations/0120_estimate_customer_response.js'
+import { emailSecondFactorMigration } from './migrations/0121_email_second_factor.js'
+import { csvImportsMigration } from './migrations/0122_csv_imports.js'
+import { workItemLinksMigration } from './migrations/0123_work_item_links.js'
+import { savedReportRoleSharesMigration } from './migrations/0124_saved_report_role_shares.js'
+import { paymentAllocationsMigration } from './migrations/0125_payment_allocations.js'
+import { timeOffMigration } from './migrations/0126_time_off.js'
+import { estimateExpiryMigration } from './migrations/0127_estimate_expiry.js'
+import { invoiceViewLinksMigration } from './migrations/0128_invoice_view_links.js'
+import { deelTimeSyncMigration } from './migrations/0129_deel_time_sync.js'
+import { clientRateCardsMigration } from './migrations/0130_client_rate_cards.js'
+import { backupDownloadLinksMigration } from './migrations/0131_backup_download_links.js'
+import { emailFeedbackEventsMigration } from './migrations/0132_email_feedback_events.js'
+import { quickBooksRecoveryMigration } from './migrations/0133_quickbooks_recovery.js'
+import { runItemQuantityMigration } from './migrations/0134_run_item_quantity.js'
+import { deelSyncSettingsMigration } from './migrations/0135_deel_sync_settings.js'
+import { payoutProviderEnablementMigration } from './migrations/0152_payout_provider_enablement.js'
 import { organizationInvoiceDefaultsMigration } from './migrations/0097_organization_invoice_defaults.js'
 import { journalFormatsInvoiceExtraMigration } from './migrations/0096_journal_formats_invoice_extra.js'
 import { freeFormInvoiceCreateMigration } from './migrations/0095_free_form_invoice_create.js'
@@ -1567,6 +1642,83 @@ const migrations = [
   { id: '0104_apple_lifecycle', statements: appleLifecycleMigration },
   { id: '0105_apple_web_custody', statements: appleWebCustodyMigration },
   { id: '0106_account_retention_review', statements: accountRetentionReviewMigration },
+  { id: '0107_idempotency_keys', statements: idempotencyKeysMigration },
+  { id: '0108_idempotency_authorization', statements: idempotencyAuthorizationMigration },
+  { id: '0109_expense_delete_receipts', statements: expenseDeleteReceiptsMigration },
+  { id: '0110_cost_rate_backfill', statements: costRateBackfillMigration },
+  { id: '0111_invoice_totals_per_invoice', statements: invoiceTotalsPerInvoiceMigration },
+  { id: '0112_time_rounding_settings', statements: timeRoundingSettingsMigration },
+  { id: '0113_project_budget_alerts', statements: projectBudgetAlertsMigration },
+  { id: '0114_time_reminders', statements: timeRemindersMigration },
+  { id: '0115_end_client_invoices', statements: endClientInvoicesMigration },
+  {
+    id: '0116_two_factor_challenge_email_code',
+    statements: twoFactorChallengeEmailCodeMigration,
+  },
+  { id: '0117_calendar_proposals', statements: calendarProposalsMigration },
+  { id: '0118_timesheet_auto_approval', statements: timesheetAutoApprovalMigration },
+  { id: '0119_allocations', statements: allocationsMigration },
+  { id: '0120_estimate_customer_response', statements: estimateCustomerResponseMigration },
+  { id: '0121_email_second_factor', statements: emailSecondFactorMigration },
+  { id: '0122_csv_imports', statements: csvImportsMigration },
+  { id: '0123_work_item_links', statements: workItemLinksMigration },
+  { id: '0124_saved_report_role_shares', statements: savedReportRoleSharesMigration },
+  { id: '0125_payment_allocations', statements: paymentAllocationsMigration },
+  { id: '0126_time_off', statements: timeOffMigration },
+  { id: '0127_estimate_expiry', statements: estimateExpiryMigration },
+  { id: '0128_invoice_view_links', statements: invoiceViewLinksMigration },
+  { id: '0129_deel_time_sync', statements: deelTimeSyncMigration },
+  { id: '0130_client_rate_cards', statements: clientRateCardsMigration },
+  { id: '0131_backup_download_links', statements: backupDownloadLinksMigration },
+  { id: '0132_email_feedback_events', statements: emailFeedbackEventsMigration },
+  { id: '0133_quickbooks_recovery', statements: quickBooksRecoveryMigration },
+  { id: '0134_run_item_quantity', statements: runItemQuantityMigration },
+  { id: '0135_deel_sync_settings', statements: deelSyncSettingsMigration },
+  { id: '0136_contractor_advances', statements: contractorAdvancesMigration },
+  { id: '0137_staff_invoices', statements: staffInvoicesMigration },
+  { id: '0138_contractor_acceptance', statements: contractorAcceptanceMigration },
+  { id: '0139_timesheet_automatic_receipts', statements: timesheetAutomaticReceiptsMigration },
+  { id: '0140_email_suppressions', statements: emailSuppressionsMigration },
+  { id: '0141_atomic_run_manifests', statements: atomicRunManifestsMigration },
+  { id: '0142_scheduled_job_controls', statements: scheduledJobControlsMigration },
+  { id: '0143_scheduled_run_leases', statements: scheduledRunLeasesMigration },
+  { id: '0144_scheduled_run_delivery', statements: scheduledRunDeliveryMigration },
+  { id: '0145_scheduled_review_links', statements: scheduledReviewLinksMigration },
+  { id: '0146_scheduled_workflow_sweep', statements: scheduledWorkflowSweepMigration },
+  { id: '0147_offsite_backup_sync', statements: offsiteBackupSyncMigration },
+  { id: '0148_estimate_templates', statements: estimateTemplatesMigration },
+  { id: '0149_invoice_elevations', statements: invoiceElevationsMigration },
+  { id: '0150_queued_migrations', statements: queuedMigrationsMigration },
+  { id: '0151_outbound_webhooks', statements: outboundWebhooksMigration },
+  { id: '0152_payout_provider_enablement', statements: payoutProviderEnablementMigration },
+  { id: '0153_example_projects', statements: exampleProjectsMigration },
+  { id: '0154_quickbooks_retry', statements: quickBooksRetryMigration },
+  { id: '0155_organization_holidays', statements: organizationHolidaysMigration },
+  { id: '0156_wise_signed_deliveries', statements: wiseSignedDeliveriesMigration },
+  { id: '0157_managed_quickbooks_grants', statements: managedQuickBooksGrantsMigration },
+  { id: '0158_placeholder_allocations', statements: placeholderAllocationsMigration },
+  { id: '0159_managed_quickbooks_revocations', statements: managedQuickBooksRevocationsMigration },
+  { id: '0160_managed_deel_connection', statements: managedDeelConnectionMigration },
+  { id: '0161_managed_bill_connection', statements: managedBillConnectionMigration },
+  { id: '0162_planning_revisions', statements: planningRevisionsMigration },
+  { id: '0163_placeholder_planning', statements: placeholderPlanningMigration },
+  { id: '0164_csv_browser_dataset', statements: csvBrowserDatasetMigration },
+  { id: '0165_nonzero_stopped_time', statements: nonzeroStoppedTimeMigration },
+  { id: '0166_deel_payment_status', statements: deelPaymentStatusMigration },
+  { id: '0167_deel_status_throttle', statements: deelStatusThrottleMigration },
+  { id: '0168_planning_calendar_feeds', statements: planningCalendarFeedsMigration },
+  { id: '0169_csv_staging_instance', statements: csvStagingInstanceMigration },
+  { id: '0170_csv_apply_runtime', statements: csvApplyRuntimeMigration },
+  { id: '0171_csv_worker_staging', statements: csvWorkerStagingMigration },
+  { id: '0172_calendar_connections', statements: calendarConnectionsMigration },
+  { id: '0173_stripe_payment_alerts', statements: stripePaymentAlertsMigration },
+  { id: '0174_bank_deposit_review', statements: bankDepositReviewMigration },
+  { id: '0175_staff_code_requester', statements: staffCodeRequesterMigration },
+  { id: '0176_worker_backup_capture', statements: workerBackupCaptureMigration },
+  { id: '0177_calendar_oauth', statements: calendarOAuthMigration },
+  { id: '0178_calendar_operator_cleanup', statements: calendarOperatorCleanupMigration },
+  { id: '0179_github_reader', statements: githubReaderMigration },
+  { id: '0180_github_publication', statements: githubPublicationMigration },
 ] as const
 
 // Fixtures assert against this rather than re-listing ids: a hand-copied ledger merges
@@ -1717,73 +1869,85 @@ const migrateD1Plan = async (
   database: D1Database,
   through: (typeof migrations)[number]['id'] | null,
 ): Promise<void> => {
-  // The ledger insert leads the atomic batch. If two Worker isolates observe a
-  // migration as absent, D1 serializes their batches: one commits the complete
-  // migration and the other's unique ledger insert aborts before any DDL runs.
-  // Re-reading the ledger distinguishes that safe race from a real migration
-  // failure. This retains the deploy/admin seam while making a cold runtime's
-  // fail-closed readiness check safe and idempotent.
+  // Ledger inserts lead their own unchanged DDL in each atomic batch. A cold
+  // database may share ordinary schema work; upgrades retain each migration's
+  // original transaction boundary and every data/preflight/PRAGMA unit is isolated.
   await database.exec('PRAGMA foreign_keys = ON')
   await database.prepare(ledger).run()
   if (!(await ledgerRecordsChecksums(database))) {
     try {
       await database.prepare(ledgerChecksumColumn).run()
     } catch (error) {
-      // The same race the batch below tolerates: two isolates can reach the
-      // ALTER together and the loser sees a duplicate column. The column being
-      // present is the whole requirement, so re-reading it distinguishes that
-      // from a real failure.
       if (!(await ledgerRecordsChecksums(database))) throw error
     }
   }
-  const ledgerRows = (
-    await database
-      .prepare('SELECT id, statements_sha256 FROM _ezacto_migrations')
-      .all<MigrationLedgerRow>()
+  const readLedger = async (): Promise<MigrationLedgerRow[]> => (
+    await database.prepare('SELECT id, statements_sha256 FROM _ezacto_migrations').all<MigrationLedgerRow>()
   ).results
-  assertLedgerMatchesStatements(ledgerRows)
-  // The ledger just read, rather than a `SELECT 1` per migration. That select
-  // was a round trip each for all 47 of them, and on a fresh database every one
-  // of them answers "no" -- which is most of what a migrate costs against D1,
-  // where the DDL itself is already one batch per migration.
-  //
-  // It is only ever an optimisation. What actually makes this safe against two
-  // isolates migrating at once is the unique ledger insert leading each batch,
-  // and the catch below re-reading the ledger to tell that race from a real
-  // failure. A stale set here costs one rejected batch, which is the case that
-  // was already handled.
-  const applied = new Set(ledgerRows.map((row) => row.id))
-  for (const migration of migrations) {
-    if (applied.has(migration.id)) {
-      if (migration.id === through) return
-      continue
-    }
-    if ('preflight' in migration) {
-      const rows = (await database.prepare(migration.preflight).all<MigrationPreflightRow>()).results
-      if (migration.id === '0006_invoice_state_events') assertInvoiceLifecyclePreflight(rows)
-      else assertTimesheetApprovalsPreflight(rows)
+  const initial = await readLedger()
+  assertLedgerMatchesStatements(initial)
+  let applied = new Set(initial.map((row) => row.id))
+  let cold = initial.length === 0 && await database.prepare(
+    "SELECT 1 FROM sqlite_master WHERE type='table' AND name<>'_ezacto_migrations' AND name<>'_cf_METADATA' AND name NOT GLOB 'sqlite_*' LIMIT 1",
+  ).first() === null
+  // Newly added migrations default to isolated transactions until this reviewed
+  // prefix is deliberately advanced. Their SQL must still pass the classifier.
+  const reviewedThrough = migrations.findIndex(({ id }) => id === '0165_nonzero_stopped_time')
+  const boundary = through === null ? -1 : migrations.findIndex(({ id }) => id === through)
+  const planned = boundary === -1 ? migrations : migrations.slice(0, boundary + 1)
+  const checksums = new Map(migrations.map((migration) => [migration.id, statementsChecksum(migration.statements)]))
+  const insertReceipt = database.prepare(
+    'INSERT INTO _ezacto_migrations (id, applied_at, statements_sha256) VALUES (?, ?, ?)',
+  )
+  const canShare = (migration: (typeof migrations)[number]): boolean =>
+    !('preflight' in migration) && migrations.indexOf(migration) <= reviewedThrough &&
+    migration.statements.length > 0 && migration.statements.every(isOrdinaryD1SchemaStatement)
+
+  while (true) {
+    const pending = planned.filter((migration) => !applied.has(migration.id))
+    const first = pending[0]
+    if (!first) return
+    const group: (typeof migrations)[number][] = [first]
+    let statements = first.statements.length + 1
+    if (cold && canShare(first)) {
+      for (const migration of pending.slice(1)) {
+        const count = migration.statements.length + 1
+        if (!canShare(migration) || statements + count > 100) break
+        group.push(migration)
+        statements += count
+      }
     }
     try {
-      await database.batch([
-        database
-          .prepare(
-            'INSERT INTO _ezacto_migrations (id, applied_at, statements_sha256) VALUES (?, ?, ?)',
-          )
-          .bind(
-            migration.id,
-            new Date().toISOString(),
-            statementsChecksum(migration.statements),
-          ),
+      if ('preflight' in first) {
+        const rows = (await database.prepare(first.preflight).all<MigrationPreflightRow>()).results
+        if (first.id === '0006_invoice_state_events') assertInvoiceLifecyclePreflight(rows)
+        else assertTimesheetApprovalsPreflight(rows)
+      }
+      await database.batch(group.flatMap((migration) => [
+        insertReceipt.bind(migration.id, new Date().toISOString(), checksums.get(migration.id)!),
         ...migration.statements.map((sql) => database.prepare(sql)),
-      ])
+      ]))
+      for (const migration of group) applied.add(migration.id)
     } catch (error) {
-      const completed = await database
-        .prepare('SELECT 1 FROM _ezacto_migrations WHERE id = ?')
-        .bind(migration.id)
-        .first()
-      if (completed === null) throw error
+      const observed = await readLedger()
+      assertLedgerMatchesStatements(observed)
+      // Only an exact, checksummed canonical prefix proves another isolate
+      // committed work. Unrelated/newer/missing/legacy-null rows are not a retry
+      // signal, and a real DDL failure with no progress propagates unchanged.
+      const rows = new Map(observed.map((row) => [row.id, row.statements_sha256]))
+      const exactPrefix = observed.length === rows.size && observed.length <= migrations.length &&
+        migrations.slice(0, observed.length).every((migration) => rows.get(migration.id) === checksums.get(migration.id))
+      let progress = 0
+      for (const migration of group) {
+        if (rows.get(migration.id) !== checksums.get(migration.id)) break
+        progress++
+      }
+      if (!exactPrefix || progress === 0 || [...applied].some((id) => !rows.has(id))) throw error
+      applied = new Set(rows.keys())
+      // An overlapping isolate may have seeded/copied data. From this point
+      // onward use the same individual transactions as every ordinary upgrade.
+      cold = false
     }
-    if (migration.id === through) return
   }
 }
 

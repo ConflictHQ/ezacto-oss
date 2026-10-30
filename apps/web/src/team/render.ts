@@ -1,19 +1,11 @@
 import { iconMarkup } from '../components/icons.js'
-
-const weekdays = [
-  ['monday', 'Mon'],
-  ['tuesday', 'Tue'],
-  ['wednesday', 'Wed'],
-  ['thursday', 'Thu'],
-  ['friday', 'Fri'],
-  ['saturday', 'Sat'],
-  ['sunday', 'Sun'],
-] as const
+import { renderNotificationFields } from './notification-fields.js'
 
 export const renderTeamPages = (view?: string): string => `
   <main class="app-content team-workspace page--grid" data-team-list-page${view === 'team-list' ? '' : ' hidden'}>
     <header class="context-row">
       <div><p class="eyebrow">Organize</p><h1>Team</h1></div>
+      <a href="/capacity">Capacity</a>
       <a href="/payments" data-staff-payments-nav hidden>Payments</a>
       <button class="primary-action" type="button" data-team-person-create hidden disabled>Add person</button>
     </header>
@@ -42,6 +34,15 @@ export const renderTeamPages = (view?: string): string => `
       </label>
     </div>
     <section class="team-summary" data-team-summary aria-label="Team utilization summary" hidden></section>
+    <section class="team-defaults" data-team-defaults hidden aria-labelledby="team-defaults-heading">
+      <h2 id="team-defaults-heading">Payment defaults</h2>
+      <p class="hint">Each person is paid through their default. They choose it once they hold an account, and you can change it here. Turning a provider off on Company settings stops new links only.</p>
+      <table class="team-defaults-table">
+        <thead><tr><th scope="col">Person</th><th scope="col">Accounts</th><th scope="col">Paid through</th><th scope="col">Set</th><th scope="col"><span class="visually-hidden">Save</span></th></tr></thead>
+        <tbody data-team-defaults-rows></tbody>
+      </table>
+      <p class="form-result" data-team-defaults-status role="status" aria-live="polite"></p>
+    </section>
     <p class="form-result team-page-status" data-team-list-status role="status" aria-live="polite">Loading team…</p>
     <div data-team-list></div>
     <button type="button" data-team-list-retry hidden>Retry loading team</button>
@@ -123,6 +124,12 @@ export const renderTeamPages = (view?: string): string => `
           <p class="form-result" data-team-permissions-result role="status" aria-live="polite"></p>
           <button class="primary-action" type="submit" data-team-permissions-submit>Save permission profile</button>
         </form>
+        <section class="team-status-actions" aria-labelledby="team-email-factor-heading" data-team-email-factor hidden>
+          <h3 id="team-email-factor-heading">Emailed sign-in code</h3>
+          <p data-team-email-factor-state>Checking…</p>
+          <button type="button" class="danger-action" data-team-email-factor-off hidden>Turn off emailed code</button>
+          <p class="form-result" data-team-email-factor-result role="status" aria-live="polite"></p>
+        </section>
       </section>
 
       <section class="team-person-panel" id="team-panel-payout" role="tabpanel" aria-labelledby="team-tab-payout" data-team-panel="payout" hidden>
@@ -135,6 +142,24 @@ export const renderTeamPages = (view?: string): string => `
           <p class="hint" data-team-payout-unverified hidden>Wise has not confirmed this destination resolves. Remove it and add it again.</p>
           <button type="button" class="danger-action" data-team-payout-remove>Remove destination</button>
         </section>
+        <fieldset class="team-payout-providers" data-team-payout-providers hidden>
+          <legend>Payout providers on this instance</legend>
+          <p class="hint">A person can be paid through each provider that is on, and picks one as primary. Turning a provider off stops new links; existing destinations are kept.</p>
+          <label><input type="checkbox" data-team-provider-toggle="wise"> Wise</label>
+          <label><input type="checkbox" data-team-provider-toggle="deel"> Deel</label>
+          <p class="form-result" data-team-provider-result role="status" aria-live="polite"></p>
+        </fieldset>
+        <section class="team-payout-deel" data-team-payout-deel hidden>
+          <h3>Deel</h3>
+          <p data-team-payout-deel-summary></p>
+          <button type="button" class="danger-action" data-team-payout-deel-remove hidden>Remove Deel destination</button>
+          <form class="team-person-form" data-team-payout-deel-form hidden>
+            <label for="ez-team-payout-deel-email">Email in Deel<input id="ez-team-payout-deel-email" name="email" type="email" autocomplete="off" maxlength="254" placeholder="ana@example.com" required aria-describedby="team-payout-deel-hint"></label>
+            <p class="hint" id="team-payout-deel-hint">Use the email address this person has in Deel. Their payouts are matched on it.</p>
+            <p class="form-result" data-team-payout-deel-result role="status" aria-live="polite"></p>
+            <button class="primary-action" type="submit">Save Deel destination</button>
+          </form>
+        </section>
         <form class="team-person-form" data-team-payout-form hidden>
           <p>Share the Wisetag on their Wise account — or the email address or phone number that account is discoverable by. Wise keeps the bank details; we never see them.</p>
           <label for="ez-team-payout-identifier">Wisetag, email or phone<input id="ez-team-payout-identifier" name="identifier" autocomplete="off" maxlength="255" placeholder="@theirtag" required aria-describedby="team-payout-hint"></label>
@@ -146,23 +171,12 @@ export const renderTeamPages = (view?: string): string => `
       </section>
 
       <section class="team-person-panel" id="team-panel-notifications" role="tabpanel" aria-labelledby="team-tab-notifications" data-team-panel="notifications" hidden>
-        <header><div><p class="eyebrow">Inactive integration</p><h2>Notification preferences</h2></div></header>
-        <p class="hint" data-team-notification-status>Notification delivery is not active in this release. These preferences remain off until delivery workers are available.</p>
+        <header><div><p class="eyebrow">Reminders</p><h2>Notification preferences</h2></div></header>
+        <p class="hint" data-team-notification-status>Reminders are sent by email from this instance. People can also change their own under Settings.</p>
         <form data-team-notifications-form>
-          <label class="team-check"><input name="daily_reminder_enabled" type="checkbox">Daily time reminder preference (inactive)</label>
-          <label>Reminder time<input name="reminder_time" type="time"></label>
-          <fieldset><legend>Reminder days</legend><div class="team-weekdays">${weekdays.map(([value, label]) => `<label><input type="checkbox" name="reminder_days" value="${value}">${label}</label>`).join('')}</div></fieldset>
-          <fieldset><legend>Reminder channels</legend>
-            <label class="team-check"><input name="channel_email" type="checkbox">Mail channel preference (inactive)</label>
-            <label class="team-check"><input name="channel_desktop" type="checkbox">Desktop preference (inactive)</label>
-            <label class="team-check"><input name="channel_slack" type="checkbox">Slack preference (inactive)</label>
-            <p class="hint" data-team-slack-status>Slack is also unavailable because no connector is configured.</p>
-          </fieldset>
-          <label class="team-check"><input name="include_in_team_reminders" type="checkbox">Include in team reminders</label>
-          <label class="team-check"><input name="weekly_digest" type="checkbox">Weekly digest preference (inactive)</label>
-          <label class="team-check"><input name="notify_project_deleted" type="checkbox">Project-deletion preference (inactive)</label>
+          ${renderNotificationFields()}
           <p class="form-result" data-team-notifications-result role="status" aria-live="polite"></p>
-          <button class="primary-action" type="submit" data-team-notifications-submit hidden disabled>Save inactive preferences</button>
+          <button class="primary-action" type="submit" data-team-notifications-submit hidden disabled>Save notification preferences</button>
         </form>
       </section>
     </article>
@@ -202,6 +216,15 @@ export const renderTeamPages = (view?: string): string => `
       <p class="hint">Past entries keep their snapshotted rate. The prior rate period closes the day before this date.</p>
       <p class="form-result" data-team-rate-result role="status" aria-live="polite"></p>
       <button class="primary-action" type="submit" data-team-rate-submit>Add rate</button>
+    </form>
+  </dialog>
+
+  <dialog class="team-deactivate-dialog" data-team-email-factor-dialog aria-labelledby="team-email-factor-dialog-title">
+    <form data-team-email-factor-form>
+      <header><div><p class="eyebrow">Sign-in security</p><h2 id="team-email-factor-dialog-title">Turn off the emailed code?</h2></div><button type="button" data-team-email-factor-close aria-label="Close">×</button></header>
+      <p>This person will no longer be sent a code by email when they sign in with a password. If they have an authenticator app, that still applies. Use this when they have lost access to their mailbox. The change is recorded in the activity log.</p>
+      <p class="form-result" data-team-email-factor-dialog-result role="status" aria-live="polite"></p>
+      <div class="team-confirm-actions"><button type="button" data-team-email-factor-cancel>Cancel</button><button class="danger-action" type="submit" data-team-email-factor-confirm>Turn off emailed code</button></div>
     </form>
   </dialog>
 

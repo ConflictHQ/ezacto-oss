@@ -266,7 +266,7 @@ const readCreateInput = (
   }
 }
 
-const readUpdateInput = (
+export const readExpenseUpdateInput = (
   body: Record<string, unknown>,
 ): UpdateExpenseRequest => {
   const errors = unknownFieldErrors(body, bodyKeys)
@@ -409,7 +409,7 @@ export const installExpenseRoutes = <Bindings extends object>(
       const expense = await options.repository.updateExpense(
         principal.userId,
         resourceId(context.req.param('id'), 'expense'),
-        readUpdateInput(await readObjectBody(context)),
+        readExpenseUpdateInput(await readObjectBody(context)),
         options.clock.now(),
       )
       return context.json(

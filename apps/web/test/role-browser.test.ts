@@ -171,3 +171,19 @@ describe('role admin controller', () => {
     expect(document.body.textContent).not.toContain('First Account Role')
   })
 })
+
+
+it('clears cancelled role loading and ignores its delayed response', async () => {
+  writeDocument()
+  let finish!: (value: ReturnType<typeof page>) => void
+  const session = new AbortController()
+  const loading = createRoleAdminController(baseApi({ listRoles: () => new Promise(resolve => { finish = resolve }) })).activate(identity('administrator'), session.signal, () => false)
+  const status = document.querySelector('[data-role-list-status]')!
+  expect(status.getAttribute('aria-busy')).toBe('true')
+  session.abort()
+  expect(status.getAttribute('aria-busy')).toBe('false')
+  finish(page([role(99, 'Stale')]))
+  await loading
+  expect(cards()).toHaveLength(0)
+  expect(status.textContent).toBe('Sign in to view roles.')
+})

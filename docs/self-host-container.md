@@ -16,7 +16,8 @@ drill before entering production books.
   in Caddy, nginx, Traefik, or the ingress you already operate.
 - An SMTP endpoint reachable from the container. Both `smtp://` with STARTTLS
   and `smtps://` are accepted. The process verifies DNS, TCP/TLS, and SMTP
-  authentication before it starts listening.
+  authentication at startup; a failed check logs a warning and mail retries
+  from the queue without preventing the instance from listening.
 - This source checkout and Node.js 22 for the tested snapshot helper.
 
 ## 1. Build a pinned image
@@ -51,13 +52,21 @@ API rather than through the sign-up form. Step 4 explains the choice, which is
 worth making before the instance is reachable rather than after.
 
 ```dotenv
-EZACTO_BOOTSTRAP_TOKEN=REPLACE_WITH_32_RANDOM_BYTES_AS_BASE64URL
+EZACTO_BOOTSTRAP_TOKEN=REPLACE_WITH_GENERATED_EZACTO_TOKEN
 ```
 
 Generate the signing key without writing raw bytes to disk:
 
 ```sh
 node -e "process.stdout.write(require('node:crypto').randomBytes(32).toString('base64url'))"
+```
+
+The bootstrap token uses the native API-token format, not a bare signing key.
+Generate its random selector and secret separately, and copy the complete
+`ezacto_…_…` output into the protected environment file:
+
+```sh
+node -e "const {randomBytes}=require('node:crypto'); process.stdout.write('ezacto_'+randomBytes(12).toString('base64url')+'_'+randomBytes(32).toString('base64url'))"
 ```
 
 The SMTP values are checked once at startup, and a failure there is a warning
@@ -132,6 +141,23 @@ what makes the setting safe. Give container shutdown at least 30 seconds; Ezacto
 stops accepting requests, drains queued SMTP work within its budget, checkpoints
 SQLite WAL, and closes the database before exit.
 
+### How often a signed-in request writes
+
+A session remembers when it was last used, and an API token when it was last
+used, and both are recorded at most once every five minutes rather than on every
+request. Inside that interval a signed-in page view reads the database and
+writes nothing. The idle timeout is still measured from the last recorded use,
+so a session can idle out up to five minutes early, never late. To change the
+interval:
+
+```dotenv
+LAST_SEEN_INTERVAL_SECONDS=300
+```
+
+`0` records every request, as releases before #951 did. The ceiling is `3600`;
+a value Ezacto cannot read stops the container at startup and names the
+variable.
+
 Confirm the container is healthy and non-root:
 
 ```sh
@@ -140,8 +166,10 @@ docker exec ezacto node -e "if(process.getuid()===0)process.exit(1)"
 curl -fsS https://time.example.com/healthz
 ```
 
-The listener opens only after configuration, SMTP verification, SQLite
-integrity checks, and migrations succeed. If it does not become healthy, inspect
+The listener opens only after configuration, the SMTP verification attempt,
+SQLite integrity checks, and migrations. SMTP verification failure warns and
+retries; invalid configuration, integrity failures, and failed migrations stop
+startup. If it does not become healthy, inspect
 `docker logs ezacto`; the process reports the invalid contract by name without
 printing its value.
 
@@ -212,3 +240,21 @@ volume's sole reference, and refuses a non-empty or already-attached target.
 It is a complete recovery mechanism for this one-container layout, but it is not
 the portable D18 logical export promised by issue #28: it has no per-table CSV
 files and is not a Worker-to-container escape bundle.
+
+## Operational notes
+
+- **Backups share attachment storage.** Attachments live on the same volume as
+  `db.sqlite`, so a backup written to that volume is lost with the data it
+  protects. Write bundles to a different disk and sync them off-host (see
+  [RESTORE.md](../RESTORE.md)).
+- **Plain HTTP cannot sign in.** Session cookies are set `Secure`, so a browser
+  will not send them over `http://`. Terminate HTTPS at the reverse proxy and
+  browse the HTTPS address, not `http://127.0.0.1:3000`.
+- **Admin email templates are privileged.** Whoever can edit email templates
+  controls the text of messages sent from your domain, including sign-in and
+  password-reset mail. Grant that to administrators you trust with that power.
+- **Account linking trusts configured providers' verified email.** A sign-in
+  provider that reports an email as verified is linked to the existing account
+  with that email. Configure only providers whose email verification you trust.
+
+Outbound webhooks require a separate `WEBHOOK_ENCRYPTION_KEY` in the private container environment. Keep this 32-byte base64url key with recovery material; see [outbound webhook setup and verification](integrations.md#outbound-webhooks). Administrators manage endpoints at Settings → Company → Webhooks.

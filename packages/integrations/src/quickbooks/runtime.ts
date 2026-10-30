@@ -11,6 +11,7 @@ import {
   QUICKBOOKS_ACCOUNTING_SCOPE,
   QUICKBOOKS_PRODUCTION_BASE_URL,
   QUICKBOOKS_SANDBOX_BASE_URL,
+  QuickBooksApiError,
   QuickBooksClient,
   accessTokenNeedsRefresh,
   authorizeUrl,
@@ -18,10 +19,12 @@ import {
   discoverEndpoints,
   exchangeAuthorizationCode,
   inboundPayments,
+  isVoidedPayment,
   mirrorInvoice,
   mirrorPayment,
   parseWebhookNotification,
   receiptIdFromRefNumber,
+  reconcileInvoices,
   refreshAccessToken,
   revokeConnection,
   verifyWebhookSignature,
@@ -30,6 +33,10 @@ import {
   type MirrorOutcome,
   type MirrorPayment,
   type MirrorPaymentOutcome,
+  type QuickBooksCapturedPayment,
+  type QuickBooksPayment,
+  type ReconcileLocalInvoice,
+  type ReconciliationReport,
 } from "../index.js";
 
 
@@ -86,6 +93,8 @@ export interface QuickBooksSyncResult {
 
 /** Likewise structural: what the routes call, without importing the routes. */
 export interface QuickBooksService {
+  /** Local connect readiness; absent on older/custom service ports. Never makes a provider request. */
+  configured?(): boolean;
   clientId(): string | null;
   callbackUrl(): string | null;
   settingsUrl(): string;
@@ -115,6 +124,64 @@ export interface QuickBooksService {
    */
   sync(invoiceId: number): Promise<QuickBooksSyncResult | null>;
   syncState(invoiceId: number): Promise<QuickBooksInvoiceSyncState | null>;
+  /**
+   * Compares our invoices with the company's and lists the differences (issue
+   * 1013). Read-only on both sides. Null where QuickBooks is not connected.
+   */
+  reconcile(): Promise<QuickBooksReconciliation | null>;
+  /**
+   * Recovers payment changes a webhook never delivered, from the stored cursor
+   * (issue 1013, slice 2). Null where QuickBooks is not connected. Throws after
+   * recording the failure, so the caller reports it; the cursor has not moved.
+   */
+  catchUp(): Promise<QuickBooksCatchUp | null>;
+}
+
+/** How the last catch-up run came to rest. */
+export type QuickBooksSyncOutcome = "caught_up" | "failed" | "full_reconcile_needed";
+
+/** Where catch-up resumes for a company, and how it last went. */
+export interface QuickBooksSyncCursor {
+  readonly cdcCursor: string;
+  readonly lastRunAt: string;
+  readonly lastOutcome: QuickBooksSyncOutcome;
+}
+
+/**
+ * A QuickBooks payment that was voided or deleted there while a receipt of ours
+ * came from it (issue 1013, slice 3). A fact to review: the receipt stays.
+ */
+export interface QuickBooksPaymentDivergence {
+  readonly quickBooksPaymentId: string;
+  readonly kind: "voided" | "deleted";
+  readonly quickBooksUpdatedAt: string;
+  readonly detectedAt: string;
+  readonly receipts: readonly {
+    readonly paymentId: number;
+    readonly invoiceId: number;
+    readonly invoiceNumber: string;
+    readonly amountCents: number;
+  }[];
+}
+
+export interface QuickBooksCatchUp {
+  /** The first run only places the cursor; history before it is the report's to compare. */
+  readonly seeded: boolean;
+  readonly outcome: Exclude<QuickBooksSyncOutcome, "failed">;
+  readonly examined: number;
+  /** Changes the webhook (or an earlier run) had already processed. */
+  readonly alreadyProcessed: number;
+  readonly cursor: string;
+}
+
+/** The report, with the company it was read from and when. */
+export interface QuickBooksReconciliation extends ReconciliationReport {
+  readonly realmId: string;
+  readonly generatedAt: string;
+  /** Payments voided or deleted in QuickBooks that a receipt here came from. */
+  readonly paymentDivergences: readonly QuickBooksPaymentDivergence[];
+  /** Null until the first catch-up run has placed a cursor. */
+  readonly recovery: QuickBooksSyncCursor | null;
 }
 
 /**
@@ -224,6 +291,58 @@ export interface QuickBooksConnectionStore {
     now: string;
     skippedReason?: string;
   }): Promise<void>;
+  /**
+   * Claims a change catch-up found, unless it was already processed under any
+   * operation: the webhook says Create where catch-up can only see an update,
+   * and the same change must not be applied twice. One claimed but never
+   * completed (a crash) is taken over.
+   */
+  claimRecoveredDelivery(input: {
+    realmId: string;
+    entityName: string;
+    entityId: string;
+    operation: string;
+    lastUpdated: string;
+    now: string;
+  }): Promise<boolean>;
+  readSyncCursor(realmId: string): Promise<(QuickBooksSyncCursor & { readonly retryNotBefore: string | null }) | null>;
+  /** Places or moves the cursor, together with the outcome of the run that did. */
+  saveSyncCursor(input: {
+    realmId: string;
+    cdcCursor: string;
+    lastRunAt: string;
+    lastOutcome: QuickBooksSyncOutcome;
+  }): Promise<void>;
+  /** Records how a run ended without moving the cursor. */
+  recordSyncOutcome(input: {
+    realmId: string;
+    lastRunAt: string;
+    lastOutcome: QuickBooksSyncOutcome;
+    retryNotBefore?: string;
+  }): Promise<void>;
+  /**
+   * Notes that a QuickBooks payment was voided or deleted there. Writes only
+   * where a receipt of ours came from the payment, and answers whether one did.
+   * Idempotent; never touches a receipt, an invoice or QuickBooks.
+   */
+  flagPaymentDivergence(input: {
+    realmId: string;
+    quickBooksPaymentId: string;
+    kind: "voided" | "deleted";
+    quickBooksUpdatedAt: string;
+    now: string;
+  }): Promise<boolean>;
+}
+
+/**
+ * The invoices of record for the reconciliation report: every open or paid
+ * invoice, with what has been received against it and the QuickBooks invoice
+ * it is linked to in that company, if any. Read-only.
+ */
+export interface QuickBooksReconciliationSource {
+  invoicesOfRecord(realmId: string): Promise<readonly ReconcileLocalInvoice[]>;
+  /** The flagged payments, each with the receipts of ours that came from it. */
+  paymentDivergences(realmId: string): Promise<readonly QuickBooksPaymentDivergence[]>;
 }
 
 export interface QuickBooksConfig {
@@ -313,11 +432,21 @@ export interface QuickBooksRuntimeOptions {
   readonly config: QuickBooksConfig;
   readonly store: QuickBooksConnectionStore;
   readonly source: QuickBooksMirrorSource;
+  readonly reconciliation: QuickBooksReconciliationSource;
   readonly fetch: (request: Request) => Promise<Response>;
   readonly now: () => Date;
   /** Injected so a test can state the value rather than tolerate randomness. */
   readonly newState?: () => string;
+  /** @deprecated Catch-up now stores a retry time instead of sleeping inline. */
+  readonly sleep?: (milliseconds: number) => Promise<void>;
 }
+
+/** Catch-up re-reads this much before its cursor: replay is free, a gap is not. */
+const CDC_OVERLAP_MS = 5 * 60 * 1000;
+/** Intuit answers change data capture for 30 days; a day's margin is kept. */
+const CDC_HORIZON_MS = 29 * 24 * 60 * 60 * 1000;
+/** Intuit asks clients to wait 60 seconds after a throttle without Retry-After. */
+const THROTTLE_DEFAULT_WAIT_SECONDS = 60;
 
 const CALLBACK_PATH = "/api/v1/integrations/quickbooks/callback";
 const SETTINGS_PATH = "/settings/integrations";
@@ -364,7 +493,16 @@ export interface QuickBooksRuntime {
   /** The invoice, then every unmirrored receipt on it. What the Sync button runs. */
   sync(invoiceId: number): Promise<QuickBooksSyncResult | null>;
   syncState(invoiceId: number): Promise<QuickBooksInvoiceSyncState | null>;
+  reconcile(): Promise<QuickBooksReconciliation | null>;
+  catchUp(): Promise<QuickBooksCatchUp | null>;
 }
+
+/** The same local connect prerequisites as the native runtime, without constructing a client. */
+export const quickBooksConfigured = (config: Pick<QuickBooksConfig, 'clientId' | 'clientSecret' | 'appBaseUrl'>): boolean => {
+  if (trimmed(config.clientId) === null || trimmed(config.clientSecret) === null || trimmed(config.appBaseUrl) === null) return false;
+  try { new URL(CALLBACK_PATH, config.appBaseUrl!.trim()); return true; }
+  catch { return false; }
+};
 
 export const createQuickBooksRuntime = (
   options: Readonly<QuickBooksRuntimeOptions>,
@@ -432,6 +570,7 @@ export const createQuickBooksRuntime = (
       accessToken = refreshed.accessToken;
     }
     return new QuickBooksClient({
+      now: options.now,
       realmId: connection.realmId,
       accessToken,
       fetch: options.fetch,
@@ -499,7 +638,7 @@ export const createQuickBooksRuntime = (
    * same silence: nothing on the QuickBooks document changes.
    */
   const adoptByNumber = async (
-    client: QuickBooksClient,
+    client: Pick<QuickBooksClient, "readInvoice">,
     realmId: string,
     quickBooksInvoiceId: string,
   ): Promise<number | null> => {
@@ -724,6 +863,31 @@ export const createQuickBooksRuntime = (
     };
   };
 
+  /**
+   * Reads, never writes: one listing of the company's invoices and one read of
+   * ours. The access token may be refreshed on the way, which is the existing
+   * connection custody and not an accounting write.
+   */
+  const reconcile = async (): Promise<QuickBooksReconciliation | null> => {
+    const connection = await store.readConnection();
+    if (connection === null) return null;
+    const client = await authorizedClient();
+    if (client === null) return null;
+    const remote = await client.listInvoices();
+    const local = await options.reconciliation.invoicesOfRecord(connection.realmId);
+    const cursor = await store.readSyncCursor(connection.realmId);
+    return {
+      ...reconcileInvoices(local, remote),
+      realmId: connection.realmId,
+      generatedAt: options.now().toISOString(),
+      paymentDivergences: await options.reconciliation.paymentDivergences(connection.realmId),
+      // Retry scheduling is private operational state, not reconciliation data.
+      recovery: cursor === null ? null : {
+        cdcCursor: cursor.cdcCursor, lastRunAt: cursor.lastRunAt, lastOutcome: cursor.lastOutcome,
+      },
+    };
+  };
+
   /** Whether a receipt of ours, not one QuickBooks recorded, is on an invoice those lines settle. */
   const isReceiptOn = async (
     receiptId: number,
@@ -738,7 +902,235 @@ export const createQuickBooksRuntime = (
     return false;
   };
 
+  /**
+   * A payment QuickBooks no longer counts, noted where a receipt of ours came
+   * from it (issue 1013, slice 3). Returns the reason the delivery keeps.
+   * Nothing is corrected: the receipt, the invoice and the QuickBooks document
+   * are as they were, and the reconciliation report lists the difference.
+   */
+  const flagDivergence = async (
+    realmId: string,
+    quickBooksPaymentId: string,
+    kind: "voided" | "deleted",
+    quickBooksUpdatedAt: string,
+  ): Promise<string> =>
+    (await store.flagPaymentDivergence({
+      realmId,
+      quickBooksPaymentId,
+      kind,
+      quickBooksUpdatedAt,
+      now: options.now().toISOString(),
+    }))
+      ? `the payment was ${kind} in QuickBooks; flagged for review, nothing changed`
+      : `the payment was ${kind} in QuickBooks; no receipt of ours came from it`;
+
+  /**
+   * What a payment read from QuickBooks comes to here, for the webhook and for
+   * catch-up alike so the two cannot disagree. Returns the reason it was not
+   * (or not wholly) recorded, or undefined where it was.
+   */
+  const applyPayment = async (
+    client: Pick<QuickBooksClient, "readInvoice">,
+    realmId: string,
+    payment: Readonly<QuickBooksPayment>,
+    lastUpdated: string,
+  ): Promise<string | undefined> => {
+    if (isVoidedPayment(payment)) {
+      return flagDivergence(realmId, payment.Id, "voided", lastUpdated);
+    }
+    // One of our own receipts coming back. A payment recorded here --
+    // Mark paid, or a provider's -- is copied into QuickBooks by
+    // `mirrorPayment`, and QuickBooks then announces the payment it made
+    // like any other. Recorded again, it settled the invoice a second time
+    // and left it overpaid by the whole amount. `mirrorPayment` already
+    // refuses the other direction; this is its counterpart. The link is
+    // the mirror's record of what it made.
+    const mirrored = await store.readPaymentLinkByQuickBooksId({
+      realmId,
+      quickBooksId: payment.Id,
+    });
+    if (mirrored !== null) {
+      return mirroredFromHere(mirrored.paymentId);
+    }
+    const resolved = new Map<string, number | null>();
+    for (const line of payment.Line ?? []) {
+      for (const linked of line.LinkedTxn ?? []) {
+        if (linked.TxnType !== "Invoice" || resolved.has(linked.TxnId)) continue;
+        resolved.set(
+          linked.TxnId,
+          (await source.ezactoInvoiceFor(realmId, linked.TxnId)) ??
+            (await adoptByNumber(client, realmId, linked.TxnId)),
+        );
+      }
+    }
+    const ours = inboundPayments(payment, (id) => resolved.get(id) ?? null);
+    // The same receipt with its link not yet written: the mirror saves the
+    // link once QuickBooks has answered the create, and a delivery can
+    // overtake that write. The reference is on the payment from the
+    // start, and names a receipt on the invoice the payment settles.
+    const referenced = receiptIdFromRefNumber(payment.PaymentRefNum);
+    if (referenced !== null && (await isReceiptOn(referenced, ours))) {
+      return mirroredFromHere(referenced);
+    }
+    const refusals: string[] = [];
+    for (const row of ours) {
+      const recording = await source.recordPayment({
+        invoiceId: row.ezactoInvoiceId,
+        amountCents: row.amountCents,
+        paidOn: row.paidOn,
+        realmId,
+        quickBooksPaymentId: row.quickBooksPaymentId,
+        quickBooksInvoiceId: row.quickBooksInvoiceId,
+      });
+      if (recording !== "recorded") {
+        refusals.push(`invoice ${String(row.ezactoInvoiceId)}: ${notRecorded[recording]}`);
+      }
+    }
+    if (ours.length === 0) return "no line settles an invoice we mirrored";
+    return refusals.length === 0
+      ? undefined
+      : refusals.join("; ").slice(0, maximumSkippedReasonLength);
+  };
+
+
+  /** One captured payment: claimed, applied the way the webhook applies it, completed. */
+  const applyCaptured = async (
+    client: Pick<QuickBooksClient, "readInvoice">,
+    realmId: string,
+    captured: Readonly<QuickBooksCapturedPayment>,
+    answeredAt: string,
+  ): Promise<{ applied: boolean; lastUpdated: string }> => {
+    const deleted = captured.status === "Deleted";
+    const payment = deleted ? null : (captured as QuickBooksPayment);
+    // A deleted document keeps no metadata, so the answer's own instant stands in.
+    const stamp = payment?.MetaData?.LastUpdatedTime;
+    const lastUpdated = stamp === undefined ? answeredAt : canonicalLastUpdated(stamp);
+    const voided = payment !== null && isVoidedPayment(payment);
+    const createdAt = payment?.MetaData?.CreateTime;
+    const created = createdAt !== undefined && canonicalLastUpdated(createdAt) === lastUpdated;
+    const delivery = {
+      realmId,
+      entityName: "Payment",
+      entityId: captured.Id,
+      operation: deleted ? "Delete" : voided ? "Void" : created ? "Create" : "Update",
+      lastUpdated,
+    };
+    if (!(await store.claimRecoveredDelivery({ ...delivery, now: options.now().toISOString() }))) {
+      return { applied: false, lastUpdated };
+    }
+    const reason =
+      payment === null
+        ? await flagDivergence(realmId, captured.Id, "deleted", lastUpdated)
+        : await applyPayment(client, realmId, payment, lastUpdated);
+    await store.completeWebhookDelivery({
+      ...delivery,
+      now: options.now().toISOString(),
+      ...(reason === undefined ? {} : { skippedReason: reason }),
+    });
+    return { applied: true, lastUpdated };
+  };
+
+  /**
+   * Payment changes since the stored cursor (issue 1013, slice 2): what a
+   * webhook that never arrived would have told us.
+   *
+   * Idempotent against the webhook because every change goes through the same
+   * claim and the same `applyPayment`, and a change the webhook already
+   * processed is skipped under any operation. The cursor moves only after a
+   * whole window has been applied, so a failure leaves it where it was and the
+   * next run reads the same window again. Reads QuickBooks and writes only
+   * what the webhook would have: no QuickBooks document and no accounting
+   * record is created or changed.
+   */
+  const catchUp = async (): Promise<QuickBooksCatchUp | null> => {
+    const connection = await store.readConnection();
+    if (connection === null) return null;
+    const realmId = connection.realmId;
+    const now = options.now();
+    const nowIso = now.toISOString();
+    const cursor = await store.readSyncCursor(realmId);
+    if (cursor === null) {
+      // History before recovery began is not replayed into the books unasked;
+      // the reconciliation report compares it. The webhook covers from here.
+      await store.saveSyncCursor({
+        realmId,
+        cdcCursor: nowIso,
+        lastRunAt: nowIso,
+        lastOutcome: "caught_up",
+      });
+      return { seeded: true, outcome: "caught_up", examined: 0, alreadyProcessed: 0, cursor: nowIso };
+    }
+    const from = new Date(Date.parse(cursor.cdcCursor) - CDC_OVERLAP_MS);
+    if (now.getTime() - from.getTime() > CDC_HORIZON_MS) {
+      // Beyond what Intuit will replay. Reconnecting is the operator starting
+      // over, so a connection newer than the last run places a fresh cursor.
+      if (Date.parse(connection.connectedAt) > Date.parse(cursor.lastRunAt)) {
+        await store.saveSyncCursor({
+          realmId,
+          cdcCursor: nowIso,
+          lastRunAt: nowIso,
+          lastOutcome: "full_reconcile_needed",
+        });
+        return {
+          seeded: false,
+          outcome: "full_reconcile_needed",
+          examined: 0,
+          alreadyProcessed: 0,
+          cursor: nowIso,
+        };
+      }
+      await store.recordSyncOutcome({
+        realmId,
+        lastRunAt: nowIso,
+        lastOutcome: "full_reconcile_needed",
+      });
+      return {
+        seeded: false,
+        outcome: "full_reconcile_needed",
+        examined: 0,
+        alreadyProcessed: 0,
+        cursor: cursor.cdcCursor,
+      };
+    }
+
+    if (cursor.retryNotBefore !== null && Date.parse(cursor.retryNotBefore) > now.getTime()) {
+      throw new QuickBooksApiError(429, 'retry_deferred', 'catch-up is waiting for the provider retry time',
+        Math.ceil((Date.parse(cursor.retryNotBefore) - now.getTime()) / 1000));
+    }
+    let examined = 0;
+    let alreadyProcessed = 0;
+    try {
+      const client = await authorizedClient();
+      if (client === null) return null;
+      const changes = await client.paymentChangesSince(from.toISOString());
+      const answeredAt = canonicalLastUpdated(changes.time);
+      if (changes.full) {
+        // CDC has an object ceiling, not a continuation cursor. Deleted objects
+        // follow active ones, so the newest visible timestamp cannot prove that
+        // every earlier change was returned. Do not apply an incomplete window.
+        await store.recordSyncOutcome({ realmId, lastRunAt: nowIso, lastOutcome: "full_reconcile_needed" });
+        return { seeded: false, outcome: "full_reconcile_needed", examined: 0, alreadyProcessed: 0, cursor: cursor.cdcCursor };
+      }
+      for (const captured of changes.payments) {
+        examined += 1;
+        const processed = await applyCaptured(client, realmId, captured, answeredAt);
+        if (!processed.applied) alreadyProcessed += 1;
+      }
+      await store.saveSyncCursor({ realmId, cdcCursor: answeredAt, lastRunAt: nowIso, lastOutcome: "caught_up" });
+      return { seeded: false, outcome: "caught_up", examined, alreadyProcessed, cursor: answeredAt };
+    } catch (error) {
+      const failedAt = options.now();
+      await store.recordSyncOutcome({ realmId, lastRunAt: failedAt.toISOString(), lastOutcome: "failed",
+        ...(error instanceof QuickBooksApiError && error.status === 429 ? {
+          retryNotBefore: new Date(failedAt.getTime() + (error.retryAfterSeconds ?? THROTTLE_DEFAULT_WAIT_SECONDS) * 1000).toISOString(),
+        } : {}),
+      });
+      throw error;
+    }
+  };
+
   const service: QuickBooksService = {
+    configured: () => quickBooksConfigured(config),
     clientId: () => clientId,
     callbackUrl,
     settingsUrl: () => SETTINGS_PATH,
@@ -880,8 +1272,20 @@ export const createQuickBooksRuntime = (
             ...(skippedReason === undefined ? {} : { skippedReason }),
           });
 
-        if (change.name !== "Payment" || change.operation === "Delete") {
+        if (change.name !== "Payment") {
           await complete(`${change.name} ${change.operation} is not mirrored back`);
+          continue;
+        }
+        // Voided or deleted there: flagged for a person, never copied back.
+        if (change.operation === "Delete" || change.operation === "Void") {
+          await complete(
+            await flagDivergence(
+              change.realmId,
+              change.id,
+              change.operation === "Void" ? "voided" : "deleted",
+              lastUpdated,
+            ),
+          );
           continue;
         }
         const client = await authorizedClient();
@@ -891,75 +1295,23 @@ export const createQuickBooksRuntime = (
         }
         const payment = await client.readPayment(change.id);
         if (payment === null) {
-          await complete("the payment no longer exists");
+          // Announced, then gone: deleted since. A receipt that came from it is
+          // flagged; one that never did leaves nothing to say.
+          await complete(await flagDivergence(change.realmId, change.id, "deleted", lastUpdated));
           continue;
         }
-        // One of our own receipts coming back. A payment recorded here --
-        // Mark paid, or a provider's -- is copied into QuickBooks by
-        // `mirrorPayment`, and QuickBooks then announces the payment it made
-        // like any other. Recorded again, it settled the invoice a second time
-        // and left it overpaid by the whole amount. `mirrorPayment` already
-        // refuses the other direction; this is its counterpart. The link is
-        // the mirror's record of what it made.
-        const mirrored = await store.readPaymentLinkByQuickBooksId({
-          realmId: change.realmId,
-          quickBooksId: payment.Id,
-        });
-        if (mirrored !== null) {
-          await complete(mirroredFromHere(mirrored.paymentId));
-          continue;
-        }
-        const resolved = new Map<string, number | null>();
-        for (const line of payment.Line ?? []) {
-          for (const linked of line.LinkedTxn ?? []) {
-            if (linked.TxnType !== "Invoice" || resolved.has(linked.TxnId)) continue;
-            resolved.set(
-              linked.TxnId,
-              (await source.ezactoInvoiceFor(change.realmId, linked.TxnId)) ??
-                (await adoptByNumber(client, change.realmId, linked.TxnId)),
-            );
-          }
-        }
-        const ours = inboundPayments(payment, (id) => resolved.get(id) ?? null);
-        // The same receipt with its link not yet written: the mirror saves the
-        // link once QuickBooks has answered the create, and a delivery can
-        // overtake that write. The reference is on the payment from the
-        // start, and names a receipt on the invoice the payment settles.
-        const referenced = receiptIdFromRefNumber(payment.PaymentRefNum);
-        if (referenced !== null && (await isReceiptOn(referenced, ours))) {
-          await complete(mirroredFromHere(referenced));
-          continue;
-        }
-        const refusals: string[] = [];
-        for (const row of ours) {
-          const recording = await source.recordPayment({
-            invoiceId: row.ezactoInvoiceId,
-            amountCents: row.amountCents,
-            paidOn: row.paidOn,
-            realmId: change.realmId,
-            quickBooksPaymentId: row.quickBooksPaymentId,
-            quickBooksInvoiceId: row.quickBooksInvoiceId,
-          });
-          if (recording !== "recorded") {
-            refusals.push(`invoice ${String(row.ezactoInvoiceId)}: ${notRecorded[recording]}`);
-          }
-        }
-        await complete(
-          ours.length === 0
-            ? "no line settles an invoice we mirrored"
-            : refusals.length === 0
-              ? undefined
-              : refusals.join("; ").slice(0, maximumSkippedReasonLength),
-        );
+        await complete(await applyPayment(client, change.realmId, payment, lastUpdated));
       }
       return { accepted: true };
     },
 
     sync,
     syncState,
+    reconcile,
+    catchUp,
   };
 
-  return { service, mirror, mirrorPayment: mirrorPaymentOnto, sync, syncState };
+  return { service, mirror, mirrorPayment: mirrorPaymentOnto, sync, syncState, reconcile, catchUp };
 };
 
 /**

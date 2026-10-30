@@ -1,3 +1,4 @@
+import { isIdempotencyClaimConflict } from '@ezacto/core'
 import type { Context } from 'hono'
 import type { ContentfulStatusCode } from 'hono/utils/http-status'
 import type { ApiContext } from './context.js'
@@ -16,6 +17,8 @@ export interface ApiErrorBody {
     code: string
     message: string
     fields: FieldError[]
+    currentVersion?: number
+    current?: unknown
   }
   request_id: string
 }
@@ -25,11 +28,14 @@ interface ApiErrorOptions {
   code: string
   message: string
   fields?: readonly FieldError[]
+  revisionConflict?: { currentVersion: number; current: unknown }
 }
 
 export interface JsonBodyOptions {
   /** Maximum UTF-8 bytes accepted before JSON parsing. Defaults to 1 MiB. */
   maxBytes?: number
+  /** An absent or empty stream may represent an empty optional JSON object. */
+  allowEmptyObject?: boolean
 }
 
 export const DEFAULT_MAX_JSON_BODY_BYTES = 1024 * 1024
@@ -39,8 +45,9 @@ export class ApiError extends Error {
   readonly status: ContentfulStatusCode
   readonly code: string
   readonly fields: readonly FieldError[]
+  readonly revisionConflict: { currentVersion: number; current: unknown } | undefined
 
-  constructor({ status, code, message, fields = [] }: ApiErrorOptions) {
+  constructor({ status, code, message, fields = [], revisionConflict }: ApiErrorOptions) {
     super(message)
     this.name = 'ApiError'
     if (status < 400 || status > 599) throw new RangeError('API error status must be 4xx or 5xx')
@@ -59,6 +66,7 @@ export class ApiError extends Error {
     if (status === 422 && fields.length === 0) {
       throw new TypeError('422 API errors must carry at least one field error')
     }
+    this.revisionConflict = revisionConflict
     this.status = status
     this.code = code
     this.fields = fields.map((field) => ({ ...field }))
@@ -84,22 +92,25 @@ type JsonRequestContext = Pick<Context, 'req'>
 
 export const readJsonBody = async <T>(
   context: JsonRequestContext,
-  { maxBytes = DEFAULT_MAX_JSON_BODY_BYTES }: JsonBodyOptions = {},
+  { maxBytes = DEFAULT_MAX_JSON_BODY_BYTES, allowEmptyObject = false }: JsonBodyOptions = {},
 ): Promise<T> => {
   if (!Number.isSafeInteger(maxBytes) || maxBytes < 1) {
     throw new RangeError('JSON body byte limit must be a positive safe integer')
   }
   const contentType = context.req.header('content-type')?.split(';', 1)[0]?.trim().toLowerCase()
-  if (
-    contentType === undefined ||
-    (contentType !== 'application/json' && !contentType.endsWith('+json'))
-  ) {
-    throw new ApiError({
-      status: 415,
-      code: 'unsupported_media_type',
-      message: 'Request body must use an application/json content type.',
-    })
+  const assertContentType = (): void => {
+    if (
+      contentType === undefined ||
+      (contentType !== 'application/json' && !contentType.endsWith('+json'))
+    ) {
+      throw new ApiError({
+        status: 415,
+        code: 'unsupported_media_type',
+        message: 'Request body must use an application/json content type.',
+      })
+    }
   }
+  if (!allowEmptyObject) assertContentType()
 
   const declaredLength = context.req.header('content-length')
   if (declaredLength !== undefined) {
@@ -114,6 +125,8 @@ export const readJsonBody = async <T>(
   }
 
   const bytes = await readLimitedBody(context.req.raw.body, maxBytes)
+  if (allowEmptyObject && bytes.length === 0) return {} as T
+  if (allowEmptyObject) assertContentType()
   try {
     const text = new TextDecoder('utf-8', { fatal: true }).decode(bytes)
     return JSON.parse(text) as T
@@ -137,7 +150,7 @@ const payloadTooLarge = (maxBytes: number): ApiError =>
 export const readLimitedBody = async (
   body: ReadableStream<Uint8Array> | null,
   maxBytes: number,
-): Promise<Uint8Array> => {
+): Promise<Uint8Array<ArrayBuffer>> => {
   if (body === null) return new Uint8Array()
   const reader = body.getReader()
   const chunks: Uint8Array[] = []
@@ -171,8 +184,9 @@ const bodyFor = <Bindings extends object>(
   code: string,
   message: string,
   fields: readonly FieldError[],
+  revisionConflict?: { currentVersion: number; current: unknown },
 ): ApiErrorBody => ({
-  error: { code, message, fields: fields.map((field) => ({ ...field })) },
+  error: { code, message, fields: fields.map((field) => ({ ...field })), ...revisionConflict },
   request_id: context.get('requestId'),
 })
 
@@ -181,9 +195,19 @@ export const errorResponse = <Bindings extends object>(
   context: Context<ApiContext<Bindings>>,
   report?: (error: Error, requestId: string) => void,
 ): Response => {
+  // The outer idempotency layer reads the winning claim and supplies its
+  // existing replay/in-progress answer. Do not report proven contention as an
+  // unexpected exception while it passes through the inner API boundary.
+  if (isIdempotencyClaimConflict(error)) {
+    return context.json(
+      bodyFor(context, 'idempotent_request_in_progress', 'Another request owns this idempotency claim.', []),
+      503,
+      { 'cache-control': 'no-store', 'retry-after': '1' },
+    )
+  }
   if (error instanceof ApiError && error.status < 500) {
     return context.json(
-      bodyFor(context, error.code, error.message, error.fields),
+      bodyFor(context, error.code, error.message, error.fields, error.revisionConflict),
       error.status,
       { 'cache-control': 'no-store' },
     )

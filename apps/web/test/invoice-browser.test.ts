@@ -193,6 +193,32 @@ const submit = (selector: string): void => {
 }
 
 describe('invoice payment controller', () => {
+  it('[browser] makes no attachment requests when storage is disabled on the instance', async () => {
+    renderDetail()
+    document.documentElement.setAttribute('data-attachments-unavailable', '')
+    const api: Partial<InvoicePaymentApi> = {
+      getInvoice: vi.fn(async () => invoice('NO-STORAGE')),
+      listInvoiceMessages: vi.fn(async () => []),
+      listInvoicePayments: vi.fn(async () => []),
+      listInvoiceAttachments: vi.fn(async () => []),
+      uploadInvoiceAttachment: vi.fn(),
+    }
+    await createInvoicePaymentController(api).activate(identity(1), new AbortController().signal, () => false)
+    expect(api.getInvoice).toHaveBeenCalled()
+    expect(api.listInvoiceAttachments).not.toHaveBeenCalled()
+    expect(document.querySelector('[data-invoice-attachment-status]')?.textContent).toBe(
+      'File attachments are not enabled on this instance.',
+    )
+    expect(document.querySelector<HTMLElement>('[data-invoice-attachment-form]')!.hidden).toBe(true)
+    expect(document.querySelector<HTMLElement>('[data-invoice-attachment-readonly]')!.hidden).toBe(true)
+    expect(document.querySelector<HTMLElement>('[data-invoice-attachment-demo]')!.hidden).toBe(true)
+    const input = document.querySelector<HTMLInputElement>('[data-invoice-attachment-form] input[name="file"]')!
+    Object.defineProperty(input, 'files', { value: [new File(['owned'], 'owned.txt', { type: 'text/plain' })] })
+    submit('[data-invoice-attachment-form]')
+    expect(api.uploadInvoiceAttachment).not.toHaveBeenCalled()
+    expect(api.listInvoiceAttachments).not.toHaveBeenCalled()
+  })
+
   it('[browser] gives Send back once an upload settles, even if a side read repainted the controls during it', async () => {
     // Issue 745. The detail page reads QuickBooks, reminders and attachments
     // beside the invoice and repaints the controls as each answers. One that
@@ -242,6 +268,7 @@ describe('invoice payment controller', () => {
     })
     submit('[data-invoice-attachment-form]')
     await vi.waitFor(() => expect(api.uploadInvoiceAttachment).toHaveBeenCalledTimes(1))
+    expect(status.getAttribute('aria-busy')).toBe('true')
 
     // The side read answers mid-upload: a deployment without the QuickBooks
     // routes, which repaints the controls while the upload holds them.
@@ -256,6 +283,7 @@ describe('invoice payment controller', () => {
     await vi.waitFor(() => expect(status.textContent).toBe('1 file attached.'))
     await new Promise((resolve) => setTimeout(resolve, 0))
     expect(send.disabled).toBe(false)
+    expect(status.getAttribute('aria-busy')).toBe('false')
   })
 
   it('[security] rejects stale detail responses and clears private payment state on abort', async () => {
@@ -693,6 +721,7 @@ describe('invoice payment controller', () => {
     expect(settle.disabled).toBe(true)
     // Progress, too, sits by the button, and the Payments line stays empty.
     expect(pageStatus.textContent).toBe('Recording payment\u2026')
+    expect(pageStatus.getAttribute('aria-busy')).toBe('true')
     expect(paymentStatus.textContent).toBe('')
 
     currentInvoice = { ...currentInvoice, due_amount_cents: 32_500, version: 4 }
@@ -708,6 +737,7 @@ describe('invoice payment controller', () => {
         'The invoice, line, or payment changed elsewhere. Latest values are loaded; review and try again.',
       ),
     )
+    expect(pageStatus.getAttribute('aria-busy')).toBe('false')
     // The reload relabelled the button with the new balance; the sentence that
     // explains why is in the same viewport as the button, not in the Payments
     // section under the line items, totals and notes.
@@ -978,6 +1008,59 @@ describe('invoice payment controller', () => {
     setInvoiceClientNames([])
   })
 
+  it('[browser #949] says which rounding the invoiced projects are under today', async () => {
+    renderDetail()
+    const projects: Record<number, Record<string, unknown>> = {
+      1: { id: 1, name: 'Northpeak', time_rounding_mode: 'up', time_rounding_minutes: 15 },
+      2: { id: 2, name: 'Acme', time_rounding_mode: null, time_rounding_minutes: null },
+      // Read without commercial authority: no rule to speak of, so none is guessed.
+      3: { id: 3, name: 'Hidden' },
+    }
+    const getDirectoryProject = vi.fn(async (id: number) => projects[id] as never)
+    await createInvoicePaymentController({
+      findInvoiceByNumber: vi.fn(async () => null),
+      getInvoice: vi.fn(async () =>
+        invoice('ROUNDED', {
+          line_items: [
+            line({ id: 1, project_id: 1 }),
+            line({ id: 2, project_id: 1 }),
+            line({ id: 3, project_id: 2 }),
+            line({ id: 4, project_id: 3 }),
+            line({ id: 5, project_id: null }),
+          ],
+        }),
+      ),
+      getDirectoryProject,
+      getTimeEntrySettings: vi.fn(async () => ({ time_rounding: { mode: 'down' as const, minutes: 30 as const } })),
+      listInvoiceMessages: vi.fn(async () => []),
+      listInvoicePayments: vi.fn(async () => []),
+    }).activate(identity(1), new AbortController().signal, () => false)
+
+    const fact = document.querySelector<HTMLElement>('[data-invoice-rounding-fact]')!
+    await vi.waitFor(() => expect(fact.hidden).toBe(false))
+    expect(document.querySelector('[data-invoice-detail-rounding]')?.textContent).toBe(
+      'Northpeak: rounded up to 15 min (project setting); Acme: rounded down to 30 min (organization setting)',
+    )
+    // Each project is read once however many lines it has.
+    expect(getDirectoryProject).toHaveBeenCalledTimes(3)
+  })
+
+  it('[browser #949] leaves the rounding row out when there is nothing to say', async () => {
+    renderDetail()
+    await createInvoicePaymentController({
+      findInvoiceByNumber: vi.fn(async () => null),
+      getInvoice: vi.fn(async () => invoice('PLAIN', { line_items: [line({ project_id: null })] })),
+      getDirectoryProject: vi.fn(async () => {
+        throw new Error('not asked')
+      }),
+      getTimeEntrySettings: vi.fn(async () => ({ time_rounding: { mode: 'exact' as const, minutes: 15 as const } })),
+      listInvoiceMessages: vi.fn(async () => []),
+      listInvoicePayments: vi.fn(async () => []),
+    }).activate(identity(1), new AbortController().signal, () => false)
+    expect(document.querySelector<HTMLElement>('[data-invoice-document]')?.hidden).toBe(false)
+    expect(document.querySelector<HTMLElement>('[data-invoice-rounding-fact]')?.hidden).toBe(true)
+  })
+
   it('[browser] still shows the invoice when its client cannot be read', async () => {
     // A token without clients:read, or a request that failed: the name is a
     // nicety, and the invoice is the page.
@@ -1239,6 +1322,31 @@ describe('the QuickBooks line and Sync button (issue 819)', () => {
     await new Promise((resolve) => setTimeout(resolve, 0))
     expect(fact().hidden).toBe(true)
     expect(button().hidden).toBe(true)
+  })
+
+  it.each(['accounting', 'quickbooks'])('[browser #1217] makes no QuickBooks request where %s is unavailable', async (unavailable) => {
+    renderDetail()
+    document.documentElement.setAttribute(`data-${unavailable}-unavailable`, '')
+    try {
+      const getInvoiceQuickBooks = vi.fn(async () => refusedBeforeConnect)
+      const controller = createInvoicePaymentController({
+        getInvoice: vi.fn(async () => invoice('OFF')),
+        listInvoiceMessages: vi.fn(async () => []),
+        listInvoicePayments: vi.fn(async () => []),
+        getInvoiceQuickBooks,
+        syncInvoiceQuickBooks: vi.fn(),
+      })
+      await controller.activate(identity(1), new AbortController().signal, () => false)
+      await vi.waitFor(() =>
+        expect(document.querySelector('[data-invoice-document]')!.hasAttribute('hidden')).toBe(false),
+      )
+      await new Promise((resolve) => setTimeout(resolve, 0))
+      expect(getInvoiceQuickBooks).not.toHaveBeenCalled()
+      expect(fact().hidden).toBe(true)
+      expect(button().hidden).toBe(true)
+    } finally {
+      document.documentElement.removeAttribute(`data-${unavailable}-unavailable`)
+    }
   })
 
   it('[e2e:invoice-quickbooks] renders the refusal, syncs on press, and the line follows', async () => {
@@ -1735,6 +1843,7 @@ describe('the Send dialog attachments', () => {
     client_id: 1,
     company_name: 'Example Studio LLC',
     client_name: 'Northwind Example Co',
+    time_zone: 'America/Costa_Rica',
     template_version: 2,
     subject: 'Invoice #%invoice_number% from %company_name%',
     message: 'Happy Friday! Please find this month\'s invoice below.\n\nAna',
@@ -1762,6 +1871,43 @@ describe('the Send dialog attachments', () => {
       ),
     )
   }
+
+  const mismatchReview = (): Awaited<ReturnType<NonNullable<InvoicePaymentApi['getInvoiceHoursReconciliation']>>> => ({
+    invoice_id: 7, invoice_version: 1, invoice_state: 'draft', hours_version: 'a'.repeat(64),
+    linked_seconds: 7200, billed_seconds: 7200, difference_seconds: 0, status: 'matched',
+    tolerance_seconds: 36, total_tolerance_seconds: 72, comparison_complete: true, has_mismatch: true,
+    not_compared_entry_ids: [], projects: [], not_compared: [], entries: [],
+    lines: [
+      {line_id: 1, project_id: 1, entry_ids: [1], linked_seconds: 5400, billed_seconds: 3600, difference_seconds: 1800, status: 'billed_below_linked'},
+      {line_id: 2, project_id: 1, entry_ids: [2], linked_seconds: 1800, billed_seconds: 3600, difference_seconds: -1800, status: 'billed_above_linked'},
+    ],
+  })
+
+  it('[browser #924] warns before sending even when opposite line differences cancel out', async () => {
+    let resolve!: (review: ReturnType<typeof mismatchReview>) => void
+    const review = new Promise<ReturnType<typeof mismatchReview>>(done => { resolve = done })
+    const getInvoiceHoursReconciliation = vi.fn(() => review)
+    const { api, calls } = sending({ getInvoiceHoursReconciliation })
+    await openComposer(api)
+    expect(box('[data-invoice-composer-submit]').disabled).toBe(true)
+    deliverTo('ap@example.com')
+    submit('[data-invoice-composer-form]')
+    expect(calls).toEqual([])
+    resolve(mismatchReview())
+    await vi.waitFor(() => expect(box('[data-invoice-composer-submit]').disabled).toBe(false))
+    const warning = document.querySelector<HTMLElement>('[data-invoice-composer-hours-warning]')!
+    expect(warning.hidden).toBe(false)
+    expect(warning.textContent).toContain('linked 2.00 h · billed 2.00 h')
+    expect(warning.textContent).toContain('At least one line differs')
+    expect(getInvoiceHoursReconciliation).toHaveBeenCalledWith(7, expect.any(AbortSignal))
+  })
+
+  it('[browser #924] leaves an explicit warning when hours cannot be compared', async () => {
+    const { api } = sending({ getInvoiceHoursReconciliation: vi.fn(async () => { throw new Error('offline') }) })
+    await openComposer(api)
+    await vi.waitFor(() => expect(document.querySelector('[data-invoice-composer-hours-warning]')?.textContent).toContain('could not be compared'))
+    expect(box('[data-invoice-composer-submit]').disabled).toBe(false)
+  })
 
   it('[e2e:invoice-email] opens on the client\'s To and Cc, the copies and the template\'s words', async () => {
     const { api } = sending({ getInvoiceEmailDefaults: vi.fn(async () => defaults()) })
@@ -1866,6 +2012,27 @@ describe('the Send dialog attachments', () => {
     )
   })
 
+  it('[e2e:invoice-email] records the send weekday in the organization zone, not a literal token (issue 925)', async () => {
+    const { api } = sending({ getInvoiceEmailDefaults: vi.fn(async () => defaults()) })
+    await openWithDefaults(api)
+    box('[data-invoice-composer-confirm]').click()
+    document.querySelector<HTMLInputElement>('[data-invoice-composer-subject]')!.value =
+      'Happy %send_weekday%!'
+    submit('[data-invoice-composer-form]')
+    const weekday = new Intl.DateTimeFormat('en-US', {
+      weekday: 'long',
+      timeZone: 'America/Costa_Rica',
+    }).format(new Date())
+    await vi.waitFor(() =>
+      expect(api.transitionInvoice).toHaveBeenCalledWith(
+        7,
+        expect.any(String),
+        expect.objectContaining({ subject: `Happy ${weekday}!` }),
+        expect.any(AbortSignal),
+      ),
+    )
+  })
+
   it('[reliability] refuses a variable an invoice email does not have, before anything is recorded', async () => {
     const { api, calls } = sending({ getInvoiceEmailDefaults: vi.fn(async () => defaults()) })
     await openWithDefaults(api)
@@ -1880,6 +2047,7 @@ describe('the Send dialog attachments', () => {
   })
 
   it('[e2e:invoice-email] previews the email the send would make, and sends a stamped copy to me only', async () => {
+    const getInvoiceHoursReconciliation = vi.fn(async () => mismatchReview())
     const previewInvoiceEmail = vi.fn(async () => ({
       email: {
         invoice_id: 7,
@@ -1913,6 +2081,7 @@ describe('the Send dialog attachments', () => {
     const { api, calls } = sending({
       getInvoiceEmailDefaults: vi.fn(async () => defaults()),
       previewInvoiceEmail,
+      getInvoiceHoursReconciliation,
       sendInvoiceEmailPreview,
     })
     await openWithDefaults(api)
@@ -1950,6 +2119,8 @@ describe('the Send dialog attachments', () => {
     expect(document.querySelector('[data-invoice-preview-attachments]')?.textContent).toBe(
       'INVOICE_SEND_EXAMPLE_STUDIO_LLC.pdf (154 kB) — with purchase-order.pdf at the back',
     )
+    expect(getInvoiceHoursReconciliation).toHaveBeenCalledTimes(2)
+    expect(document.querySelector('[data-invoice-composer-hours-warning]')?.textContent).toContain('Hours report warning')
     const download = document.querySelector<HTMLAnchorElement>('[data-invoice-preview-document]')!
     expect(download.hidden).toBe(false)
     expect(download.getAttribute('href')).toBe(

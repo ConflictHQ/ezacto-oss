@@ -22,7 +22,7 @@ const body = (
     'Open this link on the device you want to sign in on:',
     delivery.link,
     '',
-    `Or enter this code: ${delivery.code}`,
+    `Or enter this code in the app or browser where you requested it: ${delivery.code}`,
     '',
     'The link and code expire in 10 minutes and can each be used once.',
     'If you did not ask to sign in, you can ignore this email.',
@@ -30,7 +30,7 @@ const body = (
   html: [
     `<p>Sign in to ${escapeHtml(company)}.</p>`,
     `<p><a href="${escapeHtml(delivery.link)}">Tap here to finish signing in</a></p>`,
-    `<p>Or enter this code: <strong>${escapeHtml(delivery.code)}</strong></p>`,
+    `<p>Or enter this code in the app or browser where you requested it: <strong>${escapeHtml(delivery.code)}</strong></p>`,
     '<p>The link and code expire in 10 minutes and can each be used once. ' +
       'If you did not ask to sign in, you can ignore this email.</p>',
   ].join(''),

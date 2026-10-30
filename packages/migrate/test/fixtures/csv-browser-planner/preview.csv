@@ -1,0 +1,2 @@
+Email,Client,Project,Task,Description,Billable,Start Date,Start Time,End Date,End Time,Duration (h)
+member@example.invalid,Fixture studio,Existing project,Existing task,Exact seconds preserved,Yes,2026-09-01,09:00:00,2026-09-01,10:00:01,01:00:01

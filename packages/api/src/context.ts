@@ -1,4 +1,6 @@
+import type { CsvImportApplyPort } from './csv-import-apply-port.js'
 import type { Hono } from 'hono'
+import type { CsvImportStagingPort } from './csv-import-staging-port.js'
 import type {
   ActingUserAuthority,
   UserProfile as CoreUserProfile,
@@ -27,12 +29,19 @@ export type AppInstaller<Bindings extends object> = (app: Hono<ApiContext<Bindin
 export type ApiInstaller<Bindings extends object> = (api: Hono<ApiContext<Bindings>>) => void
 
 export interface CreateApiAppOptions<Bindings extends object> {
+  csvImportStaging?: CsvImportStagingPort
+  csvImportApply?: CsvImportApplyPort
   /** Fail-closed API authentication. Without resolvers every /api/v1 request is 401. */
   authentication?: ApiAuthentication
   /** Entry-owned routes such as health, identity, or static web mounting. */
   installApp?: AppInstaller<Bindings>
   /** Canonical resource routes mounted below `/api/v1`. */
   installApi?: ApiInstaller<Bindings>
+  /**
+   * The Harvest v2 compatibility shim, mounted below `/harvest/v2`. It is
+   * reached with an API token as a bearer credential and never with a session.
+   */
+  installHarvestV2?: ApiInstaller<Bindings>
   /**
    * Told about every error the app answers with a 5xx (issue 807). The app
    * handles the exception itself, so a crash reporter wrapped around the entry

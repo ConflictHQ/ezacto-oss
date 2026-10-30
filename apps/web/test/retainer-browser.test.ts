@@ -864,12 +864,14 @@ describe('Retainer write path controller', () => {
     await vi.waitFor(() => expect(optionCount('[data-retainer-drawdown-invoice]')).toBe(1))
     fill('[data-retainer-drawdown-amount]', '1200')
     submit('[data-retainer-drawdown-form]')
+    expect(document.querySelector('[data-retainer-drawdown-result]')?.getAttribute('aria-busy')).toBe('true')
     await vi.waitFor(() =>
       expect(document.querySelector('[data-retainer-drawdown-result]')?.textContent).toBe(
         'Load failed',
       ),
     )
     // The typed amount survives the failure, so the retry is the same command
+    expect(document.querySelector('[data-retainer-drawdown-result]')?.getAttribute('aria-busy')).toBe('false')
     // rather than a second one the operator has to re-type.
     expect(document.querySelector<HTMLInputElement>('[data-retainer-drawdown-amount]')!.value).toBe(
       '1200',

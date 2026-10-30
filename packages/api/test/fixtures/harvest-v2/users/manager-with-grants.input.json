@@ -1,0 +1,29 @@
+{
+  "user": {
+    "telephone": "+1 555 0100",
+    "timezone": "Etc/UTC",
+    "hasAccessToAllFutureProjects": false,
+    "isContractor": false,
+    "isActive": true,
+    "weeklyCapacity": 126000,
+    "managerGrants": [
+      "project_creator",
+      "estimates_manager"
+    ],
+    "avatarUrl": "https://example.test/avatars/402.png",
+    "samlExempt": false,
+    "isOwner": false,
+    "createdAt": "2024-01-05T10:00:00.123Z",
+    "updatedAt": "2024-03-09T16:45:30.987Z",
+    "id": 402,
+    "firstName": "Sample",
+    "lastName": "Sample-Manager",
+    "email": "manager@example.test",
+    "profile": "project_manager"
+  },
+  "context": {
+    "roleNames": [],
+    "defaultHourlyRateCents": null,
+    "costRateCents": null
+  }
+}

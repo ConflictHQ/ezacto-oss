@@ -1,3 +1,4 @@
+import type { EmailSuppressionReason } from '@ezacto/mailer'
 import type {
   EmailLogStore,
   EmailQueue,
@@ -16,12 +17,18 @@ import {
   type SenderIdentityResolver,
 } from '@ezacto/mailer'
 import {
+  createDeploymentNotificationMailer,
   createQueuedAccountDeletionMailer,
   createQueuedAuthMailer,
   createQueuedStaffMagicLinkMailer,
+  createQueuedPortalMagicLinkMailer,
+  type MagicLinkMailer,
+  createQueuedTwoFactorEmailCodeMailer,
   type AccountDeletionMailer,
   type AuthMailer,
+  type NotificationMailer,
   type StaffMagicLinkMailer,
+  type TwoFactorEmailCodeMailer,
 } from '@ezacto/api'
 
 /** Cloudflare Queues producer adapter. Provider I/O never runs in fetch(). */
@@ -50,6 +57,7 @@ export const consumeCloudflareEmailBatch = async (
    * through a path the producer never saw. Absent everywhere but the demo.
    */
   allowedDomains?: readonly string[],
+  getRecipientSuppression?: (recipients: readonly string[]) => Promise<EmailSuppressionReason | null>,
 ): Promise<void> => {
   const allowed =
     allowedDomains === undefined
@@ -77,7 +85,10 @@ export const consumeCloudflareEmailBatch = async (
         message.attempts,
         log,
         provider,
-        resolveAttachment === undefined ? {} : { resolveAttachment },
+        {
+          ...(resolveAttachment === undefined ? {} : { resolveAttachment }),
+          ...(getRecipientSuppression === undefined ? {} : { getRecipientSuppression }),
+        },
       )
       if (disposition.action === 'retry') {
         message.retry({ delaySeconds: disposition.delaySeconds })
@@ -135,6 +146,32 @@ export const createWorkerStaffMagicLinkMailer = (
     organizationName,
   )
 
+/** Contact sign-in uses the same deployment sender, durable queue and demo restrictions. */
+export const createWorkerPortalMagicLinkMailer = (
+  queue: EmailQueue,
+  log: EmailLogStore,
+  from: string,
+  organizationName: () => Promise<string>,
+  appBaseUrl: string,
+): MagicLinkMailer =>
+  createQueuedPortalMagicLinkMailer(
+    createDeploymentSenderQueuedMailer(from, createQueuedMailer(log, queue)),
+    organizationName,
+    appBaseUrl,
+  )
+
+/** The emailed second-factor code, on the same queue and deployment sender (issue 770). */
+export const createWorkerTwoFactorEmailCodeMailer = (
+  queue: EmailQueue,
+  log: EmailLogStore,
+  from: string,
+  organizationName: () => Promise<string>,
+): TwoFactorEmailCodeMailer =>
+  createQueuedTwoFactorEmailCodeMailer(
+    createDeploymentSenderQueuedMailer(from, createQueuedMailer(log, queue)),
+    organizationName,
+  )
+
 export const createWorkerOrganizationMailer = (
   queue: EmailQueue,
   log: EmailLogStore,
@@ -142,3 +179,14 @@ export const createWorkerOrganizationMailer = (
   identities: SenderIdentityResolver,
 ): SenderBoundQueuedMailer =>
   createSenderBoundQueuedMailer(identities, createQueuedMailer(log, queue), provider)
+
+/**
+ * The mail the instance sends its own people -- budget alerts, time reminders --
+ * on the deployment sender and the same queue as the rest, so the demo's
+ * allowlist holds it too.
+ */
+export const createWorkerNotificationMailer = (
+  queue: EmailQueue,
+  log: EmailLogStore,
+  from: string,
+): NotificationMailer => createDeploymentNotificationMailer(from, createQueuedMailer(log, queue))

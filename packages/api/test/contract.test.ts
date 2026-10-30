@@ -1,5 +1,24 @@
+import { installInvoiceProviderAlertRoutes } from '../src/invoice-provider-alerts.js'
+import { installBankDepositRoutes } from '../src/bank-deposits.js'
+import { installCalendarFeedRoutes } from '../src/calendar-feeds.js'
+import { installGithubReaderRoutes } from '../src/github-reader.js'
+import { installDeelStagingRoutes } from '../src/deel-staging.js'
+import { installDeelPaymentStatusRoutes } from '../src/deel-payment-status.js'
+import { installOrganizationHolidayRoutes } from '../src/organization-holidays.js'
+import { installPlaceholderPlanningRoutes } from '../src/resources/placeholder-allocations.js'
+import { installOutboundWebhookRoutes } from '../src/outbound-webhooks.js'
+import {installMigrationLoadRoutes} from '../src/migration-loads.js';
+import { installInvoiceElevationRoutes } from '../src/invoice-elevations.js';
+import { installEstimateTemplateRoutes } from '../src/estimate-templates.js';
+import { installScheduledJobRoutes } from '../src/scheduled-jobs.js';
+import { installContractorReviewRoutes } from '../src/contractor-review.js';
+import { installBackupDownloadMintRoute } from '../src/backup-download.js';
 import { installPaymentRunRoutes } from '../src/payment-runs.js';
+import { installScheduledRunRoutes } from '../src/scheduled-runs.js';
+import { installStaffInvoiceRoutes } from '../src/staff-invoices.js';
 import { installStaffPaymentRoutes } from '../src/staff-payments.js';
+import { installDeelSyncRoutes } from '../src/deel-sync.js';
+import { installMyPaymentRoutes } from '../src/my-payments.js';
 import type { GeneralResourceRepository, TeamRepository } from "@ezacto/core";
 import { describe, expect, it } from "vitest";
 import {
@@ -13,8 +32,12 @@ import {
   installPayoutAccountRoutes,
   installInvoiceDocumentPreferenceRoutes,
   installInvoiceHoursReportRoutes,
+  installInvoiceHoursReconciliationRoutes,
   installThankYouPreferenceRoutes,
   installReminderSettingsRoutes,
+  installNotificationSettingsRoutes,
+  installTimesheetAutoApprovalRoutes,
+  installProfileNotificationRoutes,
   installInvoiceDefaultsRoutes,
   installRecurringRepairRoutes,
   installInvoiceTimeClaimRoutes,
@@ -25,8 +48,11 @@ import {
   generateOpenApiDocument,
   installAttachmentRoutes,
   installClientTreeRoutes,
+  installClientRateCardRoutes,
+  type ClientRateCardRepository,
   installEmailConfigurationRoutes,
   installEmailHealthRoutes,
+  installEmailSuppressionRoutes,
   installEmailLogRoutes,
   installGeneralResourceRoutes,
   installModuleSettingsRoutes,
@@ -47,6 +73,12 @@ import {
   installSessionRoutes,
   installSsoDomainRoutes,
   installTwoFactorRoutes,
+  installAllocationRoutes,
+  installCalendarProposalRoutes,
+  installCalendarConnectionRoutes,
+  installCalendarAuthorizationRoutes,
+  installCalendarOperatorCleanupRoutes,
+  installWorkItemRoutes,
   installTrackedResourceRoutes,
   installTeamRoutes,
   installTimesheetApprovalRoutes,
@@ -68,6 +100,9 @@ import {
   type MoneyResourceRouteOptions,
   type ReportReader,
   type SsoProvisioningDomainService,
+  type AllocationRepository,
+  type CalendarProposalRepository,
+  type WorkItemRepository,
   type TrackedResourceRepository,
   type UserEmailService,
   type TimesheetApprovalService,
@@ -87,6 +122,18 @@ const trackedRepository = new Proxy(
   {},
   { get: () => unavailable },
 ) as TrackedResourceRepository;
+const allocationRepository = new Proxy(
+  {},
+  { get: () => unavailable },
+) as AllocationRepository;
+const calendarProposals = new Proxy(
+  {},
+  { get: () => unavailable },
+) as CalendarProposalRepository;
+const workItems = new Proxy(
+  {},
+  { get: () => unavailable },
+) as WorkItemRepository;
 const timesheetApprovals = new Proxy(
   {},
   { get: () => unavailable },
@@ -123,6 +170,7 @@ const recurringGeneration = new Proxy(
 ) as RecurringGenerationPort;
 const team = new Proxy({}, { get: () => unavailable }) as TeamRepository;
 const treeReader = new Proxy({}, { get: () => unavailable }) as ClientTreeReader;
+const rateCards = new Proxy({}, { get: () => unavailable }) as ClientRateCardRepository;
 const tokens = new Proxy({}, { get: () => unavailable }) as ApiTokenService;
 const passwordAuth = new Proxy(
   {},
@@ -130,7 +178,18 @@ const passwordAuth = new Proxy(
 ) as PasswordAuthService;
 const authMailer = new Proxy({}, { get: () => unavailable }) as AuthMailer;
 const sessions = new Proxy({}, { get: () => unavailable }) as ApiSessionService;
-const emailLog = { list: unavailable, countByStatus: unavailable };
+const emailLog = {
+  list: unavailable,
+  countByStatus: unavailable,
+  countByStatusPerSender: unavailable,
+  snapshot: unavailable,
+  page: unavailable,
+  count: unavailable,
+};
+const logRouteOptions = {
+  cursorSigningKey: new Uint8Array(32),
+  timezone: async () => "UTC",
+};
 const emailConfiguration = new Proxy(
   {},
   { get: () => unavailable },
@@ -178,7 +237,13 @@ const documentedApp = () =>
         sessions: { issue: unavailable },
       });
     },
+    csvImportStaging: new Proxy({}, {get:()=>unavailable}) as never,
+    csvImportApply: {apply:unavailable,resume:unavailable,status:unavailable,cancel:unavailable},
     installApi: (api) => {
+      installInvoiceProviderAlertRoutes(api, new Proxy({}, { get: () => unavailable }) as never);
+      installBankDepositRoutes(api,new Proxy({}, {get:()=>unavailable}) as never);
+      installPlaceholderPlanningRoutes(api, new Proxy({}, { get: () => unavailable }) as never, { cursorSigningKey: new Uint8Array(32), clock: () => '2026-10-25T00:00:00.000Z' });
+      installOrganizationHolidayRoutes(api,new Proxy({}, {get:()=>unavailable}) as never,{cursorSigningKey:new Uint8Array(32),clock:()=> '2026-10-22T00:00:00.000Z'});
       installSessionRoutes(api, sessions);
       installAccountRetentionReviewRoutes(api,{store:profileRepository,clock:()=>"2026-10-09T00:00:00.000Z"});
       installAccountClosureRoutes(api, {
@@ -214,6 +279,7 @@ const documentedApp = () =>
         newState: () => "contract-fixture-state",
         sync: async () => null,
         syncState: async () => null,
+        reconcile: async () => null,
       });
       installWiseRoutes(api, {
         configured: () => true,
@@ -233,13 +299,20 @@ const documentedApp = () =>
         detachFor: async () => false,
         unlink: async () => false,
       });
-      installEmailLogRoutes(api, emailLog);
+      installEmailLogRoutes(api, emailLog, logRouteOptions);
       installEmailHealthRoutes(api, emailLog);
+      installEmailSuppressionRoutes(api, {
+        snapshot: unavailable, list: unavailable, lookup: unavailable, lift: unavailable,
+      }, { cursorSigningKey: new Uint8Array(32) });
       installEmailConfigurationRoutes(api, {
         service: emailConfiguration,
         clock: () => "2026-08-28T12:00:00.000Z",
       });
-      installOutboxRoutes(api, outbox);
+      installOutboxRoutes(api, outbox, {
+        ...logRouteOptions,
+        isActivityLogModuleEnabled: async () => true,
+        roll: { rollable: async () => [], roll: async () => "rolled" },
+      });
       installGeneralResourceRoutes(api, {
         repository: generalRepository,
         cursorSigningKey: new Uint8Array(32),
@@ -257,6 +330,42 @@ const documentedApp = () =>
           }),
         },
         isExpensesModuleEnabled: async () => true,
+      });
+      installAllocationRoutes(api, {
+        repository: allocationRepository,
+        cursorSigningKey: new Uint8Array(32),
+        clock: {
+          now: () => ({
+            instant: "2026-08-28T12:00:00.000Z",
+            date: "2026-08-28",
+            time: "12:00",
+          }),
+        },
+      });
+      installResourceCalendarRoutes(api, {
+        repository: { read: unavailable, context: unavailable, allocations: unavailable, projects: unavailable },
+        cursorSigningKey: new Uint8Array(32),
+        now: () => new Date('2026-10-05T00:30:00.000Z'),
+      });
+      installCalendarConnectionRoutes(api,{cleanupStatus:async()=>({pending:0,manual_required:0,revoked:0}),connections:async()=>[],disconnect:async()=>{},refresh:async()=>({state:'connected',applied:0})});
+      installCalendarAuthorizationRoutes(api, new Proxy({}, { get: () => unavailable }) as never);
+      installCalendarOperatorCleanupRoutes(api, new Proxy({}, { get: () => unavailable }) as never);
+      installCalendarProposalRoutes(api, {
+        repository: calendarProposals,
+        cursorSigningKey: new Uint8Array(32),
+        clock: {
+          now: () => ({
+            instant: "2026-08-28T12:00:00.000Z",
+            date: "2026-08-28",
+            time: "12:00",
+          }),
+        },
+      });
+      installWorkItemRoutes(api, {
+        repository: workItems,
+        credentialConfigured: () => true,
+        clock: () => "2026-08-28T12:00:00.000Z",
+        cursorSigningKey: new Uint8Array(32),
       });
       installTimesheetApprovalRoutes(api, {
         service: timesheetApprovals,
@@ -308,6 +417,7 @@ const documentedApp = () =>
         setOrganizationJournalFormats: async () => undefined,
       } as never);
       installInvoiceHoursReportRoutes(api, { readHoursReport: async () => null });
+      installInvoiceHoursReconciliationRoutes(api, { readHoursReconciliation: async () => null, releaseLineTime: unavailable });
       installInvoiceSendingRoutes(api, {
         service: {
           emailDefaults: async () => null,
@@ -334,15 +444,37 @@ const documentedApp = () =>
         readInvoiceReminders: async () => null,
         setInvoiceReminders: async () => false,
       });
+      installProfileNotificationRoutes(api, {
+        read: async () => null,
+        update: async () => null,
+      });
+      installNotificationSettingsRoutes(api, {
+        read: async () => ({ budget_alerts_include_admins: false, submission_reminder: null }),
+        update: async () => ({ budget_alerts_include_admins: false, submission_reminder: null }),
+      });
+      installTimesheetAutoApprovalRoutes(api, {
+        service: new Proxy({}, { get: () => unavailable }) as never,
+        clock: () => "2026-10-18T12:00:00.000Z",
+      });
       installInvoiceDefaultsRoutes(api, {
-        read: async () => ({ companyName: "Org", companyAddress: null, notes: null, subject: null }),
-        update: async () => ({ companyName: "Org", companyAddress: null, notes: null, subject: null }),
+        read: async () => ({ companyName: "Org", companyAddress: null, notes: null, subject: null, estimateValidityDays: null, viewReceipts: false }),
+        update: async () => ({ companyName: "Org", companyAddress: null, notes: null, subject: null, estimateValidityDays: null, viewReceipts: false }),
       });
       installInvoiceTimeClaimRoutes(api, {
         releaseInvoicedTime: async () => ({ kind: "released", released: 0 }),
       });
+      installMyPaymentRoutes(api, { read: async () => null });
+      installCalendarFeedRoutes(api, new Proxy({}, { get: () => unavailable }) as never);
+      installDeelStagingRoutes(api, { configured: false, bounds: () => null, preview: unavailable, stage: unavailable, lookup: unavailable });
+      installGithubReaderRoutes(api, new Proxy({}, {get:()=>unavailable}) as never);
+      installDeelPaymentStatusRoutes(api, { refresh: async () => ({ configured: false, checked: 0, failed: 0, remaining: 0, retry_after_ms: 0 }) });
+      installDeelSyncRoutes(api, { runtime: { status: () => ({ configured: false, reason: 'contract fixture' }), preview: unavailable, run: unavailable }, settings: { get: unavailable, save: unavailable }, recentRuns: async () => [], clock: () => '2026-10-09T00:00:00.000Z' });
       installStaffPaymentRoutes(api, { configureProvider: async () => {}, report: async (month, as_of) => ({ month, as_of, rows: [], provider_settings: { default_provider: "wise", version: 0, events: [] } }), append: async () => {} });
+      installContractorReviewRoutes(api, new Proxy({}, { get: () => unavailable }) as never);
+      installStaffInvoiceRoutes(api, new Proxy({}, { get: () => unavailable }) as never, new Proxy({}, { get: () => unavailable }) as never);
       installPaymentRunRoutes(api, new Proxy({}, { get: () => unavailable }) as never);
+      installScheduledJobRoutes(api, new Proxy({}, { get: () => unavailable }) as never, {cursorSigningKey:new Uint8Array(32)});
+      installScheduledRunRoutes(api, new Proxy({}, { get: () => unavailable }) as never);
       installPayoutAccountRoutes(api, {
         listForUser: async () => [],
         link: async () => ({ outcome: "unknown_user" }),
@@ -396,10 +528,46 @@ const documentedApp = () =>
         isTeamModuleEnabled: async () => true,
       });
       installClientTreeRoutes(api, treeReader);
+      installInvoiceElevationRoutes(api, {
+        store: {createRequest:unavailable,pending:unavailable,mint:unavailable,verify:unavailable,revoke:unavailable},
+        passwords:passwordAuth,policy:{isLive:async()=>true},secondFactor:twoFactor,emailCodesReady:false,
+        unlinkTime:unavailable,clock:()=>"2026-08-28T12:00:00.000Z",clientKey:()=>"contract-fixture",
+      });
+      installOutboundWebhookRoutes(api,new Proxy({}, {get:()=>unavailable}) as never,{cursorSigningKey:new Uint8Array(32)});
+      installMigrationLoadRoutes(api,{status:unavailable});
+      installEstimateTemplateRoutes(api, {
+        list: async () => [], get: unavailable, save: unavailable, createDraft: unavailable,
+      }, () => "2026-08-28T12:00:00.000Z");
+      installClientRateCardRoutes(api, {
+        repository: rateCards,
+        clock: {
+          now: () => ({
+            instant: "2026-08-28T12:00:00.000Z",
+            date: "2026-08-28",
+            time: "12:00",
+          }),
+        },
+      });
       // Mounted only where a deployment composes a reader -- the Worker does,
       // the container does not (`entry-surface.ts`). The fixture composes one so
       // the documented operation has something to be checked against.
-      installBackupStatusRoutes(api, { latestRuns: async () => [] });
+      installBackupStatusRoutes(
+        api,
+        {
+          latestRuns: async () => [],
+          runsSnapshot: unavailable,
+          pageRuns: unavailable,
+          countRuns: unavailable,
+        },
+        { cursorSigningKey: new Uint8Array(32) },
+      );
+      // The Worker composes the backup download link service; the container does
+      // not. The documented operation needs a mounted route to be checked against.
+      installBackupDownloadMintRoute(api, {
+        service: new Proxy({}, { get: () => unavailable }) as never,
+        activity: new Proxy({}, { get: () => unavailable }) as never,
+        clock: () => "2026-09-01T00:00:00.000Z",
+      });
     },
   });
 
@@ -455,6 +623,22 @@ describe("OpenAPI contract", () => {
     ).toMatchObject({ "200": expect.any(Object) });
     expect(schemas).toHaveProperty("TimesheetSubmissionDetail");
     expect(schemas).toHaveProperty("TimesheetSubmissionEntry");
+
+    for (const [path, method] of [
+      ["/api/v1/invoice-elevations", "post"],
+      ["/api/v1/invoice-elevations/verify", "post"],
+      ["/api/v1/invoice-elevations/email-code", "post"],
+      ["/api/v1/invoice-elevations/{id}", "delete"],
+      ["/api/v1/invoices/{id}/unlink-time", "post"],
+    ]) {
+      expect(paths[path!]?.[method!]).toMatchObject({ security: [{ bearerAuth: [] }] });
+    }
+    expect(paths["/api/v1/invoices/{id}"]?.patch).toMatchObject({
+      parameters: expect.arrayContaining([expect.objectContaining({ name: "X-Ezacto-Invoice-Elevation", in: "header" })]),
+    });
+    expect(paths["/api/v1/invoices/{id}/hours-reconciliation/release"]?.post).toMatchObject({
+      security: [{ cookieSession: [] }],
+    });
 
     const categoryCollection = paths["/api/v1/expense-categories"] as
       | {
@@ -602,7 +786,7 @@ describe("OpenAPI contract", () => {
     ]);
   });
 
-  it("[contract] documents safe legacy rate commands and inactive notification delivery", () => {
+  it("[contract] documents safe legacy rate commands and the notification preferences that can be delivered", () => {
     const document = generateOpenApiDocument() as {
       paths: Record<
         string,
@@ -631,18 +815,20 @@ describe("OpenAPI contract", () => {
     expect(document.components.schemas.UserRateInput?.required).toEqual(
       expect.arrayContaining(["expected_version", "amount_cents"]),
     );
+    // Mail is delivered (issue 935), so the daily reminder, the mail channel,
+    // team reminders and the digest can be on; desktop, Slack and the
+    // project-deletion notice have no delivery and can only be off.
     const notifications = document.components.schemas.TeamNotificationInput;
-    expect(notifications?.properties?.daily_reminder_enabled?.enum).toEqual([
-      false,
-    ]);
+    expect(notifications?.properties?.daily_reminder_enabled?.enum).toBeUndefined();
+    expect(notifications?.properties?.notify_project_deleted?.enum).toEqual([false]);
     expect(notifications?.properties?.channels?.$ref).toBe(
-      "#/components/schemas/TeamInactiveNotificationChannels",
+      "#/components/schemas/TeamNotificationChannelsInput",
     );
-    for (const property of ["email", "desktop", "slack"]) {
-      expect(
-        document.components.schemas.TeamInactiveNotificationChannels
-          ?.properties?.[property]?.enum,
-      ).toEqual([false]);
+    const channels = document.components.schemas.TeamNotificationChannelsInput;
+    expect(channels?.properties?.email?.enum).toBeUndefined();
+    for (const property of ["desktop", "slack"]) {
+      expect(channels?.properties?.[property]?.enum).toEqual([false]);
     }
   });
 });
+import { installResourceCalendarRoutes } from '../src/resources/resource-calendar.js'

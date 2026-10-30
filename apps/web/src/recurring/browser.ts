@@ -1,4 +1,6 @@
+import { setRequestBusy } from '../request-feedback.js'
 import { renderDataTable, type CellContent } from '../components/data-table.js'
+import { loadedRowsSortNotice } from '../components/table-sort.js'
 import { isDemoDeployment } from '../demo.js'
 import { markMoney, moneyText } from '../money-display.js'
 import { invoicePagePath } from '../invoices/model.js'
@@ -329,6 +331,7 @@ export const createRecurringWorkspaceController = (
     session !== null && recurringIdentityCanWrite(session.identity)
 
   const syncPending = (): void => {
+    setRequestBusy(deleteResult, mutationPending)
     loadMore.disabled = listPending
     listRetry.disabled = listPending
     // Hidden rather than disabled where the build or the profile cannot write:
@@ -362,6 +365,8 @@ export const createRecurringWorkspaceController = (
     nextCursor = null
     listPending = false
     issuePending = false
+    setRequestBusy(issueResult, false)
+    setRequestBusy(detailStatus, false)
     issueKey = null
     catalog = null
     detail = null
@@ -369,6 +374,7 @@ export const createRecurringWorkspaceController = (
     mutationPending = false
     list.replaceChildren()
     list.removeAttribute('aria-busy')
+    setRequestBusy(listStatus, false)
     config.replaceChildren()
     detailBody.hidden = true
     issueResult.textContent = ''
@@ -459,6 +465,8 @@ export const createRecurringWorkspaceController = (
     list.replaceChildren(
       renderDataTable<RecurringInvoice>({
         caption: 'Recurring invoices',
+        table: 'recurring-invoices',
+        defaultSort: { column: 'subject', direction: 'ascending' },
         rows,
         rowKey: (definition) => String(definition.id),
         groupBy: (definition) => recurringClientLabel(definition, clients),
@@ -467,16 +475,27 @@ export const createRecurringWorkspaceController = (
             key: 'subject',
             label: 'Subject',
             render: (definition) => definition.subject_template,
+            sortValue: (definition) => definition.subject_template,
           },
-          { key: 'cadence', label: 'Cadence', render: recurringCadenceLabel },
+          {
+            key: 'cadence',
+            label: 'Cadence',
+            fit: true,
+            render: recurringCadenceLabel,
+            sortValue: (definition) => recurringCadenceLabel(definition),
+          },
           {
             key: 'next',
+            fit: true,
             label: 'Next issue',
             render: (definition) => definition.next_issue_on,
+            sortValue: (definition) => definition.next_issue_on,
           },
           {
             key: 'due',
+            fit: true,
             label: 'Status',
+            sortValue: (definition) => recurringDueLabel(recurringDueState(definition, today)),
             render: (definition) => {
               const state = recurringDueState(definition, today)
               const pill = document.createElement('span')
@@ -486,11 +505,22 @@ export const createRecurringWorkspaceController = (
               return pill
             },
           },
-          { key: 'basis', label: 'Bills', render: recurringBasisLabel },
+          {
+            key: 'basis',
+            label: 'Bills',
+            fit: true,
+            render: recurringBasisLabel,
+            sortValue: (definition) => recurringBasisLabel(definition),
+          },
           {
             key: 'amount',
             label: 'Amount',
             numeric: true,
+            // The label is a phrase for a definition whose amount is not fixed,
+            // so it sorts as the words it reads as; a known amount sorts first
+            // by currency and then by its text.
+            sortValue: (definition) =>
+              recurringAmountLabel(definition, recurringCurrency(definition, clients)),
             render: (definition): CellContent => {
               const label = recurringAmountLabel(definition, recurringCurrency(definition, clients))
               return amountIsKnown(definition) ? moneyText(label) : label
@@ -502,7 +532,7 @@ export const createRecurringWorkspaceController = (
         ],
       }),
     )
-    listStatus.textContent = `${rows.length} ${rows.length === 1 ? 'definition' : 'definitions'} loaded${nextCursor === null ? '.' : '; more are available.'}`
+    listStatus.textContent = `${rows.length} ${rows.length === 1 ? 'definition' : 'definitions'} loaded${nextCursor === null ? '.' : `; more are available.${loadedRowsSortNotice}`}`
   }
 
   const renderConfig = (definition: Readonly<RecurringInvoice>, currency: string): void => {
@@ -654,6 +684,7 @@ export const createRecurringWorkspaceController = (
     issuedLink.hidden = true
     issueResult.dataset.outcome = 'pending'
     issueResult.textContent = 'Issuing…'
+    setRequestBusy(issueResult, true)
     try {
       const result = await api.generateRecurringInvoice(id, issueKey, session.signal)
       if (current() !== session) return
@@ -680,6 +711,7 @@ export const createRecurringWorkspaceController = (
     } finally {
       if (current() === session) {
         issuePending = false
+        setRequestBusy(issueResult, false)
         issue.disabled = api.generateRecurringInvoice === undefined
       }
     }
@@ -784,6 +816,7 @@ export const createRecurringWorkspaceController = (
     detailBody.hidden = true
     detailRetry.hidden = true
     detailStatus.textContent = 'Loading recurring invoice…'
+    setRequestBusy(detailStatus, true)
     // Editing what is not on screen is editing from memory, so Edit and Delete
     // go away until the definition behind them has been read back.
     detail = null
@@ -803,6 +836,8 @@ export const createRecurringWorkspaceController = (
       detailBody.hidden = true
       detailStatus.textContent = messageFor(error)
       detailRetry.hidden = false
+    } finally {
+      if (current() === session && generation === detailGeneration) setRequestBusy(detailStatus, false)
     }
   }
 
@@ -812,6 +847,7 @@ export const createRecurringWorkspaceController = (
     if (api.listRecurringInvoices === undefined) {
       list.replaceChildren()
       list.removeAttribute('aria-busy')
+      setRequestBusy(listStatus, false)
       listStatus.textContent = 'Recurring invoices are unavailable in this build.'
       loadMore.hidden = true
       listRetry.hidden = true
@@ -827,6 +863,7 @@ export const createRecurringWorkspaceController = (
     }
     listPending = true
     list.setAttribute('aria-busy', 'true')
+    setRequestBusy(listStatus, true)
     listStatus.textContent = reset
       ? 'Loading recurring invoices…'
       : 'Loading more recurring invoices…'
@@ -858,6 +895,7 @@ export const createRecurringWorkspaceController = (
       if (current() === session && generation === listGeneration) {
         listPending = false
         list.removeAttribute('aria-busy')
+        setRequestBusy(listStatus, false)
         syncPending()
       }
     }
@@ -1133,6 +1171,7 @@ export const createRecurringEditorController = (
   const currency = (): string => recurringCurrency({ client_id: Number(client.value) }, clients)
 
   const syncPending = (): void => {
+    setRequestBusy(result, pending)
     submit.disabled = pending
     addLine.disabled = pending
     for (const remove of lineList.querySelectorAll<HTMLButtonElement>(
@@ -1337,6 +1376,7 @@ export const createRecurringEditorController = (
     status.textContent = 'Loading the editor…'
     attachments = []
     attachmentBusy = false
+    for (const region of [status, result, attachmentsStatus, removeResult]) setRequestBusy(region, false)
     uploadKey = null
     removing = null
     attachmentList.replaceChildren()
@@ -1348,6 +1388,10 @@ export const createRecurringEditorController = (
   }
 
   const syncAttachmentControls = (): void => {
+    if (!attachmentBusy) {
+      setRequestBusy(attachmentsStatus, false)
+      setRequestBusy(removeResult, false)
+    }
     attachmentSubmit.disabled = attachmentBusy
     removeSubmit.disabled = attachmentBusy
     for (const button of attachmentList.querySelectorAll<HTMLButtonElement>('button')) {
@@ -1513,6 +1557,7 @@ export const createRecurringEditorController = (
     attachmentBusy = true
     syncAttachmentControls()
     attachmentsStatus.textContent = 'Uploading file…'
+    setRequestBusy(attachmentsStatus, true)
     try {
       await api.uploadRecurringInvoiceAttachment(definitionId, uploadKey, body, session.signal)
       if (current() !== session) return
@@ -1554,6 +1599,7 @@ export const createRecurringEditorController = (
     attachmentBusy = true
     syncAttachmentControls()
     attachmentsStatus.textContent = 'Saving…'
+    setRequestBusy(attachmentsStatus, true)
     try {
       const updated = await api.setRecurringInvoiceAttachmentThrough(
         definitionId,
@@ -1603,6 +1649,7 @@ export const createRecurringEditorController = (
     attachmentBusy = true
     syncAttachmentControls()
     removeResult.textContent = 'Removing…'
+    setRequestBusy(removeResult, true)
     try {
       await api.removeRecurringInvoiceAttachment(definitionId, attachment.id, session.signal)
       if (current() !== session) return
@@ -1650,6 +1697,7 @@ export const createRecurringEditorController = (
     form.hidden = true
     retry.hidden = true
     status.textContent = editing === 'new' ? 'Loading clients and projects…' : 'Loading the definition…'
+    setRequestBusy(status, true)
     try {
       const [loadedClients, loadedProjects, definition] = await Promise.all([
         api.listRecurringClients === undefined
@@ -1680,6 +1728,8 @@ export const createRecurringEditorController = (
       if (session.onSessionFailure(error)) return
       status.textContent = messageFor(error)
       retry.hidden = false
+    } finally {
+      if (current() === session && generation === loadGeneration) setRequestBusy(status, false)
     }
   }
 

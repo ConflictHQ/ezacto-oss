@@ -1,7 +1,10 @@
+import { outsideClaim } from '@ezacto/db'
 import {
   InProcessEmailQueue,
   processQueuedEmail,
   type EmailLogStore,
+  type EmailAttachmentResolver,
+  type EmailSuppressionReason,
   type EmailQueue,
   type HttpEmailProvider,
   type InProcessEmailScheduler,
@@ -21,7 +24,12 @@ export class ContainerEmailQueue implements EmailQueue {
   private readonly shutdown = new AbortController()
   private accepting = true
 
-  constructor(log: EmailLogStore, provider: HttpEmailProvider) {
+  constructor(
+    log: EmailLogStore,
+    provider: HttpEmailProvider,
+    getRecipientSuppression?: (recipients: readonly string[]) => Promise<EmailSuppressionReason | null>,
+    resolveAttachment?: EmailAttachmentResolver,
+  ) {
     const scheduler: InProcessEmailScheduler = (task, delaySeconds) => {
       const scheduled: Scheduled = {
         timer: setTimeout(() => {
@@ -43,13 +51,21 @@ export class ContainerEmailQueue implements EmailQueue {
     }
     this.queue = new InProcessEmailQueue(
       (job, attempt) =>
-        processQueuedEmail(job, attempt, log, shutdownAwareProvider),
+        processQueuedEmail(
+          job, attempt, log, shutdownAwareProvider,
+          {
+            ...(getRecipientSuppression === undefined ? {} : { getRecipientSuppression }),
+            ...(resolveAttachment === undefined ? {} : { resolveAttachment }),
+          },
+        ),
       scheduler,
     )
   }
 
   private run(task: () => Promise<void>): void {
-    const pending = task()
+    // Delivery has its own durable mail claim; it must not inherit the HTTP
+    // request that scheduled it, which may already have returned its answer.
+    const pending = outsideClaim(task)
       .catch((error: unknown) => {
         const name = error instanceof Error ? error.name : 'UnknownError'
         console.error(`email queue task failed: ${name}`)

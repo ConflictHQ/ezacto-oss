@@ -119,8 +119,10 @@ const reportReader: ReportReader = {
   listSavedReports: async () => [],
   readSavedReport: async () => null,
   createSavedReport: async () => { throw new Error('not used') },
+  createReportView: async () => { throw new Error('not used') },
   updateSavedReport: async () => 'not_found',
   shareSavedReport: async () => false,
+  shareSavedReportWithProfile: async () => false,
   pinSavedReport: async () => false,
   deleteSavedReport: async () => false,
   runSavedReport: async () => null,
@@ -164,6 +166,7 @@ const reportReader: ReportReader = {
       unclaimedSeconds: 0,
       timeEntryCount: 0,
       currencies: [],
+      facets: { people: [], tasks: [], roles: [], tags: [] },
       rows: [],
     },
   }),
@@ -481,6 +484,19 @@ const generalResources: GeneralResourceRouteOptions['repository'] = {
   highWatermarkRates: async () => null,
   listRates: async () => [],
   getRate: async () => {
+    throw new Error('not used')
+  },
+  // The /harvest/v2 shim's reads (issue 11); the MCP server never calls them.
+  count: async () => {
+    throw new Error('not used')
+  },
+  listOffset: async () => {
+    throw new Error('not used')
+  },
+  getMany: async () => {
+    throw new Error('not used')
+  },
+  currentRates: async () => {
     throw new Error('not used')
   },
 }

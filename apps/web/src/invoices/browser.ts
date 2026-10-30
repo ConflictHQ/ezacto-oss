@@ -1,5 +1,11 @@
-import { renderDataTable, type CellContent } from '../components/data-table.js'
+import { setRequestBusy } from '../request-feedback.js'
+import { createInvoiceProviderAlerts } from './provider-alerts.js'
+import { accountingProviderAvailable } from '../accounting-providers.js'
+import { renderDataTable, type CellContent, type DataTableSort } from '../components/data-table.js'
+import { rememberedSort, resolveSort } from '../components/table-sort.js'
+import { projectTimeRounding, roundingWithSource } from '../components/time-entry-editor.js'
 import { DEMO_MAIL_NOTE, isDemoDeployment, isDemoMailRestricted } from '../demo.js'
+import { attachmentsAvailable, ATTACHMENTS_UNAVAILABLE } from '../attachments-availability.js'
 import { markMoney, moneyText } from '../money-display.js'
 import {
   type Attachment,
@@ -30,6 +36,7 @@ import {
   invoiceCanRecordPayment,
   invoiceConflictCodes,
   invoiceEditHref,
+  invoiceEndClientSubtotals,
   invoiceIdentityCanRead,
   invoiceIdentityCanWrite,
   invoiceLineQuantityForForm,
@@ -192,11 +199,42 @@ const columnTotal = (
   )
 }
 
+/**
+ * The columns the server can order the invoice list by (issue 852), and the
+ * `sort` word each one is. Client and Status are absent on purpose: a client's
+ * display name and the derived overdue pill cannot be ordered consistently with
+ * the cursor, so they are not offered rather than offered and wrong.
+ */
+const invoiceServerSorts: Readonly<Record<string, string>> = {
+  number: 'number',
+  issued: 'issue_date',
+  'due-date': 'due_date',
+  amount: 'amount',
+  balance: 'balance',
+}
+
+const invoiceDefaultSort: DataTableSort = { column: 'issued', direction: 'descending' }
+
+/** The sort the list shows: the one just chosen, else the one remembered, else newest first. */
+export const invoiceListSort = (chosen: DataTableSort | null): DataTableSort =>
+  resolveSort(
+    [chosen, rememberedSort('invoices')],
+    (column) => column in invoiceServerSorts,
+    invoiceDefaultSort,
+  )!
+
+/** The `sort` parameter for a sort, or undefined for newest first, which is what absent means. */
+export const invoiceSortParameter = (sort: DataTableSort): string | undefined =>
+  sort.column === invoiceDefaultSort.column && sort.direction === invoiceDefaultSort.direction
+    ? undefined
+    : `${sort.direction === 'descending' ? '-' : ''}${invoiceServerSorts[sort.column]}`
+
 export const renderInvoiceListItems = (
   invoices: readonly Invoice[],
   // A filtered list that empties is not an account with no invoices in it, and
   // the table is the only thing that says so to someone mid-search.
   empty = 'No invoices have been created or imported yet.',
+  sorting?: { readonly sort: DataTableSort | null; readonly onSort: (sort: DataTableSort) => void },
 ): number => {
   const list = required<HTMLElement>('[data-invoice-list]')
   list.replaceChildren(
@@ -205,16 +243,41 @@ export const renderInvoiceListItems = (
       rows: invoices,
       rowKey: (invoice) => String(invoice.id),
       empty,
+      // The server ordered these rows; the headers ask for another order and
+      // the list is fetched again, so Load more continues in it.
+      table: 'invoices',
+      serverSort: true,
+      defaultSort: invoiceDefaultSort,
+      ...(sorting === undefined ? {} : { sort: invoiceListSort(sorting.sort), onSort: sorting.onSort }),
       columns: [
-        { key: 'status', label: 'Status', render: invoiceStatePill },
-        { key: 'number', label: 'Invoice', render: invoiceNumberLink },
+        { key: 'status', label: 'Status', fit: true, render: invoiceStatePill },
+        {
+          key: 'number',
+          label: 'Invoice',
+          fit: true,
+          render: invoiceNumberLink,
+          sortValue: (invoice) => invoice.number,
+        },
         { key: 'client', label: 'Client', render: (invoice) => clientLabel(invoice.client_id) },
-        { key: 'issued', label: 'Issued', render: (invoice) => dateLabel(invoice.issue_date) },
-        { key: 'due-date', label: 'Due', render: invoiceDueLabel },
+        {
+          key: 'issued',
+          label: 'Issued',
+          fit: true,
+          render: (invoice) => dateLabel(invoice.issue_date),
+          sortValue: (invoice) => invoice.issue_date,
+        },
+        {
+          key: 'due-date',
+          label: 'Due',
+          fit: true,
+          render: invoiceDueLabel,
+          sortValue: (invoice) => invoice.due_date,
+        },
         {
           key: 'amount',
           label: 'Amount',
           numeric: true,
+          sortValue: (invoice) => invoice.amount_cents,
           render: (invoice) => moneyText(money(invoice.amount_cents, invoice.currency)),
           total: (rows) => columnTotal(rows, (invoice) => invoice.amount_cents),
         },
@@ -222,6 +285,7 @@ export const renderInvoiceListItems = (
           key: 'balance',
           label: 'Balance',
           numeric: true,
+          sortValue: (invoice) => invoice.due_amount_cents,
           render: (invoice) => moneyText(money(invoice.due_amount_cents, invoice.currency)),
           total: (rows) => columnTotal(rows, (invoice) => invoice.due_amount_cents),
         },
@@ -504,6 +568,7 @@ export interface InvoicePaymentController {
 export const createInvoicePaymentController = (
   api: Partial<InvoicePaymentApi>,
 ): InvoicePaymentController => {
+  const providerAlerts = createInvoiceProviderAlerts(api)
   const detailPage = document.documentElement.dataset.appView === 'invoice-detail'
   const status = required<HTMLElement>('[data-invoice-detail-status]')
   const retry = required<HTMLButtonElement>('[data-invoice-detail-retry]')
@@ -572,6 +637,7 @@ export const createInvoicePaymentController = (
   const composerConfirmLabel = required<HTMLElement>('[data-invoice-composer-confirm-label]')
   const composerConfirm = required<HTMLInputElement>('[data-invoice-composer-confirm]')
   const composerResult = required<HTMLElement>('[data-invoice-composer-result]')
+  const composerHoursWarning = required<HTMLElement>('[data-invoice-composer-hours-warning]')
   const composerSubmit = required<HTMLButtonElement>('[data-invoice-composer-submit]')
   const composerAttachments = required<HTMLFieldSetElement>('[data-invoice-composer-attachments]')
   const composerAttachPdf = required<HTMLInputElement>('[data-invoice-composer-attach-pdf]')
@@ -633,6 +699,11 @@ export const createInvoicePaymentController = (
   let editingPayment: InvoicePayment | null = null
   let deletingPayment: InvoicePayment | null = null
   let mutationPending = false
+  let mutationFeedback: HTMLElement | null = null
+  const showMutationFeedback = (region: HTMLElement): void => {
+    mutationFeedback = region
+    setRequestBusy(region, true)
+  }
   let refreshRequired = false
   let paymentCommandId: string | null = null
   let settleCommandId: string | null = null
@@ -669,6 +740,8 @@ export const createInvoicePaymentController = (
   // choice stands; the server's answer only moves a box nobody has touched.
   let deliveryChosen = false
   let previewPending = false
+  let hoursWarningGeneration = 0
+  let hoursWarningPending = false
 
   const current = (): ActiveSession | null =>
     active !== null &&
@@ -676,6 +749,43 @@ export const createInvoicePaymentController = (
     !active.signal.aborted
       ? active
       : null
+
+  // Read again on opening and preview: linked entries may change independently
+  // of invoice quantities. Failure stays visible rather than implying a match.
+  const loadHoursWarning = async (session: ActiveSession, shown: Readonly<Invoice>): Promise<void> => {
+    const generation = ++hoursWarningGeneration
+    composerHoursWarning.hidden = api.getInvoiceHoursReconciliation === undefined
+    composerHoursWarning.textContent = ''
+    if (!api.getInvoiceHoursReconciliation) return
+    hoursWarningPending = true
+    composerHoursWarning.textContent = 'Comparing linked time with billed hours…'
+    syncComposer()
+    try {
+      const review = await api.getInvoiceHoursReconciliation(shown.id, session.signal)
+      if (current() !== session || generation !== hoursWarningGeneration) return
+      if (review.invoice_version !== null && review.invoice_version !== shown.version) {
+        composerHoursWarning.textContent = 'The invoice changed. Reload it before comparing its hours report.'
+      } else if (review.has_mismatch) {
+        const linked = (review.linked_seconds / 3600).toFixed(2)
+        const billed = (review.billed_seconds / 3600).toFixed(2)
+        composerHoursWarning.textContent = `Hours report warning: linked ${linked} h · billed ${billed} h on comparable lines. At least one line differs. Review or release linked time in the invoice editor before sending.${review.comparison_complete ? '' : ' Some lines or entries cannot be compared.'}`
+      } else if (!review.comparison_complete && (review.entries.length || review.not_compared.length)) {
+        composerHoursWarning.textContent = 'The hours report comparison is incomplete. Some lines or linked entries cannot be compared with billed hours; review them before sending.'
+      } else {
+        composerHoursWarning.hidden = true
+        composerHoursWarning.textContent = ''
+      }
+    } catch (error) {
+      if (current() !== session || generation !== hoursWarningGeneration) return
+      if (session.onSessionFailure(error)) { clearPrivatePresentation(); active = null; return }
+      composerHoursWarning.textContent = 'Linked hours could not be compared. Review the hours report before sending, or reopen this dialog to retry.'
+    } finally {
+      if (current() === session && generation === hoursWarningGeneration) {
+        hoursWarningPending = false
+        syncComposer()
+      }
+    }
+  }
 
   const commandId = (kind: 'record' | 'update' | 'delete'): string =>
     `web.invoice.payment.${kind}:${globalThis.crypto.randomUUID()}`
@@ -766,6 +876,7 @@ export const createInvoicePaymentController = (
       previewPending || mutationPending || refreshRequired || api.sendInvoiceEmailPreview === undefined
     composerPreviewSend.hidden = api.sendInvoiceEmailPreview === undefined
     if (!delivering) composerPreviewPanel.hidden = true
+    composerSubmit.disabled = mutationPending || refreshRequired || hoursWarningPending
     syncAttachments()
   }
 
@@ -1038,21 +1149,25 @@ export const createInvoicePaymentController = (
       return
     }
     previewPending = true
+    setRequestBusy(composerPreviewResult, true)
     composerPreviewResult.textContent = sendToMe ? 'Sending a preview to you…' : 'Composing the preview…'
     syncComposer()
-    const request = sendToMe
-      ? api.sendInvoiceEmailPreview!(selected.id, input, session.signal).then((sent) => {
-          if (current() !== session) return
-          const to = sent.to.map(({ email }) => email).join(', ')
-          composerPreviewResult.textContent = mailRestricted
-            ? `A preview for ${to}, stamped PREVIEW, was recorded. ${DEMO_MAIL_NOTE} Nothing was sent to the client.`
-            : `A preview went to ${to} only, stamped PREVIEW. Nothing was sent to the client.`
-        })
-      : api.previewInvoiceEmail!(selected.id, input, session.signal).then((preview) => {
-          if (current() !== session) return
-          renderPreview(preview)
-          composerPreviewResult.textContent = ''
-        })
+    const request = loadHoursWarning(session, selected).then(() => {
+      if (current() !== session) return
+      return sendToMe
+        ? api.sendInvoiceEmailPreview!(selected.id, input, session.signal).then((sent) => {
+            if (current() !== session) return
+            const to = sent.to.map(({ email }) => email).join(', ')
+            composerPreviewResult.textContent = mailRestricted
+              ? `A preview for ${to}, stamped PREVIEW, was recorded. ${DEMO_MAIL_NOTE} Nothing was sent to the client.`
+              : `A preview went to ${to} only, stamped PREVIEW. Nothing was sent to the client.`
+          })
+        : api.previewInvoiceEmail!(selected.id, input, session.signal).then((preview) => {
+            if (current() !== session) return
+            renderPreview(preview)
+            composerPreviewResult.textContent = ''
+          })
+    })
     void request
       .catch((error: unknown) => {
         if (current() !== session) return
@@ -1071,6 +1186,7 @@ export const createInvoicePaymentController = (
       .finally(() => {
         if (current() === session) {
           previewPending = false
+          setRequestBusy(composerPreviewResult, false)
           syncComposer()
         }
       })
@@ -1104,6 +1220,10 @@ export const createInvoicePaymentController = (
   }
 
   const syncControls = (): void => {
+    if (!mutationPending && mutationFeedback) {
+      setRequestBusy(mutationFeedback, false)
+      mutationFeedback = null
+    }
     const session = current()
     const canWrite =
       session !== null && invoice !== null && invoiceIdentityCanWrite(session.identity)
@@ -1267,8 +1387,8 @@ export const createInvoicePaymentController = (
   }
 
   const loadAttachments = async (session: ActiveSession, invoiceId: number): Promise<void> => {
-    if (api.listInvoiceAttachments === undefined) {
-      attachmentStatus.textContent = 'Attachment storage is unavailable in this build.'
+    if (!attachmentsAvailable() || api.listInvoiceAttachments === undefined) {
+      attachmentStatus.textContent = ATTACHMENTS_UNAVAILABLE
       return
     }
     try {
@@ -1307,7 +1427,7 @@ export const createInvoicePaymentController = (
    * page has to show.
    */
   const loadQuickBooks = async (session: ActiveSession, invoiceId: number): Promise<void> => {
-    if (api.getInvoiceQuickBooks === undefined) {
+    if (api.getInvoiceQuickBooks === undefined || !accountingProviderAvailable('quickbooks')) {
       quickBooks = null
       renderQuickBooks()
       syncControls()
@@ -1369,7 +1489,10 @@ export const createInvoicePaymentController = (
   }
 
   const clearPrivatePresentation = (): void => {
+    providerAlerts.clear()
     invoice = null
+    mutationFeedback = null
+    for (const region of [status, paymentResult, deleteResult, composerResult, transitionResult, attachmentStatus, composerPreviewResult, remindersLine]) setRequestBusy(region, false)
     payments = []
     attachments = []
     quickBooks = null
@@ -1393,6 +1516,10 @@ export const createInvoicePaymentController = (
     emailDefaultsLoading = false
     emailDefaultsGeneration += 1
     previewPending = false
+    hoursWarningGeneration += 1
+    hoursWarningPending = false
+    composerHoursWarning.hidden = true
+    composerHoursWarning.textContent = ''
     composerPreviewPanel.hidden = true
     composerPreviewResult.textContent = ''
     closeDialogs()
@@ -1436,12 +1563,118 @@ export const createInvoicePaymentController = (
     notes.textContent = ''
     required<HTMLElement>('[data-invoice-detail-notes-section]').hidden = true
     required<HTMLElement>('[data-invoice-detail-lines]').replaceChildren()
+    required<HTMLElement>('[data-invoice-rounding-fact]').hidden = true
+    required<HTMLElement>('[data-invoice-end-clients]').hidden = true
     required<HTMLElement>('[data-invoice-detail-payments]').replaceChildren()
     required<HTMLElement>('[data-invoice-detail-messages]').replaceChildren()
     const reminderLine = required<HTMLElement>('[data-invoice-reminder-line]')
     reminderLine.textContent = ''
     reminderLine.hidden = true
     syncControls()
+  }
+
+  /**
+   * Which rounding the projects on this invoice's lines are under (issue 949).
+   * A project the reader cannot see the rule of, or cannot read at all, is left
+   * out rather than guessed at, and with nothing to say the row stays hidden.
+   */
+  const loadRounding = async (session: ActiveSession, shown: Readonly<Invoice>): Promise<void> => {
+    const fact = required<HTMLElement>('[data-invoice-rounding-fact]')
+    const text = required<HTMLElement>('[data-invoice-detail-rounding]')
+    fact.hidden = true
+    text.textContent = ''
+    const getProject = api.getDirectoryProject
+    const getSettings = api.getTimeEntrySettings
+    if (getProject === undefined || getSettings === undefined) return
+    const projectIds = [
+      ...new Set(shown.line_items.flatMap((line) => (line.project_id === null ? [] : [line.project_id]))),
+    ]
+    if (projectIds.length === 0) return
+    try {
+      const organization = (await getSettings(session.signal)).time_rounding
+      const projects = await Promise.all(
+        projectIds.map((id) => getProject(id, session.signal).catch(() => null)),
+      )
+      if (current() !== session || invoice?.id !== shown.id) return
+      const parts = projects.flatMap((project) => {
+        if (project === null) return []
+        const rule = projectTimeRounding(project, organization)
+        const name = typeof project['name'] === 'string' ? project['name'] : `Project #${project.id}`
+        return rule === undefined ? [] : [`${name}: ${roundingWithSource(rule)}`]
+      })
+      if (parts.length === 0) return
+      text.textContent = parts.join('; ')
+      fact.hidden = false
+    } catch {
+      // A nicety: the invoice is complete without it.
+    }
+  }
+
+  /**
+   * An invoice for a parent client bills its end-clients' work, each line
+   * attributed by its project (issue 33). With two or more end-clients named,
+   * this lists what each comes to; for any other invoice it stays hidden. The
+   * projects and the clients' names are niceties read beside the invoice, so a
+   * failure leaves the invoice as it was.
+   */
+  const loadEndClients = async (session: ActiveSession, shown: Readonly<Invoice>): Promise<void> => {
+    const panel = required<HTMLElement>('[data-invoice-end-clients]')
+    const rows = required<HTMLTableSectionElement>('[data-invoice-end-client-rows]')
+    panel.hidden = true
+    rows.replaceChildren()
+    const getProject = api.getDirectoryProject
+    const getClient = api.getDirectoryClient
+    if (getProject === undefined || getClient === undefined) return
+    const projectIds = [
+      ...new Set(shown.line_items.flatMap((line) => (line.project_id === null ? [] : [line.project_id]))),
+    ]
+    if (projectIds.length < 2) return
+    try {
+      const projects = await Promise.all(
+        projectIds.map((id) => getProject(id, session.signal).catch(() => null)),
+      )
+      const clientOfProject = new Map<number, number>()
+      projects.forEach((project, index) => {
+        const clientId = project?.['client_id']
+        if (typeof clientId === 'number') clientOfProject.set(projectIds[index]!, clientId)
+      })
+      const subtotals = invoiceEndClientSubtotals(shown.line_items, clientOfProject)
+      if (subtotals === null) return
+      const names = new Map<number, string>()
+      await Promise.all(
+        subtotals.flatMap(({ clientId }) =>
+          clientId === null
+            ? []
+            : [
+                getClient(clientId, session.signal)
+                  .then((client) => {
+                    if (typeof client.name === 'string' && client.name.trim() !== '') {
+                      names.set(clientId, client.name.trim())
+                    }
+                  })
+                  .catch(() => undefined),
+              ],
+        ),
+      )
+      if (current() !== session || invoice?.id !== shown.id) return
+      rows.replaceChildren(
+        ...subtotals.map(({ clientId, cents }) => {
+          const row = document.createElement('tr')
+          if (clientId !== null) row.dataset.endClient = String(clientId)
+          const name = document.createElement('th')
+          name.scope = 'row'
+          name.textContent = clientId === null ? 'Other lines' : (names.get(clientId) ?? `Client #${clientId}`)
+          const amount = document.createElement('td')
+          amount.dataset.label = 'Subtotal'
+          amount.append(moneyText(money(cents, shown.currency)))
+          row.append(name, amount)
+          return row
+        }),
+      )
+      panel.hidden = false
+    } catch {
+      // A nicety: the invoice is complete without it.
+    }
   }
 
   const loadDetail = async (
@@ -1480,6 +1713,7 @@ export const createInvoicePaymentController = (
     }
     const requested = ++requestGeneration
     status.textContent = options.hideDocument ? 'Loading invoice…' : 'Refreshing invoice…'
+    setRequestBusy(status, true)
     retry.hidden = true
     if (options.hideDocument) article.hidden = true
     else article.setAttribute('aria-busy', 'true')
@@ -1549,13 +1783,24 @@ export const createInvoicePaymentController = (
       status.textContent = options.headlineMessage ?? ''
       workflowStatus.textContent = options.successMessage ?? ''
       const canWrite = invoiceIdentityCanWrite(session.identity)
-      attachmentForm.hidden = demo || !canWrite || api.uploadInvoiceAttachment === undefined
-      attachmentReadonly.hidden = demo || canWrite || api.uploadInvoiceAttachment === undefined
-      attachmentDemo.hidden = !demo || api.uploadInvoiceAttachment === undefined
+      attachmentForm.hidden = !attachmentsAvailable() || demo || !canWrite || api.uploadInvoiceAttachment === undefined
+      attachmentReadonly.hidden = !attachmentsAvailable() || demo || canWrite || api.uploadInvoiceAttachment === undefined
+      attachmentDemo.hidden = !attachmentsAvailable() || !demo || api.uploadInvoiceAttachment === undefined
       attachmentSubmit.disabled = false
+      void loadRounding(session, loadedInvoice)
+      void loadEndClients(session, loadedInvoice)
       void loadAttachments(session, invoiceId!)
       void loadQuickBooks(session, invoiceId!)
       void loadReminders(session, invoiceId!)
+      if (session.identity.authentication.kind === 'session') {
+        void providerAlerts.load(invoiceId!, {
+          key: session,
+          signal: session.signal,
+          administrator: session.identity.profile === 'administrator',
+          isCurrent: () => current() === session && invoice?.id === invoiceId,
+          onSessionFailure: session.onSessionFailure,
+        })
+      } else providerAlerts.clear()
       syncControls()
       return true
     } catch (error) {
@@ -1572,6 +1817,7 @@ export const createInvoicePaymentController = (
     } finally {
       if (current() === session && requested === requestGeneration) {
         article.removeAttribute('aria-busy')
+        setRequestBusy(status, false)
         syncControls()
       }
     }
@@ -1701,6 +1947,7 @@ export const createInvoicePaymentController = (
     // submit, all off the attempt, so no entry point sets them independently.
     syncControls()
     composerDialog.showModal()
+    void loadHoursWarning(session, invoice)
     // Read afresh on every opening: the invoice's choices are its own state,
     // and an earlier send may have changed them.
     if (attachmentsOffered()) void loadDocumentPreference(session, invoice.id)
@@ -1845,6 +2092,7 @@ export const createInvoicePaymentController = (
     const activeCommand = transitionCommandId
     mutationPending = true
     transitionResult.textContent = 'Applying the invoice command…'
+    showMutationFeedback(transitionResult)
     syncControls()
     void transitionInvoice(selectedInvoice.id, activeCommand, input, session.signal)
       .then(async (updatedInvoice) => {
@@ -1917,6 +2165,7 @@ export const createInvoicePaymentController = (
       session === null ||
       selectedInvoice === null ||
       transitionInvoice === undefined ||
+      hoursWarningPending ||
       mutationPending ||
       refreshRequired ||
       !invoiceIdentityCanWrite(session.identity) ||
@@ -1968,6 +2217,7 @@ export const createInvoicePaymentController = (
     const names = {
       clientName: emailDefaults?.client_name ?? clientLabel(selectedInvoice.client_id),
       companyName: emailDefaults?.company_name ?? '',
+      ...(emailDefaults === null ? {} : { timeZone: emailDefaults.time_zone }),
     }
     try {
       if (delivering && attachmentsOffered()) {
@@ -2070,6 +2320,7 @@ export const createInvoicePaymentController = (
           }
     sendAttempt = attempt
     mutationPending = true
+    showMutationFeedback(composerResult)
     composerResult.textContent =
       work === 'delivery'
         ? 'Queueing the email…'
@@ -2298,6 +2549,7 @@ export const createInvoicePaymentController = (
     const activeCommand = paymentCommandId
     mutationPending = true
     paymentResult.textContent = selectedPayment === null ? 'Recording payment…' : 'Saving payment…'
+    showMutationFeedback(paymentResult)
     syncControls()
     const request =
       selectedPayment === null
@@ -2381,6 +2633,7 @@ export const createInvoicePaymentController = (
     const activeCommand = deleteCommandId
     mutationPending = true
     deleteResult.textContent = 'Deleting payment…'
+    showMutationFeedback(deleteResult)
     syncControls()
     void deletePayment(
       selectedInvoice.id,
@@ -2460,6 +2713,7 @@ export const createInvoicePaymentController = (
     const activeCommand = settleCommandId
     mutationPending = true
     status.textContent = 'Recording payment…'
+    showMutationFeedback(status)
     syncControls()
     void recordPayment(
       selectedInvoice.id,
@@ -2513,6 +2767,8 @@ export const createInvoicePaymentController = (
     // organization, so a default set later still governs it.
     const wanted: boolean | null = remindersToggle.checked ? null : false
     remindersSaving = true
+    remindersLine.textContent = 'Saving reminder preference…'
+    setRequestBusy(remindersLine, true)
     remindersToggle.disabled = true
     void set(selectedInvoice.id, wanted, session.signal)
       .then((preference) => {
@@ -2527,6 +2783,7 @@ export const createInvoicePaymentController = (
       .finally(() => {
         if (current() !== session) return
         remindersSaving = false
+        setRequestBusy(remindersLine, false)
         renderReminders()
       })
   })
@@ -2547,6 +2804,7 @@ export const createInvoicePaymentController = (
       return
     }
     quickBooksSyncing = true
+    setRequestBusy(status, true)
     status.textContent = 'Syncing to QuickBooks…'
     syncControls()
     void sync(selectedInvoice.id, session.signal)
@@ -2581,6 +2839,7 @@ export const createInvoicePaymentController = (
       .finally(() => {
         if (current() !== session) return
         quickBooksSyncing = false
+        setRequestBusy(status, false)
         syncControls()
       })
   })
@@ -2591,6 +2850,7 @@ export const createInvoicePaymentController = (
     event.preventDefault()
     const session = current()
     if (
+      !attachmentsAvailable() ||
       session === null ||
       !invoiceIdentityCanWrite(session.identity) ||
       invoice === null ||
@@ -2608,6 +2868,7 @@ export const createInvoicePaymentController = (
     mutationPending = true
     attachmentSubmit.disabled = true
     attachmentStatus.textContent = 'Uploading file…'
+    showMutationFeedback(attachmentStatus)
     // Painted locked now and unlocked when it settles, like every other
     // mutation here. The reads loaded beside the invoice repaint the controls
     // whenever they answer; one answering mid-upload locks Send, and without

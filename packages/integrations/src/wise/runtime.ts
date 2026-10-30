@@ -1,3 +1,4 @@
+import { wiseTransferException } from '@ezacto/core';
 /**
  * The Wise connection, assembled (issue 543).
  *
@@ -157,14 +158,11 @@ export interface WisePayoutAccountPort {
   detach(id: number, now: string): Promise<boolean>;
 }
 
-/**
- * The delivery ledger and the transfer log.
- *
- * `claim` is first and is the arbiter: Wise retries anything it did not get a
- * 2xx for, and only the first caller for a delivery id may act.
- */
+/** A verified event is completed by one local atomic store operation.
+ * Custom ports must implement this boundary; split claim/settle cannot recover
+ * a crash between writes. No provider request belongs inside this operation. */
 export interface WiseDeliveryPort {
-  claim(input: {
+  process(input: {
     deliveryId: string;
     subscriptionId: string;
     eventType: string;
@@ -172,17 +170,9 @@ export interface WiseDeliveryPort {
     currentState: string | null;
     occurredAt: string | null;
     now: string;
-  }): Promise<{ claim: "fresh" } | { claim: "duplicate" }>;
-  finish(deliveryId: string, now: string, skippedReason: string | null): Promise<void>;
-  settleTransfer(input: {
-    transferId: string;
-    outcome: "sent" | "failed";
-    failureReason: string | null;
-    now: string;
-  }): Promise<
-    | { settled: "sent" | "failed"; transferId: string }
-    | { settled: "none"; reason: string }
-  >;
+    outcome: "sent" | "failed" | null;
+    skippedReason: string | null;
+  }): Promise<void>;
 }
 
 export interface WiseConfig {
@@ -208,7 +198,28 @@ export interface WiseConfig {
   readonly webhookPublicKey: string | undefined;
 }
 
+/**
+ * What a connection is allowed to do (issue 1237).
+ *
+ * `full` is the self-hosted default: one token reads and also composes the
+ * payment provider. `read_only` is the tenant-owned shape: status and masked
+ * recipient reads only, with no destination writes and no provider writes.
+ * `disabled` performs no provider I/O at all, whatever token is present.
+ * Payment execution is composed separately by the host, never by this mode.
+ */
+export type WiseConnectionMode = "full" | "read_only" | "disabled";
+
+/** Thrown by a write on a connection whose mode does not permit it. */
+export class WiseReadOnlyError extends Error {
+  constructor() {
+    super("This Wise connection is read-only.");
+    this.name = "WiseReadOnlyError";
+  }
+}
+
 export interface WiseRuntimeOptions {
+  /** Absent means `full`, preserving the deployment-token behaviour. */
+  readonly mode?: WiseConnectionMode;
   readonly config: WiseConfig;
   readonly accounts: WisePayoutAccountPort;
   /** Absent where a deployment does not receive webhooks; the route is then not mounted. */
@@ -234,6 +245,8 @@ export interface WiseRuntime {
   };
   readonly service: {
     configured(): boolean;
+    /** False when the connection may only read; writes then refuse. */
+    writable(): boolean;
     readStatus(): Promise<WiseConnectionStatus | null>;
     /** Everyone the profile can pay, our own accounts excluded. */
     listRecipients(): Promise<readonly WiseRecipient[]>;
@@ -305,9 +318,26 @@ const refusalFor = (
       ? "already_linked"
       : "unknown_user";
 
+/** Operator environment syntax used by the native Worker; explicit full/disabled are not accepted. */
+export const parseWiseMode = (value: string | undefined): 'full' | 'read_only' => {
+  if (value === undefined || value === '') return 'full';
+  if (value === 'read_only') return 'read_only';
+  throw new TypeError('WISE_MODE must be unset or read_only');
+};
+
+/** Local configuration only; disabled and blank credentials never offer a connection. */
+export const wiseConfigured = (config: Pick<WiseConfig, 'token'>, mode: WiseConnectionMode = 'full'): boolean =>
+  mode !== 'disabled' && trimmed(config.token) !== null;
+
 export const createWiseRuntime = (options: Readonly<WiseRuntimeOptions>): WiseRuntime => {
   const { config, accounts } = options;
-  const token = trimmed(config.token);
+  const mode = options.mode ?? "full";
+  // A disabled connection never builds a client, so no code path can reach the
+  // provider however the token got here.
+  const token = wiseConfigured(config, mode) ? trimmed(config.token) : null;
+  const requireWritable = (): void => {
+    if (mode !== "full") throw new WiseReadOnlyError();
+  };
   const configuredProfileId = trimmed(config.profileId);
   const webhookPublicKey = trimmed(config.webhookPublicKey);
   const deliveries = options.deliveries;
@@ -398,20 +428,15 @@ export const createWiseRuntime = (options: Readonly<WiseRuntimeOptions>): WiseRu
     const transferId = event.kind === "transfer_state" ? event.transferId : null;
     const eventType =
       event.kind === "transfer_state" ? "transfers#state-change" : event.eventType;
-    // A delivery with no id of its own is keyed on the event's own identity,
-    // which is stable across a retry for the same reason: a retry is the same
-    // event again.
-    const deliveryId =
-      trimmed(input.deliveryId ?? undefined) ??
-      [
-        event.subscriptionId,
-        eventType,
-        transferId ?? "-",
-        event.kind === "transfer_state" ? event.currentState : "-",
-        event.occurredAt ?? "-",
-      ].join("|");
+    // Wise signs the raw body, not the delivery-id header. A changed header
+    // must not turn a verified retry into another durable event claim.
+    const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(input.payload));
+    const deliveryId = `wise-body-sha256:${Array.from(new Uint8Array(digest), (byte) =>
+      byte.toString(16).padStart(2, "0"),
+    ).join("")}`;
 
-    const claimed = await deliveries.claim({
+    const outcome = event.kind === "transfer_state" ? payoutOutcomeFor(event.currentState) : null;
+    await deliveries.process({
       deliveryId,
       subscriptionId: event.subscriptionId,
       eventType,
@@ -419,34 +444,14 @@ export const createWiseRuntime = (options: Readonly<WiseRuntimeOptions>): WiseRu
       currentState: event.kind === "transfer_state" ? event.currentState : null,
       occurredAt: event.occurredAt,
       now,
-    });
-    // Told already. The right answer to a retry is 2xx and no further work.
-    if (claimed.claim === "duplicate") return { accepted: true };
-
-    if (event.kind !== "transfer_state") {
-      await deliveries.finish(deliveryId, now, `event type ${event.eventType} is not acted on`);
-      return { accepted: true };
-    }
-
-    const outcome = payoutOutcomeFor(event.currentState);
-    if (outcome === null) {
-      // In flight. Writing 'sent' here would mark money as moved while it is
-      // still reversible, and a sent row cannot be corrected afterwards.
-      await deliveries.finish(deliveryId, now, `state ${event.currentState} is not final`);
-      return { accepted: true };
-    }
-
-    const settlement = await deliveries.settleTransfer({
-      transferId: event.transferId,
       outcome,
-      failureReason: outcome === "failed" ? `wise reported ${event.currentState}` : null,
-      now,
+      skippedReason:
+        event.kind !== "transfer_state"
+          ? `event type ${event.eventType} is not acted on`
+          : outcome === null
+            ? wiseTransferException(event.currentState) ?? `state ${event.currentState} is not final`
+            : null,
     });
-    await deliveries.finish(
-      deliveryId,
-      now,
-      settlement.settled === "none" ? settlement.reason : null,
-    );
     return { accepted: true };
   };
 
@@ -457,6 +462,8 @@ export const createWiseRuntime = (options: Readonly<WiseRuntimeOptions>): WiseRu
     ...(deliveries === undefined ? {} : { webhook: { receiveWebhook } }),
     service: {
       configured: () => token !== null,
+
+      writable: () => mode === "full",
 
       readStatus: async () => {
         const profile = await payingProfile();
@@ -480,6 +487,7 @@ export const createWiseRuntime = (options: Readonly<WiseRuntimeOptions>): WiseRu
        * destination and a claim somebody typed.
        */
       linkRecipient: async ({ userId, recipientId, linkedByUserId }) => {
+        requireWritable();
         const recipients = await payableRecipients();
         const wanted = recipientId.trim();
         const recipient = recipients.find((candidate) => candidate.id === wanted);
@@ -511,6 +519,7 @@ export const createWiseRuntime = (options: Readonly<WiseRuntimeOptions>): WiseRu
       },
 
       onboardRecipient: async ({ userId, email, legalName, currency, linkedByUserId }) => {
+        requireWritable();
         const profile = await payingProfile();
         if (client === null || profile === null) return { outcome: "not_configured" };
 
@@ -546,6 +555,7 @@ export const createWiseRuntime = (options: Readonly<WiseRuntimeOptions>): WiseRu
       },
 
       shareWiseProfile: async ({ userId, identifier, currency, linkedByUserId }) => {
+        requireWritable();
         const profile = await payingProfile();
         if (client === null || profile === null) return { outcome: "not_configured" };
 
@@ -625,13 +635,17 @@ export const createWiseRuntime = (options: Readonly<WiseRuntimeOptions>): WiseRu
       },
 
       detachFor: async (userId) => {
+        requireWritable();
         const mine = (await accounts.listForUser(userId)).find(
           (account) => account.provider === "wise",
         );
         return mine === undefined ? false : accounts.detach(mine.id, instant());
       },
 
-      unlink: async (accountId) => accounts.detach(accountId, instant()),
+      unlink: async (accountId) => {
+        requireWritable();
+        return accounts.detach(accountId, instant());
+      },
     },
   };
 };

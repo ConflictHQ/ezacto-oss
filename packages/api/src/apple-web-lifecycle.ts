@@ -76,7 +76,7 @@ export function createAppleWebLifecycle(options: {
   }
   const post = async (path: string, body: unknown, capability?: string): Promise<Record<string, unknown>> => {
     const response = await retrieve(APPLE_LIFECYCLE_ISSUER + path, {
-      method: 'POST', redirect: 'error', signal: AbortSignal.timeout(10000),
+      method: 'POST', redirect: 'manual', signal: AbortSignal.timeout(10000),
       headers: { 'content-type': 'application/json', ...(capability === undefined ? {} : { authorization: 'Bearer ' + capability }) }, body: JSON.stringify(body),
     }).catch(() => { throw new LifecycleOperationError(true) })
     if (!response.ok) {

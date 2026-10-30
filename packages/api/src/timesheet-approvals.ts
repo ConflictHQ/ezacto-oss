@@ -19,6 +19,15 @@ import {
 export type TimesheetSubmissionStatus = 'unsubmitted' | 'submitted' | 'approved'
 
 export interface TimesheetSubmissionRecord {
+  automaticApproval?: {
+    actor: 'system'
+    authorized_by_user_id: number
+    window_days: number
+    effective_from: string
+    submitted_at: string
+    approved_at: string
+    command_id: string
+  }
   id: number
   userId: number
   userName: string
@@ -226,6 +235,7 @@ const assertAvailable = async (service: TimesheetApprovalService): Promise<void>
 export const serializeTimesheetSubmission = (
   submission: Readonly<TimesheetSubmissionRecord>,
 ) => ({
+  ...(submission.automaticApproval ? {automatic_approval:submission.automaticApproval} : {}),
   id: submission.id,
   user_id: submission.userId,
   user_name: submission.userName,

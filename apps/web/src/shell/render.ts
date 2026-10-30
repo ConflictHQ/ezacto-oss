@@ -1,6 +1,9 @@
+import { accountingProviders, type AccountingProviderAvailability } from '../accounting-providers.js'
+import { renderFirstRunChecklist } from '../first-run/render.js'
+import { renderScheduledRunPage } from '../scheduled-runs/render.js'
 import { renderStaffPayments } from '../staff-payments/render.js'
 import { PASSWORD_MIN_CODE_POINTS, PASSWORD_MAX_CODE_POINTS } from '@ezacto/core'
-import { appleSignInIcon, googleSignInIcon, shellJavascript, shellStylesheet } from '../generated/shell-assets.js'
+import { appleSignInIcon, googleSignInIcon, portalEstimatesJavascript, portalInvoiceJavascript, shellJavascript, shellStylesheet } from '../generated/shell-assets.js'
 import { iconMarkup, type IconName } from '../components/icons.js'
 import { INSTANCE_THEME_STYLESHEET_PATH } from '../instance-theme.js'
 import { defaultTheme, themeManifest } from '../theme.js'
@@ -11,6 +14,7 @@ import {
   resolveSidebarState,
   type SidebarState,
 } from '../nav-layout.js'
+import { type CalendarLayout, resolveCalendarLayout } from '../calendar/layout.js'
 import { type DeploymentBrand, defaultBrand, resolveDeploymentBrand } from '../brand.js'
 import { renderClientDirectoryPages } from '../clients/render.js'
 import { renderRoleAdminPage } from '../roles/render.js'
@@ -24,6 +28,9 @@ import { renderExpenseCategoriesPage } from '../expense-categories/render.js'
 import { renderEmailConfigPage } from '../email-config/render.js'
 import { renderRecurringEditorPage, renderRecurringPage } from '../recurring/render.js'
 import { renderEstimatesPage } from '../estimates/render.js'
+import { renderCapacityPage } from '../capacity/render.js'
+import { renderMyPaymentsPage } from '../my-payments/render.js'
+import { renderBankDepositPage } from '../bank-deposits/render.js'
 import { renderRetainerDialogs, renderRetainerPage } from '../retainers/render.js'
 import {
   renderActivityLogPage,
@@ -49,6 +56,15 @@ export interface ShellTab {
 }
 
 export interface AppShellOptions {
+  /** Whether this runtime has an attachment storage adapter. */
+  readonly attachmentsAvailable?: boolean
+  /** Whether an accounting provider is configured and accounting is not switched off. */
+  readonly accountingAvailable?: boolean
+  readonly accountingProviders?: AccountingProviderAvailability
+  readonly backupsAvailable?: boolean
+  /** The operator's switches for invoices and single sign-on (issue 1254); false hides the module. */
+  readonly invoicesAvailable?: boolean
+  readonly ssoAvailable?: boolean
   readonly environment: string
   readonly release: string
   readonly brand?: Partial<DeploymentBrand>
@@ -72,6 +88,12 @@ export interface AppShellOptions {
    */
   readonly navLayout?: NavLayout
   readonly sidebar?: SidebarState
+  /**
+   * The calendar's Week or Day layout (issue 943), from the same kind of
+   * cookie, so the calendar opens in it rather than switching after a script
+   * runs. Absent means Week.
+   */
+  readonly timeLayout?: CalendarLayout
   readonly activeSection?:
     // 'Settings' matches no nav item on purpose. Without it the default lands
     // on 'Time', so the module settings page marked Time as the page you were
@@ -104,6 +126,7 @@ export interface AppShellOptions {
     | 'invoice-recurring-editor'
     | 'invoice-estimates'
     | 'invoice-retainers'
+    | 'invoice-bank-deposits'
     | 'client-list'
     | 'client-detail'
     | 'project-list'
@@ -123,6 +146,9 @@ export interface AppShellOptions {
     | 'team-list'
     | 'team-person'
     | 'notifications'
+    | 'capacity'
+    | 'my-payments'
+    | 'scheduled-run'
     | 'not-found'
   /**
    * The level-2 strip under the header. Time supplies its own Week/Day pair
@@ -286,6 +312,8 @@ const renderTimeModes = (options: AppShellOptions): string => {
     // 296's first stage precisely because a tab that does nothing is worse than
     // a missing feature, and putting it back without the panel would repeat that.
     `<a href="/?view=calendar">${iconMarkup('calendar')}Calendar</a>` +
+    // The month (the ezacto-ui Month view): the weeks as cells, a chip an entry.
+    `<a href="/?view=month">${iconMarkup('calendar')}Month</a>` +
     `</nav>`
   )
 }
@@ -303,6 +331,7 @@ const invoiceDestinations = [
   // an invoice comes from, not a setting.
   ['Estimates', '/invoices/estimates', 'invoice-estimates'],
   ['Retainers', '/invoices/retainers', 'invoice-retainers'],
+  ['Bank deposits', '/invoices/bank-deposits', 'invoice-bank-deposits'],
   // Configure left this strip for Settings. Two of the five templates it edits
   // -- the email-verification and password-reset messages -- are account mail
   // with nothing to do with invoicing, and it sits beside sender identity and
@@ -608,14 +637,17 @@ export const renderAppShell = (options: AppShellOptions): string => {
   const instancePalette = options.instanceTheme === true
   const navLayout = resolveNavLayout(options.navLayout)
   const sidebar = resolveSidebarState(options.sidebar)
+  const timeLayout = resolveCalendarLayout(options.timeLayout)
   const navLink = (section: (typeof sections)[number] | (typeof foldedSections)[number]): string =>
     `<a href="${hrefFor(section)}"${section === 'Approvals' ? ' data-approvals-nav hidden' : ''}${section === 'Team' ? ' data-team-nav hidden' : ''}${section === 'Payments' ? ' data-staff-payments-nav hidden' : ''}${section === 'Expenses' ? ' data-expenses-nav' : ''}${section === 'Invoices' ? ' data-money-nav hidden' : ''}${directorySections.has(section) ? ' data-directory-nav hidden' : ''}${section === active ? ' aria-current="page"' : ''}>${iconMarkup(sectionIcons[section])}<span class="nav-label">${section}</span></a>`
+  // The operator's invoices switch takes the section out of every strip (issue 1254).
+  const offered = sections.filter((section) => section !== 'Invoices' || options.invoicesAvailable !== false)
   const navigation = navGroups
     .map(
       (group) =>
         `<div class="nav-group" role="group" aria-labelledby="nav-group-${group.label.toLowerCase()}">` +
         `<span class="nav-group-label" id="nav-group-${group.label.toLowerCase()}">${group.label}</span>` +
-        group.sections.map(navLink).join('') +
+        group.sections.filter((section) => offered.includes(section)).map(navLink).join('') +
         `</div>`,
     )
     .join('')
@@ -630,11 +662,11 @@ export const renderAppShell = (options: AppShellOptions): string => {
         `<span class="nav-label">${section}</span>`,
         `<span class="menu-card-text"><span class="menu-card-title">${section}</span><span class="menu-card-hint" id="menu-hint-${section.toLowerCase()}" aria-hidden="true">${sectionHints[section]}</span></span>`,
       )
-  const menuNavigation = sections.map(menuCard).join('')
+  const menuNavigation = offered.map(menuCard).join('')
   const menuFoldedNavigation = foldedSections.map(menuCard).join('')
 
   return `<!doctype html>
-<html lang="en" data-ez-theme="${defaultTheme}" data-ez-scheme="${colorScheme}"${instancePalette ? ' data-ez-palette="instance"' : ''} data-ez-nav="${navLayout}" data-ez-sidebar="${sidebar}" data-app-view="${view}" data-auth-state="${resumeSession ? 'checking' : 'unknown'}" data-brand="${escapeHtml(brand)}"${options.demo === true ? ' data-demo-deployment' : ''}${options.demoMailRestricted === true ? ' data-demo-mail-restricted' : ''}>
+<html lang="en"${options.accountingProviders === undefined ? '' : accountingProviders.filter(provider => !options.accountingProviders![provider.id]).map(provider => ` data-${provider.id}-unavailable`).join('')}${options.attachmentsAvailable === false ? ' data-attachments-unavailable' : ''}${options.accountingAvailable === false ? ' data-accounting-unavailable' : ''}${options.backupsAvailable === false ? ' data-backups-unavailable' : ''}${options.invoicesAvailable === false ? ' data-invoices-unavailable' : ''}${options.ssoAvailable === false ? ' data-sso-unavailable' : ''} data-ez-theme="${defaultTheme}" data-ez-scheme="${colorScheme}"${instancePalette ? ' data-ez-palette="instance"' : ''} data-ez-nav="${navLayout}" data-ez-sidebar="${sidebar}" data-ez-time-layout="${timeLayout}" data-app-view="${view}" data-auth-state="${resumeSession ? 'checking' : 'unknown'}" data-brand="${escapeHtml(brand)}"${options.demo === true ? ' data-demo-deployment' : ''}${options.demoMailRestricted === true ? ' data-demo-mail-restricted' : ''}>
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
@@ -693,12 +725,13 @@ ${instancePalette ? `  <link rel="stylesheet" href="${INSTANCE_THEME_STYLESHEET_
           <div class="auth-heading">
             <p class="eyebrow">One more step</p>
             <h2 id="two-factor-title">Enter your verification code</h2>
-            <p>Open your authenticator app, or use one of your recovery codes.</p>
+            <p data-two-factor-hint>Open your authenticator app, or use one of your recovery codes.</p>
           </div>
           <label for="ez-two-factor-code">Verification code
             <input id="ez-two-factor-code" name="code" type="text" inputmode="numeric" autocomplete="one-time-code" spellcheck="false" autocapitalize="off" required>
           </label>
           <button class="primary-action" type="submit" data-two-factor-submit>Verify</button>
+          <button class="sign-in-restart" type="button" data-two-factor-email hidden>Email me a code</button>
           <button class="sign-in-restart" type="button" data-two-factor-cancel>Start over</button>
           <p class="auth-result" data-two-factor-result role="status" aria-live="polite"></p>
         </form>
@@ -737,6 +770,7 @@ ${instancePalette ? `  <link rel="stylesheet" href="${INSTANCE_THEME_STYLESHEET_
     root. The collapse toggle only shows in the sidebar, and only at desktop
     width; below 900px both layouts fold into the Menu drawer.
   -->
+  <a class="app-skip-link" href="#app-content" data-app-skip-link>Skip navigation</a>
   <header class="topbar" id="ez-app-nav" data-app-nav>
     <a class="brand" href="/dashboard" aria-label="${escapeHtml(brand)} home" data-home-link><span class="brand-wordmark">${wordmark(b.wordmarkDark, brand)}</span><span class="brand-glyph">${brand === defaultBrand.name && (b.wordmarkDark ?? '') === '' ? productLogo : iconMarkup('home')}</span></a>
     <button class="nav-collapse" type="button" data-sidebar-toggle aria-controls="ez-app-nav" aria-pressed="${sidebar === 'collapsed' ? 'true' : 'false'}" aria-label="Collapse sidebar">${iconMarkup('sidebar')}</button>
@@ -781,6 +815,7 @@ ${instancePalette ? `  <link rel="stylesheet" href="${INSTANCE_THEME_STYLESHEET_
         <div class="account-menu" id="ez-account-menu" data-account-menu>
           <a class="identity-settings" href="/settings/user" data-settings-link>${iconMarkup('sliders')}<span class="identity-action-label">Settings</span></a>
           ${(options.signInProviders ?? []).includes('apple') ? '<a class="identity-settings" href="/auth/apple/disconnect">Disconnect Apple</a>' : ''}
+        <button type="button" class="identity-settings" data-first-run-help aria-label="Help: setup guide" title="Help: setup guide" hidden>${iconMarkup('list')}<span class="identity-action-label">Help</span></button>
           <button type="button" class="identity-signout" data-logout>${iconMarkup('sign-out')}<span class="identity-action-label">Sign out</span></button>
         </div>
         <p class="auth-result visually-hidden" data-logout-result role="status" aria-live="polite"></p>
@@ -788,6 +823,7 @@ ${instancePalette ? `  <link rel="stylesheet" href="${INSTANCE_THEME_STYLESHEET_
     </div>
   </header>
   ${renderTabStrip(options)}
+  ${renderFirstRunChecklist()}
   <main class="app-content page--grid" data-app-content${view === 'time' ? '' : ' hidden'}>
     <header class="context-row">
       <div><p class="eyebrow">This week</p><h1>Time</h1></div>
@@ -887,9 +923,40 @@ ${instancePalette ? `  <link rel="stylesheet" href="${INSTANCE_THEME_STYLESHEET_
           <tfoot data-week-grid-totals></tfoot>
         </table>
       </div>
-      <section class="calendar-week" data-calendar-week aria-label="Calendar">
+      <!--
+        The calendar is where time is drawn rather than typed (issue 943): drag on
+        the clock to add an entry, drag one to move it, drag its edges to change
+        when it starts and ends. Every drag has a key path, said here so it can be
+        found and linked from each control by aria-describedby.
+      -->
+      <section class="calendar-week" data-calendar-week aria-labelledby="calendar-heading">
+        <header class="calendar-toolbar">
+          <h2 class="visually-hidden" id="calendar-heading">Calendar</h2>
+          <div class="calendar-hint" id="calendar-keys">
+            <p>Drag on the clock to add time. Drag an entry to move it, or its top or bottom edge to change when it starts or ends. On a touch screen, press and hold first.</p>
+            <p>Keyboard: Tab to a day, then <kbd>↑</kbd> <kbd>↓</kbd> choose a time, <kbd>Shift</kbd> with them sets the length, and <kbd>Enter</kbd> adds. On an entry, the arrows move it, <kbd>Shift</kbd> moves its end, <kbd>Alt</kbd>+<kbd>Shift</kbd> its start; <kbd>Enter</kbd> saves and <kbd>Esc</kbd> puts it back.</p>
+          </div>
+          <div class="calendar-layout" role="group" aria-label="Calendar layout">
+            <button type="button" data-calendar-layout-choice="week" aria-pressed="${timeLayout === 'week' ? 'true' : 'false'}">Week</button>
+            <button type="button" data-calendar-layout-choice="day" aria-pressed="${timeLayout === 'day' ? 'true' : 'false'}">Day</button>
+          </div>
+        </header>
         <p class="form-result" data-calendar-status role="status" aria-live="polite">Loading calendar…</p>
-        <div data-calendar-grid></div>
+        <p class="visually-hidden" data-calendar-live aria-live="polite"></p>
+        <aside class="calendar-proposals" data-calendar-proposals hidden>
+          <p data-proposal-status role="status" aria-live="polite"></p>
+          <button type="button" data-proposal-retry hidden>Retry proposals</button>
+        </aside>
+        <div class="calendar-surface" data-calendar-grid></div>
+      </section>
+      <!--
+        The month, as the ezacto-ui Month view draws it: a band naming the month
+        with its total, then the weeks as cells, a chip an entry. Drawn from its
+        own fetch, a month being more than the week the grid holds.
+      -->
+      <section class="calendar-month" data-calendar-month-view aria-label="Month">
+        <p class="form-result" data-calendar-month-status role="status" aria-live="polite">Loading calendar…</p>
+        <div data-calendar-month-grid></div>
       </section>
       <div class="day-list" data-day-list data-view="phone">
         <div data-day-rows><p class="day-empty">Loading time entries…</p></div>
@@ -1010,6 +1077,7 @@ ${instancePalette ? `  <link rel="stylesheet" href="${INSTANCE_THEME_STYLESHEET_
         <div><dt>Due</dt><dd data-invoice-detail-due-date>—</dd></div>
         <div><dt>Period</dt><dd data-invoice-detail-period>—</dd></div>
         <div><dt>Purchase order</dt><dd data-invoice-detail-purchase-order>—</dd></div>
+        <div data-invoice-rounding-fact hidden><dt>Time rounding</dt><dd><span data-invoice-detail-rounding></span> <small class="hint">The rule today. Hours already on this invoice keep the rounding they were saved with.</small></dd></div>
         <div data-invoice-quickbooks-fact hidden><dt>QuickBooks</dt><dd data-invoice-detail-quickbooks>—</dd></div>
         <div data-invoice-reminders-fact hidden><dt>Reminders</dt><dd><span data-invoice-detail-reminders>—</span> <label class="invoice-reminders-switch"><input type="checkbox" data-invoice-reminders-toggle> Send payment reminders</label></dd></div>
       </dl>
@@ -1020,6 +1088,13 @@ ${instancePalette ? `  <link rel="stylesheet" href="${INSTANCE_THEME_STYLESHEET_
           <tbody data-invoice-detail-lines></tbody>
         </table>
       </div>
+      <section class="invoice-end-clients" data-invoice-end-clients aria-label="Subtotal by end-client" hidden>
+        <table class="invoice-line-table">
+          <caption>Subtotal by end-client</caption>
+          <thead><tr><th scope="col">End-client</th><th scope="col">Subtotal</th></tr></thead>
+          <tbody data-invoice-end-client-rows></tbody>
+        </table>
+      </section>
       <dl class="invoice-totals">
         <div><dt>Discount</dt><dd class="money" data-invoice-detail-discount>—</dd></div>
         <div><dt>Tax</dt><dd class="money" data-invoice-detail-tax>—</dd></div>
@@ -1195,9 +1270,13 @@ ${instancePalette ? `  <link rel="stylesheet" href="${INSTANCE_THEME_STYLESHEET_
   ${renderRecurringEditorPage(view)}
   ${renderEstimatesPage(view)}
   ${renderRetainerPage(view)}
+  ${renderBankDepositPage(view)}
   ${renderEmailConfigPage(view)}
   ${renderClientDirectoryPages(view)}
   ${renderTeamPages(view)}
+  ${renderCapacityPage(view)}
+  ${renderMyPaymentsPage(view)}
+  ${renderScheduledRunPage(view)}
   ${renderProjectDirectoryPages(view)}
   ${renderTaskAdminPage(view)}
   ${renderDashboardPage(view)}
@@ -1205,7 +1284,7 @@ ${instancePalette ? `  <link rel="stylesheet" href="${INSTANCE_THEME_STYLESHEET_
   ${renderStaffPayments(view)}
   ${renderExpenseWorkflowPages(view)}
   ${renderExpenseCategoriesPage(view)}
-  ${renderModuleSettingsPage(view)}
+  ${renderModuleSettingsPage(view, options.accountingProviders)}
   ${renderActivityLogPage(view)}
   ${renderNotificationsPage(view)}
   ${renderDeliveriesPage(view)}
@@ -1248,6 +1327,7 @@ ${instancePalette ? `  <link rel="stylesheet" href="${INSTANCE_THEME_STYLESHEET_
         <div class="entry-head-title">${iconMarkup('clock')}<p class="eyebrow" data-entry-context>Time entry</p><h2 id="entry-title" data-entry-title data-note-title>Log time</h2></div>
         <button type="button" data-dialog-close aria-label="Close">×</button>
       </header>
+      <p class="hint" data-entry-proposal-source hidden></p>
       <div class="entry-description">
         <label for="ez-entry-note" class="visually-hidden">Note</label>
         <textarea id="ez-entry-note" name="notes" data-entry-note-input data-timer-note data-note-input rows="1" maxlength="10000" placeholder="Add description…" aria-describedby="note-hint note-result"></textarea>
@@ -1263,6 +1343,7 @@ ${instancePalette ? `  <link rel="stylesheet" href="${INSTANCE_THEME_STYLESHEET_
           <label for="ez-entry-date" class="visually-hidden">Date</label>
           <input id="ez-entry-date" class="entry-date-input" name="spent_date" data-entry-date type="date" required tabindex="-1">
         </div>
+        <p class="hint" data-entry-billing aria-live="polite" hidden></p>
         <p class="hint" data-entry-running hidden>This entry is running. Stop it before changing its assignment or timing.</p>
         <div class="entry-time-row">
           <div class="entry-times" data-entry-times hidden>
@@ -1273,7 +1354,7 @@ ${instancePalette ? `  <link rel="stylesheet" href="${INSTANCE_THEME_STYLESHEET_
           <label class="entry-duration" data-entry-duration>${iconMarkup('clock')}<span class="visually-hidden">Duration</span><input name="duration" data-entry-duration-input inputmode="decimal" autocomplete="off"></label>
         </div>
         <p class="form-result" id="note-result" data-entry-result data-timer-result data-note-result role="status"></p>
-        <div class="entry-secondary"><button type="button" data-stop-timer hidden>Stop running timer</button><button type="button" class="danger-action" data-entry-delete hidden>Delete entry</button></div>
+        <div class="entry-secondary"><button type="button" data-proposal-discard hidden>Discard proposal</button><button type="button" data-proposal-check hidden>Check proposal status</button><button type="button" data-stop-timer hidden>Stop running timer</button><button type="button" class="danger-action" data-entry-delete hidden>Delete entry</button></div>
       </div>
       <button class="entry-submit" type="submit" data-entry-submit><span data-entry-submit-label>Save entry</span><span class="entry-submit-duration" data-entry-submit-duration hidden></span><kbd aria-hidden="true">↵</kbd></button>
     </form>
@@ -1316,10 +1397,15 @@ ${instancePalette ? `  <link rel="stylesheet" href="${INSTANCE_THEME_STYLESHEET_
   <dialog class="row-dialog" data-row-dialog aria-labelledby="row-title">
     <form data-row-form>
       <header><div><p class="eyebrow">Timesheet row</p><h2 id="row-title">Add project and task</h2></div><button type="button" data-dialog-close aria-label="Close">×</button></header>
-      <label>Project<select name="project" data-row-project required></select></label>
-      <label>Task<select name="task" data-row-task required></select></label>
+      <label data-row-selection>Project<select name="project" data-row-project required></select></label>
+      <label data-row-selection>Task<select name="task" data-row-task required></select></label>
+      <div class="time-setup-guidance" data-row-empty hidden>
+        <p>Set up a project and task to start a timer or log time.</p>
+        <p class="hint" data-row-empty-reason></p>
+        <a class="primary-action" data-row-setup href="/projects">Set up a project</a>
+      </div>
       <p class="form-result" data-row-result role="status"></p>
-      <button class="primary-action" type="submit">Add row</button>
+      <button class="primary-action" type="submit" data-row-submit>Add row</button>
     </form>
   </dialog>
   <dialog class="rejection-dialog" data-rejection-dialog aria-labelledby="rejection-title">
@@ -1354,10 +1440,19 @@ ${instancePalette ? `  <link rel="stylesheet" href="${INSTANCE_THEME_STYLESHEET_
 </html>`
 }
 
-export const webAssets = {
+/**
+ * Annotated, not inferred: each generated bundle is a string literal type the
+ * length of the bundle, and an inferred type here carries all of them into the
+ * declaration file, which `tsc` refuses past a million characters (TS7056).
+ */
+export const webAssets: Readonly<
+  Record<'stylesheet' | 'javascript' | 'portalEstimatesJavascript' | 'portalInvoiceJavascript', string>
+> = {
   stylesheet: shellStylesheet,
   javascript: shellJavascript,
-} as const
+  portalEstimatesJavascript,
+  portalInvoiceJavascript,
+}
 
 /** Standalone confirmation: no workspace session authorizes Apple revocation. */
 export const renderAppleDisconnect = (options: {

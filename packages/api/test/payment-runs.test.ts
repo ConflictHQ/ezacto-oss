@@ -18,6 +18,7 @@ const fixture = (profile = "administrator", kind = "session") => {
       runs: [],
     })),
     processDue: vi.fn(),
+    advances: { report: vi.fn(async () => ({ from: '2026-10-01', to: '2026-10-31', advances: [] })), apply: vi.fn(async () => {}), reverse: vi.fn(async () => {}), recordReturn: vi.fn(async () => {}) },
   };
   api.use("*", async (c, next) => {
     c.set("principal", {
@@ -111,5 +112,34 @@ describe("payment run authorization", () => {
       expect.any(String),
     );
     expect(service.processDue).not.toHaveBeenCalled();
+  });
+});
+
+describe('advance credit commands', () => {
+  it.each([['member','session'],['accounting','session'],['executive_manager','session'],['administrator','token']])('refuses %s %s on every credit route', async (profile, kind) => {
+    const { api, service } = fixture(profile, kind);
+    for (const [path, method] of [['','GET'],['/applications','POST'],['/reversals','POST'],['/returns','POST']] as const) {
+      const response = await api.request(`/payment-runs/advances${path}`, { method });
+      expect(response.status).toBe(403);
+    }
+    expect(service.advances.report).not.toHaveBeenCalled();
+    expect(service.advances.apply).not.toHaveBeenCalled();
+  });
+  it('passes reviewed advance selections and explicit applications through the administrator session', async () => {
+    const { api, service } = fixture();
+    const post = (path: string, body: unknown) => api.request(path, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) });
+    const item = { user_id: 2, month: '2026-11', amount_cents: 15000, expected_version: 0, purpose: 'advance', currency: 'USD', advance_project_id: 7, advance_reason: 'Deposit' };
+    expect((await post('/payment-runs/preview', { id: 'run', name: 'Deposit', source_currency: 'USD', scheduled_at: '2026-10-21T00:00:00.000Z', timezone: 'UTC', items: [item] })).status).toBe(201);
+    expect(service.preview).toHaveBeenCalledWith(expect.objectContaining({ items: [item] }), 1, 'request', expect.any(String));
+    expect((await api.request('/payment-runs/advances?from=2026-10-01&to=2026-10-31')).status).toBe(200);
+    expect(service.advances.report).toHaveBeenCalledWith('2026-10-01','2026-10-31');
+    const command = { id: 'apply', reason: 'Pay reviewed work', advance_item_id: 'item', user_id: 2, currency: 'USD', month: '2026-09', amount_cents: 4000, scope: 'entry', project_id: 7, entry_id: 10 };
+    expect((await post('/payment-runs/advances/applications', command)).status).toBe(204);
+    expect(service.advances.apply).toHaveBeenCalledWith(command, 1, 'request', expect.any(String));
+    expect((await post('/payment-runs/advances/reversals', { id: 'reverse', application_id: 'apply', reason: 'Wrong period' })).status).toBe(204);
+    expect(service.advances.reverse).toHaveBeenCalledWith({ id: 'reverse', application_id: 'apply', reason: 'Wrong period' }, 1, 'request', expect.any(String));
+    expect((await post('/payment-runs/advances/returns', { id: 'return', advance_item_id: 'item', amount_cents: 1000, reference: 'confirmed-return', reason: 'Unused deposit' })).status).toBe(204);
+    expect(service.advances.recordReturn).toHaveBeenCalledWith(expect.objectContaining({ amount_cents: 1000, reference: 'confirmed-return' }), 1, 'request', expect.any(String));
+    expect((await post('/payment-runs/advances/applications', { ...command, amount_cents: '4000' })).status).toBe(422);
   });
 });

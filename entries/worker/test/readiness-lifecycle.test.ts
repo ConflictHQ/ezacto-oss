@@ -71,8 +71,10 @@ const harness = async (bindings: Record<string, string | boolean>) => {
     script: bundle.outputFiles[0]!.text,
   })
   const origin = await miniflare.ready
+  // A request that really hangs is still caught; 5 s was shorter than a cold
+  // Miniflare plus the first request's database migrations on a loaded CI runner.
   const request = (path: string) => fetch(new URL(path, origin), {
-    signal: AbortSignal.timeout(5_000),
+    signal: AbortSignal.timeout(30_000),
   })
   return { miniflare, request }
 }

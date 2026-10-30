@@ -1,5 +1,20 @@
+import { createGithubPublicationController } from './github-publication.js'
+import { setRequestBusy } from '../request-feedback.js'
+import { accountingProviderAvailable } from '../accounting-providers.js'
+import type { createCsvImportController } from '../csv-import/browser.js'
+import {
+  moduleAvailable,
+  SETTINGS_SECTION_MODULES,
+  withdrawUnavailableSettingsSections,
+} from '../module-availability.js'
+import { createWebhookController } from './webhooks.js'
+import { createGithubReaderController } from './github-reader.js'
+import { createPayoutProviderSwitches } from './payout-provider-switches.js'
+import { createCompanyDataTools } from './data-tools.js'
+import { createEmailSuppressionController } from './email-suppressions-browser.js'
 import { createDeletionRequestsController } from './deletion-requests.js'
 import { createRetentionController } from './retention.js'
+import { createTimeRoundingController } from './time-rounding.js'
 import {
   EzactoApiError,
   type InvoiceRecipient,
@@ -8,6 +23,8 @@ import {
   type Whoami,
 } from '@conflict-hq/ezacto-client'
 import { renderDataTable } from '../components/data-table.js'
+import { dateInTimeZone, timeInTimeZone } from '@ezacto/core'
+import { createPagedLog, type PagedLog } from '../components/paged-log.js'
 import { DEMO_UNAVAILABLE, demoUnavailable, isDemoDeployment } from '../demo.js'
 import { invoiceAddressLines } from '../invoice-addresses.js'
 import { defaultTheme, themeManifest } from '../theme.js'
@@ -28,6 +45,7 @@ import {
   noteSettingsPatch,
   reminderPolicyFromForm,
   ratePercentage,
+  emailReputationWarning,
   senderVerificationLabel,
   ssoDomainStatus,
   ssoLastCheckedLabel,
@@ -43,6 +61,8 @@ import {
   type OrganizationInvoiceSendingSetting,
   type InstanceThemeView,
   type BackupRun,
+  type NotificationSettingsState,
+  type TimesheetAutoApprovalState,
 } from './model.js'
 
 interface ModuleState {
@@ -135,7 +155,12 @@ const moduleDescriptions: Readonly<Record<string, { label: string; warning: stri
   expenses: {
     label: 'Expenses',
     warning:
-      'Disabling hides the Expenses navigation link and returns 404 from expense API endpoints. Existing expense records are preserved.',
+      'Disabling hides the Expenses navigation link and refuses expense API calls. Existing expense records are preserved.',
+  },
+  activity_log: {
+    label: 'Activity log',
+    warning:
+      'Disabling hides the Activity log from Settings and Reports and refuses the activity log API with module_disabled. Nothing stops being recorded: events keep being captured while it is off, and appear again when it is switched back on.',
   },
   own_money: {
     label: 'Your own rates and take-home',
@@ -321,13 +346,18 @@ const renderSignInMethodCard = (state: SignInMethodState, demo: boolean): string
       ? 'Live. People can sign in this way.'
       : 'Switched off. The routes refuse it.'
     : 'Not configured in this deployment, so it cannot be switched on here.'
+  // The switch is named by the method's heading as well as its state word, so
+  // a screen reader hears "Google Enabled" rather than five switches all
+  // called "Enabled". The span stays the label's first: the change handler
+  // below rewrites the state word through it.
+  const id = `settings-sign-in-${state.method}`
   return (
     `<article class="module-settings-card" data-sign-in-card="${state.method}">` +
     `<header class="module-settings-card-header">` +
-    `<div><h2>${label}</h2><p class="module-code">${state.method}</p></div>` +
-    `<label class="module-toggle"><input type="checkbox" data-sign-in-toggle="${state.method}"${state.enabled ? ' checked' : ''}${state.configured && !demo ? '' : ' disabled'}><span>${state.enabled ? 'Enabled' : 'Disabled'}</span></label>` +
+    `<h3 id="${id}-title">${label}</h3>` +
+    `<label class="module-toggle"><input type="checkbox" data-sign-in-toggle="${state.method}" aria-labelledby="${id}-title ${id}-state" aria-describedby="${id}-note"${state.enabled ? ' checked' : ''}${state.configured && !demo ? '' : ' disabled'}><span id="${id}-state">${state.enabled ? 'Enabled' : 'Disabled'}</span></label>` +
     `</header>` +
-    `<p class="module-settings-warning">${note}</p>` +
+    `<p class="module-settings-warning" id="${id}-note">${note}</p>` +
     `<p class="form-result" data-sign-in-result="${state.method}" role="status" aria-live="polite"></p>` +
     `</article>`
   )
@@ -337,13 +367,15 @@ const renderModuleCard = (state: ModuleState): string => {
   const description = moduleDescriptions[state.module]
   const label = description?.label ?? state.module
   const warning = description?.warning ?? ''
+  // Named and described the way a sign-in method's switch is, above.
+  const id = `settings-module-${state.module}`
   return (
     `<article class="module-settings-card" data-module-card="${state.module}">` +
     `<header class="module-settings-card-header">` +
-    `<div><h2>${label}</h2><p class="module-code">${state.module}</p></div>` +
-    `<label class="module-toggle"><input type="checkbox" data-module-toggle="${state.module}"${state.enabled ? ' checked' : ''}><span>${state.enabled ? 'Enabled' : 'Disabled'}</span></label>` +
+    `<h3 id="${id}-title">${label}</h3>` +
+    `<label class="module-toggle"><input type="checkbox" data-module-toggle="${state.module}" aria-labelledby="${id}-title ${id}-state" aria-describedby="${id}-note"${state.enabled ? ' checked' : ''}><span id="${id}-state">${state.enabled ? 'Enabled' : 'Disabled'}</span></label>` +
     `</header>` +
-    `<p class="module-settings-warning">${warning}</p>` +
+    `<p class="module-settings-warning" id="${id}-note">${warning}</p>` +
     `<p class="form-result" data-module-result="${state.module}" role="status" aria-live="polite"></p>` +
     `</article>`
   )
@@ -366,6 +398,11 @@ export const createModuleSettingsController = (
   const emailStatus = required<HTMLElement>('[data-settings-email-status]')
   const emailSenders = required<HTMLElement>('[data-settings-sender-identities]')
   const emailReputation = required<HTMLElement>('[data-settings-email-reputation]')
+  const emailIdentityHealth = required<HTMLElement>('[data-settings-email-identities-health]')
+  const webhookController = createWebhookController(api.webhooks)
+  const githubReader = createGithubReaderController(api.githubReader)
+  const githubPublication = createGithubPublicationController(api.githubPublication)
+  const suppressionReview = createEmailSuppressionController(api)
   const wiseSection = required<HTMLElement>('[data-settings-wise]')
   const wiseStatus = required<HTMLElement>('[data-settings-wise-status]')
   const wiseFacts = required<HTMLElement>('[data-settings-wise-facts]')
@@ -374,6 +411,9 @@ export const createModuleSettingsController = (
   const backupAlarm = required<HTMLElement>('[data-settings-backup-alarm]')
   const backupFacts = required<HTMLElement>('[data-settings-backup-facts]')
   const backupRuns = required<HTMLElement>('[data-settings-backup-runs]')
+  const backupDownload = required<HTMLElement>('[data-settings-backup-download]')
+  const backupControls = required<HTMLElement>('[data-settings-backup-controls]')
+  const backupRunsStatus = required<HTMLElement>('[data-settings-backup-runs-status]')
   const brandStatus = required<HTMLElement>('[data-settings-brand-status]')
   const brandSlots = required<HTMLElement>('[data-settings-brand-slots]')
   const brandResult = required<HTMLElement>('[data-settings-brand-result]')
@@ -385,6 +425,10 @@ export const createModuleSettingsController = (
   const quickBooksAllowPayment = required<HTMLInputElement>('[data-quickbooks-allow-payment]')
   const quickBooksDisconnect = required<HTMLButtonElement>('[data-quickbooks-disconnect]')
   const quickBooksResult = required<HTMLElement>('[data-settings-quickbooks-result]')
+  const quickBooksReconcilePanel = required<HTMLElement>('[data-quickbooks-reconcile-panel]')
+  const quickBooksReconcile = required<HTMLButtonElement>('[data-quickbooks-reconcile]')
+  const quickBooksReconcileResult = required<HTMLElement>('[data-quickbooks-reconcile-result]')
+  const quickBooksReconcileTable = required<HTMLElement>('[data-quickbooks-reconcile-table]')
   const refreshControls = document.querySelectorAll<HTMLButtonElement>('[data-settings-refresh]')
   const themeStatus = required<HTMLElement>('[data-settings-theme-status]')
   const themeSlots = required<HTMLElement>('[data-settings-theme-slots]')
@@ -405,6 +449,10 @@ export const createModuleSettingsController = (
   const invoiceDefaultsAddress = required<HTMLTextAreaElement>('[data-invoice-defaults-address]')
   const invoiceDefaultsSubject = required<HTMLInputElement>('[data-invoice-defaults-subject]')
   const invoiceDefaultsNotes = required<HTMLTextAreaElement>('[data-invoice-defaults-notes]')
+  const invoiceDefaultsEstimateDays = required<HTMLInputElement>(
+    '[data-invoice-defaults-estimate-days]',
+  )
+  const invoiceDefaultsViewReceipts = required<HTMLInputElement>('[data-invoice-defaults-view-receipts]')
   const invoiceDefaultsSubmit = required<HTMLButtonElement>('[data-invoice-defaults-submit]')
   const invoiceDefaultsResult = required<HTMLElement>('[data-invoice-defaults-result]')
   // The public demo (issue 931). The company information and default values
@@ -421,6 +469,8 @@ export const createModuleSettingsController = (
     invoiceDefaultsAddress,
     invoiceDefaultsSubject,
     invoiceDefaultsNotes,
+    invoiceDefaultsEstimateDays,
+    invoiceDefaultsViewReceipts,
   ]) {
     field.disabled = demo
   }
@@ -451,6 +501,21 @@ export const createModuleSettingsController = (
   const remindersEvery = required<HTMLInputElement>('[data-reminder-settings-every]')
   const remindersSubmit = required<HTMLButtonElement>('[data-reminder-settings-submit]')
   const remindersResult = required<HTMLElement>('[data-reminder-settings-result]')
+  const notificationsStatus = required<HTMLElement>('[data-settings-notifications-status]')
+  const notificationsForm = required<HTMLFormElement>('[data-notification-settings-form]')
+  const notificationsAdmins = required<HTMLInputElement>('[data-notification-settings-admins]')
+  // Not `required<HTMLSelectElement>`: see the note on `type` above.
+  const notificationsDay = required('[data-notification-settings-day]') as unknown as HTMLInputElement
+  const notificationsTime = required<HTMLInputElement>('[data-notification-settings-time]')
+  const notificationsSubmit = required<HTMLButtonElement>('[data-notification-settings-submit]')
+  const notificationsResult = required<HTMLElement>('[data-notification-settings-result]')
+  const autoApprovalStatus = required<HTMLElement>('[data-auto-approval-status]')
+  const autoApprovalForm = required<HTMLFormElement>('[data-auto-approval-form]')
+  const autoApprovalEnabled = required<HTMLInputElement>('[data-auto-approval-enabled]')
+  const autoApprovalDays = required<HTMLInputElement>('[data-auto-approval-days]')
+  const autoApprovalSince = required<HTMLElement>('[data-auto-approval-since]')
+  const autoApprovalSubmit = required<HTMLButtonElement>('[data-auto-approval-submit]')
+  const autoApprovalResult = required<HTMLElement>('[data-auto-approval-result]')
 
   // The list is held rather than re-fetched after every action: add, verify and
   // remove all answer with what they changed, and a re-fetch would throw away
@@ -472,6 +537,7 @@ export const createModuleSettingsController = (
   // back into the page would otherwise leave two listeners on it and send the
   // policy twice.
   let session: ActiveSession | null = null
+  let csvImports: ReturnType<typeof createCsvImportController> | null = null
 
   // Which sections this session has read, by the promise that read them. A
   // section loads the first time it is shown and not again (issue 809): the
@@ -604,6 +670,9 @@ export const createModuleSettingsController = (
     invoiceDefaultsAddress.value = defaults.company_address ?? ''
     invoiceDefaultsSubject.value = defaults.subject ?? ''
     invoiceDefaultsNotes.value = defaults.notes ?? ''
+    invoiceDefaultsEstimateDays.value =
+      defaults.estimate_validity_days === null ? '' : String(defaults.estimate_validity_days)
+    invoiceDefaultsViewReceipts.checked = defaults.view_receipts === true
   }
 
   invoiceDefaultsForm.addEventListener('submit', async (event) => {
@@ -612,6 +681,15 @@ export const createModuleSettingsController = (
     if (active === null || api.updateInvoiceDefaults === undefined) return
     if (invoiceDefaultsName.value.trim() === '') {
       invoiceDefaultsResult.textContent = 'The company name cannot be blank.'
+      return
+    }
+    const estimateDays = invoiceDefaultsEstimateDays.value.trim()
+    if (
+      estimateDays !== '' &&
+      (!/^[1-9][0-9]{0,3}$/.test(estimateDays) || Number(estimateDays) > 3650)
+    ) {
+      invoiceDefaultsResult.textContent =
+        'Estimate validity is a whole number of days from 1 to 3650, or blank.'
       return
     }
     let sendingChange: ReturnType<typeof invoiceSendingChanges>
@@ -639,6 +717,8 @@ export const createModuleSettingsController = (
             company_address: text(invoiceDefaultsAddress.value),
             subject: text(invoiceDefaultsSubject.value),
             notes: text(invoiceDefaultsNotes.value),
+            estimate_validity_days: estimateDays === '' ? null : Number(estimateDays),
+            view_receipts: invoiceDefaultsViewReceipts.checked,
           },
           active.signal,
         )
@@ -720,6 +800,105 @@ export const createModuleSettingsController = (
     }
   })
 
+  const showNotificationSettings = (settings: NotificationSettingsState): void => {
+    notificationsAdmins.checked = settings.budget_alerts_include_admins
+    notificationsDay.value = settings.submission_reminder?.day ?? ''
+    notificationsTime.value = settings.submission_reminder?.time ?? ''
+  }
+
+  notificationsForm.addEventListener('submit', async (event) => {
+    event.preventDefault()
+    const active = currentSession()
+    if (active === null || api.updateNotificationSettings === undefined) return
+    // A day with no time (or the reverse) is half a schedule: say so rather
+    // than guess which half was meant.
+    if ((notificationsDay.value === '') !== (notificationsTime.value === '')) {
+      notificationsResult.textContent =
+        notificationsDay.value === ''
+          ? 'Choose a day for the submission reminder, or clear the time.'
+          : 'Choose a time for the submission reminder.'
+      return
+    }
+    notificationsResult.textContent = 'Saving…'
+    notificationsSubmit.disabled = true
+    try {
+      const saved = await api.updateNotificationSettings(
+        {
+          budget_alerts_include_admins: notificationsAdmins.checked,
+          submission_reminder:
+            notificationsDay.value === ''
+              ? null
+              : {
+                  day: notificationsDay.value as NonNullable<
+                    NotificationSettingsState['submission_reminder']
+                  >['day'],
+                  time: notificationsTime.value,
+                },
+        },
+        active.signal,
+      )
+      active.present(() => {
+        showNotificationSettings(saved)
+        notificationsResult.textContent = 'Saved.'
+      })
+    } catch (error) {
+      active.presentFailure(error, () => {
+        notificationsResult.textContent = messageFor(
+          error,
+          'Only administrators can change notification settings.',
+          'Notification settings could not be saved.',
+        )
+      })
+    } finally {
+      if (currentSession() === active) notificationsSubmit.disabled = false
+    }
+  })
+
+  const showAutoApproval = (settings: TimesheetAutoApprovalState): void => {
+    autoApprovalEnabled.checked = settings.enabled
+    autoApprovalDays.value = settings.window_days === null ? '' : String(settings.window_days)
+    autoApprovalSince.textContent = !settings.approval_module_enabled
+      ? 'Needs the Approval module, which is off.'
+      : settings.enabled && settings.effective_from !== null
+        ? `Applies to weeks submitted on or after ${settings.effective_from.slice(0, 10)}.`
+        : 'Turning this on does not approve weeks that are already waiting.'
+  }
+
+  autoApprovalForm.addEventListener('submit', async (event) => {
+    event.preventDefault()
+    const active = currentSession()
+    if (active === null || api.updateTimesheetAutoApproval === undefined) return
+    if (autoApprovalEnabled.checked && autoApprovalDays.value === '') {
+      autoApprovalResult.textContent = 'Choose how many days a week waits before it is approved.'
+      return
+    }
+    autoApprovalResult.textContent = 'Saving…'
+    autoApprovalSubmit.disabled = true
+    try {
+      const saved = await api.updateTimesheetAutoApproval(
+        {
+          enabled: autoApprovalEnabled.checked,
+          ...(autoApprovalDays.value === '' ? {} : { window_days: Number(autoApprovalDays.value) }),
+        },
+        active.signal,
+      )
+      active.present(() => {
+        showAutoApproval(saved)
+        autoApprovalResult.textContent = 'Saved.'
+      })
+    } catch (error) {
+      active.presentFailure(error, () => {
+        autoApprovalResult.textContent = messageFor(
+          error,
+          'Only administrators can change automatic approval.',
+          'Automatic approval could not be saved.',
+        )
+      })
+    } finally {
+      if (currentSession() === active) autoApprovalSubmit.disabled = false
+    }
+  })
+
   noteForm.addEventListener('submit', async (event) => {
     event.preventDefault()
     const active = currentSession()
@@ -759,21 +938,35 @@ export const createModuleSettingsController = (
   const senderTable = (identities: readonly SenderIdentity[]): HTMLElement =>
     renderDataTable<SenderIdentity>({
       caption: 'Sender identities',
+      table: 'settings-senders',
+      defaultSort: { column: 'default', direction: 'ascending' },
       rows: identities,
       rowKey: (identity) => String(identity.id),
       empty: 'No sender identity is configured, so nothing this instance sends has a from address.',
       columns: [
-        { key: 'email', label: 'Sends as', render: (identity) => identity.email },
-        { key: 'display_name', label: 'Display name', render: (identity) => identity.display_name },
-        { key: 'provider', label: 'Transport', render: (identity) => identity.provider },
+        { key: 'email', label: 'Sends as', sortValue: (identity) => identity.email, render: (identity) => identity.email },
+        {
+          key: 'display_name',
+          label: 'Display name',
+          sortValue: (identity) => identity.display_name,
+          render: (identity) => identity.display_name,
+        },
+        {
+          key: 'provider',
+          label: 'Transport',
+          sortValue: (identity) => identity.provider,
+          render: (identity) => identity.provider,
+        },
         {
           key: 'verification',
           label: 'Verification',
+          sortValue: (identity) => senderVerificationLabel(identity),
           render: (identity) => senderVerificationLabel(identity),
         },
         {
           key: 'default',
           label: 'Default',
+          sortValue: (identity) => identity.is_default ? 0 : 1,
           render: (identity) => (identity.is_default ? 'Default' : ''),
         },
       ],
@@ -800,19 +993,38 @@ export const createModuleSettingsController = (
     ssoDomains.replaceChildren(
       renderDataTable<SsoDomain>({
         caption: 'SSO provisioning domains',
+        table: 'settings-sso-domains',
+        defaultSort: { column: 'domain', direction: 'ascending' },
         rows: ssoState,
         rowKey: (domain) => String(domain.id),
         empty:
           'No domain is provisioned, so single sign-on creates nobody. Add the email domain your directory signs in with.',
+        // The domain, its status and the date take their own width; the record
+        // is what an operator copies into a zone file, so it takes the rest and
+        // wraps rather than ending in an ellipsis on a narrow window.
         columns: [
-          { key: 'domain', label: 'Domain', render: (domain) => domain.domain },
-          { key: 'status', label: 'Status', render: (domain) => ssoDomainStatus(domain) },
+          {
+            key: 'domain',
+            label: 'Domain',
+            fit: true,
+            sortValue: (domain) => domain.domain,
+            render: (domain) => domain.domain,
+          },
+          {
+            key: 'status',
+            label: 'Status',
+            fit: true,
+            sortValue: (domain) => ssoDomainStatus(domain),
+            render: (domain) => ssoDomainStatus(domain),
+          },
           {
             key: 'checked',
             label: 'Last checked',
+            fit: true,
+            sortValue: (domain) => domain.last_checked_at,
             render: (domain) => ssoLastCheckedLabel(domain),
           },
-          { key: 'record', label: 'DNS record', render: (domain) => ssoRecordCell(domain) },
+          { key: 'record', label: 'DNS record', wrap: true, render: (domain) => ssoRecordCell(domain) },
         ],
         // The demo refuses both (issue 931), so neither is offered as if it worked.
         actions: (domain) => [
@@ -872,8 +1084,12 @@ export const createModuleSettingsController = (
           preview.append(image)
         }
 
+        // A button-shaped label over a visually hidden file input: the upload
+        // starts the moment a file is chosen, so the browser's own "No file
+        // chosen" box had nothing to say, and it squeezed the label beside it
+        // into three lines.
         const picker = document.createElement('label')
-        picker.className = 'brand-slot-picker'
+        picker.className = 'brand-slot-picker editor-secondary'
         picker.append(stored === undefined ? 'Upload an image' : 'Replace')
         const input = document.createElement('input')
         input.type = 'file'
@@ -892,6 +1108,7 @@ export const createModuleSettingsController = (
         if (stored !== undefined) {
           const remove = document.createElement('button')
           remove.type = 'button'
+          remove.className = 'editor-secondary'
           remove.textContent = 'Remove'
           remove.disabled = brandBusy
           remove.addEventListener('click', () => void discardBrandAsset(copy.segment))
@@ -1054,6 +1271,11 @@ export const createModuleSettingsController = (
    */
   const deletionRequests = createDeletionRequestsController(required<HTMLElement>('[data-module-settings-page]'), demo)
   const retention = createRetentionController(required<HTMLElement>('[data-module-settings-page]'), demo)
+  const timeRounding = createTimeRoundingController(
+    required<HTMLElement>('[data-settings-section="time"]'),
+    api,
+    () => session,
+  )
 
   const clearPrivatePresentation = (): void => {
     // The previous session stops owning the page here, before anything is
@@ -1061,8 +1283,31 @@ export const createModuleSettingsController = (
     // whether or not the shell remembered to abort its signal on the way out.
     session = null
     loaded.clear()
+    for (const control of refreshControls) {
+      control.disabled = false
+      setRequestBusy(control, false)
+    }
     retention.clear()
     deletionRequests.clear()
+    backupHistoryOwner?.abort()
+    backupHistoryOwner = null
+    backupLog = null
+    backupFacts.replaceChildren()
+    backupFacts.hidden = true
+    backupRuns.replaceChildren()
+    backupRuns.hidden = backupControls.hidden = true
+    backupRunsStatus.textContent = ''
+    backupAlarm.hidden = true
+    backupAlarm.textContent = backupStatus.textContent = ''
+    backupDownload.hidden = true
+    backupDownloadCode.value = backupDownloadLink.value = ''
+    backupDownloadResult.textContent = ''
+    backupDownloadCodeRow.hidden = backupDownloadLinkRow.hidden = true
+    backupDownloadMint.disabled = false
+    offsiteSession = null
+    offsiteCheckRow.hidden = true
+    offsiteCheckResult.textContent = ''
+    offsiteCheck.disabled = false
     // Its controls come back with the page rather than from the finally of an
     // operation that is no longer allowed to touch anything.
     noteSubmit.disabled = false
@@ -1070,10 +1315,19 @@ export const createModuleSettingsController = (
     ssoBusy = false
     emailSenders.replaceChildren()
     emailSenders.hidden = true
+    webhookController.clear()
+    githubReader.clear()
+    githubPublication.clear()
+    suppressionReview.clear()
+    emailIdentityHealth.replaceChildren()
+    emailIdentityHealth.hidden = true
     emailReputation.replaceChildren()
     emailReputation.hidden = true
     timeFacts.replaceChildren()
     noteForm.hidden = true
+    timeRounding.clear()
+    dataTools.clear()
+    csvImports?.clear()
     // The result line sits outside the form, so hiding the form leaves the
     // previous session's "Saved." or its 403 on screen under the next
     // person's notice.
@@ -1117,6 +1371,7 @@ export const createModuleSettingsController = (
         noteRequired.checked = notes.required
         noteMinimum.value = String(notes.minimum_length)
         noteForm.hidden = false
+        timeRounding.show(active, settings.time_rounding)
         timeStatus.textContent = ''
       })
     } catch (error) {
@@ -1224,6 +1479,56 @@ export const createModuleSettingsController = (
     }
   }
 
+  const loadAutoApproval = async (active: ActiveSession): Promise<void> => {
+    if (api.getTimesheetAutoApproval === undefined) {
+      autoApprovalStatus.textContent = 'This build has no automatic approval endpoint.'
+      return
+    }
+    try {
+      const settings = await api.getTimesheetAutoApproval(active.signal)
+      active.present(() => {
+        showAutoApproval(settings)
+        autoApprovalForm.hidden = false
+        autoApprovalStatus.textContent = ''
+      })
+    } catch (error) {
+      active.presentFailure(error, () => {
+        sectionFailed(
+          'approval',
+          autoApprovalStatus,
+          error,
+          'Only administrators can read automatic approval.',
+          'Automatic approval could not be loaded.',
+        )
+      })
+    }
+  }
+
+  const loadNotifications = async (active: ActiveSession): Promise<void> => {
+    if (api.getNotificationSettings === undefined) {
+      notificationsStatus.textContent = 'This build has no notification settings endpoint.'
+      return
+    }
+    try {
+      const settings = await api.getNotificationSettings(active.signal)
+      active.present(() => {
+        showNotificationSettings(settings)
+        notificationsForm.hidden = false
+        notificationsStatus.textContent = ''
+      })
+    } catch (error) {
+      active.presentFailure(error, () => {
+        sectionFailed(
+          'notifications',
+          notificationsStatus,
+          error,
+          'Only administrators can read notification settings.',
+          'Notification settings could not be loaded.',
+        )
+      })
+    }
+  }
+
   const loadEmail = async (identity: Whoami, active: ActiveSession): Promise<void> => {
     // email-health and sender-identities are both administrator-only. Asking as
     // an executive manager buys two 403s and tells the operator nothing.
@@ -1240,9 +1545,65 @@ export const createModuleSettingsController = (
         api.listSenderIdentities(active.signal),
         api.getEmailHealth(active.signal),
       ])
-      active.present(() => {
+      const presented = active.present(() => {
         emailSenders.replaceChildren(senderTable(identities))
         emailSenders.hidden = false
+        emailIdentityHealth.replaceChildren(
+          renderDataTable({
+            caption: 'Recorded sender health',
+            table: 'email-identity-health',
+            rows: health.identities ?? [],
+            rowKey: (row) => row.sender,
+            empty: 'No sender delivery history is recorded.',
+            columns: [
+              {
+                key: 'sender',
+                label: 'Sender',
+                sortValue: (row) => row.sender,
+                render: (row) => row.sender,
+              },
+              {
+                key: 'accepted',
+                label: 'Accepted messages',
+                numeric: true,
+                render: (row) => String(row.sent),
+              },
+              {
+                key: 'bounced',
+                label: 'Bounced',
+                render: (row) => `${row.bounced} (${ratePercentage(row.bounce_rate_ppm)})`,
+              },
+              {
+                key: 'complained',
+                label: 'Complained',
+                render: (row) => `${row.complained} (${ratePercentage(row.complaint_rate_ppm)})`,
+              },
+              {
+                key: 'failed',
+                label: 'Failed to send',
+                numeric: true,
+                render: (row) => String(row.failed),
+              },
+              {
+                key: 'feedback',
+                label: 'Feedback',
+                render: (row) =>
+                  [
+                    row.complained > 0
+                      ? 'Complaint recorded'
+                      : row.bounced > 0
+                        ? 'Bounce recorded'
+                        : 'No negative feedback recorded',
+                    emailReputationWarning(row),
+                  ]
+                    .filter(Boolean)
+                    .join('. '),
+              },
+            ],
+          }),
+        )
+
+        emailIdentityHealth.hidden = false
         facts(emailReputation, [
           // reputation.sent is counts.sent + bounced + complained — the total
           // accepted, and the denominator both rates are taken over. Labelling it
@@ -1258,6 +1619,7 @@ export const createModuleSettingsController = (
         ])
         emailStatus.textContent = ''
       })
+      if (presented) await suppressionReview.activate({identity,signal:active.signal,failed:(error,paint)=>{active.presentFailure(error,paint)}})
     } catch (error) {
       active.presentFailure(error, () => {
         sectionFailed(
@@ -1286,18 +1648,33 @@ export const createModuleSettingsController = (
     return `${days} ${days === 1 ? 'day' : 'days'} ago`
   }
 
+  // Said in UTC until the organization's timezone is known, and labelled so.
+  let backupZone = 'UTC'
+
   const backupRunTable = (runs: readonly BackupRun[]): HTMLElement =>
     renderDataTable<BackupRun>({
       caption: 'Recent backup runs',
+      table: 'settings-backup-runs',
+      defaultSort: { column: 'started', direction: 'descending' },
       rows: runs,
       rowKey: (run) => String(run.id),
       empty: 'No backup has run yet.',
       columns: [
-        { key: 'started', label: 'Started', render: (run) => run.started_at.replace('T', ' ').slice(0, 19) },
-        { key: 'trigger', label: 'Trigger', render: (run) => run.trigger },
+        {
+          key: 'started',
+          label: `Started (${backupZone})`,
+          sortValue: (run) => run.started_at,
+          // In the organization's timezone, to the minute, like the other logs.
+          render: (run) =>
+            Number.isNaN(Date.parse(run.started_at))
+              ? run.started_at
+              : `${dateInTimeZone(run.started_at, backupZone)} ${timeInTimeZone(run.started_at, backupZone)}`,
+        },
+        { key: 'trigger', label: 'Trigger', sortValue: (run) => run.trigger, render: (run) => run.trigger },
         {
           key: 'status',
           label: 'Result',
+          sortValue: (run) => run.status,
           render: (run) => {
             const pill = document.createElement('span')
             pill.className = 'invoice-state'
@@ -1310,6 +1687,7 @@ export const createModuleSettingsController = (
           key: 'rows',
           label: 'Rows',
           numeric: true,
+          sortValue: (run) => run.total_rows,
           render: (run) =>
             run.total_rows === null ? '—' : run.total_rows.toLocaleString('en-US'),
         },
@@ -1317,6 +1695,7 @@ export const createModuleSettingsController = (
           key: 'tables',
           label: 'Tables',
           numeric: true,
+          sortValue: (run) => run.table_count,
           render: (run) => (run.table_count === null ? '—' : String(run.table_count)),
         },
         // The reason it failed, where there is one. A failed run whose message
@@ -1474,7 +1853,7 @@ export const createModuleSettingsController = (
         'Connecting an accounting system is an administrator action.'
       return
     }
-    if (api.getQuickBooksConnection === undefined) {
+    if (api.getQuickBooksConnection === undefined || !accountingProviderAvailable('quickbooks')) {
       quickBooksStatus.textContent =
         'This deployment is not configured for QuickBooks.'
       return
@@ -1494,6 +1873,8 @@ export const createModuleSettingsController = (
         quickBooksConnect.hidden = connection !== null
         quickBooksDisconnect.hidden = connection === null
         quickBooksPaymentRow.hidden = connection === null
+        quickBooksReconcilePanel.hidden =
+          connection === null || api.getQuickBooksReconciliation === undefined
         if (connection === null) {
           quickBooksFacts.hidden = true
           quickBooksStatus.textContent = 'Not connected.'
@@ -1549,6 +1930,11 @@ export const createModuleSettingsController = (
    * administrator or an executive manager before any of these loaders run, so a
    * second one here would be a branch nothing can reach.
    */
+  const payoutProviderSwitches = createPayoutProviderSwitches(
+    required<HTMLElement>('[data-settings-payout-providers]'),
+    api,
+  )
+
   const loadWiseConnection = async (active: ActiveSession): Promise<void> => {
     const read = api.getWiseConnection
     if (read === undefined) return
@@ -1620,7 +2006,152 @@ export const createModuleSettingsController = (
     globalThis.dispatchEvent(new Event('hashchange'))
   }
 
+  /**
+   * The whole backup history, a page at a time. The status above it carries
+   * only the latest runs, which is enough to say whether the last one worked
+   * and not enough to find out when the last one before it did.
+   */
+  let backupLog: PagedLog | null = null
+  let backupHistoryOwner: AbortController | null = null
+  const backupHistory = (list: NonNullable<CompanySettingsApi['listBackupRuns']>): PagedLog => {
+    backupLog ??= createPagedLog<BackupRun>({
+      prefix: 'backup',
+      filterKeys: ['status', 'trigger'],
+      controls: backupControls,
+      list: backupRuns,
+      status: backupRunsStatus,
+      noun: 'runs',
+      failure: 'Backup history could not be loaded.',
+      read: (address, signal) => {
+        const { status, trigger } = address.filters
+        return list(
+          {
+            per_page: address.perPage,
+            ...(address.cursor === null ? {} : { cursor: address.cursor }),
+            ...(status === 'completed' || status === 'failed' || status === 'running'
+              ? { status }
+              : {}),
+            ...(trigger === 'nightly' || trigger === 'manual' ? { trigger } : {}),
+          },
+          signal,
+        )
+      },
+      empty: (filtered) =>
+        filtered ? 'No backup run matches these filters.' : 'No backup has run yet.',
+      draw: (runs) => backupRunTable(runs),
+    })
+    return backupLog
+  }
+
+  /**
+   * Mints the single-use download link (issue 39). The server decides whether
+   * a code is needed; the field appears when it says so, rather than the page
+   * guessing who has an authenticator enrolled.
+   */
+  const backupDownloadMint = required<HTMLButtonElement>('[data-backup-download-mint]')
+  const backupDownloadCode = required<HTMLInputElement>('[data-backup-download-code]')
+  const backupDownloadCodeRow = required<HTMLElement>('[data-backup-download-code-row]')
+  const backupDownloadResult = required<HTMLElement>('[data-backup-download-result]')
+  const backupDownloadLink = required<HTMLInputElement>('[data-backup-download-link]')
+  const backupDownloadLinkRow = required<HTMLElement>('[data-backup-download-link-row]')
+  const backupDownloadErrorCode = (error: unknown): string | null => {
+    if (!(error instanceof EzactoApiError) || typeof error.body !== 'object' || error.body === null) {
+      return null
+    }
+    const detail: unknown = Reflect.get(error.body, 'error')
+    if (typeof detail !== 'object' || detail === null) return null
+    const code: unknown = Reflect.get(detail, 'code')
+    return typeof code === 'string' ? code : null
+  }
+  const backupDownloadFailure = (error: unknown): string => {
+    const code = backupDownloadErrorCode(error)
+    if (code === 'two_factor_code_required') {
+      backupDownloadCodeRow.hidden = false
+      backupDownloadCode.focus()
+      return 'Enter a current verification code to create the link.'
+    }
+    if (code === 'invalid_two_factor_code') return 'That code is incorrect. Try again.'
+    if (code === 'two_factor_locked') return 'Too many incorrect codes. Wait a few minutes and try again.'
+    if (error instanceof EzactoApiError && error.status === 429) {
+      return 'Too many links requested. Try again in a minute.'
+    }
+    if (error instanceof EzactoApiError && error.status === 404) {
+      return 'There is no completed backup to download.'
+    }
+    if (error instanceof EzactoApiError && error.status === 403) {
+      return 'Only administrators can create a download link.'
+    }
+    return 'The link could not be created. Try again.'
+  }
+  const mintBackupDownload = async (): Promise<void> => {
+    const active = currentSession()
+    if (active === null || active.identity.profile !== 'administrator' || api.createBackupDownloadLink === undefined) return
+    backupDownloadMint.disabled = true
+    backupDownloadLinkRow.hidden = true
+    backupDownloadLink.value = ''
+    backupDownloadResult.textContent = 'Creating the link…'
+    const code = backupDownloadCode.value.trim()
+    try {
+      const link = await api.createBackupDownloadLink(code === '' ? {} : { code },active.signal)
+      active.present(() => {
+        backupDownloadCode.value = ''
+        backupDownloadLink.value = new URL(link.url, globalThis.location.origin).href
+        backupDownloadLinkRow.hidden = false
+        backupDownloadResult.textContent = `Link created. It works once and expires at ${new Date(link.expires_at).toLocaleString()}. It will not be shown again.`
+      })
+    } catch (error) {
+      const paint = () => { backupDownloadResult.textContent = backupDownloadFailure(error) }
+      const factorCode = backupDownloadErrorCode(error)
+      if (factorCode === 'two_factor_code_required' || factorCode === 'invalid_two_factor_code' || factorCode === 'two_factor_locked') active.present(paint)
+      else active.presentFailure(error,paint)
+    } finally {
+      if (currentSession() === active) backupDownloadMint.disabled = false
+    }
+  }
+  backupDownloadMint.addEventListener('click', () => void mintBackupDownload())
+
+  const offsiteCheckRow = required<HTMLElement>('[data-backup-offsite-check-row]')
+  const offsiteCheck = required<HTMLButtonElement>('[data-backup-offsite-check]')
+  const offsiteCheckResult = required<HTMLElement>('[data-backup-offsite-check-result]')
+  let offsiteSession: ActiveSession | null = null
+  offsiteCheck.addEventListener('click', () => {
+    const active = offsiteSession
+    if (!active || currentSession() !== active || active.identity.profile !== 'administrator' || !api.checkOffsiteBackupDestination) return
+    offsiteCheck.disabled = true
+    offsiteCheckResult.textContent = 'Verifying an encrypted test object…'
+    void api
+      .checkOffsiteBackupDestination(active.signal)
+      .then((result) => {
+        active.present(() => {
+          offsiteCheckResult.textContent = `Destination verified at ${new Date(result.checked_at).toLocaleString()}. This check did not create a backup.`
+        })
+      })
+      .catch((error) => {
+        active.presentFailure(error, () => {
+          const detail =
+            error instanceof EzactoApiError && typeof error.body === 'object' && error.body !== null
+              ? Reflect.get(error.body, 'error')
+              : null
+          const message =
+            typeof detail === 'object' && detail !== null ? Reflect.get(detail, 'message') : null
+          offsiteCheckResult.textContent =
+            backupDownloadErrorCode(error) === 'offsite_backup_unavailable' &&
+            typeof message === 'string'
+              ? message
+              : 'E14: The off-site destination could not be verified. Check its configuration and bucket permissions.'
+        })
+      })
+      .finally(() => {
+        active.present(() => {
+          offsiteCheck.disabled = false
+        })
+      })
+  })
+
   const loadBackups = async (identity: Whoami, active: ActiveSession): Promise<void> => {
+    offsiteSession = null
+    offsiteCheckRow.hidden = true
+    offsiteCheckResult.textContent = ''
     if (identity.profile !== 'administrator') {
       backupStatus.textContent = 'Backups are visible to administrators only.'
       return
@@ -1628,26 +2159,68 @@ export const createModuleSettingsController = (
     if (api.getBackupStatus === undefined) {
       // The container composes no reader: its backups are the operator's
       // filesystem, and RESTORE.md is the contract there rather than this page.
-      backupStatus.textContent =
-        'This deployment does not manage its own backups. See RESTORE.md.'
+      backupStatus.textContent = 'This deployment does not manage its own backups. See RESTORE.md.'
       return
     }
     try {
       const status = await api.getBackupStatus(active.signal)
+      if (currentSession() !== active) return
+      offsiteSession = active
+      active.signal.addEventListener(
+        'abort',
+        () => {
+          if (offsiteSession === active) {
+            offsiteSession = null
+            offsiteCheckRow.hidden = true
+            offsiteCheckResult.textContent = ''
+          }
+        },
+        { once: true },
+      )
       active.present(() => {
         const now = Date.now()
         facts(backupFacts, [
           [
-            'Last completed',
+            'Last completed (L1)',
             status.last_completed === null
               ? 'Never'
               : `${sinceLabel(status.last_completed.completed_at ?? status.last_completed.started_at, now)} · ${(status.last_completed.total_rows ?? 0).toLocaleString('en-US')} rows`,
           ],
+          ['Destination', status.last_completed?.r2_prefix ?? '—'],
           [
-            'Destination',
-            status.last_completed?.r2_prefix ?? '—',
+            'Last off-site copy (L2)',
+            status.offsite?.last_completed
+              ? sinceLabel(
+                  status.offsite.last_completed.completed_at ??
+                    status.offsite.last_completed.started_at,
+                  now,
+                )
+              : status.offsite === undefined
+                ? 'Not reported by this deployment'
+                : 'Never',
           ],
-          ['Runs recorded', String(status.recent_runs.length)],
+          [
+            'Off-site state',
+            status.offsite === undefined
+              ? 'See RESTORE.md'
+              : status.offsite.state === 'disabled'
+                ? 'Not configured'
+                : status.offsite.state === 'misconfigured'
+                  ? 'Configuration needs attention'
+                  : status.offsite.state === 'waiting'
+                    ? 'Waiting for a scheduled copy'
+                    : status.offsite.state === 'running'
+                      ? `Copy in progress · ${status.offsite.latest?.uploaded_objects ?? 0}/${status.offsite.latest?.total_objects ?? 0} objects`
+                      : status.offsite.state === 'failed'
+                        ? 'Copy failed'
+                        : 'Verified encrypted copy completed',
+          ],
+          ['Off-site destination', status.offsite?.destination ?? '—'],
+          // Without a paged history the status is all there is to count; with
+          // one, the pager under the table says how many runs there are.
+          ...(api.listBackupRuns === undefined
+            ? ([['Runs recorded', String(status.recent_runs.length)]] as const)
+            : []),
         ])
         // A failure is not a row in a table to be scanned for; it is the answer
         // to the only question this section is asked.
@@ -1663,12 +2236,47 @@ export const createModuleSettingsController = (
           backupAlarm.textContent =
             'No backup has ever completed, so there is nothing to restore from.'
         }
-        backupRuns.replaceChildren(backupRunTable(status.recent_runs))
-        backupRuns.hidden = false
-        backupStatus.textContent = ''
+        backupStatus.textContent = status.offsite?.error
+          ? `${status.offsite.error.code}: ${status.offsite.error.message}`
+          : ''
+        offsiteCheckRow.hidden =
+          !status.offsite?.configured || api.checkOffsiteBackupDestination === undefined
+        offsiteCheck.disabled = false
+        if (api.createBackupDownloadLink !== undefined) {
+          backupDownload.hidden = false
+          const none = status.last_completed === null
+          backupDownloadMint.disabled = none
+          if (none) {
+            backupDownloadResult.textContent =
+              'There is no completed backup yet, so there is nothing to download.'
+          }
+        }
+        if (api.listBackupRuns === undefined) {
+          backupRuns.replaceChildren(backupRunTable(status.recent_runs))
+          backupRuns.hidden = false
+        }
       })
+      if (api.listBackupRuns !== undefined && currentSession() === active) {
+        backupControls.hidden = false
+        backupRuns.hidden = false
+        let zone = 'UTC'
+        try { zone = (await api.getTimesheetLockPolicy?.(active.signal))?.timezone ?? 'UTC' }
+        catch { /* The header explicitly says UTC when the setting is unavailable. */ }
+        if (currentSession() !== active) return
+        backupZone = zone
+        backupHistoryOwner?.abort()
+        const owner = new AbortController()
+        backupHistoryOwner = owner
+        active.signal.addEventListener('abort',()=>owner.abort(),{once:true})
+        await backupHistory(api.listBackupRuns).load(owner.signal)
+      }
     } catch (error) {
       active.presentFailure(error, () => {
+        if (error instanceof EzactoApiError && error.status === 404) {
+          backupStatus.textContent =
+            'This deployment uses operator-managed backups. See RESTORE.md for scheduling and recovery.'
+          return
+        }
         sectionFailed(
           'backup',
           backupStatus,
@@ -1802,6 +2410,90 @@ export const createModuleSettingsController = (
       })
   })
 
+  // The reconciliation report (issue 1013): a read, shown as a table of what
+  // differs. There is no action on a row -- nothing here corrects anything.
+  quickBooksReconcile.addEventListener('click', () => {
+    const active = currentSession()
+    if (active === null || api.getQuickBooksReconciliation === undefined) return
+    quickBooksReconcile.disabled = true
+    quickBooksReconcileResult.textContent = 'Comparing…'
+    api
+      .getQuickBooksReconciliation(active.signal)
+      .then((report) => {
+        active.present(() => {
+          const money = (cents: number | null): string =>
+            cents === null ? '—' : (cents / 100).toFixed(2)
+          // A payment QuickBooks no longer counts sits beside the invoice
+          // differences: same table, same rule that nothing here corrects it.
+          const differing = [
+            ...report.rows
+              .filter((row) => row.status !== 'matched')
+              .map((row) => ({
+                key: `${row.status}:${row.number}`,
+                number: row.number,
+                difference: row.status.replaceAll('_', ' '),
+                ezacto: row.ezacto_amount_cents,
+                quickbooks: row.quickbooks_amount_cents,
+                detail: row.detail,
+              })),
+            ...report.payment_divergences.map((divergence) => {
+              const total = divergence.receipts.reduce((sum, receipt) => sum + receipt.amount_cents, 0)
+              return {
+                key: `payment:${divergence.quickbooks_payment_id}`,
+                number: divergence.receipts.map((receipt) => receipt.invoice_number).join(', '),
+                difference: `payment ${divergence.kind} in QuickBooks`,
+                ezacto: total,
+                quickbooks: null,
+                detail: `Receipts here still count ${money(total)} from QuickBooks payment ${divergence.quickbooks_payment_id}; review them.`,
+              }
+            }),
+          ]
+          const matched = report.counts['matched'] ?? 0
+          const catchUp =
+            report.recovery?.last_outcome === 'failed'
+              ? ' The last catch-up for missed QuickBooks events failed.'
+              : report.recovery?.last_outcome === 'full_reconcile_needed'
+                ? ' QuickBooks catch-up could not prove a complete history (an old gap or the provider response limit). Compare the books and review missing payments.'
+                : ''
+          quickBooksReconcileResult.textContent =
+            (differing.length === 0
+              ? `Everything agrees (${String(matched)} invoices matched).`
+              : `${String(differing.length)} to look at, ${String(matched)} matched.`) + catchUp
+          quickBooksReconcileTable.replaceChildren(
+            renderDataTable({
+              caption: 'Differences between ezacto and QuickBooks',
+              table: 'quickbooks-comparison',
+              defaultSort: { column: 'number', direction: 'ascending' },
+              rows: differing,
+              rowKey: (row) => row.key,
+              empty: 'No differences.',
+              columns: [
+                { key: 'number', label: 'Invoice', sortValue: (row) => row.number || null, fit: true, render: (row) => row.number || '—' },
+                { key: 'status', label: 'Difference', sortValue: (row) => row.difference, fit: true, render: (row) => row.difference },
+                { key: 'ezacto', label: 'ezacto', sortValue: (row) => row.ezacto, numeric: true, render: (row) => money(row.ezacto) },
+                { key: 'quickbooks', label: 'QuickBooks', sortValue: (row) => row.quickbooks, numeric: true, render: (row) => money(row.quickbooks) },
+                { key: 'detail', label: 'Detail', sortValue: (row) => row.detail || null, wrap: true, render: (row) => row.detail },
+              ],
+            }),
+          )
+          quickBooksReconcileTable.hidden = false
+        })
+      })
+      .catch((error: unknown) => {
+        active.presentFailure(error, () => {
+          quickBooksReconcileTable.hidden = true
+          quickBooksReconcileResult.textContent = messageFor(
+            error,
+            'The reconciliation is for administrators and accounting.',
+            'QuickBooks could not be compared.',
+          )
+        })
+      })
+      .finally(() => {
+        if (currentSession() === active) quickBooksReconcile.disabled = false
+      })
+  })
+
   themeSave.addEventListener('click', () => {
     const active = currentSession()
     if (active === null || themeBusy || api.setInstanceTheme === undefined) return
@@ -1910,7 +2602,9 @@ export const createModuleSettingsController = (
     // methods are shown, and no switch moves.
     signInStatus.textContent = demo ? demoUnavailable('Switching a sign-in method') : ''
     signInList.hidden = false
-    signInList.innerHTML = states.map((state) => renderSignInMethodCard(state, demo)).join('')
+    signInList.innerHTML = states
+      .filter((state) => moduleAvailable('sso') || state.method === 'password' || state.method === 'magic_link')
+      .map((state) => renderSignInMethodCard(state, demo)).join('')
     for (const toggle of signInList.querySelectorAll<HTMLInputElement>(
       '[data-sign-in-toggle]',
     )) {
@@ -1979,6 +2673,8 @@ export const createModuleSettingsController = (
             try {
               const updated = await patchModule(moduleName, toggle.checked, active.signal)
               active.present(() => {
+                loaded.delete('import-export')
+                loaded.delete('bulk-actions')
                 const state = updated.find((m) => m.module === moduleName)
                 if (span) span.textContent = state?.enabled ? 'Enabled' : 'Disabled'
                 if (result) result.textContent = ''
@@ -2020,8 +2716,31 @@ export const createModuleSettingsController = (
    * for the session; what it showed stays, and a Retry or Refresh reads it
    * once more.
    */
+  const dataTools = createCompanyDataTools(api,signal=>fetchModules(signal))
   const sectionLoaders: Readonly<Record<string, (active: ActiveSession) => Promise<void>>> = {
     modules: loadModules,
+    webhooks: active => webhookController.load(active),
+    'work-items': async active => { await Promise.all([githubReader.load(active), githubPublication.load(active)]) },
+    'import-export': async active=>{
+      const loadImport = async () => {
+        const root = document.querySelector<HTMLElement>('[data-csv-import]')
+        if (!root || currentSession() !== active || active.signal.aborted) return
+        if (!api.csvImports) { root.querySelector<HTMLElement>('[data-csv-status]')!.textContent = 'Browser import is unavailable. Use the operator CSV migration tool.'; return }
+        const module = await import('../csv-import/browser.js')
+        if (currentSession() !== active || active.signal.aborted) return
+        csvImports ??= module.createCsvImportController(root, api.csvImports)
+        await csvImports.activate({ actor: `${active.identity.user_id}:${active.identity.profile}:${crypto.randomUUID()}`, administrator: active.identity.profile === 'administrator', signal: active.signal })
+      }
+      await Promise.all([
+        (async () => { try { await dataTools.loadExports(active) }
+          catch(error){active.presentFailure(error,()=>sectionFailed('import-export',required<HTMLElement>('[data-settings-data-status]'),error,'Only administrators can use company import and export.','Available exports could not be loaded.'))} })(),
+        loadImport(),
+      ])
+    },
+    'bulk-actions': async active=>{
+      try { await dataTools.loadBulk(active) }
+      catch(error){active.presentFailure(error,()=>sectionFailed('bulk-actions',required<HTMLElement>('[data-settings-bulk-status]'),error,'Only administrators can view company bulk actions.','Available bulk actions could not be loaded.'))}
+    },
     erasure: async (active) => {
       try { await retention.load(active); await deletionRequests.load(active) }
       catch (error) {
@@ -2033,8 +2752,12 @@ export const createModuleSettingsController = (
     email: (active) => loadEmail(active.identity, active),
     invoices: loadInvoiceDefaults,
     reminders: loadReminders,
-    payouts: loadWiseConnection,
-    backup: (active) => loadBackups(active.identity, active),
+    approval: loadAutoApproval,
+    notifications: loadNotifications,
+    payouts: async (active) => {
+      await Promise.all([loadWiseConnection(active), payoutProviderSwitches.load(active.signal)])
+    },
+    backup: (active) => (moduleAvailable('backups') ? loadBackups(active.identity, active) : Promise.resolve()),
     brand: (active) => loadBrandAssets(active.identity, active),
     appearance: (active) => loadInstanceTheme(active.identity, active),
     integrations: (active) => loadQuickBooks(active.identity, active),
@@ -2044,7 +2767,10 @@ export const createModuleSettingsController = (
   const load = (section: string): Promise<void> => {
     const active = currentSession()
     const read = sectionLoaders[section]
-    if (active === null || read === undefined) return Promise.resolve()
+    const owner = SETTINGS_SECTION_MODULES[section]
+    if (active === null || read === undefined || (owner !== undefined && !moduleAvailable(owner))) {
+      return Promise.resolve()
+    }
     const pending = loaded.get(section)
     if (pending !== undefined) return pending
     const run = read(active)
@@ -2059,9 +2785,18 @@ export const createModuleSettingsController = (
    */
   const shownSection = (): string => {
     const wanted = resolveSettingsSection(globalThis.location.hash)
-    return wanted === 'payouts' && wiseSection.hasAttribute('data-settings-unavailable')
+    const owner = SETTINGS_SECTION_MODULES[wanted]
+    return (wanted === 'payouts' && wiseSection.hasAttribute('data-settings-unavailable')) ||
+      (owner !== undefined && !moduleAvailable(owner))
       ? DEFAULT_COMPANY_SETTINGS_SECTION
       : wanted
+  }
+
+  // A module the operator switched off (issues 1216, 1254) is not offered at
+  // all: its sections are withdrawn from the strip like Payouts, and never
+  // read, so no request reaches its endpoints.
+  if (withdrawUnavailableSettingsSections()) {
+    globalThis.dispatchEvent(new Event('hashchange'))
   }
 
   // Following a link in the strip is a hash change (issue 800), and the
@@ -2077,13 +2812,18 @@ export const createModuleSettingsController = (
   for (const control of refreshControls) {
     control.addEventListener('click', async () => {
       const section = control.dataset.settingsRefresh
-      if (section === undefined || currentSession() === null) return
+      const active = currentSession()
+      if (section === undefined || active === null || control.disabled) return
       loaded.delete(section)
       control.disabled = true
+      setRequestBusy(control, true)
       try {
         await load(section)
       } finally {
-        control.disabled = false
+        if (currentSession() === active) {
+          control.disabled = false
+          setRequestBusy(control, false)
+        }
       }
     })
   }
@@ -2098,6 +2838,7 @@ export const createModuleSettingsController = (
         brandStatus.textContent = ''
         quickBooksStatus.textContent = ''
         ssoStatus.textContent = ''
+        backupStatus.textContent = 'Backups are visible to administrators only.'
         return
       }
 
@@ -2106,7 +2847,9 @@ export const createModuleSettingsController = (
         identity,
         ...sessionPresenter(() => currentSession() === active, onSessionFailure),
       }
+      if (signal.aborted) return
       session = active
+      signal.addEventListener('abort',()=>{if(session===active)clearPrivatePresentation()},{once:true})
 
       revealWiseSection()
       await load(shownSection())

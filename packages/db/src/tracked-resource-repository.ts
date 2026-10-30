@@ -7,9 +7,17 @@ import {
   type ApprovalStatus,
   type TrackedState,
   type TeamViewer,
+  assertTimeRoundingPolicy,
   canManageTeammateTime,
   dateInTimeZone,
+  effectiveTimeRounding,
+  effectiveTimeZone,
+  roundTimeSeconds,
   timeInTimeZone,
+  type EffectiveTimeRounding,
+  type TimeRoundingMinutes,
+  type TimeRoundingMode,
+  type TimeRoundingPolicy,
 } from '@ezacto/core'
 import {
   computeExpenseTotalCents,
@@ -21,11 +29,12 @@ import {
   createStoppedTimeEntry,
   elapsedWallClockSeconds,
   restartTimeEntry,
-  roundSeconds,
   startTimeEntry,
   stopTimeEntry,
+  timeRoundingForProject,
   type TimeBoundary,
   type TimeEntry,
+  ZeroDurationTimeEntryError,
 } from './time-entries.js'
 import {
   assertStoredTimeEntryNoteRequirement,
@@ -35,9 +44,18 @@ import {
 import { resolveEntryRates } from './rate-resolver.js'
 import { timeEntryOnBehalfEvent, type TimeEntryChange } from './time-entry-audit.js'
 import {
+  applyTimeRoundingRecalculation,
+  previewTimeRoundingRecalculation,
+  type LockedDates,
+  type TimeRoundingRecalculationPreview,
+  type TimeRoundingRecalculationResult,
+  type TimeRoundingRecalculationScope,
+} from './time-rounding-recalculation.js'
+import {
   clients,
   expenseCategories,
   expenses,
+  invoices,
   organizations,
   projects,
   taskAssignments,
@@ -61,6 +79,7 @@ import {
   getTableColumns,
   gt,
   gte,
+  inArray,
   isNotNull,
   isNull,
   lte,
@@ -84,6 +103,9 @@ export interface ResourceSource<Row extends { id: number }> {
 
 const inputProblem = (field: string, code: string, message: string) =>
   new TrackedResourceInputError(field, code, message)
+const isZeroDurationStorageError = (error: unknown) =>
+  error instanceof ZeroDurationTimeEntryError ||
+  (error instanceof Error && error.message.includes('time_entry_zero_duration'))
 
 const assignmentProblem = () => new TrackedResourceAssignmentError()
 const concurrentProblem = (resource: 'time entry' | 'expense') =>
@@ -261,6 +283,23 @@ export interface OrganizationTimeEntrySettings {
   timeFormat: 'decimal' | 'hours_minutes'
   clock: '12h' | '24h'
   weekStartDay: 'saturday' | 'sunday' | 'monday'
+  /** The organization's rounding rule; a project may have its own (issue 949). */
+  timeRounding: TimeRoundingPolicy
+}
+
+/** One half or both; the other keeps what is stored. */
+export interface UpdateOrganizationTimeRounding {
+  mode?: TimeRoundingMode
+  minutes?: TimeRoundingMinutes
+}
+
+/** A project/task pair a person may log against, and what logging there means. */
+export interface TimeEntryOptionRecord {
+  projectId: number
+  taskId: number
+  noteMinimumLength: number
+  /** How time on this pair is rounded, and whose rule that is (issue 949). */
+  timeRounding: EffectiveTimeRounding
 }
 
 export interface UpdateOrganizationTimeEntryNoteSettings {
@@ -338,14 +377,31 @@ type TimeSettings = Pick<
   | 'timeEntryMode'
   | 'timeFormat'
   | 'clock'
-  | 'timeRounding'
   | 'weekStartDay'
+  | 'timeRoundingMode'
+  | 'timeRoundingMinutes'
   // Issue 651: a running timer is filed against the organization's today, not
   // UTC's.
   | 'timezone'
 >
 
 const moneyUpperBound = 9_000_000_000_000
+
+const organizationTimeRounding = (
+  settings: Pick<typeof organizations.$inferSelect, 'timeRoundingMode' | 'timeRoundingMinutes'>,
+): TimeRoundingPolicy =>
+  assertTimeRoundingPolicy({ mode: settings.timeRoundingMode, minutes: settings.timeRoundingMinutes })
+
+/** A project's own rule, or null where it takes the organization's. */
+const projectTimeRounding = (
+  project: Pick<typeof projects.$inferSelect, 'timeRoundingMode' | 'timeRoundingMinutes'>,
+): TimeRoundingPolicy | null =>
+  project.timeRoundingMode === null
+    ? null
+    : assertTimeRoundingPolicy({
+        mode: project.timeRoundingMode,
+        minutes: project.timeRoundingMinutes,
+      })
 
 const mapReturnedTimeEntry = (row: Record<string, unknown>): TimeEntry =>
   Object.fromEntries(
@@ -373,22 +429,6 @@ const isRunning = (entry: TimeEntry): boolean =>
  * `instant` is untouched -- it is the moment, and the moment is not local to
  * anybody. Only the calendar fields move.
  */
-/**
- * Whether a calendar can actually use this zone.
- *
- * The same test the profile route applies on write. It is applied on read as
- * well because the rows that predate that route were imported from a system
- * that stored display names, and those are still in the table.
- */
-const usableTimezone = (zone: string): boolean => {
-  try {
-    new Intl.DateTimeFormat('en-US', { timeZone: zone }).format(new Date(0))
-    return true
-  } catch {
-    return false
-  }
-}
-
 const localBoundary = (
   boundary: TimeBoundary,
   timezone: string | null,
@@ -439,20 +479,10 @@ export class DrizzleTrackedResourceRepository {
       .from(users)
       .where(eq(users.id, userId))
       .limit(1)
-    // A personal zone only wins if it is one a calendar can actually use.
-    //
-    // Imported people carry Harvest's display names -- "Central America",
-    // "Warsaw" -- which `Intl` refuses. Preferring them unconditionally threw
-    // downstream, and the catch there fell all the way back to UTC: so this
-    // discarded a working organisation zone and restored the very bug it was
-    // written to fix, for every imported person at once.
-    //
-    // The organisation zone is the right floor. It is the answer everyone had
-    // before personal zones existed, and it is set.
-    if (user?.timezone && user.timezone !== 'UTC' && usableTimezone(user.timezone)) {
-      return user.timezone
-    }
-    return settings.timezone
+    // The rule itself -- a personal zone wins only if a calendar can use it,
+    // and the organisation's is the floor -- lives in core, where the time
+    // reminders (issue 935) read it too.
+    return effectiveTimeZone(user?.timezone ?? null, settings.timezone)
   }
 
   /**
@@ -471,7 +501,71 @@ export class DrizzleTrackedResourceRepository {
       timeFormat: settings.timeFormat,
       clock: settings.clock,
       weekStartDay: settings.weekStartDay,
+      timeRounding: organizationTimeRounding(settings),
     }
+  }
+
+  /**
+   * Sets the organization's rule (issue 949). Nothing already saved changes:
+   * the new rule rounds time saved from now on, and open time is re-rounded
+   * only by the recalculation below, after a preview.
+   */
+  async updateTimeRoundingSettings(
+    input: Readonly<UpdateOrganizationTimeRounding>,
+    updatedAt: string,
+  ): Promise<TimeRoundingPolicy> {
+    const current = organizationTimeRounding(await this.#timeSettings())
+    const next = assertTimeRoundingPolicy({
+      mode: input.mode ?? current.mode,
+      minutes: input.minutes ?? current.minutes,
+    })
+    const [organization] = await this.#database
+      .update(organizations)
+      .set({ timeRoundingMode: next.mode, timeRoundingMinutes: next.minutes, updatedAt })
+      .where(eq(organizations.id, 1))
+      .returning()
+    if (!organization) throw new Error('organization must exist before serving tracked resources')
+    return organizationTimeRounding(organization)
+  }
+
+  /** What re-rounding open time under today's rules would change (issue 949). */
+  async previewTimeRoundingRecalculation(
+    scope: Readonly<TimeRoundingRecalculationScope>,
+  ): Promise<TimeRoundingRecalculationPreview> {
+    return previewTimeRoundingRecalculation(this.#database, scope, this.#lockedDates())
+  }
+
+  /** Applies exactly the preview the fingerprint names, or answers `stale`. */
+  async applyTimeRoundingRecalculation(
+    scope: Readonly<TimeRoundingRecalculationScope>,
+    fingerprint: string,
+    updatedAt: string,
+  ): Promise<TimeRoundingRecalculationResult> {
+    return applyTimeRoundingRecalculation(
+      this.#database,
+      scope,
+      fingerprint,
+      updatedAt,
+      this.#lockedDates(),
+    )
+  }
+
+  /**
+   * The lock policy's answer for many dates at once where it offers one, else
+   * one date at a time: the same question `isLocked` answers for a single edit.
+   */
+  #lockedDates(): LockedDates {
+    const policy = this.#policy
+    if (policy.lockedDates !== undefined) return (dates) => policy.lockedDates!(dates)
+    return async (dates) =>
+      new Map(
+        await Promise.all(
+          dates.map(
+            async (spentDate) =>
+              [spentDate, await policy.isLocked({ entityType: 'tracked_date', spentDate })] as const,
+          ),
+        ),
+      )
   }
 
   async timeEntryNoteSettings(): Promise<OrganizationTimeEntryNoteSettings> {
@@ -688,9 +782,20 @@ export class DrizzleTrackedResourceRepository {
     }
   }
 
-  #timeConditions(actor: TimeEntryActor, filters: Readonly<TimeEntryFilters>): SQL[] {
+  /**
+   * `everyone` widens an unnamed user to every person the actor reaches, which
+   * is the Harvest shim's reading of an unfiltered list; the native API
+   * defaults to the actor's own time and never passes it.
+   */
+  #timeConditions(
+    actor: TimeEntryActor,
+    filters: Readonly<TimeEntryFilters>,
+    everyone = false,
+  ): SQL[] {
     const conditions: SQL[] = [
-      eq(timeEntries.userId, filters.userId ?? actor.userId),
+      everyone && filters.userId === undefined
+        ? sql`1`
+        : eq(timeEntries.userId, filters.userId ?? actor.userId),
       this.#timeEntryAccess(actor),
     ]
     if (filters.clientId !== undefined) {
@@ -745,8 +850,8 @@ export class DrizzleTrackedResourceRepository {
     return conditions
   }
 
-  #expenseConditions(userId: number, filters: Readonly<ExpenseFilters>): SQL[] {
-    const conditions: SQL[] = [eq(expenses.userId, userId)]
+  #expenseConditions(userId: number | null, filters: Readonly<ExpenseFilters>): SQL[] {
+    const conditions: SQL[] = userId === null ? [] : [eq(expenses.userId, userId)]
     if (filters.clientId !== undefined) {
       conditions.push(sql`EXISTS (
         SELECT 1 FROM ${projects} filter_project
@@ -781,9 +886,8 @@ export class DrizzleTrackedResourceRepository {
     return conditions
   }
 
-  async timeEntryOptions(
-    userId: number,
-  ): Promise<readonly { projectId: number; taskId: number; noteMinimumLength: number }[]> {
+  async timeEntryOptions(userId: number): Promise<readonly TimeEntryOptionRecord[]> {
+    const organization = organizationTimeRounding(await this.#timeSettings())
     const rows = await this.#database
       .select()
       .from(userAssignments)
@@ -814,6 +918,7 @@ export class DrizzleTrackedResourceRepository {
               row.user_assignments.projectId,
             )
           )?.minimumLength ?? 0,
+        timeRounding: effectiveTimeRounding(organization, projectTimeRounding(row.projects)),
       })),
     )
   }
@@ -850,6 +955,45 @@ export class DrizzleTrackedResourceRepository {
         return Promise.all(rows.map((row) => this.#timeRecord(row, byDate?.get(row.spentDate))))
       },
     }
+  }
+
+  /** The size of what `timeEntriesOffset` pages over: every person the actor reaches. */
+  async countTimeEntries(
+    actor: TimeEntryActor,
+    filters: Readonly<TimeEntryFilters>,
+  ): Promise<number> {
+    return this.#database.$count(timeEntries, and(...this.#timeConditions(actor, filters, true)))
+  }
+
+  /** Rows in id order from `window.offset`, for the Harvest shim's page numbers. */
+  async timeEntriesOffset(
+    actor: TimeEntryActor,
+    filters: Readonly<TimeEntryFilters>,
+    window: Readonly<{ offset: number; take: number }>,
+  ): Promise<readonly TimeEntryRecord[]> {
+    const rows = await this.#database
+      .select()
+      .from(timeEntries)
+      .where(and(...this.#timeConditions(actor, filters, true)))
+      .orderBy(asc(timeEntries.id))
+      .limit(window.take)
+      .offset(window.offset)
+    const byDate = await this.#policy.lockedDates?.(rows.map(({ spentDate }) => spentDate))
+    return Promise.all(rows.map((row) => this.#timeRecord(row, byDate?.get(row.spentDate))))
+  }
+
+  /** Invoice numbers by id, for the entries that name an invoice. */
+  async invoiceNumbers(ids: readonly number[]): Promise<ReadonlyMap<number, string>> {
+    const numbers = new Map<number, string>()
+    const unique = [...new Set(ids)]
+    for (let start = 0; start < unique.length; start += 50) {
+      const rows = await this.#database
+        .select()
+        .from(invoices)
+        .where(inArray(invoices.id, unique.slice(start, start + 50)))
+      for (const row of rows) numbers.set(row.id, row.number)
+    }
+    return numbers
   }
 
   // Submission review is based on explicit teammates, not project co-membership.
@@ -908,6 +1052,38 @@ export class DrizzleTrackedResourceRepository {
     }
   }
 
+  /** The size of what `expensesOffset` pages over: every person the viewer reaches, or the one named. */
+  async countExpenses(
+    userId: number | null,
+    filters: Readonly<ExpenseFilters>,
+    viewer: Readonly<TeamViewer>,
+  ): Promise<number> {
+    return this.#database.$count(
+      expenses,
+      and(...this.#expenseConditions(userId, filters), this.#expenseReadAccess(viewer, expenses.userId)),
+    )
+  }
+
+  /** Rows in id order from `window.offset`, for the Harvest shim's page numbers. */
+  async expensesOffset(
+    userId: number | null,
+    filters: Readonly<ExpenseFilters>,
+    viewer: Readonly<TeamViewer>,
+    window: Readonly<{ offset: number; take: number }>,
+  ): Promise<readonly ExpenseRecord[]> {
+    const rows = await this.#database
+      .select()
+      .from(expenses)
+      .where(
+        and(...this.#expenseConditions(userId, filters), this.#expenseReadAccess(viewer, expenses.userId)),
+      )
+      .orderBy(asc(expenses.id))
+      .limit(window.take)
+      .offset(window.offset)
+    const byDate = await this.#policy.lockedDates?.(rows.map(({ spentDate }) => spentDate))
+    return Promise.all(rows.map((row) => this.#expenseRecord(row, byDate?.get(row.spentDate))))
+  }
+
   async getTimeEntry(actor: TimeEntryActor, id: number): Promise<TimeEntryRecord> {
     return this.#timeRecord(await this.#accessibleTimeEntry(actor, id))
   }
@@ -926,7 +1102,16 @@ export class DrizzleTrackedResourceRepository {
     actor: TimeEntryActor,
     input: Readonly<CreateTimeEntryRequest>,
     boundary: TimeBoundary,
+    /**
+     * Statements that commit with a stopped entry or not at all, ahead of any
+     * audit. Accepting a calendar proposal marks it accepted in the same batch
+     * (issue 428), so a refusal here leaves the proposal open.
+     */
+    followUps: readonly CompiledQuery[] = [],
   ): Promise<TimeEntryRecord> {
+    if (followUps.length > 0 && input.seconds === undefined && input.endedTime === undefined) {
+      throw new Error('follow-up statements ride only with a stopped time entry')
+    }
     // Everything below is the owner's: their assignments, their timesheet,
     // their rates. Only the audit names the actor.
     const userId = input.userId ?? actor.userId
@@ -986,6 +1171,13 @@ export class DrizzleTrackedResourceRepository {
             runningEntryPolicyLocked,
           )
         } catch (error) {
+          if (isZeroDurationStorageError(error)) {
+            throw inputProblem(
+              'seconds',
+              'zero_duration',
+              'The running timer would round to zero. Add more time before starting another timer.',
+            )
+          }
           return this.#translateApprovalPeriodWriteError(error, userId, local.date, true)
         }
       } else {
@@ -1005,9 +1197,16 @@ export class DrizzleTrackedResourceRepository {
               createdAt: boundary.instant,
               updatedAt: boundary.instant,
             },
-            onBehalfAudit(actor, userId, { action: 'create' }, boundary.instant),
+            [...followUps, ...onBehalfAudit(actor, userId, { action: 'create' }, boundary.instant)],
           )
         } catch (error) {
+          if (error instanceof ZeroDurationTimeEntryError) {
+            throw inputProblem(
+              'seconds',
+              'zero_duration',
+              'completed time entries must have a positive rounded duration',
+            )
+          }
           return this.#translateApprovalPeriodWriteError(error, userId, input.spentDate, false)
         }
       }
@@ -1060,6 +1259,13 @@ export class DrizzleTrackedResourceRepository {
             runningEntryPolicyLocked,
           )
         } catch (error) {
+          if (isZeroDurationStorageError(error)) {
+            throw inputProblem(
+              'started_time',
+              'zero_duration',
+              'The running timer would round to zero. Add more time before starting another timer.',
+            )
+          }
           return this.#translateApprovalPeriodWriteError(error, userId, local.date, true)
         }
       } else {
@@ -1084,9 +1290,16 @@ export class DrizzleTrackedResourceRepository {
               createdAt: boundary.instant,
               updatedAt: boundary.instant,
             },
-            onBehalfAudit(actor, userId, { action: 'create' }, boundary.instant),
+            [...followUps, ...onBehalfAudit(actor, userId, { action: 'create' }, boundary.instant)],
           )
         } catch (error) {
+          if (error instanceof ZeroDurationTimeEntryError) {
+            throw inputProblem(
+              'seconds',
+              'zero_duration',
+              'completed time entries must have a positive rounded duration',
+            )
+          }
           return this.#translateApprovalPeriodWriteError(error, userId, input.spentDate, false)
         }
       }
@@ -1105,7 +1318,6 @@ export class DrizzleTrackedResourceRepository {
     // else's time is held to that person's assignments, timesheet and note
     // requirement, and the entry stays theirs (#917).
     const userId = entry.userId
-    const settings = await this.#timeSettings()
     const timingOrAssignmentChange =
       input.projectId !== undefined ||
       input.taskId !== undefined ||
@@ -1185,9 +1397,23 @@ export class DrizzleTrackedResourceRepository {
         seconds = elapsedWallClockSeconds(0, spentDate, startedTime, spentDate, endedTime, true)
       }
     }
-    if (timingChanged) {
-      secondsWithoutTimer = seconds
-      roundedSeconds = roundSeconds(seconds, settings.timeRounding)
+    if (timingChanged) secondsWithoutTimer = seconds
+    // Rounded under the rule of the project it ends up on (issue 949): a new
+    // duration, and a move to a project that rounds differently, both re-round.
+    // A negative duration is an imported correction and keeps its source's
+    // figure, whichever project it is filed under.
+    if ((timingChanged || projectId !== entry.projectId) && seconds >= 0) {
+      roundedSeconds = roundTimeSeconds(
+        seconds,
+        await timeRoundingForProject(this.#database, projectId),
+      )
+      if (roundedSeconds === 0) {
+        throw inputProblem(
+          'seconds',
+          'zero_duration',
+          'completed time entries must have a positive rounded duration',
+        )
+      }
     }
 
     const rates =
@@ -1335,6 +1561,13 @@ export class DrizzleTrackedResourceRepository {
         ),
       )
     } catch (error) {
+      if (isZeroDurationStorageError(error)) {
+        throw inputProblem(
+          'seconds',
+          'zero_duration',
+          'completed time entries must have a positive rounded duration',
+        )
+      }
       return translateTrackedNotFound(error, 'time entry')
     }
   }

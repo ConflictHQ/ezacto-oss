@@ -259,6 +259,33 @@ for (const [runtime, factory] of factories) {
       )
     })
 
+    it('[api] publishes passing and failing restore drills to activity exactly once', async () => {
+      database = await factory()
+      for (const status of ['pass', 'fail']) {
+        const input = {
+          eventType: 'backup.restore_drilled' as const,
+          subjectId: 1,
+          actor: { type: 'system' as const },
+          occurredAt: '2026-09-08T04:00:00.000Z',
+          captureId: `monthly-drill:${status}`,
+          detail: { status, failed: status === 'fail' ? 'sha256' : null,
+            scratch_removed: true, counts: { tables: 200, rows: 500 } },
+        }
+        await captureActivityEvent(database.orm, input)
+        const replay = await captureActivityEvent(database.orm, input)
+        expect(replay.captured).toBe(false)
+      }
+      const service = database.outbox()
+      await service.drain()
+      const events = (await service.listActivity()).filter(event => event.eventType === 'backup.restore_drilled')
+      expect(events).toHaveLength(2)
+      expect(events.map(event => event.payload.backup_drill)).toEqual(expect.arrayContaining([
+        expect.objectContaining({ status: 'pass', failed: null, scratch_removed: true }),
+        expect.objectContaining({ status: 'fail', failed: 'sha256', scratch_removed: true }),
+      ]))
+      expect(events.every(event => event.aggregateType === 'backup_drill')).toBe(true)
+    })
+
     it('[unit] records every invoice state transition exactly once alongside a capture', async () => {
       database = await factory()
       await installInvoiceFixture(database)
@@ -333,6 +360,36 @@ for (const [runtime, factory] of factories) {
       // up a day short and look like nothing happened.
       expect(await ids({ from: '2026-09-06', to: '2026-09-06' })).toEqual(['a-3'])
       expect(await ids({ from: '2026-09-04', to: '2026-09-05' })).toEqual(['a-2', 'a-1'])
+    })
+
+    it('[unit] leaves named event types out for a reader who may not see them (issue 740)', async () => {
+      database = await factory()
+      const capture = async (
+        eventType: 'auth.signed_in' | 'api_token.created' | 'backup.exported',
+        subjectId: number,
+        occurredAt: string,
+        id: string,
+      ) =>
+        captureActivityEvent(
+          database!.orm,
+          { eventType, subjectId, actor: { type: 'user', id: 1 }, occurredAt, captureId: id },
+          { createEventId: () => id },
+        )
+      await capture('auth.signed_in', 1, '2026-09-04T09:00:00.000Z', 'x-1')
+      await capture('api_token.created', 2, '2026-09-05T09:00:00.000Z', 'x-2')
+      await capture('backup.exported', 3, '2026-09-06T09:00:00.000Z', 'x-3')
+      const service = database.outbox()
+      await service.drain()
+
+      const ids = async (filter: Parameters<typeof service.listActivity>[0]) =>
+        (await service.listActivity(filter)).map((entry) => entry.id)
+      const excluded = ['auth.signed_in', 'api_token.created']
+
+      expect(await ids({ excludeEventTypes: excluded })).toEqual(['x-3'])
+      // Asking for an excluded type by name does not get around the exclusion.
+      expect(await ids({ eventType: 'auth.signed_in', excludeEventTypes: excluded })).toEqual([])
+      expect(await ids({ excludeEventTypes: [] })).toEqual(['x-3', 'x-2', 'x-1'])
+      await expect(service.listActivity({ excludeEventTypes: ["x'; --"] })).rejects.toThrow(RangeError)
     })
 
     it('[unit] names who acted when the log is read, and keeps the id when nobody carries it (issue 862)', async () => {
@@ -514,6 +571,20 @@ for (const [runtime, factory] of factories) {
       }
 
       expect(sequences).toEqual([1, 2, 1])
+    })
+
+    it('[unit] reads a full page of 200 and its lookahead row, and refuses more', async () => {
+      // The activity log pager asks for one row past its largest page; reading 200
+      // through it once threw and answered 500 on the deployed demo.
+      database = await factory()
+      const service = database.outbox()
+      await expect(service.listActivity({ limit: 201 })).resolves.toEqual([])
+      await expect(service.listActivity({ limit: 202 })).rejects.toThrow(
+        'activity log limit must be an integer between 1 and 201',
+      )
+      await expect(service.listActivity({ limit: 0 })).rejects.toThrow(
+        'activity log limit must be an integer between 1 and 201',
+      )
     })
 
     it('[unit] refuses input the log cannot represent', async () => {

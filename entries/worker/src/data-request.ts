@@ -21,6 +21,8 @@
 const SERVICE_PATH_PREFIXES: readonly string[] = [
   '/__ezacto/bootstrap',
   '/api/v1',
+  // The Harvest v2 compatibility shim, reached with an API token.
+  '/harvest/v2',
   '/auth',
   // Request-scoped tracking remains available after account credentials close.
   '/account-deletion',
@@ -29,6 +31,10 @@ const SERVICE_PATH_PREFIXES: readonly string[] = [
   // No session, by definition: a payment processor calling us. The signature is
   // the authorisation.
   '/webhooks',
+  // A backup downloaded by the link an administrator minted (issue 39). No
+  // session: the single-use token is the authorisation.
+  '/backup-download',
+  '/calendar',
 ]
 
 export const isServicePath = (path: string): boolean =>

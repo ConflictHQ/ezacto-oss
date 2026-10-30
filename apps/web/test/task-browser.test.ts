@@ -140,7 +140,7 @@ describe('Tasks administration browser controller', () => {
       document.querySelector('[data-task-list-status]')?.textContent ?? ''
     const search = document.querySelector<HTMLInputElement>('[data-task-search]')!
     expect(rows()).toBe(2)
-    expect(status()).toBe('2 tasks loaded; more are available.')
+    expect(status()).toBe('2 tasks loaded; more are available. Sorting covers only the rows loaded so far; load more to include the rest.')
 
     search.value = 'quality'
     search.dispatchEvent(new Event('input', { bubbles: true }))
@@ -162,8 +162,34 @@ describe('Tasks administration browser controller', () => {
     search.dispatchEvent(new Event('input', { bubbles: true }))
 
     expect(document.querySelectorAll('[data-task-list] tbody tr')).toHaveLength(2)
-    expect(status()).toBe('2 tasks loaded; more are available.')
+    expect(status()).toBe('2 tasks loaded; more are available. Sorting covers only the rows loaded so far; load more to include the rest.')
   })
+  it('[browser] sorts the loaded tasks by a header and says the sort covers only those rows', async () => {
+    writeDocument()
+    const api = apiFor([task(7, 'Quality assurance'), task(8, 'Implementation')], {
+      listAdminTasks: vi.fn(async () =>
+        page([task(7, 'Quality assurance'), task(8, 'Implementation')], 'cursor-2'),
+      ),
+    })
+    const controller = createTaskAdminController(api)
+    await controller.activate(identity('administrator'), new AbortController().signal, () => false)
+
+    const names = (): string[] =>
+      [...document.querySelectorAll('[data-task-list] tbody tr[data-row] td:first-child')].map(
+        (cell) => cell.textContent ?? '',
+      )
+    expect(names()).toEqual(['Implementation', 'Quality assurance'])
+    expect(document.querySelector('[data-task-list] thead th[data-column="name"]')?.getAttribute('aria-sort')).toBe('ascending')
+    document.querySelector<HTMLButtonElement>('[data-task-list] thead button[data-sort-column="name"]')!.click()
+    expect(names()).toEqual(['Quality assurance', 'Implementation'])
+    expect(document.querySelector('[data-task-list] thead th[data-column="name"]')?.getAttribute('aria-sort')).toBe('descending')
+    document.querySelector<HTMLButtonElement>('[data-task-list] thead button[data-sort-column="name"]')!.click()
+    expect(names()).toEqual(['Implementation', 'Quality assurance'])
+    expect(document.querySelector('[data-task-list-status]')?.textContent).toContain(
+      'Sorting covers only the rows loaded so far',
+    )
+  })
+
   it('[browser] creates and minimally edits exact-cent task defaults', async () => {
     writeDocument()
     const original = task(7, 'Implementation')
@@ -192,7 +218,15 @@ describe('Tasks administration browser controller', () => {
       expect(document.querySelector('[data-task-form-dialog]')?.hasAttribute('open')).toBe(false),
     )
 
-    document.querySelector<HTMLButtonElement>('[data-task-list] button')!.click()
+    await vi.waitFor(() =>
+      expect(document.querySelector('[data-task-list-status]')?.textContent).toContain(
+        'To use it on an existing project, open Projects',
+      ),
+    )
+    expect(document.querySelector('.task-admin-workspace a[href="/projects"]')?.textContent).toBe('Projects')
+    expect(document.querySelector('#task-default-help')?.textContent).toContain('Existing projects keep their assigned tasks')
+
+    document.querySelector<HTMLButtonElement>('[data-task-list] tbody button')!.click()
     ;(form.elements.namedItem('name') as HTMLInputElement).value = 'Delivery'
     ;(form.elements.namedItem('default_hourly_rate') as HTMLInputElement).value = '125.01'
     submit(form)
@@ -216,7 +250,7 @@ describe('Tasks administration browser controller', () => {
 
     await controller.activate(identity('project_manager'), new AbortController().signal, () => false)
     expect(document.querySelector('[data-task-list]')?.textContent).not.toContain('$')
-    document.querySelector<HTMLButtonElement>('[data-task-list] button')!.click()
+    document.querySelector<HTMLButtonElement>('[data-task-list] tbody button')!.click()
     const form = document.querySelector<HTMLFormElement>('[data-task-form]')!
     const rateField = document.querySelector<HTMLElement>('[data-task-rate-field]')!
     expect(rateField.hidden).toBe(true)
@@ -246,7 +280,7 @@ describe('Tasks administration browser controller', () => {
 
     expect(document.querySelector('[data-task-list]')?.textContent).toContain('$123.45/hour')
     expect(document.querySelector<HTMLButtonElement>('[data-task-create]')?.hidden).toBe(true)
-    expect(document.querySelectorAll('[data-task-list] button')).toHaveLength(0)
+    expect(document.querySelectorAll('[data-task-list] tbody button')).toHaveLength(0)
     expect(createAdminTask).not.toHaveBeenCalled()
     expect(updateAdminTask).not.toHaveBeenCalled()
     expect(archiveAdminTask).not.toHaveBeenCalled()
@@ -393,7 +427,7 @@ describe('Tasks administration browser controller', () => {
       apiFor([task(7, 'Implementation')], { updateAdminTask }),
     )
     await controller.activate(identity('administrator'), new AbortController().signal, () => false)
-    document.querySelector<HTMLButtonElement>('[data-task-list] button')!.click()
+    document.querySelector<HTMLButtonElement>('[data-task-list] tbody button')!.click()
     const form = document.querySelector<HTMLFormElement>('[data-task-form]')!
     ;(form.elements.namedItem('name') as HTMLInputElement).value = 'Failed draft'
     submit(form)
@@ -436,7 +470,7 @@ describe('Tasks administration browser controller', () => {
     )
     const first = new AbortController()
     await controller.activate(identity('administrator'), first.signal, () => false)
-    document.querySelector<HTMLButtonElement>('[data-task-list] button')!.click()
+    document.querySelector<HTMLButtonElement>('[data-task-list] tbody button')!.click()
     const form = document.querySelector<HTMLFormElement>('[data-task-form]')!
     ;(form.elements.namedItem('name') as HTMLInputElement).value = 'Pending private update'
     submit(form)
@@ -472,7 +506,7 @@ describe('Tasks administration browser controller', () => {
       apiFor([], { listAdminTasks, archiveAdminTask }),
     )
     await controller.activate(identity('administrator'), new AbortController().signal, () => false)
-    const archiveButton = [...document.querySelectorAll<HTMLButtonElement>('[data-task-list] button')]
+    const archiveButton = [...document.querySelectorAll<HTMLButtonElement>('[data-task-list] tbody button')]
       .find((button) => button.textContent === 'Archive')!
     archiveButton.click()
     const archiveForm = document.querySelector<HTMLFormElement>('[data-task-archive-form]')!

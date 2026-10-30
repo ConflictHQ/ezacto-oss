@@ -260,10 +260,15 @@ const activeIdentity = {
 const sessionHarness = () => {
   const sessions: CloudflareAccessSessionService = {
     resolve: vi.fn(async () => null),
-    issue: vi.fn(async (userId) => ({
-      session: { id: 9, userId },
-      setCookie:
-        '__Host-ezacto_session=test; Path=/; HttpOnly; Secure; SameSite=Lax',
+    resolveAccess: vi.fn(async (userId) => ({
+      principal: {
+        type: 'user' as const,
+        userId,
+        profile: 'administrator' as const,
+        managerGrants: ['team:all'],
+        authentication: { kind: 'session' as const, sessionId: '9' },
+      },
+      setCookie: '__Host-ezacto_session=test; Path=/; HttpOnly; Secure; SameSite=Lax',
     })),
   }
   const identities = {
@@ -297,9 +302,7 @@ describe('Cloudflare Access application-session composition', () => {
     })
 
     expect(response.status).toBe(200)
-    expect(response.headers.get('set-cookie')).toContain(
-      '__Host-ezacto_session=',
-    )
+    expect(response.headers.get('set-cookie')).toContain('__Host-ezacto_session=')
     expect(await response.json()).toEqual({
       data: {
         user_id: 42,
@@ -310,7 +313,10 @@ describe('Cloudflare Access application-session composition', () => {
       links: { self: '/api/v1/whoami' },
     })
     expect(identities.resolveEmail).toHaveBeenCalledWith('owner@example.test')
-    expect(sessions.issue).toHaveBeenCalledWith(42)
+    expect(sessions.resolveAccess).toHaveBeenCalledWith(
+      42,
+      expect.stringMatching(/^[A-Za-z0-9_-]{16}$/),
+    )
   })
 
   it('[api] rejects forged identity headers without a valid JWT and never resolves their email', async () => {
@@ -340,7 +346,7 @@ describe('Cloudflare Access application-session composition', () => {
       })
     }
     expect(identities.resolveEmail).not.toHaveBeenCalled()
-    expect(sessions.issue).not.toHaveBeenCalled()
+    expect(sessions.resolveAccess).not.toHaveBeenCalled()
     expect(verifier.verify).toHaveBeenCalledTimes(1)
   })
 
@@ -365,10 +371,8 @@ describe('Cloudflare Access application-session composition', () => {
       headers: { [CLOUDFLARE_ACCESS_JWT_HEADER]: 'signed-assertion' },
     })
     expect(response.status).toBe(401)
-    expect(identities.resolveEmail).toHaveBeenCalledWith(
-      'unverified@example.test',
-    )
-    expect(sessions.issue).not.toHaveBeenCalled()
+    expect(identities.resolveEmail).toHaveBeenCalledWith('unverified@example.test')
+    expect(sessions.resolveAccess).not.toHaveBeenCalled()
   })
 
   it('[security] keeps an existing app session authoritative without consulting Access', async () => {
@@ -401,6 +405,24 @@ describe('Cloudflare Access application-session composition', () => {
     ).resolves.toMatchObject({ userId: 7 })
     expect(verifier.verify).not.toHaveBeenCalled()
     expect(identities.resolveEmail).not.toHaveBeenCalled()
-    expect(sessions.issue).not.toHaveBeenCalled()
+    expect(sessions.resolveAccess).not.toHaveBeenCalled()
+  })
+  it('[security] binds reuse to the complete verified assertion and resolved local user', async () => {
+    const { identities, sessions } = sessionHarness()
+    const resolver = createCloudflareAccessSessionResolver({
+      identities,
+      sessions,
+      verifier: { verify: async () => ({ email: 'owner@example.test' }) },
+    })
+    for (const proof of ['verified-proof-one', 'verified-proof-one', 'verified-proof-two'])
+      await resolver.resolve(
+        new Request('https://ezacto.test/api/v1/whoami', {
+          headers: { [CLOUDFLARE_ACCESS_JWT_HEADER]: proof },
+        }),
+      )
+    const calls = vi.mocked(sessions.resolveAccess).mock.calls
+    expect(calls[0]?.[1]).toBe(calls[1]?.[1])
+    expect(calls[2]?.[1]).not.toBe(calls[0]?.[1])
+    expect(calls[0]?.[1]).not.toContain('verified-proof')
   })
 })

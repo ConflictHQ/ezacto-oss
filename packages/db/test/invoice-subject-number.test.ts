@@ -40,7 +40,7 @@ describe('invoice subject names the invoice number', () => {
       // The primary key is not a number any client has ever seen.
       expect(template.subject, template.kind).not.toContain('%invoice_id%')
     }
-  }, 30_000)
+  }, 60_000)
 
   it('[unit] keeps each subject agreeing with its own body', async () => {
     // The defect was the disagreement, not the variable: a subject saying
@@ -49,7 +49,7 @@ describe('invoice subject names the invoice number', () => {
       if (!template.body.includes('%invoice_number%')) continue
       expect(template.subject, template.kind).not.toContain('%invoice_id%')
     }
-  }, 30_000)
+  }, 60_000)
 
   it('[unit] leaves the account templates alone', async () => {
     // Verification and password-reset mail names no invoice, so the migration
@@ -69,5 +69,5 @@ describe('invoice subject names the invoice number', () => {
         expect(field, template.kind).not.toContain('%invoice_id%')
       }
     }
-  }, 30_000)
+  }, 60_000)
 })

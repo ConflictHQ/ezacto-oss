@@ -50,6 +50,46 @@ into Harvest's 429 backoff against production. Asking for the sweep *without*
 credentials still fails loudly rather than skipping, and a skipped live suite
 prints the reason it skipped.
 
+## CI failure ledger
+
+A red `verify` job is compared against known causes before it is investigated
+(issue 745). `scripts/ci-failure-ledger.mjs` does two things:
+
+- `node scripts/ci-failure-ledger.mjs --repo OWNER/NAME --runs 50` lists failed
+  job attempts of `ci.yml` and `deploy.yml` from the Actions REST API, with the
+  run, attempt, failed step, cause class, and whether a re-run of that job went
+  green. Jobs that failed with no steps (a billing outage) and cancelled jobs are
+  left out. A log that matches nothing is reported as `unclassified`.
+- In `verify`, a failed test job is annotated with the matched class and a link
+  to the ledger issue.
+
+| Class | Signature | Disposition |
+|---|---|---|
+| `miniflare-proxy-heap` | `proxy.worker.ts:150` | Upstream; the narrow retry in the migrate resume test covers it |
+| `miniflare-fetch-sync` | `fetch-sync.ts:147` | Upstream; no retry, re-run the job and record it |
+| `kdf-overload` | `PasswordDerivationOverloadedError` | Load on the runner queueing password derivations; the limiter caps are a memory decision, so rerun the test alone before touching them |
+| `vitest-timeout` | `Test timed out in Nms`, `Hook timed out in Nms` | Budget against a loaded runner; compare the green duration before touching it |
+| `request-abort-timeout` | `TimeoutError: The operation was aborted due to timeout` | A per-request AbortSignal budget lost to a cold runtime; size it for migrations if it recurs |
+| `registry-reset` | `ECONNRESET` and similar network errors | Infrastructure; not ours, re-run the job |
+
+Anything else is `unclassified`: investigate it, and add a row here and a
+signature in the script if it recurs. A test keeps this table and the script
+equal.
+
+## Repeat under load
+
+`.github/workflows/load-verify.yml` (manual dispatch only, never per PR)
+repeats one shard (`migrate`, `web`, `worker`, `api-1`, `db-10`) N times with
+one worker, pinned to one CPU beside a CPU burner, and writes a pass-rate table
+to the job summary. `scripts/load-verify.mjs` classifies each failed repeat with
+the ledger signatures above; only an `unclassified` failure fails the run, and a
+known class lowers the pass rate, which is a finding. There is no retry in the
+loop. The one retry in the suite stays the narrow miniflare proxy-heap case in
+the migrate resume test.
+
+The web `testTimeout: 15_000` CI override in `apps/web/vitest.config.ts` stays
+until a recorded `web` baseline supports removing it.
+
 ## Standing rules
 
 Red gate = fix, never bypass (PROCESS.md). A bug fix ships with the test that

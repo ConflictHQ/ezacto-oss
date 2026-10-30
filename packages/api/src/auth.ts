@@ -8,6 +8,7 @@ import {
   validationError,
   type FieldError,
 } from './errors.js'
+import { resourceId } from './resources/support.js'
 import type { TwoFactorGate } from './two-factor-challenge.js'
 
 export interface ApiTokenMetadata {
@@ -79,6 +80,12 @@ export interface ApiAuthentication {
    * two-factor on simply does not serve these routes.
    */
   twoFactor?: TwoFactorService
+  /**
+   * Whether a mail can be sent for the emailed second factor (issue 770).
+   * Turning the factor on is refused when it is false: a factor that cannot be
+   * delivered would lock the person out at their next sign-in.
+   */
+  twoFactorEmailCodes?: boolean
   /** Where credential events are recorded. Absent leaves them unrecorded. */
   activity?: ActivityRecorder
   /**
@@ -113,7 +120,7 @@ const bearerToken = (authorization: string): string | null => {
 
 const safeSessionMethods = new Set(['GET', 'HEAD', 'OPTIONS'])
 
-const requireSameOriginForUnsafeSessionRequest = (request: Request): void => {
+export const requireSameOriginForUnsafeSessionRequest =(request: Request): void => {
   if (safeSessionMethods.has(request.method.toUpperCase())) return
   const origin = request.headers.get('origin')
   if (origin !== null && origin === new URL(request.url).origin) return
@@ -358,6 +365,28 @@ const isCanonicalTimestamp = (value: string): boolean => {
 const isJsonObject = (value: unknown): value is Record<string, unknown> =>
   typeof value === 'object' && value !== null && !Array.isArray(value)
 
+/**
+ * Issue 599 owner decision (2026-10-19): no refresh tokens. A token a person
+ * issues for themselves lasts at most one year; only an administrator may ask
+ * for longer, or for none. Tokens already issued without an expiry are left
+ * alone -- see docs/api-token-lifetime.md.
+ */
+const addOneYear = (from: Date): Date => {
+  const result = new Date(from)
+  result.setUTCFullYear(result.getUTCFullYear() + 1)
+  return result
+}
+
+/** The last instant of the UTC day one year out, so a date picked a year ahead is accepted. */
+const endOfDayOneYearOut = (from: Date): number => {
+  const day = addOneYear(from)
+  day.setUTCHours(23, 59, 59, 999)
+  return day.getTime()
+}
+
+export const tokenLifetimeRefusal =
+  'expires_at is more than one year away. A token you issue yourself lasts at most one year; ask an administrator for a longer one.'
+
 export const installApiTokenRoutes = <Bindings extends object>(
   api: Hono<ApiContext<Bindings>>,
   tokens: ApiTokenService,
@@ -366,6 +395,7 @@ export const installApiTokenRoutes = <Bindings extends object>(
   // credential, and "one was issued and we cannot say who by" is not a state
   // this should be able to reach.
   activity?: ActivityRecorder,
+  now: () => Date = () => new Date(),
 ): void => {
   api.get('/api-tokens', async (context) => {
     const principal = requireSessionPrincipal(context)
@@ -405,14 +435,31 @@ export const installApiTokenRoutes = <Bindings extends object>(
           'The acting user profile cannot grant one or more requested scopes.',
       })
     }
+    const issuedAt = now()
+    const mayExceedMaximum = principal.profile === 'administrator'
+    let expiresAt: string | null | undefined =
+      'expires_at' in body ? (body.expires_at as string | null) : undefined
+    if (expiresAt === undefined) {
+      expiresAt = addOneYear(issuedAt).toISOString()
+    } else if (
+      !mayExceedMaximum &&
+      (expiresAt === null ||
+        Date.parse(expiresAt) > endOfDayOneYearOut(issuedAt))
+    ) {
+      throw validationError([
+        {
+          field: 'expires_at',
+          code: 'too_long',
+          message: tokenLifetimeRefusal,
+        },
+      ])
+    }
     try {
       const issued = await tokens.issue({
         userId: principal.userId,
         name: (body.name as string).trim(),
         scopes,
-        ...('expires_at' in body
-          ? { expiresAt: body.expires_at as string | null }
-          : {}),
+        expiresAt,
       })
       if (activity !== undefined) {
         await captureRequestActivity(context, activity, {
@@ -481,6 +528,8 @@ export const installApiTokenRoutes = <Bindings extends object>(
  */
 export interface TwoFactorStatus {
   enrolled: boolean
+  /** The person asked for a code by email. Independent of the authenticator. */
+  emailEnabled: boolean
   /** A seed has been issued but no code has proved it, so sign-in is unchanged. */
   pendingConfirmation: boolean
   recoveryCodesRemaining: number
@@ -501,6 +550,12 @@ export interface TwoFactorEnrolmentOffer {
  * to be wired to.
  */
 export interface TwoFactorService extends TwoFactorGate {
+  // Required here though optional on the gate: a deployment that composes the
+  // service composes the whole factor. Letting these be absent would let the
+  // runtime pass type-checking while the sign-in quietly skipped the factor.
+  isEmailFactorEnabled(userId: number): Promise<boolean>
+  issueEmailCodeChallenge: NonNullable<TwoFactorGate['issueEmailCodeChallenge']>
+  resendEmailCode: NonNullable<TwoFactorGate['resendEmailCode']>
   status(userId: number): Promise<TwoFactorStatus>
   beginEnrolment(userId: number): Promise<TwoFactorEnrolmentOffer>
   confirmEnrolment(
@@ -512,10 +567,17 @@ export interface TwoFactorService extends TwoFactorGate {
     userId: number,
     code: string,
   ): Promise<'disabled' | 'rejected' | 'not_enrolled' | 'locked'>
+  /** Needs a verified address on the user; says `no_verified_email` without one. */
+  enableEmailFactor(
+    userId: number,
+  ): Promise<'enabled' | 'already_enabled' | 'no_verified_email'>
+  /** False when the factor was not on. */
+  disableEmailFactor(userId: number): Promise<boolean>
 }
 
 const twoFactorStatusData = (status: TwoFactorStatus) => ({
   enrolled: status.enrolled,
+  email_enabled: status.emailEnabled,
   pending_confirmation: status.pendingConfirmation,
   recovery_codes_remaining: status.recoveryCodesRemaining,
 })
@@ -582,7 +644,29 @@ export const lockedCode = (): never => {
 export const installTwoFactorRoutes = <Bindings extends object>(
   api: Hono<ApiContext<Bindings>>,
   service: TwoFactorService,
+  { emailCodes = false, activity }: { emailCodes?: boolean; activity?: ActivityRecorder } = {},
 ): void => {
+  const noStore = { 'cache-control': 'no-store' }
+  const statusResponse = async (
+    context: Context<ApiContext<Bindings>>,
+    userId: number,
+  ) =>
+    context.json(
+      {
+        data: twoFactorStatusData(await service.status(userId)),
+        links: { self: '/api/v1/two-factor' },
+      },
+      200,
+      noStore,
+    )
+  const emailFactorNotEnabled = (): never => {
+    throw new ApiError({
+      status: 409,
+      code: 'two_factor_email_not_enabled',
+      message: 'The emailed second factor is not enabled for this user.',
+    })
+  }
+
   api.get('/two-factor', async (context) => {
     const principal = requireSessionPrincipal(context)
     return context.json(
@@ -672,5 +756,96 @@ export const installTwoFactorRoutes = <Bindings extends object>(
       200,
       { 'cache-control': 'no-store' },
     )
+  })
+
+  // The emailed factor (issue 770). Session-only like the rest of this family:
+  // an API token must not be able to change how its owner signs in.
+  api.post('/two-factor/email', async (context) => {
+    const principal = requireSessionPrincipal(context)
+    if (!emailCodes) {
+      throw new ApiError({
+        status: 503,
+        code: 'mailer_unavailable',
+        message: 'Verification email delivery is not available on this instance.',
+      })
+    }
+    const result = await service.enableEmailFactor(principal.userId)
+    if (result === 'no_verified_email') {
+      throw new ApiError({
+        status: 409,
+        code: 'verified_email_required',
+        message: 'Verify an email address before turning on emailed codes.',
+      })
+    }
+    // Turning on what is already on changes nothing and records nothing.
+    if (result === 'enabled' && activity !== undefined) {
+      await captureRequestActivity(context, activity, {
+        eventType: 'two_factor.email_enabled',
+        subjectId: principal.userId,
+        occurredAt: new Date().toISOString(),
+      })
+    }
+    return statusResponse(context, principal.userId)
+  })
+
+  api.delete('/two-factor/email', async (context) => {
+    const principal = requireSessionPrincipal(context)
+    if (!(await service.disableEmailFactor(principal.userId))) return emailFactorNotEnabled()
+    if (activity !== undefined) {
+      await captureRequestActivity(context, activity, {
+        eventType: 'two_factor.email_disabled',
+        subjectId: principal.userId,
+        occurredAt: new Date().toISOString(),
+        detail: { by: 'self' },
+      })
+    }
+    return statusResponse(context, principal.userId)
+  })
+
+  const requireAdministrator = (context: Context<ApiContext<Bindings>>) => {
+    const principal = requireSessionPrincipal(context)
+    if (principal.profile !== 'administrator') {
+      throw new ApiError({
+        status: 403,
+        code: 'profile_forbidden',
+        message: "Only administrators can manage another user's emailed second factor.",
+      })
+    }
+    return principal
+  }
+
+  // What the administrator screen shows before it offers to turn the factor off.
+  api.get('/users/:id/two-factor/email', async (context) => {
+    requireAdministrator(context)
+    const userId = resourceId(context.req.param('id'), 'user')
+    return context.json(
+      { data: { user_id: userId, email_enabled: await service.isEmailFactorEnabled(userId) } },
+      200,
+      noStore,
+    )
+  })
+
+  // Lockout recovery for someone who lost their mailbox: an administrator can
+  // turn a user's emailed factor off. Audited, and the audit names whose
+  // factor it was and who turned it off.
+  api.delete('/users/:id/two-factor/email', async (context) => {
+    requireAdministrator(context)
+    const userId = resourceId(context.req.param('id'), 'user')
+    if (!(await service.disableEmailFactor(userId))) {
+      throw new ApiError({
+        status: 404,
+        code: 'not_found',
+        message: 'That user has no emailed second factor.',
+      })
+    }
+    if (activity !== undefined) {
+      await captureRequestActivity(context, activity, {
+        eventType: 'two_factor.email_disabled',
+        subjectId: userId,
+        occurredAt: new Date().toISOString(),
+        detail: { by: 'administrator' },
+      })
+    }
+    return context.json({ data: { user_id: userId, email_enabled: false } }, 200, noStore)
   })
 }

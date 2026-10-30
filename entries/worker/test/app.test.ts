@@ -1,5 +1,7 @@
 import { describe, expect, it } from 'vitest'
+import { moduleAvailability } from '@ezacto/api'
 import { invoiceNumberIsAddressable, paletteDestinations } from '@ezacto/web'
+import { providerCredentials } from '../src/runtime.js'
 import {
   createApp,
   type AppEnv,
@@ -13,6 +15,88 @@ const env: Env = { ENVIRONMENT: 'test', RELEASE: 'abc1234def5678' }
 const app = createApp()
 
 describe('worker entry', () => {
+  it('[#1167] bootstraps attachment availability from the runtime before session restoration', async () => {
+    const withoutStorage = await (await app.request('/projects/1', {}, env)).text()
+    expect(withoutStorage).toContain('data-attachments-unavailable')
+    const withStorage = await (await app.request('/projects/1', {}, { ...env, ATTACHMENTS: {} })).text()
+    expect(withStorage).not.toContain('data-attachments-unavailable')
+  })
+
+  it('[#1217] bootstraps accounting availability from the runtime before session restoration', async () => {
+    const keys = { QUICKBOOKS_CLIENT_ID: 'id', QUICKBOOKS_CLIENT_SECRET: 'secret', APP_BASE_URL: 'https://accounting.example.test' }
+    const html = async (extra: Partial<WorkerEnv>) =>
+      (await (await app.request('/invoices', {}, { ...env, ...extra })).text())
+    expect(await html({})).toContain('data-accounting-unavailable')
+    expect(await html(keys)).not.toContain('data-accounting-unavailable')
+    expect(await html({ ...keys, ACCOUNTING_ENABLED: 'false' })).toContain('data-accounting-unavailable')
+    expect(await html({ ...keys, ACCOUNTING_ENABLED: 'true' })).not.toContain('data-accounting-unavailable')
+    // An invalid flag refuses the page rather than reading as on or off.
+    expect((await app.request('/invoices', {}, { ...env, ...keys, ACCOUNTING_ENABLED: 'nope' })).status).toBe(500)
+  })
+
+  it('[#1217] renders each native provider independently without provider requests', async () => {
+    const configured = { BILL_DEV_KEY: 'dev', BILL_COMPANY_ID: 'company', BILL_USERNAME: 'user', BILL_PASSWORD: 'pass', WISE_TOKEN: 'wise', DEEL_TOKEN: 'deel', DEEL_SYNC_START_DATE: '2026-01-01' }
+    const page = await (await app.request('/settings/company', {}, { ...env, ...configured })).text()
+    expect(page).not.toContain('data-accounting-unavailable')
+    expect(page).toContain('data-quickbooks-unavailable')
+    for (const id of ['bill', 'wise', 'deel']) expect(page).toContain(`data-accounting-provider="${id}" data-provider-available="true"`)
+    expect(page).toContain('data-accounting-provider="quickbooks" data-provider-available="false"')
+    expect(page).toContain('data-accounting-quickbooks hidden')
+    const off = await (await app.request('/settings/company', {}, { ...env, ...configured, ACCOUNTING_ENABLED: 'false' })).text()
+    expect(off).toContain('data-accounting-unavailable')
+    for (const id of ['quickbooks', 'bill', 'wise', 'deel']) expect(off).toContain(`data-accounting-provider="${id}" data-provider-available="false"`)
+    const incomplete = await (await app.request('/settings/company', {}, { ...env, BILL_DEV_KEY: 'dev', DEEL_TOKEN: 'deel', DEEL_SYNC_START_DATE: 'not-a-date' })).text()
+    expect(incomplete).toContain('data-accounting-unavailable')
+  })
+
+  it('[#1217] refuses blank or incomplete native connection prerequisites without advertising a provider', async () => {
+    for (const flags of [
+      { WISE_TOKEN: '   ' },
+      { QUICKBOOKS_CLIENT_ID: ' ', QUICKBOOKS_CLIENT_SECRET: 'secret', APP_BASE_URL: 'https://app.example.test' },
+      { QUICKBOOKS_CLIENT_ID: 'id', QUICKBOOKS_CLIENT_SECRET: 'secret' },
+      { DEEL_TOKEN: 'token', DEEL_SYNC_START_DATE: '2026-99-99' },
+    ]) {
+      const response = await app.request('/settings/company', {}, { ...env, ...flags })
+      expect(response.status).toBe(200)
+      expect(await response.text()).toContain('data-accounting-unavailable')
+    }
+    for (const mode of ['disabled', 'full', 'unknown']) {
+      expect((await app.request('/settings/company', {}, { ...env, WISE_TOKEN: 'token', WISE_MODE: mode })).status).toBe(500)
+    }
+  })
+
+  it('[#1217] accepts only true or false for ACCOUNTING_ENABLED', () => {
+    expect(moduleAvailability({}).accounting).toBe(true)
+    expect(moduleAvailability({ ACCOUNTING_ENABLED: 'true' }).accounting).toBe(true)
+    expect(moduleAvailability({ ACCOUNTING_ENABLED: 'false' }).accounting).toBe(false)
+    for (const bad of ['', 'FALSE', '0', 'no']) {
+      expect(() => moduleAvailability({ ACCOUNTING_ENABLED: bad })).toThrow(/ACCOUNTING_ENABLED/)
+    }
+  })
+
+  it('[#1217] withholds the QuickBooks keys from the runtime when accounting is off', () => {
+    const keys = {
+      QUICKBOOKS_CLIENT_ID: 'id',
+      QUICKBOOKS_CLIENT_SECRET: 'secret',
+      QUICKBOOKS_WEBHOOK_VERIFIER_TOKEN: 'token',
+    }
+    expect(providerCredentials({ ...env, ...keys } as WorkerEnv)).toMatchObject(keys)
+    const off = providerCredentials({ ...env, ...keys, ACCOUNTING_ENABLED: 'false' } as WorkerEnv)
+    expect(off.QUICKBOOKS_CLIENT_ID).toBeUndefined()
+    expect(off.QUICKBOOKS_CLIENT_SECRET).toBeUndefined()
+    expect(off.QUICKBOOKS_WEBHOOK_VERIFIER_TOKEN).toBeUndefined()
+    expect(() => providerCredentials({ ...env, ...keys, ACCOUNTING_ENABLED: 'maybe' } as WorkerEnv)).toThrow(
+      /ACCOUNTING_ENABLED/,
+    )
+  })
+
+  it('[#1216] marks backups unavailable only when BACKUPS_ENABLED is explicitly false', async () => {
+    const fetchPage = async (extra: Partial<AppEnv>) => (await app.request('/settings/company', {}, { ...env, ...extra })).text()
+    expect(await fetchPage({})).not.toContain('data-backups-unavailable')
+    expect(await fetchPage({ BACKUPS_ENABLED: 'true' })).not.toContain('data-backups-unavailable')
+    expect(await fetchPage({ BACKUPS_ENABLED: 'false' })).toContain('data-backups-unavailable')
+  })
+
   it('reports health with the environment and release it was deployed with', async () => {
     const res = await app.request('/healthz', {}, env)
 
@@ -26,6 +110,14 @@ describe('worker entry', () => {
       environment: 'test',
       release: 'abc1234def5678',
     })
+  })
+
+  it('[unit] serves the Saved tab of Reports as the Reports page with its own tab current (#933)', async () => {
+    const saved = await (await app.request('/reports/saved', {}, env)).text()
+    expect(saved).toContain('data-saved-screen')
+    expect(saved).toMatch(/<a href="\/reports\/saved"[^>]*aria-current="page"[^>]*>Saved<\/a>/u)
+    const time = await (await app.request('/reports?report=time', {}, env)).text()
+    expect(time).toMatch(/<a href="\/reports\/saved"(?![^>]*aria-current)[^>]*>Saved<\/a>/u)
   })
 
   it('[unit] brands every HTML route from the deployment, with no route left behind', async () => {
@@ -57,6 +149,7 @@ describe('worker entry', () => {
       '/invoices/recurring/1/edit',
       '/invoices/retainers',
       '/reports',
+      '/reports/saved',
       '/settings/user',
       '/settings/company',
       '/settings/templates',
@@ -230,6 +323,18 @@ describe('worker entry', () => {
     expect(nav).not.toContain('aria-current')
   })
 
+  it('permits reviewed GitHub App registration forms only from company settings', async () => {
+    const company = await app.request('/settings/company', {}, env)
+    const policy = company.headers.get('content-security-policy')!
+    expect(policy).toContain("form-action 'self' https://github.com/settings/apps/new https://github.com/organizations/")
+    expect(policy).toContain("connect-src 'self'")
+    for (const path of ['/', '/settings/user', '/settings/templates']) {
+      const response = await app.request(path, {}, env)
+      expect(response.headers.get('content-security-policy')).toContain("form-action 'self';")
+      expect(response.headers.get('content-security-policy')).not.toContain('https://github.com')
+    }
+  })
+
   it('serves the responsive application shell with the deployment stamp', async () => {
     const res = await app.request('/', {}, env)
 
@@ -357,6 +462,7 @@ describe('worker entry', () => {
         .filter((segment): segment is string => segment !== undefined),
     )
     expect([...statics].sort()).toEqual([
+      'bank-deposits',
       'by-id',
       'configure',
       'estimates',
@@ -582,7 +688,7 @@ describe('worker entry', () => {
     },
   )
 
-  it.each(['/', '/dashboard', '/clients', '/clients/42', '/projects', '/projects/42', '/tasks', '/expenses', '/expenses/42', '/expense-categories', '/invoices', '/invoices/42', '/invoices/42/edit', '/invoices/new', '/invoices/recurring/new', '/invoices/recurring/42/edit', '/approvals', '/reports'])(
+  it.each(['/', '/dashboard', '/clients', '/clients/42', '/projects', '/projects/42', '/tasks', '/expenses', '/expenses/42', '/expense-categories', '/invoices', '/invoices/42', '/invoices/42/edit', '/invoices/new', '/invoices/recurring/new', '/invoices/recurring/42/edit', '/approvals', '/reports', '/reports/saved'])(
     '[security] renders %s as an inert shell under an overlay when a session cookie is present',
     async (path) => {
       const res = await app.request(

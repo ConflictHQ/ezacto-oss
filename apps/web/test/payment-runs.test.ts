@@ -1,4 +1,5 @@
 /** @vitest-environment happy-dom */
+import { setSortPreferenceOwner } from "../src/components/table-sort.js";
 import { beforeEach, describe, it, expect, vi } from "vitest";
 import { renderStaffPayments } from "../src/staff-payments/render.js";
 import { createPaymentRunsController } from "../src/staff-payments/runs-browser.js";
@@ -6,11 +7,13 @@ import {
   filteredPaymentReport,
   paymentRunCsv,
   paymentReportTotals,
+  paymentAllocationRows,
 } from "../src/staff-payments/runs-model.js";
 import {
   summarizeStaffPayments,
   type PaymentRun,
   type PaymentRunReport,
+  type PaymentAllocationReport,
   type StaffPaymentReport,
 } from "@ezacto/core";
 const row = {
@@ -96,6 +99,82 @@ beforeEach(() => {
   document.body.innerHTML = renderStaffPayments("staff-payments");
 });
 describe("payment run review", () => {
+  it.each(["bounced_back", "charged_back"])(
+    "shows %s as needing review without changing the paid ledger",
+    async (provider_status) => {
+      const exception: PaymentRun = {
+        ...run,
+        state: "approved",
+        items: [
+          { ...run.items[0]!, state: "paid", provider_status, failure: null },
+        ],
+      };
+      const data = { ...report, runs: [exception] };
+      const controller = createPaymentRunsController(
+        { getPaymentRunReport: async () => data },
+        async () => {},
+      );
+      const active = new AbortController();
+      await controller.activate(active.signal);
+      controller.ledger(ledger);
+      await vi.waitFor(() =>
+        expect(
+          document.querySelector("[data-run-history]")?.textContent,
+        ).toContain("Needs review in Wise"),
+      );
+      expect(
+        document.querySelector("[data-run-history]")?.textContent,
+      ).toContain("Review");
+      expect(
+        document.querySelector("[data-run-history]")?.textContent,
+      ).not.toContain("Paid (Wise sent)");
+      expect(
+        filteredPaymentReport(data, {
+          person: "",
+          currency: "",
+          status: "outstanding",
+        }).items,
+      ).toHaveLength(1);
+      expect(
+        paymentRunCsv(data, { person: "", currency: "", status: "all" }),
+      ).toContain("no new payment will be sent automatically");
+      active.abort();
+    },
+  );
+
+
+  it('keeps a new session busy when an old preview finishes', async () => {
+    let finishOld!: (value: PaymentRun) => void
+    let finishNew!: (value: PaymentRun) => void
+    const previewPaymentRun = vi.fn()
+      .mockImplementationOnce(() => new Promise<PaymentRun>(resolve => { finishOld = resolve }))
+      .mockImplementationOnce(() => new Promise<PaymentRun>(resolve => { finishNew = resolve }))
+    const controller = createPaymentRunsController({ previewPaymentRun }, async () => {})
+    const start = () => {
+      const form = document.querySelector<HTMLFormElement>('[data-run-form]')!
+      ;(form.elements.namedItem('select-2') as HTMLInputElement).checked = true
+      form.dispatchEvent(new SubmitEvent('submit', { cancelable: true }))
+    }
+    const old = new AbortController()
+    await controller.activate(old.signal)
+    controller.ledger(ledger)
+    start()
+    old.abort()
+    const active = new AbortController()
+    await controller.activate(active.signal)
+    controller.ledger(ledger)
+    start()
+    expect(previewPaymentRun).toHaveBeenCalledTimes(2)
+    finishOld(run)
+    await Promise.resolve()
+    await Promise.resolve()
+    expect(document.querySelector('[data-run-status]')?.getAttribute('aria-busy')).toBe('true')
+    expect(document.querySelector<HTMLElement>('[data-run-review]')!.hidden).toBe(true)
+    finishNew(run)
+    await vi.waitFor(() => expect(document.querySelector<HTMLElement>('[data-run-review]')!.hidden).toBe(false))
+    expect(document.querySelector('[data-run-status]')?.getAttribute('aria-busy')).toBe('false')
+    active.abort()
+  })
   it("discards an old month's in-flight preview after the selection is reset", async () => {
     let finish!: (value: PaymentRun) => void;
     const api = {
@@ -124,6 +203,80 @@ describe("payment run review", () => {
       document.querySelector<HTMLElement>("[data-run-review]")!.hidden,
     ).toBe(true);
     expect(api.approvePaymentRun).not.toHaveBeenCalled();
+  });
+  it("tells the person what a status check did instead of staying silent", async () => {
+    const stuck: PaymentRun = {
+      ...run,
+      state: "approved",
+      items: [{ ...run.items[0]!, state: "attention", execution_quote: run.items[0]!.quote }],
+    };
+    const reconcile = vi.fn(async () => stuck);
+    const controller = createPaymentRunsController(
+      {
+        getPaymentRunReport: async () => ({ ...report, runs: [stuck] }),
+        reconcilePaymentRunItem: reconcile,
+      },
+      async () => {},
+    );
+    await controller.activate(new AbortController().signal);
+    controller.ledger(ledger);
+    await vi.waitFor(() =>
+      expect(document.querySelector("[data-run-history] button")).not.toBeNull(),
+    );
+    const button = [
+      ...document.querySelectorAll<HTMLButtonElement>("[data-run-history] button"),
+    ].find((b) => b.textContent === "Check status")!;
+    expect(button.disabled).toBe(false);
+    button.click();
+    await vi.waitFor(() => expect(reconcile).toHaveBeenCalledTimes(1));
+    await vi.waitFor(() =>
+      expect(document.querySelector("[data-run-status]")!.textContent).toContain(
+        "Status check requested for Person Two",
+      ),
+    );
+    expect(document.querySelector("[data-run-status]")!.textContent).toContain(
+      "no Wise transfer created yet",
+    );
+  });
+  it("names a run with no label from who is paid, not from a field the person must fill", async () => {
+    const two: StaffPaymentReport = {
+      ...ledger,
+      rows: [row, { ...row, user_id: 3, name: "Second Person" }],
+    };
+    const preview = vi.fn<(command: { name: string }) => Promise<PaymentRun>>(async () => run);
+    const controller = createPaymentRunsController(
+      { getPaymentRunReport: async () => report, previewPaymentRun: preview },
+      async () => {},
+    );
+    await controller.activate(new AbortController().signal);
+    controller.ledger(two);
+    const form = document.querySelector<HTMLFormElement>("[data-run-form]")!;
+    const named = form.elements.namedItem("run_name") as HTMLInputElement;
+    expect(named.required).toBe(false);
+    (form.elements.namedItem("select-2") as HTMLInputElement).checked = true;
+    form.dispatchEvent(new SubmitEvent("submit", { cancelable: true }));
+    await vi.waitFor(() => expect(preview).toHaveBeenCalledTimes(1));
+    await vi.waitFor(() =>
+      expect(document.querySelector<HTMLElement>("[data-run-review]")!.hidden).toBe(false),
+    );
+    expect(preview.mock.calls[0]![0].name).toBe(`${row.name} · ${row.month}`);
+    controller.resetSelection();
+    controller.ledger(two);
+    (form.elements.namedItem("select-2") as HTMLInputElement).checked = true;
+    (form.elements.namedItem("select-3") as HTMLInputElement).checked = true;
+    form.dispatchEvent(new SubmitEvent("submit", { cancelable: true }));
+    await vi.waitFor(() => expect(preview).toHaveBeenCalledTimes(2));
+    await vi.waitFor(() =>
+      expect(document.querySelector<HTMLElement>("[data-run-review]")!.hidden).toBe(false),
+    );
+    expect(preview.mock.calls[1]![0].name).toBe("2 payments · 2026-09");
+    controller.resetSelection();
+    controller.ledger(two);
+    named.value = "August payroll";
+    (form.elements.namedItem("select-2") as HTMLInputElement).checked = true;
+    form.dispatchEvent(new SubmitEvent("submit", { cancelable: true }));
+    await vi.waitFor(() => expect(preview).toHaveBeenCalledTimes(3));
+    expect(preview.mock.calls[2]![0].name).toBe("August payroll");
   });
   it("shows the request ID when the payment API fails", async () => {
     const controller = createPaymentRunsController(
@@ -331,3 +484,106 @@ it("hides empty report rows and exports by default, with an explicit opt-in", ()
   expect(filteredPaymentReport(data, { ...filters, show_empty: true }).rows).toHaveLength(3);
   expect(paymentRunCsv(data, { ...filters, show_empty: true })).toContain("Empty Person");
 });
+
+const allocationReport = (month: string): PaymentAllocationReport => ({ month, people: [{
+  user_id: 2, name: "Person Two", currency: "USD", earned_cents: 10000,
+  paid_cents: 5000, reserved_cents: 2000, allocated_applied_cents: 3000,
+  allocated_reserved_cents: 1000, remaining_cents: 3000,
+  unallocated_payments: [{ payment_kind: "event", payment_id: "old-payment", amount_cents: 2000, allocated_cents: 0, unallocated_cents: 2000, state: "applied" }],
+  allocations: [], projects: [{ project_id: 7, project_name: '=Atlas,"North"', earned_cents: 10000,
+    applied_cents: 3000, reserved_cents: 1000, remaining_cents: 6000, entries: [{
+      entry_id: 31, spent_date: `${month}-04`, selected_seconds: 7200, rate_cents: 5000,
+      reviewed_rounded_seconds: 7200, current_rounded_seconds: 3600, current_rate_cents: 5000,
+      earned_cents: 10000, applied_cents: 1000, reserved_cents: 500,
+      applied_seconds: 720, reserved_seconds: 360, remaining_cents: 8500, remaining_seconds: 6120,
+      source_changed: true, over_allocated: false,
+    }] }],
+}] });
+
+it("exports explicit project and entry allocations without assigning monthly or project money to entries", () => {
+  const allocations = allocationReport("2026-09");
+  const filters = { person: "Two", currency: "USD", status: "all" };
+  const balances = filteredPaymentReport(report, filters).rows;
+  const rows = paymentAllocationRows([allocations], balances);
+  expect(rows).toMatchObject([
+    { level: "Project", earned: 10000, paid: 3000, reserved: 1000, remaining: 6000, entry_id: null },
+    { level: "Entry", earned: 10000, paid: 1000, reserved: 500, remaining: 8500, entry_id: 31, flags: "Source time changed" },
+  ]);
+  const csv = paymentRunCsv(report, filters, [allocations]);
+  expect(csv).toContain('"Allocation Project","Person Two","2026-09","USD","10000","3000","1000","6000"');
+  expect(csv).toContain('"Allocation Entry","Person Two","2026-09","USD","10000","1000","500","8500"');
+  expect(csv).toContain(`"'=Atlas,""North"""`);
+  expect(csv).toContain('"31","7200","6120","Source time changed"');
+  const csvRows = csv.trim().split("\r\n").map((line) => line.match(/"(?:[^"]|"")*"/gu));
+  expect(csvRows.every((cells) => cells?.length === csvRows[0]?.length)).toBe(true);
+  for (const hidden of [ { ...filters, person: "Nobody" }, { ...filters, currency: "EUR" }, { ...filters, status: "paid" } ])
+    expect(paymentRunCsv(report, hidden, [allocations])).not.toContain("Allocation Entry");
+  expect(paymentRunCsv(report, filters, [allocationReport("2026-08")])).not.toContain("Allocation Entry");
+});
+
+it("loads allocation reconciliation for every reported month and clears it on navigation", async () => {
+  history.replaceState({}, "", "/payments/report");
+  const data = { ...report, from: "2026-08", ledgers: [{ ...ledger, month: "2026-08", rows: [{ ...row, month: "2026-08" }] }, ledger] };
+  const getPaymentAllocationReport = vi.fn(async (month: string) => allocationReport(month));
+  const controller = createPaymentRunsController({ getPaymentRunReport: async () => data, getPaymentAllocationReport }, async () => {});
+  const active = new AbortController();
+  await controller.activate(active.signal);
+  expect(getPaymentAllocationReport.mock.calls.map(([month]) => month)).toEqual(["2026-08", "2026-09"]);
+  const host = document.querySelector<HTMLElement>("[data-run-report-allocations]")!;
+  expect(host.textContent).toContain("entry 31");
+  expect(host.textContent).toContain("Source time changed");
+  expect(host.textContent).toContain("Monthly payments stay unassigned");
+  const person = document.querySelector<HTMLInputElement>('[data-run-report-form] [name="person"]')!;
+  person.value = "Nobody";
+  person.dispatchEvent(new Event("input"));
+  expect(host.textContent).not.toContain("entry 31");
+  active.abort();
+  expect(host.textContent).toBe("");
+});
+
+
+it('[browser #852] sorts read-only payment reports by currency, exact cents and receipt date without changing totals or paying', async () => {
+  const values = [
+    { user_id: 2, currency: 'USD', amount_cents: 900, paid_on: '2026-10-12' },
+    { user_id: 3, currency: 'USD', amount_cents: 10000, paid_on: '2026-10-02' },
+    { user_id: 4, currency: 'EUR', amount_cents: 99999, paid_on: '2026-10-09' },
+  ]
+  const rows = values.map(value => ({ ...row, ...value, name: `Person ${value.user_id}`, events: [{
+    ...value, id: `receipt-${value.user_id}`, month: row.month, expected_version: 0,
+    kind: 'payment' as const, due_on: null, reference: 'Fixture', note: '', payment_id: null,
+    source: 'wise' as const, version: 1, actor_id: 1, actor_name: 'Admin',
+    recorded_at: '2026-10-20T00:00:00.000Z', request_id: 'fixture',
+  }] }))
+  const data: PaymentRunReport = { ...report,
+    ledgers: [{ ...ledger, rows: [...rows, { ...row, user_id: 5, name: 'Unspecified amount', amount_cents: null }] }],
+    runs: [{ ...run, items: values.map(value => ({ ...run.items[0]!, ...value, id: `item-${value.user_id}`, name: `Person ${value.user_id}` })) }],
+  }
+  const api = { getPaymentRunReport: async () => data, approvePaymentRun: vi.fn(), previewPaymentRun: vi.fn() }
+  const mount = async () => {
+    document.body.innerHTML = renderStaffPayments('staff-payments')
+    history.replaceState({}, '', '/payments/report')
+    await createPaymentRunsController(api, async () => {}).activate(new AbortController().signal)
+  }
+  const keys = (table: string) => [...document.querySelectorAll(`${table} tbody tr[data-row-key]`)].map(tr => tr.getAttribute('data-row-key'))
+  const click = (table: string, column: string) => document.querySelector<HTMLButtonElement>(`${table} button[data-sort-column="${column}"]`)!.click()
+  setSortPreferenceOwner(1)
+  try {
+    await mount()
+    const totals = document.querySelector('[data-run-report-totals]')!.textContent
+    click('[data-run-report-balances]', 'owed')
+    expect(keys('[data-run-report-balances]')).toEqual(['4/2026-09', '2/2026-09', '3/2026-09', '5/2026-09'])
+    click('[data-run-report-balances]', 'owed')
+    expect(keys('[data-run-report-balances]')).toEqual(['3/2026-09', '2/2026-09', '4/2026-09', '5/2026-09'])
+    click('[data-run-report-transfers]', 'amount')
+    expect(keys('[data-run-report-transfers]')).toEqual(['item-4', 'item-2', 'item-3'])
+    click('[data-run-report-receipts]', 'date')
+    expect(keys('[data-run-report-receipts]')).toEqual(['receipt-3', 'receipt-4', 'receipt-2'])
+    expect(document.querySelector('[data-run-report-totals]')!.textContent).toBe(totals)
+    await mount()
+    expect(keys('[data-run-report-balances]')).toEqual(['3/2026-09', '2/2026-09', '4/2026-09', '5/2026-09'])
+    expect(keys('[data-run-report-transfers]')).toEqual(['item-4', 'item-2', 'item-3'])
+    expect(keys('[data-run-report-receipts]')).toEqual(['receipt-3', 'receipt-4', 'receipt-2'])
+    expect(api.approvePaymentRun).not.toHaveBeenCalled()
+    expect(api.previewPaymentRun).not.toHaveBeenCalled()
+  } finally { setSortPreferenceOwner(null); localStorage.clear() }
+})

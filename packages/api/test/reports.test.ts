@@ -324,6 +324,39 @@ for (const [runtime, factory] of factories) {
     let harness: Harness | undefined;
     afterEach(async () => harness?.close());
 
+    it('[#1163] omits archived practice data while keeping ordinary archived project history', async () => {
+      harness = await factory();
+      const range = { from: '2026-08-01', to: '2026-08-31' };
+      await harness.run('UPDATE projects SET is_example=1 WHERE id=1', []);
+      expect((await harness.reports.timeReport(range)).projects.map(row => row.projectId)).toContain(1);
+      expect((await harness.reports.uninvoiced(range)).projects.map(row => row.projectId).sort()).toEqual([1, 2, 3]);
+      await harness.run('UPDATE projects SET is_active=0 WHERE id=1', []);
+      const report = await harness.reports.timeReport(range);
+      expect(report.projects.map(row => row.projectId).sort()).toEqual([2, 3, 4]);
+      expect(report.totals.timeEntryCount).toBe(3);
+      expect(report.totals.roundedSeconds).toBe(6300);
+      expect((await harness.reports.uninvoiced(range)).projects.map(row => row.projectId).sort()).toEqual([2, 3]);
+      expect(await harness.reports.detailedTime({...range, projectId: 1})).toMatchObject({kind: 'report', report: {rows: []}});
+      expect(await harness.reports.detailedTime({...range, projectId: 4})).toMatchObject({kind: 'report', report: {rows: [expect.objectContaining({projectId: 4})]}});
+      const expenses = await harness.reports.detailedExpense(range);
+      expect(expenses.rows.map(row => row.expenseId).sort()).toEqual([202, 203, 204]);
+      const saved = await harness.request('/report-definitions', 'administrator', [], 1, {
+        method: 'POST', headers: {'content-type': 'application/json'},
+        body: JSON.stringify({name: 'Practice exclusion', fields: [{id: 'project_name', label: 'Project', visible: true}], metrics: ['hours'], filters: [], group_by: {dimension: 'project'}, presentation: {result: 'summary', grouped: true, include_zero_values: false}}),
+      });
+      expect(saved.status).toBe(201);
+      const { data: { id } } = await saved.json() as {data: {id: string}};
+      const run = await harness.request(`/report-definitions/${id}/run`, 'administrator', [], 1, {method: 'POST'});
+      expect(run.status).toBe(200);
+      const custom = await run.json() as {data: {rows: {label: string}[]}};
+      expect(custom.data.rows.map(row => row.label).sort()).toEqual(['Archived project', 'Child project', 'Leaf project']);
+      // Archiving changes visibility, never the stored practice time or expense.
+      await harness.run('UPDATE projects SET is_active=1 WHERE id=1', []);
+      expect((await harness.reports.timeReport(range)).totals.timeEntryCount).toBe(4);
+      expect((await harness.reports.detailedExpense(range)).rows).toHaveLength(4);
+    });
+
+
     it("[api #715] saves, shares, pins and reruns a live definition", async () => {
       harness = await factory();
       const create = await harness.request("/report-definitions", "administrator", [], 1, {
@@ -363,6 +396,150 @@ for (const [runtime, factory] of factories) {
       expect(conflict.status).toBe(409);
       expect((await harness.request(`/report-definitions/${id}/shares/2`, "administrator", [], 1, { method: "DELETE" })).status).toBe(204);
       expect((await harness.request(`/report-definitions/${id}`, "accounting", [], 2)).status).toBe(404);
+    });
+
+    it("[api #933] a private report is invisible to others, shares by person and role, and admins see all", async () => {
+      harness = await factory();
+      await harness.run(
+        `INSERT INTO users (id, first_name, last_name, profile, manager_grants, created_at, updated_at)
+         VALUES (3, 'Alma', 'Accounts', 'accounting', '[]', ?, ?), (4, 'Eli', 'Exec', 'executive_manager', '[]', ?, ?),
+                (5, 'Ana', 'Another', 'accounting', '[]', ?, ?)`,
+        [now, now, now, now, now, now],
+      );
+      const json = (body: unknown): RequestInit => ({
+        method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body),
+      });
+      // User 3 (accounting) authors the report; user 1 is the administrator, user 4 an
+      // executive manager, user 5 another accountant, user 2 a member who has no reports.
+      const create = await harness.request("/report-definitions", "accounting", [], 3, json({
+        name: "Mine",
+        fields: [{ id: "client_name", label: "Client", visible: true }],
+        metrics: ["hours"], filters: [], group_by: { dimension: "client" },
+        presentation: { result: "summary", grouped: true, include_zero_values: false },
+      }));
+      expect(create.status, await create.clone().text()).toBe(201);
+      const created = (await create.json()) as { data: { id: string; owned_by_viewer: boolean; shared_with: unknown } };
+      const id = created.data.id;
+      expect(created.data).toMatchObject({ owned_by_viewer: true, shared_with: { users: [], profiles: [] } });
+
+      const asAccountant = (path: string, init?: RequestInit) => harness!.request(path, "accounting", [], 5, init);
+      const asExec = (path: string, init?: RequestInit) => harness!.request(path, "executive_manager", [], 4, init);
+      // Private: neither run, read, list, pin nor duplicate reaches it for anyone else.
+      for (const other of [asAccountant, asExec]) {
+        expect((await other(`/report-definitions/${id}`)).status).toBe(404);
+        expect((await other(`/report-definitions/${id}/run`, { method: "POST" })).status).toBe(404);
+        expect((await other(`/report-definitions/${id}/pin`, { method: "POST" })).status).toBe(404);
+        expect((await other(`/report-definitions/${id}/duplicate`, { method: "POST" })).status).toBe(404);
+        expect(await (await other("/report-definitions")).json()).toMatchObject({ data: [] });
+        expect((await other(`/report-definitions/${id}`, { method: "DELETE" })).status).toBe(404);
+      }
+      // A member has no reports at all, whatever is shared.
+      expect((await harness.request(`/report-definitions/${id}`, "member", [], 2)).status).toBe(403);
+      // Only the owner changes sharing; even an administrator may not.
+      expect((await harness.request(`/report-definitions/${id}/role-shares/accounting`, "administrator", [], 1, { method: "POST" })).status).toBe(404);
+      expect((await asAccountant(`/report-definitions/${id}/role-shares/accounting`, { method: "POST" })).status).toBe(404);
+      expect((await harness.request(`/report-definitions/${id}/role-shares/member`, "accounting", [], 3, { method: "POST" })).status).toBe(422);
+      expect((await harness.request(`/report-definitions/${id}/role-shares/janitor`, "accounting", [], 3, { method: "POST" })).status).toBe(422);
+
+      // Administrators read, run and see every report.
+      expect((await harness.request(`/report-definitions/${id}`, "administrator", [], 1)).status).toBe(200);
+      expect((await harness.request(`/report-definitions/${id}/run`, "administrator", [], 1, { method: "POST" })).status).toBe(200);
+      expect(await (await harness.request("/report-definitions", "administrator", [], 1)).json())
+        .toMatchObject({ data: [{ id, owned_by_viewer: false, can_delete: true, shared: false }] });
+
+      // A role share reaches that role only: user 5 is an accountant, user 4 is not.
+      expect((await harness.request(`/report-definitions/${id}/role-shares/accounting`, "accounting", [], 3, { method: "POST" })).status).toBe(204);
+      expect(await (await asAccountant(`/report-definitions/${id}`)).json())
+        .toMatchObject({ data: { id, shared: true, can_delete: false, shared_with: { users: [], profiles: [] } } });
+      expect((await asAccountant(`/report-definitions/${id}/run`, { method: "POST" })).status).toBe(200);
+      expect((await asExec(`/report-definitions/${id}`)).status).toBe(404);
+      expect((await asAccountant(`/report-definitions/${id}`, { method: "DELETE" })).status).toBe(404);
+      expect(await (await harness.request(`/report-definitions/${id}`, "accounting", [], 3)).json())
+        .toMatchObject({ data: { shared_with: { profiles: ["accounting"] } } });
+
+      // A named share reaches that person only.
+      expect((await harness.request(`/report-definitions/${id}/shares/4`, "accounting", [], 3, { method: "POST" })).status).toBe(204);
+      expect((await asExec(`/report-definitions/${id}/run`, { method: "POST" })).status).toBe(200);
+      expect((await asExec(`/report-definitions/${id}`, { method: "DELETE" })).status).toBe(404);
+
+      // Revoking closes the door again.
+      expect((await harness.request(`/report-definitions/${id}/role-shares/accounting`, "accounting", [], 3, { method: "DELETE" })).status).toBe(204);
+      expect((await asAccountant(`/report-definitions/${id}/run`, { method: "POST" })).status).toBe(404);
+
+      // Delete: the owner or an administrator.
+      expect((await harness.request(`/report-definitions/${id}`, "administrator", [], 1, { method: "DELETE" })).status).toBe(204);
+      expect((await harness.request(`/report-definitions/${id}`, "accounting", [], 3)).status).toBe(404);
+    });
+
+    it("[api #933] saves the report on screen as a view, renames and re-saves it, and never runs it as a definition", async () => {
+      harness = await factory();
+      await harness.run(
+        `INSERT INTO users (id, first_name, last_name, profile, manager_grants, created_at, updated_at)
+         VALUES (3, 'Alma', 'Accounts', 'accounting', '[]', ?, ?), (5, 'Ana', 'Another', 'accounting', '[]', ?, ?)`,
+        [now, now, now, now],
+      );
+      const send = (path: string, method: string, body: unknown, userId = 3): Promise<Response> =>
+        harness!.request(path, "accounting", [], userId, {
+          method, headers: { "content-type": "application/json" }, body: JSON.stringify(body),
+        });
+      const create = await send("/report-views", "POST", {
+        name: "Q3 by client",
+        view: { report: "time", query: "from=2026-07-01&to=2026-09-30&tab=client&saved=stale&sort=hours.desc" },
+      });
+      expect(create.status, await create.clone().text()).toBe(201);
+      const created = (await create.json()) as { data: { id: string; version: number } };
+      // The address is stored without the pointer back to a saved report, and the
+      // report is a view, not a custom definition.
+      expect(created.data).toMatchObject({
+        name: "Q3 by client", is_custom: false, owned_by_viewer: true,
+        view: { report: "time", query: "from=2026-07-01&to=2026-09-30&tab=client&sort=hours.desc" },
+      });
+      const id = created.data.id;
+
+      expect((await send("/report-views", "POST", { name: "Bad", view: { report: "../x", query: "" } })).status).toBe(422);
+      expect((await send("/report-views", "POST", { name: " ", view: { report: "time", query: "" } })).status).toBe(422);
+      expect((await send("/report-views", "POST", { name: "Long", view: { report: "time", query: "a=".padEnd(2001, "b") } })).status).toBe(422);
+
+      // Private to the author, like any saved report; it is also never run.
+      expect((await harness.request(`/report-definitions/${id}`, "accounting", [], 5)).status).toBe(404);
+      const run = await harness.request(`/report-definitions/${id}/run`, "accounting", [], 3, { method: "POST" });
+      expect(run.status).toBe(422);
+      expect(JSON.stringify(await run.json())).toContain("report_view_not_runnable");
+
+      // Save changes moves the address and the version; a stale version is refused.
+      const resave = await send(`/report-definitions/${id}`, "PATCH", {
+        version: 1, view: { report: "time", query: "from=2026-10-01&to=2026-10-31" },
+      });
+      expect(resave.status, await resave.clone().text()).toBe(200);
+      expect(await resave.json()).toMatchObject({
+        data: { version: 2, name: "Q3 by client", view: { report: "time", query: "from=2026-10-01&to=2026-10-31" } },
+      });
+      expect((await send(`/report-definitions/${id}`, "PATCH", { version: 1, name: "Stale" })).status).toBe(409);
+      expect(await (await send(`/report-definitions/${id}`, "PATCH", { version: 2, name: "October" })).json())
+        .toMatchObject({ data: { version: 3, name: "October", view: { query: "from=2026-10-01&to=2026-10-31" } } });
+      // A view has no fields to edit, and a builder definition has no address.
+      expect((await send(`/report-definitions/${id}`, "PATCH", { version: 3, metrics: ["hours"] })).status).toBe(422);
+      const builder = await send("/report-definitions", "POST", {
+        name: "Builder",
+        fields: [{ id: "client_name", label: "Client", visible: true }],
+        metrics: ["hours"], filters: [], group_by: null,
+        presentation: { result: "summary", grouped: false, include_zero_values: false },
+      });
+      const builderId = ((await builder.json()) as { data: { id: string } }).data.id;
+      expect((await send(`/report-definitions/${builderId}`, "PATCH", { version: 1, view: { report: "time", query: "" } })).status).toBe(422);
+      expect(await (await harness.request(`/report-definitions/${builderId}`, "accounting", [], 3)).json())
+        .toMatchObject({ data: { view: null, is_custom: true } });
+
+      // Shared, pinned and duplicated like any other saved report; a copy is a view too.
+      expect((await send(`/report-definitions/${id}/role-shares/accounting`, "POST", {})).status).toBe(204);
+      const copy = await harness.request(`/report-definitions/${id}/duplicate`, "accounting", [], 5, { method: "POST" });
+      expect(copy.status).toBe(201);
+      expect(await copy.json()).toMatchObject({
+        data: { name: "October copy", owned_by_viewer: true, view: { report: "time", query: "from=2026-10-01&to=2026-10-31" } },
+      });
+      expect((await harness.request(`/report-definitions/${id}/pin`, "accounting", [], 5, { method: "POST" })).status).toBe(204);
+      const library = await harness.request("/report-definitions?custom_only=true", "accounting", [], 5);
+      expect(await library.json()).toMatchObject({ data: [] });
     });
 
     it("[db] reconciles invoiced, received, and aged receivable ledgers by currency", async () => {
@@ -439,6 +616,19 @@ for (const [runtime, factory] of factories) {
           days61To90Cents: 0,
           days90PlusCents: 0,
         },
+      ]);
+      const viaRoute = await harness.request("/reports/receivables?as_of=2026-08-31&due_state=not_due");
+      expect(viaRoute.status).toBe(200);
+      expect(((await viaRoute.json()) as { data: { totals: Array<{ currency: string }> } }).data.totals.map((t) => t.currency)).toEqual(["USD"]);
+      expect((await harness.request("/reports/receivables?as_of=2026-08-31&due_state=late")).status).toBe(422);
+      const pastDue = await harness.reports.receivables({ asOf: "2026-08-31", dueState: "past_due" });
+      expect(pastDue.totals.map((total) => [total.currency, total.outstandingCents, total.notDueCents])).toEqual([
+        ["EUR", 70_000, 0],
+        ["USD", 75_000, 0],
+      ]);
+      const notDue = await harness.reports.receivables({ asOf: "2026-08-31", dueState: "not_due" });
+      expect(notDue.totals.map((total) => [total.currency, total.outstandingCents, total.days1To30Cents])).toEqual([
+        ["USD", 50_000, 0],
       ]);
       // Draft and cancelled invoices do not become receivables. The USD total
       // is therefore 150,000 rather than the 200,000 shown by Invoiced.
@@ -2466,7 +2656,7 @@ for (const [runtime, factory] of factories) {
       ]);
     });
 
-    it("[db] entry grain is one row per entry with its id and notes; day grain carries neither", async () => {
+    it("[db] entry grain is one row per entry with its id and notes; day grain has no id and joins the notes it folds", async () => {
       harness = await factory();
       await seedDetailedDay(harness);
       await harness.run(`UPDATE time_entries SET notes = 'wrote the thing' WHERE id = 111`, []);
@@ -2495,7 +2685,12 @@ for (const [runtime, factory] of factories) {
       if (day.kind !== "report") throw new Error("expected a report");
       expect(day.report.grain).toBe("day");
       expect(day.report.rows).toHaveLength(1);
-      expect(day.report.rows[0]).toMatchObject({ timeEntryId: null, notes: null });
+      // A daily line has no entry id, but it says what was done: the note of the
+      // entry it folds (issue 1160). The other daily lines have none.
+      expect(day.report.rows.every((row) => row.timeEntryId === null)).toBe(true);
+      expect(day.report.rows.map((row) => row.notes).filter((note) => note !== null)).toEqual([
+        "wrote the thing",
+      ]);
     });
 
     it("[api] emits time_entry_id and notes at entry grain only, and refuses an unknown grain", async () => {
@@ -2710,6 +2905,74 @@ for (const [runtime, factory] of factories) {
       expect(body.data.rows[0]).toHaveProperty("roles");
     });
 
+    it("[db] narrows to entries whose note contains the text, and facets ignore their own filter", async () => {
+      harness = await factory();
+      await seedDetailedDay(harness);
+      await harness.run(`UPDATE time_entries SET notes = 'Wrote the THING' WHERE id = 111`, []);
+      await harness.run(`UPDATE time_entries SET notes = 'meeting', client_visible = 0 WHERE id = 112`, []);
+      const range = { from: "2026-08-10", to: "2026-08-10", projectId: 1, grain: "entry" as const };
+
+      const found = await harness.reports.detailedTime({ ...range, notes: "the thing" });
+      if (found.kind !== "report") throw new Error("expected a report");
+      expect(found.report.rows.map((row) => row.timeEntryId)).toEqual([111]);
+      // Totals follow the filtered rows.
+      expect(found.report.seconds).toBe(1800);
+      expect(found.report.timeEntryCount).toBe(1);
+
+      const internal = await harness.reports.detailedTime({ ...range, notes: "meeting" });
+      if (internal.kind !== "report") throw new Error("expected a report");
+      expect(internal.report.rows.map((row) => row.timeEntryId)).toEqual([112]);
+      // A note withheld from a client cannot be searched under the client audience.
+      const client = await harness.reports.detailedTime({ ...range, notes: "meeting", audience: "client" });
+      if (client.kind !== "report") throw new Error("expected a report");
+      expect(client.report.rows).toEqual([]);
+
+      // Percent and underscore are text, not wildcards.
+      const wildcard = await harness.reports.detailedTime({ ...range, notes: "%" });
+      if (wildcard.kind !== "report") throw new Error("expected a report");
+      expect(wildcard.report.rows).toEqual([]);
+
+      const faceted = await harness.reports.detailedTime({ ...range, userId: 1, taskId: 1 });
+      if (faceted.kind !== "report") throw new Error("expected a report");
+      expect(faceted.report.facets.people.map((person) => person.id)).toContain(1);
+      expect(faceted.report.facets.tasks.map((task) => task.id)).toContain(1);
+      const nobody = await harness.reports.detailedTime({ ...range, userId: 999 });
+      if (nobody.kind !== "report") throw new Error("expected a report");
+      expect(nobody.report.rows).toEqual([]);
+      // The person list is computed without the person filter, so a miss on a
+      // person still offers everyone the other filters leave.
+      expect(nobody.report.facets.people.map((person) => person.id)).toContain(1);
+      expect(nobody.report.facets.tasks).toEqual([]);
+    });
+
+    it("[api] reads notes through the report and its export, and does not hand a My hours view its colleagues", async () => {
+      harness = await factory();
+      await seedDetailedDay(harness);
+      await harness.run(`UPDATE time_entries SET notes = 'Wrote the thing' WHERE id = 111`, []);
+      const response = await harness.request(
+        "/reports/detailed-time?from=2026-08-10&to=2026-08-10&project_id=1&grain=entry&notes=wrote",
+      );
+      expect(response.status).toBe(200);
+      const body = (await response.json()) as {
+        data: { rows: Array<{ time_entry_id: number }>; facets: { people: Array<{ id: number }>; tasks: unknown[]; roles: unknown[]; tags: unknown[] } };
+      };
+      expect(body.data.rows.map((row) => row.time_entry_id)).toEqual([111]);
+      expect(body.data.facets.people.length).toBeGreaterThan(0);
+      expect(Array.isArray(body.data.facets.tasks)).toBe(true);
+
+      const tooLong = await harness.request(
+        `/reports/detailed-time?from=2026-08-10&to=2026-08-10&notes=${"x".repeat(201)}`,
+      );
+      expect(tooLong.status).toBe(422);
+
+      const exported = await harness.request(
+        "/reports/detailed-time/export?from=2026-08-10&to=2026-08-10&project_id=1&grain=entry&notes=wrote&audience=internal&format=csv",
+      );
+      expect(exported.status).toBe(200);
+      const csv = await exported.text();
+      expect(csv).toContain("Wrote the thing");
+    });
+
     it("[api] exposes entry workflow fields and echoes the expanded filters", async () => {
       harness = await factory();
       await seedDetailedDay(harness);
@@ -2896,6 +3159,7 @@ describe("detailed time serialization", () => {
     currencies: [
       { currency: "USD", billableAmountCents: 10_000, entriesWithoutBillableRate: 1 },
     ],
+    facets: { people: [], tasks: [], roles: [], tags: [] },
     rows: [
       {
         spentDate: "2026-08-10",

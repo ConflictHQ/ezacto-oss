@@ -1,0 +1,109 @@
+{
+  "adapterId": "clockify-detailed-browser@2",
+  "provenance": "Invented sanitized fixture, not a live or owned Clockify export. Reserved invalid domains; no credentials or customer data.",
+  "cases": [
+    {
+      "name": "invalid UTF-8",
+      "encoding": "hex",
+      "text": "c328",
+      "fileErrors": [
+        [
+          0,
+          "not_utf8"
+        ]
+      ],
+      "invalid": []
+    },
+    {
+      "name": "NUL bytes are binary",
+      "encoding": "utf8",
+      "text": "Email,Client,Project,Task,Description,Billable,Start Date,Start Time,End Date,End Time,Duration (h)\nfixture@example.invalid,Fixture studio,Website,General,NUL\u0000 is not text,Yes,2026-09-01,09:00:00,2026-09-01,10:00:00,01:00:00\n",
+      "fileErrors": [
+        [
+          0,
+          "binary_content"
+        ]
+      ],
+      "invalid": []
+    },
+    {
+      "name": "unknown-column formula is rejected before projection",
+      "encoding": "utf8",
+      "text": "Email,Client,Project,Task,Description,Billable,Start Date,Start Time,End Date,End Time,Duration (h),Custom Field\nfixture@example.invalid,Fixture studio,Website,General,Owned task,Yes,2026-09-01,09:00:00,2026-09-01,10:00:00,01:00:00,\"=HYPERLINK(\"\"https://fixture.invalid/receipt\"\",\"\"fixture\"\")\"\n",
+      "fileErrors": [],
+      "invalid": [
+        [
+          2,
+          "formula_injection"
+        ]
+      ],
+      "cliRows": 1
+    },
+    {
+      "name": "normalized duplicate header",
+      "encoding": "utf8",
+      "text": "Email,Client,Project,Task,Description,Billable,Start Date,Start Time,End Date,End Time,Duration (h), email \nfixture@example.invalid,Fixture studio,Website,General,Owned task,Yes,2026-09-01,09:00:00,2026-09-01,10:00:00,01:00:00,other@example.invalid\n",
+      "fileErrors": [
+        [
+          1,
+          "clockify_duplicate_column"
+        ]
+      ],
+      "invalid": []
+    },
+    {
+      "name": "missing required detailed header",
+      "encoding": "utf8",
+      "text": "Email,Client,Project,Description,Billable,Start Date,Start Time,End Date,End Time,Duration (h)\nfixture@example.invalid,Fixture studio,Website,General,Owned task,Yes,2026-09-01,09:00:00,2026-09-01,10:00:00,01:00:00\n",
+      "fileErrors": [
+        [
+          1,
+          "clockify_missing_column"
+        ]
+      ],
+      "invalid": []
+    },
+    {
+      "name": "ignored source field still obeys raw length bound",
+      "encoding": "oversized-field",
+      "header": [
+        "Email",
+        "Client",
+        "Project",
+        "Task",
+        "Description",
+        "Billable",
+        "Start Date",
+        "Start Time",
+        "End Date",
+        "End Time",
+        "Duration (h)",
+        "Custom Field"
+      ],
+      "row": [
+        "fixture@example.invalid",
+        "Fixture studio",
+        "Website",
+        "General",
+        "Owned task",
+        "Yes",
+        "2026-09-01",
+        "09:00:00",
+        "2026-09-01",
+        "10:00:00",
+        "01:00:00",
+        ""
+      ],
+      "column": 11,
+      "repeat": "x",
+      "count": 10001,
+      "fileErrors": [
+        [
+          2,
+          "field_too_long"
+        ]
+      ],
+      "invalid": []
+    }
+  ]
+}

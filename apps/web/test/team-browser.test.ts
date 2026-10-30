@@ -71,7 +71,7 @@ const person = (overrides: Partial<TeamPerson> = {}): TeamPerson => ({
   ],
   cost_rates: [],
   notifications: {
-    delivery_active: false,
+    delivery_active: true,
     daily_reminder_enabled: false,
     reminder_time: null,
     reminder_days: [],
@@ -149,6 +149,72 @@ beforeEach(() => {
 })
 
 describe('Team browser controller', () => {
+  it.each(['team-list', 'team-person'] as const)('[#1259] a disabled Team bookmark withdraws controls and reads (%s)', async (view) => {
+    writeDocument(view)
+    const listTeamPeople = vi.fn(async () => page([summary()]))
+    const getTeamPerson = vi.fn(async () => person())
+    const getTeamCatalog = vi.fn(async () => catalog)
+    const getTeamWeekStartDay = vi.fn(async () => 'monday' as const)
+    const listPayoutPreferences = vi.fn(async () => ({ data: { people: [], organization_default: 'deel' as const } }))
+    const createTeamPerson = vi.fn()
+    const getTeamStatus = vi.fn(async () => ({ enabled: false }))
+    await createTeamDirectoryController({ getTeamStatus, listTeamPeople, getTeamPerson, getTeamCatalog, getTeamWeekStartDay, listPayoutPreferences, createTeamPerson }).activate(identity(), new AbortController().signal, () => false)
+    for (const read of [listTeamPeople, getTeamPerson, getTeamCatalog, getTeamWeekStartDay, listPayoutPreferences]) expect(read).not.toHaveBeenCalled()
+    expect(getTeamStatus).toHaveBeenCalledOnce()
+    const add = document.querySelector<HTMLButtonElement>('[data-team-person-create]')!
+    expect(add.hidden).toBe(true)
+    expect(add.disabled).toBe(true)
+    add.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+    expect(createTeamPerson).not.toHaveBeenCalled()
+    expect(document.querySelector<HTMLElement>('[data-team-defaults]')?.hidden).toBe(true)
+    expect(document.querySelector(view === 'team-list' ? '[data-team-list-status]' : '[data-team-person-status]')?.textContent).toBe('Team is unavailable.')
+  })
+
+  it('[#1259] only an enabled current Team discovery releases private reads and Add person', async () => {
+    writeDocument('team-list')
+    let release!: (value: { enabled: boolean }) => void
+    const getTeamStatus = vi.fn(() => new Promise<{ enabled: boolean }>(resolve => { release = resolve }))
+    const listTeamPeople = vi.fn(async () => page([summary()]))
+    const controller = createTeamDirectoryController({ getTeamStatus, listTeamPeople })
+    const session = new AbortController()
+    const activation = controller.activate(identity(), session.signal, () => false)
+    expect(listTeamPeople).not.toHaveBeenCalled()
+    expect(document.querySelector<HTMLButtonElement>('[data-team-person-create]')?.hidden).toBe(true)
+    release({ enabled: true })
+    await activation
+    expect(listTeamPeople).toHaveBeenCalledOnce()
+    expect(document.querySelector<HTMLButtonElement>('[data-team-person-create]')?.hidden).toBe(false)
+    expect(document.querySelector('[data-team-list]')?.textContent).toContain('Avery Owner')
+    session.abort()
+  })
+
+  it('[#1259] a late enabled Team status cannot release an aborted activation', async () => {
+    writeDocument('team-list')
+    let release!: (value: { enabled: boolean }) => void
+    const getTeamStatus = vi.fn(() => new Promise<{ enabled: boolean }>(resolve => { release = resolve }))
+    const listTeamPeople = vi.fn(async () => page([summary()]))
+    const session = new AbortController()
+    const activation = createTeamDirectoryController({ getTeamStatus, listTeamPeople }).activate(identity(), session.signal, () => false)
+    session.abort()
+    expect(getTeamStatus).toHaveBeenCalledOnce()
+    release({ enabled: true })
+    await activation
+    expect(listTeamPeople).not.toHaveBeenCalled()
+    expect(document.querySelector<HTMLButtonElement>('[data-team-person-create]')?.hidden).toBe(true)
+  })
+
+  it('[#1259] a failed Team discovery fails closed and preserves authentication handling', async () => {
+    writeDocument('team-list')
+    const failure = new Error('Owned unavailable status')
+    const onSessionFailure = vi.fn(() => false)
+    const listTeamPeople = vi.fn(async () => page([summary()]))
+    await createTeamDirectoryController({ getTeamStatus: async () => { throw failure }, listTeamPeople }).activate(identity(), new AbortController().signal, onSessionFailure)
+    expect(onSessionFailure).toHaveBeenCalledWith(failure)
+    expect(listTeamPeople).not.toHaveBeenCalled()
+    expect(document.querySelector<HTMLButtonElement>('[data-team-person-create]')?.hidden).toBe(true)
+    expect(document.querySelector('[data-team-list-status]')?.textContent).toBe('Team is unavailable.')
+  })
+
   it('loads authoritative utilization and reloads week and Active/All filters', async () => {
     writeDocument('team-list')
     const listTeamPeople = vi.fn(async (filter) =>
@@ -185,6 +251,38 @@ describe('Team browser controller', () => {
     await vi.waitFor(() =>
       expect(document.querySelector('[data-team-list]')?.textContent).toContain('Kai Archive'),
     )
+  })
+
+  it('[browser #852] sorts people by a header inside their cohort bands', async () => {
+    writeDocument('team-list')
+    const listTeamPeople = vi.fn(async () =>
+      page([
+        summary({ id: 1, first_name: 'Avery', last_name: 'Owner', total_seconds: 3_600 }),
+        summary({ id: 2, first_name: 'Blair', last_name: 'Lead', total_seconds: 36_000 }),
+        summary({ id: 3, first_name: 'Casey', last_name: 'Temp', is_contractor: true, total_seconds: 7_200 }),
+        summary({ id: 4, first_name: 'Drew', last_name: 'Temp', is_contractor: true, total_seconds: 600 }),
+      ]),
+    )
+    await createTeamDirectoryController({ listTeamPeople }).activate(
+      identity(),
+      new AbortController().signal,
+      () => false,
+    )
+    const names = (): string[] =>
+      [...document.querySelectorAll('[data-team-list] tbody tr[data-row] td[data-column="name"] a')].map(
+        (cell) => cell.textContent ?? '',
+      )
+    expect(names()).toEqual(['Avery Owner', 'Blair Lead', 'Casey Temp', 'Drew Temp'])
+
+    // The table draws itself again on a sort, so the header is found afresh.
+    const hours = (): HTMLButtonElement =>
+      document.querySelector<HTMLButtonElement>(
+        '[data-team-list] thead button[data-sort-column="hours"]',
+      )!
+    hours().click()
+    hours().click()
+    // Largest first, and the contractors stay under their own band.
+    expect(names()).toEqual(['Blair Lead', 'Avery Owner', 'Casey Temp', 'Drew Temp'])
   })
 
   it('asks the server for the archived people, not for everyone', async () => {
@@ -996,36 +1094,100 @@ describe('Team browser controller', () => {
     })
   })
 
-  it('renders notification delivery as inactive and never saves delivery promises', async () => {
-    writeDocument('team-person')
-    const updateTeamPersonNotifications = vi.fn<
-      TeamDirectoryApi['updateTeamPersonNotifications']
-    >(async () => receipt(4))
-    const controller = createTeamDirectoryController({
-      getTeamPerson: vi.fn(async () =>
-        person({
-          notifications: {
-            ...person().notifications,
-            channels: { email: true, desktop: false, slack: true },
-          },
-        }),
-      ),
-      getTeamCatalog: vi.fn(async () => catalog),
-      updateTeamPersonNotifications,
-    })
-    await controller.activate(identity('people_admin'), new AbortController().signal, () => false)
+  describe('reminder preferences (issue 935)', () => {
+    const open = async (
+      profile: Parameters<typeof identity>[0],
+      stored: Partial<ReturnType<typeof person>['notifications']> = {},
+    ) => {
+      writeDocument('team-person')
+      const updateTeamPersonNotifications = vi.fn<
+        TeamDirectoryApi['updateTeamPersonNotifications']
+      >(async () => receipt(4))
+      const controller = createTeamDirectoryController({
+        getTeamPerson: vi.fn(async () =>
+          person({ notifications: { ...person().notifications, ...stored } }),
+        ),
+        getTeamCatalog: vi.fn(async () => catalog),
+        updateTeamPersonNotifications,
+      })
+      await controller.activate(identity(profile), new AbortController().signal, () => false)
+      const form = document.querySelector<HTMLFormElement>('[data-team-notifications-form]')!
+      const box = (name: string): HTMLInputElement =>
+        form.elements.namedItem(name) as HTMLInputElement
+      return { form, box, updateTeamPersonNotifications }
+    }
 
-    const form = document.querySelector<HTMLFormElement>('[data-team-notifications-form]')!
-    submit(form)
-    expect(updateTeamPersonNotifications).not.toHaveBeenCalled()
-    expect(document.querySelector('[data-team-notification-status]')?.textContent).toContain(
-      'delivery is not active',
-    )
-    expect(
-      [...form.querySelectorAll<HTMLInputElement>('input')].every((input) => input.disabled),
-    ).toBe(true)
-    submit(form)
-    expect(updateTeamPersonNotifications).not.toHaveBeenCalled()
+    it('saves what an administrator of people sets: the daily reminder, mail, team reminders and the digest', async () => {
+      const { form, box, updateTeamPersonNotifications } = await open('people_admin')
+      expect(document.querySelector('[data-team-notifications-submit]')?.hasAttribute('hidden')).toBe(false)
+
+      box('daily_reminder_enabled').checked = true
+      box('reminder_time').value = '17:00'
+      for (const day of form.querySelectorAll<HTMLInputElement>('[name="reminder_days"]')) {
+        day.checked = day.value === 'monday' || day.value === 'friday'
+      }
+      box('channel_email').checked = true
+      box('include_in_team_reminders').checked = true
+      box('weekly_digest').checked = true
+      submit(form)
+
+      await vi.waitFor(() => expect(updateTeamPersonNotifications).toHaveBeenCalledTimes(1))
+      expect(updateTeamPersonNotifications.mock.calls[0]![0]).toBe(1)
+      expect(updateTeamPersonNotifications.mock.calls[0]![2]).toEqual({
+        expected_version: 3,
+        daily_reminder_enabled: true,
+        reminder_time: '17:00',
+        reminder_days: ['monday', 'friday'],
+        channels: { email: true, desktop: false, slack: false },
+        include_in_team_reminders: true,
+        weekly_digest: true,
+        notify_project_deleted: false,
+      })
+    })
+
+    it('says what is missing before it asks the server, and keeps what has no delivery switched off', async () => {
+      const { form, box, updateTeamPersonNotifications } = await open('people_admin', {
+        // An imported preference nothing honours.
+        channels: { email: false, desktop: true, slack: true },
+        notify_project_deleted: true,
+      })
+      expect(box('channel_desktop').checked).toBe(false)
+      expect(box('channel_desktop').disabled).toBe(true)
+      expect(box('channel_slack').disabled).toBe(true)
+      expect(box('notify_project_deleted').disabled).toBe(true)
+
+      box('daily_reminder_enabled').checked = true
+      submit(form)
+      expect(document.querySelector('[data-team-notifications-result]')?.textContent).toBe(
+        'Choose a time for the daily reminder.',
+      )
+      box('reminder_time').value = '17:00'
+      submit(form)
+      expect(document.querySelector('[data-team-notifications-result]')?.textContent).toBe(
+        'Choose at least one day for the daily reminder.',
+      )
+      form.querySelector<HTMLInputElement>('[name="reminder_days"]')!.checked = true
+      submit(form)
+      expect(document.querySelector('[data-team-notifications-result]')?.textContent).toBe(
+        'The daily reminder is sent by email: tick Email.',
+      )
+      expect(updateTeamPersonNotifications).not.toHaveBeenCalled()
+    })
+
+    it('[security] shows them read-only to somebody who cannot administer people', async () => {
+      const { form, box, updateTeamPersonNotifications } = await open('project_manager', {
+        daily_reminder_enabled: true,
+        reminder_time: '09:00',
+        reminder_days: ['monday'],
+        channels: { email: true, desktop: false, slack: false },
+      })
+      expect(box('daily_reminder_enabled').checked).toBe(true)
+      expect(box('reminder_time').value).toBe('09:00')
+      expect([...form.querySelectorAll<HTMLInputElement>('input')].every((input) => input.disabled)).toBe(true)
+      expect(document.querySelector<HTMLButtonElement>('[data-team-notifications-submit]')!.hidden).toBe(true)
+      submit(form)
+      expect(updateTeamPersonNotifications).not.toHaveBeenCalled()
+    })
   })
 
   it('[e2e:rate-change] takes back a misclicked rate and shows the one it displaced reopened', async () => {

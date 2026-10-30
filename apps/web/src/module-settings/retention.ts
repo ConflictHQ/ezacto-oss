@@ -9,6 +9,7 @@ import {
 } from "@conflict-hq/ezacto-client";
 import type { SessionPresenter } from "../session.js";
 import { apiErrorMessage } from "./model.js";
+import { shellFetch } from "../shell/net.js";
 
 const frameworks = PRIVACY_FRAMEWORK_CATALOG;
 const renderFramework = ({
@@ -45,7 +46,7 @@ export const renderRetentionSection = (): string => `
   <section class="settings-section" data-settings-section="erasure" aria-labelledby="settings-erasure-title">
     <header><h2 id="settings-erasure-title">Erasure and retention</h2>
     <p>Publish your instance's account-closure disclosure. The operator determines applicable obligations and completes requests. Saving this policy does not erase accounts, schedule deletion, or establish legal compliance.</p></header>
-    <p data-retention-status role="status" aria-live="polite">Loading policy…</p>
+    <p class="form-result" data-retention-status role="status" aria-live="polite">Loading policy…</p>
     <form class="settings-form" data-retention-form hidden>
       <fieldset data-retention-editable>
         <legend>Operator policy</legend>
@@ -93,7 +94,7 @@ export const renderRetentionSection = (): string => `
         <button class="primary-action" type="submit">Publish policy</button>
       </fieldset>
     </form>
-    <p data-retention-result role="status" aria-live="polite"></p>
+    <p class="form-result" data-retention-result role="status" aria-live="polite"></p>
     ${renderDeletionRequests()}
   </section>`;
 
@@ -194,7 +195,7 @@ export function createRetentionController(root: HTMLElement, demo: boolean) {
     active: Active,
     body?: unknown,
   ): Promise<AccountRetentionRecord | null> => {
-    const response = await fetch(
+    const response = await shellFetch(
       body === undefined
         ? "/api/v1/profile/retention-policy"
         : "/api/v1/admin/retention-policy",

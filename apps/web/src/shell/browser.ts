@@ -1,7 +1,28 @@
+import { createCalendarConnectionController } from '../calendar-connections/browser.js'
+import { setRequestBusy } from '../request-feedback.js'
+import { moduleAvailable, withdrawUnavailableSettingsSections } from '../module-availability.js'
+import {
+  createCalendarProposalController,
+  type ProposalDecision,
+} from '../calendar-proposals/browser.js'
+import {
+  proposalBlocks,
+  proposalSourceLabel,
+  proposalTimeZone,
+  proposalReviewFields,
+  proposalBillingSeconds,
+} from '../calendar-proposals/model.js'
+import { bindSkipNavigation } from './skip-navigation.js'
+import { createFirstRunController } from '../first-run/browser.js'
+import { wirePayoutDefaultSelf } from './payout-default-self.js'
+import { createScheduledRunController } from '../scheduled-runs/browser.js'
+import { wireDeelSelfPayout } from './payout-deel-self.js'
 import { createStaffPaymentsController } from '../staff-payments/browser.js'
 import { mountPasswordRecovery, takePasswordResetLink } from './password-recovery.js'
 import {
   EzactoApiError,
+  type CalendarProposal,
+  type CalendarProposalAcceptInput,
   type GeneralResource,
   type Invoice,
   type InvoiceGenerationInput,
@@ -32,6 +53,7 @@ import {
   DEFAULT_COMPANY_SETTINGS_SECTION,
   applySettingsSection,
   resolveSettingsSection,
+  USER_SETTINGS_SECTIONS,
 } from '../settings-sections.js'
 import { browserTextSizeStore, createTextSizeRuntime, type TextSize, textSizes } from '../text-size.js'
 import {
@@ -43,7 +65,7 @@ import {
   createColorSchemeRuntime,
   createThemeRuntime,
 } from '../theme-preference.js'
-import { renderDataTable } from '../components/data-table.js'
+import { renderDataTable, type DataTableSort } from '../components/data-table.js'
 import { defaultTheme, themeManifest } from '../theme.js'
 import {
   payoutFailure,
@@ -58,10 +80,14 @@ import {
   type MoneyDisplay,
 } from '../money-display.js'
 import {
+  billsAsText,
   contextLabel,
+  projectTimeRounding,
+  roundingWithSource,
   formatTimeForClock,
   modeForEntryDraft,
   parseTimeForClock,
+  secondsBetweenTimes,
   type EntryEditorContext,
   type TimeEntryMode,
 } from '../components/time-entry-editor.js'
@@ -70,9 +96,19 @@ import { createClientDirectoryController } from '../clients/browser.js'
 import { createProjectDirectoryController } from '../projects/browser.js'
 import { createActivityController } from '../activity/browser.js'
 import { createNotificationsController } from '../notifications/browser.js'
+import { createCapacityController } from '../capacity/browser.js'
+import { createMyPaymentsController } from '../my-payments/browser.js'
+import { focusSortHeader, setSortPreferenceOwner } from '../components/table-sort.js'
 import { createDeliveriesController } from '../deliveries/browser.js'
-import { createCalendarController } from '../calendar/browser.js'
-import { calendarMonthRange, monthStart } from '../calendar/model.js'
+import { createCalendarController, type CalendarPlacement } from '../calendar/browser.js'
+import { createCalendarMonthController } from '../calendar/month-browser.js'
+import { calendarMonthRange, monthStart } from '../calendar/month-model.js'
+import {
+  CALENDAR_LAYOUT_COOKIE,
+  type CalendarLayout,
+  calendarLayouts,
+  createCalendarLayoutRuntime,
+} from '../calendar/layout.js'
 import { createDashboardController } from '../dashboard/browser.js'
 import { createReportsController } from '../reports/browser.js'
 import { canReadFinancialReports } from '../reports/model.js'
@@ -80,6 +116,12 @@ import { createExpenseWorkflowController } from '../expenses/browser.js'
 import { createRoleAdminController } from '../roles/browser.js'
 import { createTaskAdminController } from '../tasks/browser.js'
 import { createTeamDirectoryController } from '../team/browser.js'
+import {
+  notificationFieldsProblem,
+  paintNotificationFields,
+  readNotificationFields,
+} from '../team/notification-fields.js'
+import { personLabel } from '../projects/model.js'
 import { teamCapabilities } from '../team/model.js'
 import { createExpenseCategoryDirectoryController } from '../expense-categories/browser.js'
 import { createEmailConfigurationController } from '../email-config/browser.js'
@@ -88,12 +130,15 @@ import {
   createRecurringWorkspaceController,
 } from '../recurring/browser.js'
 import { createEstimateWorkspaceController } from '../estimates/browser.js'
+import { createBankDepositController } from '../bank-deposits/browser.js'
 import { createRetainerWorkspaceController } from '../retainers/browser.js'
 import { createModuleSettingsController } from '../module-settings/browser.js'
 import { demoUnavailable, isDemoDeployment } from '../demo.js'
 import {
   createInvoicePaymentController,
   invoiceMatchesSearch,
+  invoiceListSort,
+  invoiceSortParameter,
   renderInvoiceListItems,
   setInvoiceClientNames,
 } from '../invoices/browser.js'
@@ -132,6 +177,7 @@ import {
   createSameOriginShellApi,
   hydratePendingTimesheetDetails,
   loadShellSnapshot,
+  filingClock,
   filingDate,
   localDate,
   navigationDestination,
@@ -211,6 +257,11 @@ interface GridHandlers {
 }
 
 interface ActiveEntryEditor {
+  readonly proposalRange?: string
+  readonly proposalZone?: string
+  readonly proposal?: CalendarProposal
+  readonly proposalUnconfirmed?: boolean
+
   readonly context: EntryEditorContext
   readonly cell?: WeekGridCell
   readonly view?: GridView
@@ -225,6 +276,8 @@ interface ActiveEntryEditor {
   readonly minimumNoteLength: number
   readonly initialDurationValue?: string
   readonly durationWasEditedBeforeOpen?: boolean
+  /** A new entry's start and end, canonical, when the calendar drew them (issue 943). */
+  readonly times?: { readonly started: string; readonly ended: string }
   /**
    * Whose time the editor writes when it is not the signed-in person's (issue 917):
    * the teammate an administrator has open on Time, or the owner of a report
@@ -305,7 +358,7 @@ const setActiveTimeFormat = (format: 'decimal' | 'hours_minutes'): void => {
 }
 
 /**
- * Every total on this screen — row, tfoot, week, day strip, timer chip — reads
+ * Every total on this screen — row, tfoot, week, day strip — reads
  * beside a cell rendered from the same seconds, so it renders through the same
  * function the cell does rather than a second one that rounded differently.
  * Unlike `formatCellHours` a total of zero still prints: an empty cell means
@@ -474,11 +527,35 @@ const signInMessage = (error: unknown): string => {
  */
 const isTwoFactorRequired = (
   result: unknown,
-): result is { status: 'two_factor_required'; challenge: string } =>
+): result is {
+  status: 'two_factor_required'
+  challenge: string
+  methods?: readonly string[]
+} =>
   typeof result === 'object' &&
   result !== null &&
   (result as { status?: unknown }).status === 'two_factor_required' &&
   typeof (result as { challenge?: unknown }).challenge === 'string'
+
+/** Asking for another emailed code fails differently from answering with one. */
+const emailCodeMessage = (error: unknown): { text: string; expired: boolean } => {
+  if (error instanceof EzactoApiError) {
+    const code = apiErrorCode(error)
+    if (code === 'two_factor_challenge_invalid') {
+      return { text: 'That sign-in expired. Enter your password again.', expired: true }
+    }
+    if (error.status === 429) {
+      return {
+        text: 'A code was sent a moment ago. Wait a minute before asking for another.',
+        expired: false,
+      }
+    }
+    if (code === 'two_factor_email_unavailable') {
+      return { text: 'A code cannot be emailed for this sign-in.', expired: false }
+    }
+  }
+  return { text: 'The code could not be sent right now. Try again.', expired: false }
+}
 
 /** `expired` means the challenge itself is gone, so the password step returns. */
 const twoFactorMessage = (
@@ -812,19 +889,19 @@ const rowStopButton = (entryId: number, label: string, className: string, handle
   button.textContent = 'Stop'
   button.setAttribute('aria-label', `Stop the timer on ${label}`)
   button.addEventListener('click', () => {
+    if (button.disabled) return
     button.disabled = true
-    void handlers.stop(entryId).finally(() => { button.disabled = false })
+    button.textContent = 'Stopping…'
+    setRequestBusy(button, true)
+    void handlers.stop(entryId).finally(() => {
+      button.disabled = false
+      button.textContent = 'Stop'
+      setRequestBusy(button, false)
+    })
   })
   return button
 }
 
-/**
- * `today` is the day the server files a timer on -- the operator's zone, then
- * the organization's -- not the browser's clock. The column marked today and
- * the cell a row's Start aims at are the same date, so they take it from the
- * same place: marked from one clock and started from another, the highlighted
- * column would stay empty while the timer landed a day over.
- */
 /**
  * The mark beside a project's name (the ezacto-ui grid): its initials on a
  * tile whose hue follows the project, so one project wears one colour on
@@ -845,7 +922,7 @@ const markProject = (element: HTMLElement, label: string, projectId: unknown): v
   element.style.setProperty('--mark-hue', String(hue))
 }
 
-const renderDesktopGrid = (grid: WeekGrid, handlers: GridHandlers, today: string): void => {
+const renderGridHead = (dates: readonly string[], today: string): void => {
   const head = required<HTMLTableSectionElement>('[data-week-grid-head]')
   const heading = document.createElement('tr')
   const projectHeading = document.createElement('th')
@@ -855,7 +932,7 @@ const renderDesktopGrid = (grid: WeekGrid, handlers: GridHandlers, today: string
   // Which column is today is the first thing you look for in a week grid, and
   // nothing said. The cells carry it too, so the marker runs the column's
   // height rather than sitting only in its header.
-  for (const date of grid.dates) {
+  for (const date of dates) {
     const th = document.createElement('th')
     th.scope = 'col'
     const [weekday, day] = dayHeadingParts(date)
@@ -874,6 +951,17 @@ const renderDesktopGrid = (grid: WeekGrid, handlers: GridHandlers, today: string
   totalHeading.textContent = 'Total'
   heading.append(totalHeading)
   head.replaceChildren(heading)
+}
+
+/**
+ * `today` is the day the server files a timer on -- the operator's zone, then
+ * the organization's -- not the browser's clock. The column marked today and
+ * the cell a row's Start aims at are the same date, so they take it from the
+ * same place: marked from one clock and started from another, the highlighted
+ * column would stay empty while the timer landed a day over.
+ */
+const renderDesktopGrid = (grid: WeekGrid, handlers: GridHandlers, today: string): void => {
+  renderGridHead(grid.dates, today)
 
   const body = required<HTMLTableSectionElement>('[data-week-grid-rows]')
   if (grid.rows.length === 0) {
@@ -946,7 +1034,10 @@ const renderDesktopGrid = (grid: WeekGrid, handlers: GridHandlers, today: string
             `Start a timer on ${row.projectLabel} / ${row.taskLabel}`,
           )
           start.addEventListener('click', () => {
+            if (start.disabled) return
             start.disabled = true
+            start.textContent = 'Starting…'
+            setRequestBusy(start, true)
             const started =
               restartId === undefined
                 ? handlers.startToday(
@@ -956,6 +1047,8 @@ const renderDesktopGrid = (grid: WeekGrid, handlers: GridHandlers, today: string
                 : handlers.restart?.(restartId)
             void started?.finally(() => {
               start.disabled = false
+              start.textContent = 'Start'
+              setRequestBusy(start, false)
             })
           })
           label.append(start)
@@ -1181,15 +1274,20 @@ const renderTimer = (running: DisplayTimeEntry | null): void => {
   if (timerInterval !== undefined) globalThis.clearInterval(timerInterval)
   if (running === null) {
     chip.dataset.state = 'stopped'
+    chip.setAttribute('aria-label', 'Start timer')
+    chip.title = 'Start timer'
     label.textContent = 'Start timer'
-    // The idle placeholder is the clock at zero where the organization reads
-    // hours and minutes, and the setting's own zero on a decimal account: a
-    // hardcoded 0:00:00 beside a 2.25 row total is a mismatch, just at zero.
-    elapsed.textContent = activeTimeFormat === 'decimal' ? formatSeconds(0) : formatElapsed(0)
+    // The idle placeholder is the clock at zero whatever the organization's
+    // time format: the chip is a clock, not a total (issue 1003), so 0.00
+    // beside it would promise a decimal that never ticks.
+    elapsed.textContent = formatElapsed(0)
     if (band !== null) band.hidden = true
     return
   }
   chip.dataset.state = 'running'
+  const accessibleLabel = `Running timer: ${running.project_label} / ${running.task_label}`
+  chip.setAttribute('aria-label', accessibleLabel)
+  chip.title = accessibleLabel
   label.textContent = `${running.project_label} / ${running.task_label}`
   if (band !== null) {
     band.querySelector<HTMLElement>('[data-timer-band-project]')!.textContent = running.project_label
@@ -1204,6 +1302,13 @@ const renderTimer = (running: DisplayTimeEntry | null): void => {
   update()
   timerInterval = globalThis.setInterval(update, 1_000)
 }
+
+/** What an install whose api offers no log says: an empty page, not a failure. */
+const emptyLogPage = {
+  data: [],
+  links: { next: null },
+  page: { per_page: 0, next_cursor: null, total: 0 },
+} as const
 
 type WeekStartDay = 'saturday' | 'sunday' | 'monday'
 
@@ -1345,11 +1450,15 @@ const markTimeViewTab = (): void => {
     if (linkView === current) link.setAttribute('aria-current', 'page')
     else link.removeAttribute('aria-current')
   }
-  // The title row's pair: Timesheet is the week and the day alike, Calendar
-  // the month. Week and Day choose between the two timesheets in the toolbar.
+  // The title row's trio: Timesheet is the week and the day alike, Calendar
+  // the clock and Month the month. Week and Day choose between the two
+  // timesheets in the toolbar.
   for (const link of document.querySelectorAll<HTMLAnchorElement>('[data-time-modes] a')) {
     const linkView = new URL(link.href).searchParams.get('view') ?? 'week'
-    const isCurrent = linkView === 'calendar' ? current === 'calendar' : current !== 'calendar'
+    const isCurrent =
+      linkView === 'calendar' || linkView === 'month'
+        ? linkView === current
+        : current !== 'calendar' && current !== 'month'
     if (isCurrent) link.setAttribute('aria-current', 'page')
     else link.removeAttribute('aria-current')
   }
@@ -1412,6 +1521,7 @@ export const mountShell = async (
   const authChecking = required<HTMLElement>('[data-auth-checking]')
   const sessionCheckOverlay = required<HTMLElement>('[data-session-check-overlay]')
   const authenticatedShell = required<HTMLElement>('[data-authenticated-shell]')
+  bindSkipNavigation(authenticatedShell)
   const invoiceGenerationPage =
     document.documentElement.dataset.appView === 'invoice-generation'
   // The week grid also mounts behind the invoice wizard and normalizes its own
@@ -1518,6 +1628,8 @@ export const mountShell = async (
   const twoFactorCode = required<HTMLInputElement>('#ez-two-factor-code')
   const twoFactorSubmit = required<HTMLButtonElement>('[data-two-factor-submit]')
   const twoFactorCancel = required<HTMLButtonElement>('[data-two-factor-cancel]')
+  const twoFactorEmail = required<HTMLButtonElement>('[data-two-factor-email]')
+  const twoFactorHint = required<HTMLElement>('[data-two-factor-hint]')
   const twoFactorResult = required<HTMLElement>('[data-two-factor-result]')
   const currentIdentityPanel = required<HTMLElement>('[data-current-identity]')
   const logout = required<HTMLButtonElement>('[data-logout]')
@@ -1546,6 +1658,7 @@ export const mountShell = async (
   const entryStart = required<HTMLInputElement>('[data-entry-start]')
   const entryEnd = required<HTMLInputElement>('[data-entry-end]')
   const entryRunning = required<HTMLElement>('[data-entry-running]')
+  const entryBilling = required<HTMLElement>('[data-entry-billing]')
   const entryNoteInput = required<HTMLTextAreaElement>('[data-entry-note-input]')
   const entryNoteHint = required<HTMLElement>('[data-entry-note-hint]')
   const entryResult = required<HTMLElement>('[data-entry-result]')
@@ -1588,6 +1701,9 @@ export const mountShell = async (
       entryDate.focus()
     }
   })
+  const proposalSource = required<HTMLElement>('[data-entry-proposal-source]')
+  const proposalDiscard = required<HTMLButtonElement>('[data-proposal-discard]')
+  const proposalCheck = required<HTMLButtonElement>('[data-proposal-check]')
   const stopTimer = required<HTMLButtonElement>('[data-stop-timer]')
   const deleteEntry = required<HTMLButtonElement>('[data-entry-delete]')
   const weekRemoved = required<HTMLElement>('[data-week-removed]')
@@ -1653,12 +1769,34 @@ export const mountShell = async (
   const invoiceResult = required<HTMLElement>('[data-invoice-generation-result]')
   const invoiceSubmit = required<HTMLButtonElement>('[data-invoice-generation-submit]')
   const invoiceRetry = required<HTMLButtonElement>('[data-retry-invoice-catalog]')
+  const firstRun = createFirstRunController(api)
   const clientDirectory = createClientDirectoryController(api)
   const projectDirectory = createProjectDirectoryController(api)
   const taskAdmin = createTaskAdminController(api)
   const roleAdmin = createRoleAdminController(api)
   const teamDirectory = createTeamDirectoryController(api)
-  const calendar = createCalendarController()
+  const calendarLayout = createCalendarLayoutRuntime({
+    store: browserCookieStore(
+      document,
+      CALENDAR_LAYOUT_COOKIE,
+      globalThis.location.protocol === 'https:',
+    ),
+    target: document.documentElement,
+  })
+  const monthView = createCalendarMonthController()
+  const calendar = createCalendarController({
+    openEntry: (entryId) => openCalendarEntry(entryId),
+    reviewProposal: (id, anchor) => openCalendarProposal(id, anchor),
+    createEntry: (placement) => createCalendarEntry(placement),
+    moveEntry: (entryId, placement) => moveCalendarEntry(entryId, placement),
+    stepDay: (offset) => moveDay(offset),
+    now: () => calendarNow(),
+  })
+  const calendarProposals = createCalendarProposalController(api, {
+    root: required<HTMLElement>('[data-calendar-proposals]'),
+    changed: () => render(),
+    message: messageFor,
+  })
   const staffPayments = createStaffPaymentsController(api)
   const dashboard = createDashboardController(api)
   // Reads only when the api offers the endpoint; an install without it still
@@ -1668,6 +1806,64 @@ export const mountShell = async (
       api.listActivityLog === undefined
         ? { data: [] }
         : api.listActivityLog(query, signal),
+    ...(api.exportActivityLog === undefined ? {} : { exportActivityLog: api.exportActivityLog }),
+    ...(api.listRollableActivityYears === undefined
+      ? {}
+      : { listRollableYears: api.listRollableActivityYears }),
+    ...(api.rollActivityYear === undefined ? {} : { rollActivityYear: api.rollActivityYear }),
+    // Everyone the directory lists, active or not: the log keeps the actions of
+    // people who have since been archived, and the picker must reach them too.
+    listActors: async (signal) => {
+      const listUsers = api.listDirectoryUsers
+      if (listUsers === undefined) return []
+      const people: GeneralResource[] = []
+      let cursor: string | undefined
+      do {
+        const page = await listUsers(cursor, signal)
+        people.push(...page.data)
+        cursor = page.page.next_cursor ?? undefined
+      } while (cursor !== undefined)
+      return people
+        .map((person) => ({ id: person.id, name: personLabel(person.id, people) }))
+        .sort((left, right) => left.name.localeCompare(right.name, 'en-US'))
+    },
+  })
+  const capacity = createCapacityController({
+    ...(api.resourceCalendar ? { calendar: api.resourceCalendar } : {}),
+    getCapacity: async (range, signal) => {
+      if (api.getCapacity === undefined) throw new Error('Capacity is not available.')
+      return api.getCapacity(range, signal)
+    },
+    ...(api.planning === undefined ? {} : { planning: api.planning }),
+    ...(api.placeholders === undefined ? {} : { placeholders: api.placeholders }),
+  })
+  const scheduledRun = createScheduledRunController({
+    consumeReviewLink: async (id,token,signal) => {
+      if (!api.scheduledRuns?.consumeReviewLink) throw new Error('Email review links are unavailable.')
+      await api.scheduledRuns.consumeReviewLink(id,token,signal)
+    },
+    read: (id, signal) => {
+      if (!api.scheduledRuns) throw new Error('Scheduled runs are unavailable.')
+      return api.scheduledRuns.read(id, signal)
+    },
+    confirm: (id, signal, acknowledgeReportWarnings) => {
+      if (!api.scheduledRuns) throw new Error('Scheduled runs are unavailable.')
+      return api.scheduledRuns.confirm(id, signal, acknowledgeReportWarnings)
+    },
+    retry: (id, signal) => {
+      if (!api.scheduledRuns?.retry) throw new Error('Scheduled run retry is unavailable.')
+      return api.scheduledRuns.retry(id, signal)
+    },
+    cancel: (id, signal) => {
+      if (!api.scheduledRuns) throw new Error('Scheduled runs are unavailable.')
+      return api.scheduledRuns.cancel(id, signal)
+    },
+  })
+  const myPayments = createMyPaymentsController({
+    getMyPayments: async (month, signal) => {
+      if (api.getMyPayments === undefined) throw new Error('Your payments are not available.')
+      return api.getMyPayments(month, signal)
+    },
   })
   // Reads only the sources the signed-in person may read, which it decides by
   // profile; an install missing an endpoint simply has that source absent.
@@ -1677,11 +1873,15 @@ export const mountShell = async (
   // shell failing to construct.
   const deliveries = createDeliveriesController({
     listEmailLog: async (query, signal) =>
-      api.listEmailLog === undefined ? { data: [] } : api.listEmailLog(query, signal),
+      api.listEmailLog === undefined ? emptyLogPage : api.listEmailLog(query, signal),
     listOutboxDeliveries: async (query, signal) =>
       api.listOutboxDeliveries === undefined
-        ? { data: [] }
+        ? emptyLogPage
         : api.listOutboxDeliveries(query, signal),
+    organizationTimezone: async (signal) =>
+      api.getTimesheetLockPolicy === undefined
+        ? null
+        : (await api.getTimesheetLockPolicy(signal)).timezone,
     retryOutboxDelivery: async (subscriberId, eventId, signal) =>
       api.retryOutboxDelivery === undefined
         ? undefined
@@ -1697,6 +1897,7 @@ export const mountShell = async (
   const recurringEditor = createRecurringEditorController(api)
   const estimateWorkspace = createEstimateWorkspaceController(api)
   const retainerWorkspace = createRetainerWorkspaceController(api)
+  const bankDeposits = createBankDepositController(api)
   const moduleSettings = createModuleSettingsController(api)
   const invoicePayments = createInvoicePaymentController(api)
   const invoiceEditor = createInvoiceEditorController(api)
@@ -1794,7 +1995,9 @@ export const mountShell = async (
   }
   const requestedView = new URL(globalThis.location.href).searchParams.get('view')
   document.documentElement.dataset.timeView =
-    requestedView === 'day' || requestedView === 'calendar' ? requestedView : 'week'
+    requestedView === 'day' || requestedView === 'calendar' || requestedView === 'month'
+      ? requestedView
+      : 'week'
   markTimeViewTab()
   const cellStates = new Map<string, CellSaveState>()
   let within = initialWithin()
@@ -1820,15 +2023,15 @@ export const mountShell = async (
    * the one screen where the period was already navigation rather than a filter
    * waiting on a button.
    */
-  // The calendar is a month (the ezacto-ui Month view), so its toolbar steps
-  // months and names one, "October 2026"; the timesheets step weeks.
-  const isCalendarView = (): boolean => document.documentElement.dataset.timeView === 'calendar'
+  // The Month view is a month (the ezacto-ui Month view), so its toolbar steps
+  // months and names one, "October 2026"; the timesheets and the calendar step weeks.
+  const isMonthView = (): boolean => document.documentElement.dataset.timeView === 'month'
   const weekPeriod = createPeriodControl({
-    label: isCalendarView() ? 'Month' : 'Week',
-    kinds: isCalendarView() ? ['month'] : ['week'],
+    label: isMonthView() ? 'Month' : 'Week',
+    kinds: isMonthView() ? ['month'] : ['week'],
     // The ezacto-ui toolbar: the week by its days, "Today" as the link beside
     // it, and the dates themselves the way to any other week.
-    summary: isCalendarView() ? 'compact' : 'days',
+    summary: isMonthView() ? 'compact' : 'days',
     jump: true,
     today: localDate,
     onChange: (range) => {
@@ -1839,11 +2042,12 @@ export const mountShell = async (
   /** The control shows the month on the calendar and the week elsewhere, both around `within`. */
   const syncWeekPeriod = (): void => {
     weekPeriod.setRange(
-      isCalendarView() ? periodRange('month', within) : weekRange(within, weekStartDay),
+      isMonthView() ? periodRange('month', within) : weekRange(within, weekStartDay),
     )
   }
   let supplementalRows: WeekRowSeed[] = []
   let selectedDay = Math.max(0, weekDates(within, weekStartDay).indexOf(localDate()))
+  let effectiveProposalZone: string | null = null
   let snapshot: ShellSnapshot | null = null
   let grid: WeekGrid | null = null
   let activeEntry: ActiveEntryEditor | null = null
@@ -1857,6 +2061,8 @@ export const mountShell = async (
    * how the magic-link redirect lands here. Null means no challenge is open.
    */
   let pendingChallenge: string | null = null
+  /** Issue 770: what the open challenge says can answer it. */
+  let pendingMethods: readonly string[] = []
   let verifyingSecondFactor = false
   let authGeneration = 0
   let authController = new AbortController()
@@ -1872,11 +2078,15 @@ export const mountShell = async (
   // own choice only when it differs, so following the default stays following.
   let invoiceJournalDefault: InvoiceJournalChoice = { level: false, formats: ['pdf'] }
   let invoiceExpenseChoice = invoiceExpenseSummary.value
+  let invoiceExpensesInSelection = true
   let invoiceCommandId: string | null = null
   let invoiceNextCursor: string | null = null
   let invoiceListRows: readonly Invoice[] = []
   /** Which states the list is asking the server for. Outstanding is the open question. */
   let invoiceFilter: 'outstanding' | 'overdue' | 'paid' | 'closed' | 'all' = 'outstanding'
+  // The column the person last sorted the invoice list by (issue 852). The list
+  // is ordered by the server, so choosing one fetches the list again.
+  let invoiceSort: DataTableSort | null = null
   let invoiceClientNamesLoaded = false
   let invoiceListCount = 0
   let approvalModuleAvailable = false
@@ -1919,6 +2129,12 @@ export const mountShell = async (
    * reader, as it always was, rather than silently dropping expenses.
    */
   const setInvoiceExpensesAvailable = (available: boolean): void => {
+    invoiceExpensesInSelection = available
+    const offered = snapshot?.expensesAvailable !== false
+    invoiceExpenseSummary.closest('label')!.hidden = !offered
+    available = available && offered
+    invoiceExpenseHint.hidden = available
+    invoiceExpenseHint.textContent = available ? '' : offered ? 'No uninvoiced expenses for this selection.' : 'This source is unavailable.'
     if (available === !invoiceExpenseSummary.disabled) return
     if (available) {
       invoiceExpenseSummary.value = invoiceExpenseChoice
@@ -1927,8 +2143,6 @@ export const mountShell = async (
       invoiceExpenseSummary.value = ''
     }
     invoiceExpenseSummary.disabled = !available
-    invoiceExpenseHint.hidden = available
-    invoiceExpenseHint.textContent = available ? '' : 'No uninvoiced expenses for this selection.'
   }
 
   const configureNoteInput = (
@@ -2008,6 +2222,7 @@ export const mountShell = async (
   }
 
   const showSignedOutScreen = (): void => {
+    setSortPreferenceOwner(null)
     passwordRecovery?.clear()
     sessionCheckOverlay.hidden = true
     authenticatedShell.hidden = true
@@ -2053,8 +2268,27 @@ export const mountShell = async (
    * for every browser, including the magic-link redirect that lands here with
    * no sign-in response to read at all.
    */
-  const openTwoFactorStep = (challenge: string): void => {
+  const paintTwoFactorMethods = (sent: boolean): void => {
+    const email = pendingMethods.includes('email')
+    const authenticator = pendingMethods.includes('totp')
+    // Offered only when the sign-in said it works. The magic-link landing names
+    // no methods, and the server refuses the mail there by design.
+    twoFactorEmail.hidden = !email || pendingChallenge === ''
+    twoFactorEmail.textContent = authenticator && !sent ? 'Email me a code' : 'Send a new code'
+    twoFactorHint.textContent = !email
+      ? 'Open your authenticator app, or use one of your recovery codes.'
+      : authenticator
+        ? sent
+          ? 'A code is on its way to your email address. Or use your authenticator app, or a recovery code.'
+          : 'Open your authenticator app, use a recovery code, or have a code sent to your email address.'
+        : 'We emailed a six-digit code to your address. It expires in five minutes.'
+  }
+
+  const openTwoFactorStep = (challenge: string, methods: readonly string[] = []): void => {
     pendingChallenge = challenge
+    pendingMethods = methods
+    twoFactorEmail.disabled = false
+    paintTwoFactorMethods(false)
     signInResult.textContent = ''
     twoFactorResult.textContent = ''
     twoFactorCode.value = ''
@@ -2066,6 +2300,7 @@ export const mountShell = async (
 
   const closeTwoFactorStep = (message: string): void => {
     pendingChallenge = null
+    pendingMethods = []
     verifyingSecondFactor = false
     setTwoFactorPending(false)
     twoFactorForm.reset()
@@ -2080,7 +2315,18 @@ export const mountShell = async (
     if (!authGateway.hidden) authGateway.dataset.state = pending ? 'signing-in' : 'signed-out'
   }
 
+  const calendarConnections = createCalendarConnectionController(
+    required<HTMLElement>('[data-calendar-connections]'), api.calendarConnections, {
+      sessionFailure: (error) => {
+        const operation = sessionOperation()
+        return operation === null || handleSessionFailure(error, operation)
+      },
+      navigate: (url) => globalThis.location.assign(url),
+    },
+  )
+
   const clearFormState = (): void => {
+    calendarConnections.clear()
     signInForm.reset()
     twoFactorForm.reset()
     commandForm.reset()
@@ -2094,6 +2340,14 @@ export const mountShell = async (
     configureNoteInput(entryNoteInput, entryNoteHint, 0)
     required<HTMLSelectElement>('[data-row-project]').replaceChildren()
     required<HTMLSelectElement>('[data-row-task]').replaceChildren()
+    required<HTMLElement>('[data-row-empty]').hidden = true
+    required<HTMLElement>('[data-row-empty-reason]').textContent = ''
+    const setup = required<HTMLAnchorElement>('[data-row-setup]')
+    setup.textContent = 'Set up a project'
+    setup.href = '/projects'
+    const timer = required<HTMLButtonElement>('[data-timer-chip]')
+    timer.setAttribute('aria-label', 'Timer')
+    timer.title = 'Timer'
     required<HTMLElement>('[data-command-result]').textContent = ''
     entryResult.textContent = ''
     required<HTMLElement>('[data-row-result]').textContent = ''
@@ -2102,6 +2356,7 @@ export const mountShell = async (
     required<HTMLElement>('[data-current-profile]').textContent = '—'
     required<HTMLElement>('[data-timer-label]').textContent = 'Timer'
     required<HTMLElement>('[data-timer-elapsed]').textContent = '—'
+    endWeekLoading()
     required<HTMLElement>('[data-week-total]').textContent = '—'
     // The served skeleton again, not an empty table: the next week lands on
     // the shimmer the page opened with rather than on nothing.
@@ -2114,6 +2369,15 @@ export const mountShell = async (
     required<HTMLElement>('[data-week-grid-rows]').replaceChildren(loadingRow)
     required<HTMLElement>('[data-week-grid-totals]').replaceChildren()
     required<HTMLElement>('[data-day-rows]').replaceChildren()
+    calendarProposals.clear()
+    effectiveProposalZone = null
+    proposalSource.textContent = ''
+    proposalSource.hidden = true
+    proposalDiscard.hidden = true
+    proposalCheck.hidden = true
+    calendar.clear()
+    monthView.clear()
+    monthShown = ''
     invoiceClient.replaceChildren()
     invoiceProjects.replaceChildren()
     invoiceResult.textContent = ''
@@ -2219,6 +2483,7 @@ export const mountShell = async (
     required<HTMLButtonElement>('[data-timer-chip]').dataset.state = 'signed-out'
     required<HTMLElement>('[data-timer-label]').textContent = 'Sign in required'
     required<HTMLElement>('[data-timer-elapsed]').textContent = '—'
+    endWeekLoading()
     syncWeekPeriod()
     required<HTMLElement>('[data-week-total]').textContent = '—'
     const unavailable = document.createElement('tr')
@@ -2235,7 +2500,69 @@ export const mountShell = async (
     required<HTMLElement>('[data-day-rows]').replaceChildren(phoneUnavailable)
   }
 
+  // A week change keeps the old week's rows on screen until the new one answers,
+  // so the grid is marked busy and inert at once and swaps to placeholders only
+  // if the answer is slow: a fast one would otherwise flash a skeleton.
+  const weekLoadSkeletonDelayMs = 150
+  let weekLoadSeq = 0
+  let weekLoadTimer: ReturnType<typeof globalThis.setTimeout> | undefined
+  const setWeekBusy = (busy: boolean): void => {
+    for (const selector of ['[data-week-grid]', '[data-day-list]']) {
+      const surface = required<HTMLElement>(selector)
+      surface.setAttribute('aria-busy', String(busy))
+      surface.toggleAttribute('inert', busy)
+    }
+  }
+  const renderWeekSkeleton = (): void => {
+    const rows = Array.from({ length: 4 }, () => {
+      const row = document.createElement('tr')
+      row.className = 'grid-skeleton-row'
+      const cell = document.createElement('td')
+      cell.colSpan = 9
+      const bar = document.createElement('span')
+      bar.className = 'grid-skeleton'
+      cell.append(bar)
+      row.append(cell)
+      return row
+    })
+    required<HTMLElement>('[data-week-grid-rows]').replaceChildren(...rows)
+    required<HTMLElement>('[data-week-grid-totals]').replaceChildren()
+    const blocks = Array.from({ length: 3 }, () => {
+      const block = document.createElement('div')
+      block.className = 'grid-skeleton day-skeleton'
+      return block
+    })
+    required<HTMLElement>('[data-day-rows]').replaceChildren(...blocks)
+  }
+  const endWeekLoading = (): void => {
+    globalThis.clearTimeout(weekLoadTimer)
+    weekLoadTimer = undefined
+    setWeekBusy(false)
+  }
+  /** Returns the token of this load; only the latest token may end the state. */
+  const beginWeekLoading = (): number => {
+    const token = ++weekLoadSeq
+    globalThis.clearTimeout(weekLoadTimer)
+    setWeekBusy(true)
+    const dates = weekDates(within, weekStartDay)
+    weekPeriod.setRange({ from: dates[0]!, to: dates.at(-1)! })
+    renderGridHead(
+      dates,
+      filingDate([
+        ...(profileZone === null ? [] : [profileZone]),
+        ...(lockPolicy === null ? [] : [lockPolicy.timezone]),
+      ]),
+    )
+    required<HTMLElement>('[data-day-label]').textContent = dayLabel(dates[selectedDay]!)
+    required<HTMLElement>('[data-week-total]').textContent = '—'
+    weekLoadTimer = globalThis.setTimeout(() => {
+      if (token === weekLoadSeq) renderWeekSkeleton()
+    }, weekLoadSkeletonDelayMs)
+    return token
+  }
+
   const renderWeekLoadFailure = (): void => {
+    endWeekLoading()
     snapshot = null
     grid = null
     cellStates.clear()
@@ -2364,8 +2691,32 @@ export const mountShell = async (
     for (const tab of document.querySelectorAll<HTMLElement>(
       '[data-staff-payments-nav], [data-settings-company-tab], [data-settings-activity-tab], [data-settings-templates-tab], [data-settings-roles-tab], [data-settings-deliveries-tab]',
     )) {
-      tab.hidden = !visible
+      // The Activity log is also a module: an administrator who switched it
+      // off does not get its tab back every time this runs.
+      tab.hidden = !visible || (activityLogOff && tab.matches('[data-settings-activity-tab]'))
     }
+  }
+
+  let activityLogOff = false
+
+  /**
+   * Only an administrator is offered the Activity tab, so only an administrator
+   * asks whether its module is on. The route itself refuses when it is off; this
+   * keeps the link from promising a page that answers with that refusal.
+   */
+  const hideActivityLogWhenOff = (
+    identity: Readonly<Whoami>,
+    operation: AuthOperation,
+  ): void => {
+    if (identity.profile !== 'administrator' || api.getActivityLogEnabled === undefined) return
+    void api
+      .getActivityLogEnabled(operation.signal)
+      .then((enabled) => {
+        if (enabled || !isSessionCurrent(operation)) return
+        activityLogOff = true
+        revealCompanySettings(identity)
+      })
+      .catch(() => {})
   }
 
   /**
@@ -2377,7 +2728,7 @@ export const mountShell = async (
    * keeping a second copy of the rule.
    */
   const revealMoneySections = (identity: Readonly<Whoami>): void => {
-    const visible = canReadFinancialReports(identity.profile)
+    const visible = moduleAvailable('invoices') && canReadFinancialReports(identity.profile)
     for (const link of document.querySelectorAll<HTMLElement>('[data-money-nav]')) {
       link.hidden = !visible
     }
@@ -2410,6 +2761,88 @@ export const mountShell = async (
    * has the Wisetag had nowhere to enter it and somebody else had to do it for
    * them. Which is the opposite of asking them to share it.
    */
+  /**
+   * Your own reminders (issue 935): the daily time reminder, the end-of-week
+   * submission reminder and the digest, edited by the person they are for. The
+   * same fields the Team page shows an administrator, written to the same row,
+   * so "per-person opt-out" does not mean asking someone to do it for you.
+   */
+  const wireUserNotifications = (): void => {
+    const section = document.querySelector<HTMLElement>('[data-settings-notifications]')
+    const read = api.getProfileNotifications
+    const write = api.updateProfileNotifications
+    if (section === null || read === undefined || write === undefined) return
+    // Company and personal settings each have a status with this data name.
+    const status = section.querySelector<HTMLElement>('[data-settings-notifications-status]')!
+    const form = required<HTMLFormElement>('[data-settings-notifications-form]')
+    const result = required<HTMLElement>('[data-settings-notifications-result]')
+    const submit = required<HTMLButtonElement>('[data-settings-notifications-submit]')
+    const operation = sessionOperation()
+    if (operation === null) return
+    const currentRequest = () => isSessionCurrent(operation)
+    submit.disabled = false
+    setRequestBusy(result, false)
+    section.hidden = false
+    // The demo shares one workspace between strangers (issue 931); nobody there
+    // has an inbox of their own to remind.
+    if (isDemoDeployment()) {
+      status.textContent = demoUnavailable('Setting reminders')
+      return
+    }
+    void (async () => {
+      try {
+        status.textContent = 'Loading your reminders…'
+        setRequestBusy(status, true)
+        const preferences = await read(operation.signal)
+        if (!currentRequest()) return
+        paintNotificationFields(form, preferences, true)
+        status.textContent = ''
+        form.hidden = false
+      } catch {
+        if (currentRequest()) status.textContent = 'Your reminders could not be loaded.'
+      } finally {
+        if (currentRequest()) setRequestBusy(status, false)
+      }
+    })()
+    form.addEventListener('input', () => {
+      result.textContent = ''
+    }, { signal: operation.signal })
+    form.addEventListener('submit', (event) => {
+      event.preventDefault()
+      if (!currentRequest() || submit.disabled) return
+      const preferences = readNotificationFields(form)
+      const problem = notificationFieldsProblem(preferences)
+      if (problem !== null) {
+        result.textContent = problem
+        return
+      }
+      submit.disabled = true
+      result.textContent = 'Saving…'
+      setRequestBusy(result, true)
+      void (async () => {
+        try {
+          const saved = await write(preferences, operation.signal)
+          if (!currentRequest()) return
+          paintNotificationFields(form, saved, true)
+          result.textContent = 'Saved.'
+        } catch (error) {
+          if (!currentRequest()) return
+          const body =
+            typeof error === 'object' && error !== null && 'body' in error
+              ? (error as { body: unknown }).body
+              : null
+          const first =
+            typeof body === 'object' && body !== null && 'error' in body
+              ? (body as { error: { fields?: readonly { message?: string }[] } }).error.fields?.[0]
+              : undefined
+          result.textContent = first?.message ?? 'Your reminders could not be saved.'
+        } finally {
+          if (currentRequest()) { submit.disabled = false; setRequestBusy(result, false) }
+        }
+      })()
+    }, { signal: operation.signal })
+  }
+
   const wireUserPayout = (identity: Readonly<Whoami>): void => {
     const section = document.querySelector<HTMLElement>('[data-settings-payout]')
     const read = api.getWisePayoutDestination
@@ -2423,7 +2856,16 @@ export const mountShell = async (
     const form = required<HTMLFormElement>('[data-settings-payout-form]')
     const result = required<HTMLElement>('[data-settings-payout-result]')
     const submit = required<HTMLButtonElement>('[data-settings-payout-submit]')
+    const operation = sessionOperation()
+    if (operation === null) return
+    const currentRequest = () => isSessionCurrent(operation)
+    submit.disabled = false
+    setRequestBusy(result, false)
     section.hidden = false
+    remove.disabled = false
+    const deelSection = section.querySelector<HTMLElement>('[data-settings-payout-deel]')
+    if (deelSection !== null) wireDeelSelfPayout(deelSection, api, identity.user_id, operation.signal)
+    wirePayoutDefaultSelf(section, api, identity.user_id, operation.signal)
     // The public demo pays nobody (issue 931). It has no Wise to ask, so the
     // read could only fail; it says why instead, and offers no form.
     if (isDemoDeployment()) {
@@ -2452,18 +2894,23 @@ export const mountShell = async (
 
     const reload = async (): Promise<void> => {
       try {
-        paint(await read(identity.user_id))
+        status.textContent = 'Loading your payout destination…'
+        setRequestBusy(status, true)
+        const state = await read(identity.user_id, operation.signal)
+        if (currentRequest()) paint(state)
       } catch {
         // Its own line, in its own section. A payout destination that will not
         // load is not a reason to take the rest of the settings page down.
-        status.textContent = 'Your payout destination could not be loaded.'
+        if (currentRequest()) status.textContent = 'Your payout destination could not be loaded.'
+      } finally {
+        if (currentRequest()) setRequestBusy(status, false)
       }
     }
 
     const share = api.shareWiseProfile
     form.addEventListener('submit', (event) => {
       event.preventDefault()
-      if (share === undefined) return
+      if (share === undefined || !currentRequest() || submit.disabled || remove.disabled) return
       const data = new FormData(form)
       const identifier = String(data.get('identifier') ?? '').trim()
       const currency = String(data.get('currency') ?? '').trim().toUpperCase()
@@ -2472,10 +2919,13 @@ export const mountShell = async (
         return
       }
       submit.disabled = true
+      remove.disabled = true
       result.textContent = 'Asking Wise…'
+      setRequestBusy(result, true)
       void (async () => {
         try {
-          const shared = await share({ userId: identity.user_id, identifier, currency })
+          const shared = await share({ userId: identity.user_id, identifier, currency }, operation.signal)
+          if (!currentRequest()) return
           // Wise's own answer for whose profile that is. Shown back because a
           // mistyped tag that resolves resolves to somebody else.
           result.textContent =
@@ -2485,30 +2935,33 @@ export const mountShell = async (
           form.reset()
           await reload()
         } catch (error) {
-          result.textContent = payoutFailure(error)
+          if (currentRequest()) result.textContent = payoutFailure(error)
         } finally {
-          submit.disabled = false
+          if (currentRequest()) { submit.disabled = remove.disabled = false; setRequestBusy(result, false) }
         }
       })()
-    })
+    }, { signal: operation.signal })
 
     const detach = api.removeWisePayoutDestination
     remove.addEventListener('click', () => {
-      if (detach === undefined) return
+      if (detach === undefined || !currentRequest() || submit.disabled || remove.disabled) return
       remove.disabled = true
+      submit.disabled = true
       result.textContent = 'Removing…'
+      setRequestBusy(result, true)
       void (async () => {
         try {
-          await detach(identity.user_id)
+          await detach(identity.user_id, operation.signal)
+          if (!currentRequest()) return
           result.textContent = 'Payout destination removed.'
           await reload()
         } catch (error) {
-          result.textContent = payoutFailure(error)
+          if (currentRequest()) result.textContent = payoutFailure(error)
         } finally {
-          remove.disabled = false
+          if (currentRequest()) { submit.disabled = remove.disabled = false; setRequestBusy(result, false) }
         }
       })()
-    })
+    }, { signal: operation.signal })
 
     void reload()
   }
@@ -2598,10 +3051,12 @@ export const mountShell = async (
       table.replaceChildren(
         renderDataTable<ApiToken>({
           caption: 'API tokens',
+          table: 'api-tokens',
+          defaultSort: { column: 'name', direction: 'ascending' },
           rows: [...live],
           rowKey: (token) => String(token.id),
           columns: [
-            { key: 'name', label: 'Name', render: (token) => token.name },
+            { key: 'name', label: 'Name', sortValue: (token) => token.name, render: (token) => token.name },
             // The hint, never the token: the value is stored hashed and shown
             // once, and a screen that could print it again would mean it was
             // recoverable.
@@ -2609,11 +3064,13 @@ export const mountShell = async (
             {
               key: 'scopes',
               label: 'Scopes',
+              sortValue: (token) => token.scopes.join(', '),
               render: (token) => token.scopes.join(', '),
             },
             {
               key: 'used',
               label: 'Last used',
+              sortValue: (token) => token.last_used_at,
               // A token nobody has ever used is the one worth revoking, and
               // "never" says that where an empty cell reads as a loading bug.
               render: (token) => token.last_used_at ?? 'Never',
@@ -2621,6 +3078,7 @@ export const mountShell = async (
             {
               key: 'expires',
               label: 'Expires',
+              sortValue: (token) => token.expires_at,
               render: (token) => token.expires_at ?? 'Never',
             },
           ],
@@ -2753,6 +3211,10 @@ export const mountShell = async (
     const confirmResult = required<HTMLElement>('[data-settings-2fa-confirm-result]')
     const disableForm = required<HTMLFormElement>('[data-settings-2fa-disable-form]')
     const disableResult = required<HTMLElement>('[data-settings-2fa-disable-result]')
+    const emailBlock = required<HTMLElement>('[data-settings-2fa-email]')
+    const emailResult = required<HTMLElement>('[data-settings-2fa-email-result]')
+    const emailOn = required<HTMLButtonElement>('[data-settings-2fa-email-on]')
+    const emailOff = required<HTMLButtonElement>('[data-settings-2fa-email-off]')
     section.hidden = false
     // Everyone on the public demo signs in as the same people (issue 931): a
     // second factor one visitor sets up is the next one locked out, and one
@@ -2763,7 +3225,7 @@ export const mountShell = async (
     const paint = (state: TwoFactorStatus): void => {
       writeFacts(factsList, [
         [
-          'Status',
+          'Authenticator app',
           state.enrolled
             ? 'On'
             : state.pending_confirmation
@@ -2774,7 +3236,13 @@ export const mountShell = async (
           'Recovery codes left',
           state.enrolled ? String(state.recovery_codes_remaining) : '—',
         ],
+        ...(api.enableTwoFactorEmail === undefined
+          ? []
+          : [['Emailed code', state.email_enabled ? 'On' : 'Off'] as const]),
       ])
+      emailBlock.hidden = api.enableTwoFactorEmail === undefined
+      emailOn.hidden = demo || state.email_enabled
+      emailOff.hidden = demo || !state.email_enabled
       begin.hidden = demo || state.enrolled
       begin.textContent = state.pending_confirmation
         ? 'Start again'
@@ -2882,6 +3350,38 @@ export const mountShell = async (
       })()
     })
 
+    const changeEmailFactor = (
+      button: HTMLButtonElement,
+      change: ((signal?: AbortSignal) => Promise<TwoFactorStatus>) | undefined,
+      done: string,
+    ): void => {
+      if (change === undefined) return
+      button.disabled = true
+      emailResult.textContent = 'Working…'
+      void (async () => {
+        try {
+          paint(await change())
+          emailResult.textContent = done
+        } catch (error) {
+          const code = error instanceof EzactoApiError ? apiErrorCode(error) : null
+          emailResult.textContent =
+            code === 'verified_email_required'
+              ? 'Verify your email address before turning on emailed codes.'
+              : code === 'mailer_unavailable'
+                ? 'This instance cannot send email, so emailed codes are not available.'
+                : 'Emailed codes could not be changed. Try again.'
+        } finally {
+          button.disabled = false
+        }
+      })()
+    }
+    emailOn.addEventListener('click', () =>
+      changeEmailFactor(emailOn, api.enableTwoFactorEmail, 'Emailed codes are on.'),
+    )
+    emailOff.addEventListener('click', () =>
+      changeEmailFactor(emailOff, api.disableTwoFactorEmail, 'Emailed codes are off.'),
+    )
+
     void reload()
   }
 
@@ -2914,9 +3414,15 @@ export const mountShell = async (
     )
     facts.hidden = false
     settingsStatus.textContent = ''
+    wireUserNotifications()
     wireUserPayout(identity)
     wireApiTokens(identity)
     wireTwoFactor()
+    const operation = sessionOperation()
+    if (operation !== null && identity.authentication.kind === 'session') {
+      const callback = new URLSearchParams(globalThis.location.search).get('calendar') ?? undefined
+      calendarConnections.activate(operation.signal, callback, new URLSearchParams(globalThis.location.search).get('provider') ?? undefined)
+    }
   }
 
   const handleSessionFailure = (
@@ -3002,6 +3508,7 @@ export const mountShell = async (
   const showTimePerson = (person: { readonly id: number; readonly name: string } | null): void => {
     const operation = sessionOperation()
     if (operation === null || operation.userId === null) return
+    suspendCalendarProposals()
     viewedPerson = person
     timePerson.value = person === null ? '' : String(person.id)
     if (entryDialog.open) entryDialog.close()
@@ -3150,6 +3657,16 @@ export const mountShell = async (
       ),
     )
     entryTask.value = heldTask
+    if (activeEntry?.proposal !== undefined) {
+      for (const [control, title] of [[entryProject, 'Choose project'], [entryTask, 'Choose task']] as const) {
+        const placeholder = document.createElement('option')
+        placeholder.value = ''
+        placeholder.textContent = title
+        control.prepend(placeholder)
+      }
+      entryProject.value = heldProject
+      entryTask.value = heldTask
+    }
   }
 
   entryProject.addEventListener('change', () => updateEntrySuggestions())
@@ -3164,6 +3681,28 @@ export const mountShell = async (
       ...projects.map((resource) => option(resource.id, resourceLabel(resource))),
     )
     updateRowTaskOptions(projects[0]?.id ?? 0)
+    const empty = projects.length === 0
+    required<HTMLElement>('[data-row-empty]').hidden = !empty
+    for (const label of document.querySelectorAll<HTMLElement>('[data-row-selection]')) {
+      label.hidden = empty
+    }
+    const submit = required<HTMLButtonElement>('[data-row-submit]')
+    submit.hidden = empty
+    submit.disabled = empty
+    const canSetUp = currentIdentity !== null &&
+      canProfileUseApiScope(currentIdentity.profile, 'projects:write')
+    required<HTMLElement>('[data-row-empty-reason]').textContent = canSetUp
+      ? 'You have no available project and task pair. In a project, use Assigned tasks → Assign task, and add the person logging time to its Project team.'
+      : 'You have no available project and task pair. Ask a project manager to add you to a project and assign a task to it.'
+    const setup = required<HTMLAnchorElement>('[data-row-setup]')
+    setup.hidden = !canSetUp
+    const firstProject = snapshot.catalog.projects[0]
+    setup.href = firstProject === undefined
+      ? '/projects'
+      : `/projects/${firstProject.id}#project-tasks-heading`
+    setup.textContent = firstProject === undefined
+      ? 'Set up a project'
+      : `Assign a task to ${resourceLabel(firstProject)}`
     updateEntrySuggestions()
   }
 
@@ -3206,7 +3745,7 @@ export const mountShell = async (
     const selfWithdrawn = isSelfWithdrawn(currentSubmission)
     timesheetStatusLabel.textContent =
       status === 'approved'
-        ? 'Approved'
+        ? currentSubmission?.automatic_approval ? 'Approved automatically' : 'Approved'
         : status === 'submitted'
           ? 'Submitted for approval'
           : selfWithdrawn ||
@@ -3494,6 +4033,11 @@ export const mountShell = async (
         totals.className = 'approval-totals'
         totals.textContent = `${formatSeconds(submission.total_seconds)} · ${submission.entry_count} time ${submission.expense_count > 0 ? ` · ${submission.expense_count} expenses` : ''}`
         summary.append(title, period, totals)
+        if (submission.automatic_approval) {
+          const audit = document.createElement('p')
+          audit.textContent = `Approved automatically after a ${submission.automatic_approval.window_days}-day review window.`
+          summary.appendChild(audit)
+        }
         const reopen = document.createElement('button')
         reopen.type = 'button'
         reopen.textContent = 'Reopen'
@@ -3563,6 +4107,8 @@ export const mountShell = async (
         ? {}
         : { restart: restartEntry }),
     }
+    // The same data the grid draws, laid out on whichever axis the
+    // organization's tracking mode makes true.
     // The server's today, as near as the shell can get: the person's own zone,
     // then the organization's where the session can read it (the lock policy
     // is an administrator's), then the browser's clock. The browser's clock
@@ -3573,6 +4119,51 @@ export const mountShell = async (
       ...(profileZone === null ? [] : [profileZone]),
       ...(lockPolicy === null ? [] : [lockPolicy.timezone]),
     ])
+    const proposalOperation = sessionOperation()
+    const proposalsVisible =
+      document.documentElement.dataset.appView === 'time' &&
+      document.documentElement.dataset.timeView === 'calendar' &&
+      viewedPerson === null &&
+      proposalOperation !== null
+    const zone = effectiveProposalZone ?? lockPolicy?.timezone ?? null
+    const proposalDates = calendarLayout.current() === 'day' ? [grid.dates[selectedDay]!] : grid.dates
+    calendarProposals.sync(
+      proposalsVisible
+        ? {
+            userId: proposalOperation!.userId!,
+            dates: proposalDates,
+            timeZone: zone,
+            signal: proposalOperation!.signal,
+            onSessionFailure: (error) => handleSessionFailure(error, proposalOperation!),
+          }
+        : null,
+    )
+    if (
+      activeEntry?.proposal !== undefined &&
+      (!proposalsVisible ||
+        !calendarProposals.canReview() ||
+        activeEntry.proposalRange !== proposalDates.join(',') ||
+        activeEntry.proposalZone !== zone)
+    ) {
+      entryDialog.close()
+      activeEntry = null
+      proposalSource.textContent = ''
+      proposalSource.hidden = true
+      proposalDiscard.hidden = true
+      proposalCheck.hidden = true
+      entryForm.reset()
+    }
+
+    calendar.render({
+      ...(zone === null ? {} : { proposals: proposalBlocks(calendarProposals.proposals(), grid.dates, zone), proposalTimeZone: zone }),
+      dates: grid.dates,
+      entries: snapshot.entries,
+      layout: calendarLayout.current(),
+      selectedDate: grid.dates[selectedDay]!,
+      now: calendarNow(),
+      clock: snapshot.timeEntrySettings.clock,
+      formatSeconds,
+    })
     renderDayTotals(grid, selectedDay, selectDay, today)
     // "Today" fades while you are already there (the reference link): on
     // today's day in Day view, in today's week otherwise.
@@ -3580,7 +4171,7 @@ export const mountShell = async (
       'data-on-today',
       document.documentElement.dataset.timeView === 'day'
         ? grid.dates[selectedDay] === today
-        : isCalendarView()
+        : isMonthView()
           ? // `today` can be empty while the zones that decide it are still
             // unknown; an empty day is in no month rather than an error.
             isCalendarDay(today) && monthStart(within) === monthStart(today)
@@ -3588,9 +4179,9 @@ export const mountShell = async (
     )
     renderDesktopGrid(grid, handlers, today)
     renderPhoneDay(grid, selectedDay, handlers)
-    // The calendar is the month around the same date, drawn from its own
+    // The Month view is the month around the same date, drawn from its own
     // fetch: a month is more than the week the grid holds.
-    if (isCalendarView()) loadMonth(today)
+    if (isMonthView()) loadMonth(today)
     renderTimer(snapshot.running)
     updateRowOptions()
     renderApprovalNavigation()
@@ -3695,27 +4286,28 @@ export const mountShell = async (
   // The zone a timer is filed on is the person's own before the organization's
   // (issue 651), and only `GET /profile` says what it is. Read with the week so
   // the grid's today is the server's, not the browser's.
-  const loadProfileZone = async (operation: AuthOperation): Promise<string | null> => {
-    if (api.getProfile === undefined) return null
+  const loadProfileZone = async (operation: AuthOperation): Promise<{ clock: string | null; proposal: string | null }> => {
+    if (api.getProfile === undefined) return { clock: null, proposal: null }
     try {
       const profile = await api.getProfile(operation.signal)
-      return profile.timezone === 'UTC' ? null : profile.timezone
+      const authoritative = proposalTimeZone(profile)
+      return { clock: authoritative, proposal: authoritative }
     } catch (error) {
       // A session that has ended is the week's failure, not this read's. Any
       // other refusal or fault falls back to the browser's clock: the zone
       // decides which cell is today, and a week that cannot say is still a
       // week worth showing.
       if (error instanceof EzactoApiError && error.status === 401) throw error
-      return null
+      return { clock: null, proposal: null }
     }
   }
 
   /**
-   * A calendar card opens its entry, as a cell's mark does on the grid: the
+   * A Month view chip opens its entry, as a cell's mark does on the grid: the
    * same editor, with the same lock message said on arrival, and a teammate's
    * entry written as theirs (issue 917).
    */
-  const openCalendarEntry = (entry: DisplayTimeEntry): void => {
+  const openMonthEntry = (entry: DisplayTimeEntry): void => {
     if (currentIdentity === null || snapshot === null) return
     configureEntryEditor(
       {
@@ -3758,7 +4350,7 @@ export const mountShell = async (
     if (monthShown === key) return
     monthShown = key
     const shown = within
-    calendar.loading(shown)
+    monthView.loading(shown)
     void api
       .listTimeEntries(
         viewedPerson === null ? range : { ...range, user_id: viewedPerson.id },
@@ -3766,17 +4358,17 @@ export const mountShell = async (
       )
       .then((entries) => {
         if (!isSessionCurrent(operation) || monthShown !== key || snapshot === null) return
-        calendar.render(shown, displayEntries(entries, snapshot.catalog), {
+        monthView.render(shown, displayEntries(entries, snapshot.catalog), {
           timeFormat: snapshot.timeEntrySettings.time_format,
           weekStartDay,
           today,
-          open: openCalendarEntry,
+          open: openMonthEntry,
         })
       })
       .catch((error: unknown) => {
         if (handleSessionFailure(error, operation)) return
         monthShown = ''
-        calendar.failed('The calendar could not load. Check the connection and retry.')
+        monthView.failed('The calendar could not load. Check the connection and retry.')
       })
   }
 
@@ -3881,6 +4473,8 @@ export const mountShell = async (
     // disagreed with what the timesheet called the same week.
     invoicePeriod.setWeekStartDay(loadedWeekStartDay)
     snapshot = loaded
+    setInvoiceExpensesAvailable(invoiceExpensesInSelection)
+    if (requestedPerson === null && loaded.entries.length > 0) firstRun.markTimeEntrySaved()
     // A module an administrator switched off is not offered in the strip
     // (issue 815), the way Approvals and Team already are not. Only hidden,
     // never removed: the route still answers with its own "unavailable" state
@@ -3904,15 +4498,33 @@ export const mountShell = async (
     approvedNextCursor = approval.approvedCursor
     lockPolicyAvailable = policy.available
     lockPolicy = policy.policy
-    profileZone = zone
+    profileZone = zone.clock
+    effectiveProposalZone = zone.proposal
     activeTimesheetLocks = policy.locks
+    // The latest requested week is on screen: nothing superseded gets this far.
+    endWeekLoading()
     render()
     focusCell(focus)
     return true
   }
 
+  const suspendCalendarProposals = (): void => {
+    calendarProposals.clear()
+    for (const block of document.querySelectorAll('[data-calendar-proposal]')) block.remove()
+    if (activeEntry?.proposal !== undefined) {
+      entryDialog.close()
+      activeEntry = null
+      entryForm.reset()
+    }
+    proposalSource.textContent = ''
+    proposalSource.hidden = true
+    proposalDiscard.hidden = true
+    proposalCheck.hidden = true
+  }
+
   const loadWeek = async (operation: AuthOperation): Promise<void> => {
     if (!isSessionCurrent(operation)) return
+    suspendCalendarProposals()
     setSessionStatus('Loading your week…', 'loading')
     try {
       if (!(await refresh(operation))) return
@@ -3928,13 +4540,54 @@ export const mountShell = async (
     }
   }
 
+  /**
+   * The chosen client and every client beneath it, the order an invoice for a
+   * parent lists its end-clients in: depth first, siblings by name (issue 33).
+   */
+  const invoiceClientTree = (rootId: number): readonly Record<string, unknown>[] => {
+    const clients = invoiceCatalog?.clients ?? []
+    const root = clients.find((client) => client.id === rootId)
+    if (root === undefined) return []
+    const ordered: Record<string, unknown>[] = []
+    const seen = new Set<number>()
+    const visit = (client: Record<string, unknown> & { id: number }): void => {
+      if (seen.has(client.id)) return
+      seen.add(client.id)
+      ordered.push(client)
+      clients
+        .filter((candidate) => candidate['parent_client_id'] === client.id)
+        .sort(
+          (left, right) =>
+            resourceLabel(left).localeCompare(resourceLabel(right)) || left.id - right.id,
+        )
+        .forEach(visit)
+    }
+    visit(root)
+    return ordered
+  }
+
   const renderInvoiceProjects = (): void => {
     if (invoiceCatalog === null) return
     const clientId = Number(invoiceClient.value)
-    const projects = invoiceCatalog.projects.filter((project) => {
-      const value = project['client_id'] ?? project['clientId']
-      return typeof value === 'number' && value === clientId
-    })
+    // A parent's invoice may bill the work of the clients beneath it, each
+    // line attributed to its end-client by its project (issue 33); the
+    // projects are listed in the tree's order, so the draft reads that way.
+    const tree = invoiceClientTree(clientId)
+    const endClients = new Map(tree.map((client) => [client['id'] as number, client]))
+    const clientCurrency = (client: Record<string, unknown> | undefined): string | null =>
+      typeof client?.['currency'] === 'string' ? client['currency'].toUpperCase() : null
+    const projectCurrency = (project: Record<string, unknown>): string | null => {
+      const own = project['billing_currency']
+      return typeof own === 'string' && own !== ''
+        ? own.toUpperCase()
+        : clientCurrency(endClients.get(project['client_id'] as number))
+    }
+    const projects = tree.flatMap((client) =>
+      invoiceCatalog!.projects.filter((project) => {
+        const value = project['client_id'] ?? project['clientId']
+        return typeof value === 'number' && value === client['id']
+      }),
+    )
     if (projects.length === 0) {
       const empty = document.createElement('p')
       empty.textContent = 'This client has no active projects.'
@@ -3948,12 +4601,44 @@ export const mountShell = async (
         input.type = 'checkbox'
         input.name = 'project'
         input.value = String(project.id)
-        input.checked = true
+        // The client's own projects start selected, as ever. An end-client's
+        // do too unless they bill in another currency, which one invoice
+        // cannot hold: the operator chooses those on purpose.
+        const endClientId = project['client_id'] as number
+        const beneath = endClientId !== clientId
+        input.checked = !beneath || projectCurrency(project) === clientCurrency(endClients.get(clientId))
+        if (beneath) {
+          input.dataset.endClientProject = ''
+          if (invoiceKind() === 'banded') {
+            input.disabled = true
+            input.checked = false
+          }
+        }
         const name = document.createElement('span')
         name.textContent = resourceLabel(project)
         const waiting = document.createElement('small')
         waiting.dataset.projectUninvoiced = String(project.id)
-        label.append(input, name, waiting)
+        label.append(input, name)
+        if (beneath) {
+          const endClient = document.createElement('small')
+          endClient.className = 'project-end-client'
+          endClient.dataset.projectEndClient = String(endClientId)
+          endClient.textContent = `For ${resourceLabel(endClients.get(endClientId) ?? {})}`
+          label.append(endClient)
+        }
+        label.append(waiting)
+        // The rule these hours will be billed under (issue 949). A project
+        // record that does not carry one is not asked about it.
+        const rule =
+          snapshot === null
+            ? undefined
+            : projectTimeRounding(project, snapshot.timeEntrySettings.time_rounding)
+        if (rule !== undefined) {
+          const rounding = document.createElement('small')
+          rounding.className = 'project-rounding'
+          rounding.textContent = `Time ${roundingWithSource(rule)}`
+          label.append(rounding)
+        }
         return label
       }),
     )
@@ -4130,6 +4815,9 @@ export const mountShell = async (
             total.total_cents === undefined
               ? `${(total.rounded_seconds / 3_600).toFixed(2)} h`
               : moneyText(formatMoney(total.total_cents, total.currency)),
+            ...(total.unpriced_time_entry_count > 0
+              ? [` · ${total.unpriced_time_entry_count} unpriced ${total.unpriced_time_entry_count === 1 ? 'entry' : 'entries'}; amount incomplete`]
+              : []),
           ]),
         )
       }
@@ -4275,6 +4963,14 @@ export const mountShell = async (
     invoicePeriodMount.hidden =
       invoiceForm.querySelector<HTMLInputElement>('[data-invoice-period-choice]:checked')
         ?.value !== 'range'
+    // A band claims its own client's work only: the end-clients' projects are
+    // set aside while one is chosen, and come back with the tracked kind.
+    for (const input of invoiceProjects.querySelectorAll<HTMLInputElement>(
+      'input[data-end-client-project]',
+    )) {
+      input.disabled = kind === 'banded'
+      if (kind === 'banded') input.checked = false
+    }
     paintInvoiceBand()
   }
 
@@ -4391,6 +5087,20 @@ export const mountShell = async (
         : overdue
           ? complete ? 'No past-due invoices.' : 'No past-due invoices in the loaded pages.'
           : undefined,
+      {
+        sort: invoiceSort,
+        onSort: (next) => {
+          const operation = sessionOperation()
+          if (operation === null) return
+          invoiceSort = next
+          invoiceNextCursor = null
+          invoiceListRows = []
+          invoiceLoadMore.hidden = true
+          void loadInvoiceList(operation).then(() => {
+            focusSortHeader(invoiceList, next.column)
+          })
+        },
+      },
     )
     invoiceListStatus.textContent = searching
       ? `${invoiceListCount} of ${invoiceListRows.length} loaded ${invoiceListRows.length === 1 ? 'invoice matches' : 'invoices match'}${complete ? '.' : '; load more to search the rest.'}`
@@ -4422,12 +5132,15 @@ export const mountShell = async (
       return
     }
     const append = cursor !== undefined
+    const invoiceSortWord = invoiceSortParameter(invoiceListSort(invoiceSort))
     invoiceList.setAttribute('aria-busy', 'true')
     invoiceLoadMore.disabled = true
     invoiceListStatus.textContent = append ? 'Loading more invoices…' : 'Loading invoices…'
     try {
       const [page] = await Promise.all([
-        listInvoices(cursor, operation.signal, undefined, invoiceStatesFor(invoiceFilter)),
+        invoiceSortWord === undefined
+          ? listInvoices(cursor, operation.signal, undefined, invoiceStatesFor(invoiceFilter))
+          : listInvoices(cursor, operation.signal, undefined, invoiceStatesFor(invoiceFilter), invoiceSortWord),
         ensureInvoiceClientNames(operation),
       ])
       if (!isSessionCurrent(operation)) return
@@ -4457,6 +5170,8 @@ export const mountShell = async (
     const identity = cached ?? (await api.whoami(operation.signal))
     if (!isGenerationCurrent(operation)) return
     rememberIdentity(identity)
+    // Whose sorted tables are remembered (issue 852).
+    setSortPreferenceOwner(identity.user_id)
     const authenticated = showAuthenticated(identity)
     if (cached !== undefined) {
       // Nothing is granted on the cache's say-so: every protected load below is
@@ -4481,12 +5196,16 @@ export const mountShell = async (
           handleSessionFailure(error, authenticated)
         })
     }
+    firstRun.activate(identity, authenticated.signal, (error) =>
+      handleSessionFailure(error, authenticated),
+    )
     void loadTeamNavigation(identity, authenticated)
     // The bell's count, on every page that carries the breadcrumb row. The
     // Notifications page loads the same list below and is not asked twice.
     if (!notificationsPage && document.querySelector('[data-notifications-bell]') !== null) {
       void notifications.activate(identity, authenticated.signal)
     }
+    hideActivityLogWhenOff(identity, authenticated)
     if (invoiceGenerationPage) {
       openInvoiceDialog(authenticated)
       await Promise.all([loadInvoiceList(authenticated), loadWeek(authenticated)])
@@ -4572,7 +5291,24 @@ export const mountShell = async (
         loadWeek(authenticated),
       ])
     } else if (document.querySelector('[data-activity-log-page]:not([hidden])') !== null) {
-      await Promise.all([activity.activate(authenticated.signal), loadWeek(authenticated)])
+      await Promise.all([
+        activity.activate(authenticated.signal, {
+          administrator: identity.profile === 'administrator',
+        }),
+        loadWeek(authenticated),
+      ])
+    } else if (document.querySelector('[data-scheduled-run-page]:not([hidden])') !== null) {
+      await scheduledRun.activate(authenticated.signal, identity.profile === 'administrator')
+    } else if (document.querySelector('[data-my-payments-page]:not([hidden])') !== null) {
+      await myPayments.activate(authenticated.signal)
+    } else if (document.querySelector('[data-capacity-page]:not([hidden])') !== null) {
+      await Promise.all([
+        capacity.activate(authenticated.signal, {
+          administrator: identity.profile === 'administrator',
+          scheduleManager: identity.profile === 'executive_manager' || identity.profile === 'project_manager',
+        }),
+        loadWeek(authenticated),
+      ])
     } else if (document.querySelector('[data-deliveries-page]:not([hidden])') !== null) {
       await Promise.all([deliveries.activate(authenticated.signal), loadWeek(authenticated)])
     } else if (document.documentElement.dataset.appView === 'staff-payments') {
@@ -4640,6 +5376,8 @@ export const mountShell = async (
         ),
         loadWeek(authenticated),
       ])
+    } else if (document.documentElement.dataset.appView === 'invoice-bank-deposits') {
+      await Promise.all([bankDeposits.activate(identity, authenticated.signal, (error) => handleSessionFailure(error, authenticated)), loadWeek(authenticated)])
     } else if (invoiceRetainersPage) {
       await Promise.all([
         retainerWorkspace.activate(
@@ -5005,6 +5743,290 @@ export const mountShell = async (
       : null
   }
 
+  /** The local moment the calendar measures running entries to and draws its line at. */
+  function calendarNow(): { readonly date: string; readonly minutes: number } {
+    return filingClock([
+      ...(profileZone === null ? [] : [profileZone]),
+      ...(lockPolicy === null ? [] : [lockPolicy.timezone]),
+    ])
+  }
+
+  const calendarOwner = (): Pick<ActiveEntryEditor, 'owner'> =>
+    viewedPerson === null || snapshot === null
+      ? {}
+      : { owner: { userId: viewedPerson.id, options: snapshot.catalog.timeEntryOptions } }
+
+  function openCalendarProposal(id: number, anchor: HTMLElement): void {
+    const proposal = calendarProposals.proposals().find((item) => item.id === id)
+    const zone = effectiveProposalZone ?? lockPolicy?.timezone ?? null
+    if (
+      proposal === undefined ||
+      zone === null ||
+      snapshot === null ||
+      viewedPerson !== null ||
+      sessionOperation() === null
+    )
+      return
+    const source = proposalReviewFields(proposal, zone)
+    configureEntryEditor(
+      {
+        context: 'proposal',
+        proposal,
+        proposalRange: (calendarLayout.current() === 'day'
+          ? [grid!.dates[selectedDay]!]
+          : grid!.dates
+        ).join(','),
+        proposalZone: zone,
+        proposalUnconfirmed: calendarProposals.unconfirmed(id),
+        entry: null,
+        projectId: 0,
+        taskId: 0,
+        spentDate: source.date,
+        seconds: source.seconds,
+        times: source.times,
+        notes: proposal.title,
+        mode: snapshot.timeEntrySettings.time_entry_mode,
+        timer: false,
+        minimumNoteLength: 0,
+      },
+      calendarProposals.unconfirmed(id)
+        ? 'The prior decision is not confirmed. Check its status before retrying.'
+        : '',
+    )
+    entryDialog.addEventListener(
+      'close',
+      () => {
+        if (anchor.isConnected) anchor.focus({ preventScroll: true })
+      },
+      { once: true },
+    )
+  }
+
+  const proposalPending = (pending: boolean): void => {
+    entryForm.setAttribute('aria-busy', String(pending))
+    entrySubmit.disabled = pending || activeEntry?.proposalUnconfirmed === true
+    proposalDiscard.disabled = pending || activeEntry?.proposalUnconfirmed === true
+    proposalCheck.disabled = pending
+    entryProject.disabled = pending
+    entryTask.disabled = pending
+    entryNoteInput.disabled = pending
+  }
+  const applyProposalDecision = async (
+    outcome: ProposalDecision,
+    editor: ActiveEntryEditor,
+    operation: AuthOperation,
+  ): Promise<void> => {
+    if (!isSessionCurrent(operation) || viewedPerson !== null || outcome.status === 'stale') return
+    if (outcome.status === 'unconfirmed' || outcome.status === 'open') {
+      if (activeEntry?.proposal?.id !== editor.proposal!.id || !entryDialog.open) return
+      activeEntry = { ...editor, proposalUnconfirmed: true }
+      proposalCheck.hidden = false
+      entryResult.textContent =
+        outcome.status === 'unconfirmed'
+          ? outcome.message
+          : 'The decision is not confirmed. Check proposal status before retrying.'
+      return
+    }
+    const acceptedId = outcome.status === 'accepted' ? outcome.proposal.time_entry_id : null
+    const wasOpen = entryDialog.open && activeEntry?.proposal?.id === editor.proposal!.id
+    if (wasOpen && activeEntry?.proposal?.id === editor.proposal!.id) {
+      entryDialog.close()
+      activeEntry = null
+      proposalSource.textContent = ''
+      proposalSource.hidden = true
+      proposalDiscard.hidden = true
+      proposalCheck.hidden = true
+      entryNoteInput.value = ''
+    }
+    try {
+      if (!(await refresh(operation))) return
+    } catch (error) {
+      if (handleSessionFailure(error, operation)) return
+      renderWeekLoadFailure()
+      setSessionStatus(
+        `Proposal ${outcome.status}. Your saved time could not reload; retry loading the week.`,
+        'error',
+        true,
+      )
+      return
+    }
+    await calendarProposals.reload()
+    if (outcome.status === 'accepted' && acceptedId === null)
+      setSessionStatus(
+        'This proposal was accepted earlier; its linked time entry is no longer available.',
+        'ready',
+      )
+    if (acceptedId !== null) {
+      const entry = snapshot?.entries.find((item) => item.id === acceptedId)
+      if (entry !== undefined)
+        document.dispatchEvent(new CustomEvent('ezacto:time-entry-created', { detail: entry }))
+      if (wasOpen) calendar.focusEntry(acceptedId)
+    }
+  }
+  function submitProposal(
+    editor: ActiveEntryEditor,
+    operation: AuthOperation,
+    input: CalendarProposalAcceptInput | null,
+  ): void {
+    if (editor.proposal === undefined || calendarProposals.pending()) return
+    proposalPending(true)
+    entryResult.textContent = input === null ? 'Discarding proposal…' : 'Accepting proposal…'
+    const request =
+      input === null
+        ? calendarProposals.discard(editor.proposal.id)
+        : calendarProposals.accept(editor.proposal.id, input)
+    void request
+      .then((outcome) => applyProposalDecision(outcome, editor, operation))
+      .catch((error: unknown) => {
+        if (
+          handleSessionFailure(error, operation) ||
+          !entryDialog.open ||
+          activeEntry?.proposal?.id !== editor.proposal!.id
+        )
+          return
+        const minimum = requiredMinimumFromError(error)
+        if (minimum !== null) {
+          activeEntry = { ...editor, minimumNoteLength: minimum }
+          configureNoteInput(entryNoteInput, entryNoteHint, minimum)
+        }
+        entryResult.textContent = messageFor(error)
+      })
+      .finally(() => {
+        if (
+          isSessionCurrent(operation) &&
+          activeEntry?.proposal?.id === editor.proposal!.id &&
+          entryDialog.open
+        )
+          proposalPending(false)
+      })
+  }
+  proposalDiscard.addEventListener('click', () => {
+    const operation = sessionOperation()
+    if (operation === null || activeEntry?.proposal === undefined || activeEntry.proposalUnconfirmed)
+      return
+    submitProposal(activeEntry, operation, null)
+  })
+  proposalCheck.addEventListener('click', () => {
+    const operation = sessionOperation(),
+      editor = activeEntry
+    if (operation === null || editor?.proposal === undefined || calendarProposals.pending()) return
+    proposalPending(true)
+    void calendarProposals
+      .check(editor.proposal.id)
+      .then(async (outcome) => {
+        if (!isSessionCurrent(operation) || activeEntry?.proposal?.id !== editor.proposal!.id) return
+        if (outcome.status === 'open') {
+          activeEntry = { ...editor, proposalUnconfirmed: false }
+          proposalCheck.hidden = true
+          entryResult.textContent =
+            'This proposal is still open. You can review the choices and try again.'
+        } else await applyProposalDecision(outcome, editor, operation)
+      })
+      .finally(() => {
+        if (
+          isSessionCurrent(operation) &&
+          activeEntry?.proposal?.id === editor.proposal!.id &&
+          entryDialog.open
+        )
+          proposalPending(false)
+      })
+  })
+
+  /** A click, a tap or Enter on an entry drawn on the calendar. */
+  function openCalendarEntry(entryId: number): void {
+    const entry = snapshot?.entries.find((candidate) => candidate.id === entryId)
+    if (currentIdentity === null || snapshot === null || entry === undefined) return
+    configureEntryEditor(
+      {
+        context: 'edit',
+        entry,
+        projectId: entry.project_id,
+        taskId: entry.task_id,
+        spentDate: entry.spent_date,
+        seconds: entry.seconds,
+        notes: entry.notes ?? null,
+        mode: modeForEntryDraft(entry, snapshot.timeEntrySettings.time_entry_mode),
+        timer: false,
+        minimumNoteLength: entry.minimum_note_length,
+        ...calendarOwner(),
+      },
+      entry.is_locked === true
+        ? `This entry cannot be changed: ${entry.locked_reason ?? 'it is locked'}.`
+        : '',
+    )
+  }
+
+  /**
+   * A span drawn on the calendar becomes an entry that carries its start and
+   * end in either organization mode. It opens prefilled with the project and
+   * task of the person's most recent entry, falling back to the first pair they
+   * can log to when that one is no longer offered.
+   */
+  function createCalendarEntry(placement: CalendarPlacement): void {
+    if (currentIdentity === null || snapshot === null) {
+      calendar.clearDraft()
+      return
+    }
+    const options = snapshot.catalog.timeEntryOptions
+    const latest = snapshot.entries.reduce<DisplayTimeEntry | null>(
+      (best, entry) =>
+        best === null ||
+        entry.spent_date > best.spent_date ||
+        (entry.spent_date === best.spent_date && entry.id > best.id)
+          ? entry
+          : best,
+      null,
+    )
+    const chosen =
+      options.find(
+        (option) => option.project_id === latest?.project_id && option.task_id === latest?.task_id,
+      ) ?? options[0]
+    if (chosen === undefined) {
+      calendar.clearDraft()
+      setSessionStatus('There is no project and task to log time to yet.', 'ready')
+      return
+    }
+    configureEntryEditor({
+      context: 'calendar',
+      entry: null,
+      projectId: chosen.project_id,
+      taskId: chosen.task_id,
+      spentDate: placement.date,
+      seconds: 0,
+      notes: null,
+      mode: 'start_end',
+      timer: false,
+      minimumNoteLength: chosen.minimum_note_length,
+      times: { started: placement.startedTime, ended: placement.endedTime },
+      ...calendarOwner(),
+    })
+  }
+
+  /** A drag or a key move released on the calendar: the entry's new day and times. */
+  async function moveCalendarEntry(
+    entryId: number,
+    placement: CalendarPlacement,
+  ): Promise<void> {
+    const operation = sessionOperation()
+    if (operation === null) throw new Error('Sign in again to move this entry.')
+    try {
+      await api.updateTimeEntry(
+        entryId,
+        {
+          spent_date: placement.date,
+          started_time: placement.startedTime,
+          ended_time: placement.endedTime,
+        } satisfies TimeEntryPatch,
+        operation.signal,
+      )
+      if (!isSessionCurrent(operation)) return
+      await refresh(operation)
+    } catch (error) {
+      if (handleSessionFailure(error, operation)) return
+      throw new Error(messageFor(error), { cause: error })
+    }
+  }
+
   const configureEntryEditor = (
     next: ActiveEntryEditor,
     message = '',
@@ -5014,9 +6036,20 @@ export const mountShell = async (
     const initialDurationValue =
       durationValue ?? formatCellHours(next.seconds, snapshot.timeEntrySettings.time_format)
     activeEntry = { ...next, initialDurationValue }
+    const reviewingProposal = next.proposal !== undefined
+    proposalSource.hidden = !reviewingProposal
+    proposalSource.textContent = reviewingProposal
+      ? `Proposed event: ${next.proposal!.title}. ${proposalSourceLabel(next.proposal!, effectiveProposalZone ?? lockPolicy!.timezone)}. Timing comes from the original event and cannot be edited here.` : ''
+    proposalDiscard.hidden = !reviewingProposal
+    proposalDiscard.disabled = false
+    proposalCheck.hidden = !next.proposalUnconfirmed
+    entrySubmit.disabled = next.proposalUnconfirmed === true
+    proposalDiscard.disabled = next.proposalUnconfirmed === true
+    for (const field of [entryDate, entryDurationInput, entryStart, entryEnd]) field.readOnly = reviewingProposal
+
     entryDialog.dataset.entryContext = next.context
     entryContext.textContent =
-      next.context === 'timer' ? 'Global timer' : 'Time entry'
+      reviewingProposal ? 'Calendar proposal' : next.context === 'timer' ? 'Global timer' : 'Time entry'
     entryTitle.textContent = contextLabel(
       next.context,
       next.entry !== null,
@@ -5034,14 +6067,12 @@ export const mountShell = async (
     entryDate.value = next.spentDate
     syncEntryDateLabel()
     entryDurationInput.value = initialDurationValue
+    const shownStart = next.entry?.started_time ?? next.times?.started ?? null
+    const shownEnd = next.entry?.ended_time ?? next.times?.ended ?? null
     entryStart.value =
-      next.entry?.started_time === null || next.entry?.started_time === undefined
-        ? ''
-        : formatTimeForClock(next.entry.started_time, snapshot.timeEntrySettings.clock)
+      shownStart === null ? '' : formatTimeForClock(shownStart, snapshot.timeEntrySettings.clock)
     entryEnd.value =
-      next.entry?.ended_time === null || next.entry?.ended_time === undefined
-        ? ''
-        : formatTimeForClock(next.entry.ended_time, snapshot.timeEntrySettings.clock)
+      shownEnd === null ? '' : formatTimeForClock(shownEnd, snapshot.timeEntrySettings.clock)
     entryStart.placeholder = snapshot.timeEntrySettings.clock === '12h' ? '9:00 AM' : '09:00'
     entryEnd.placeholder = snapshot.timeEntrySettings.clock === '12h' ? '5:00 PM' : '17:00'
     entryNoteInput.value = next.notes ?? ''
@@ -5063,7 +6094,7 @@ export const mountShell = async (
     entryDateChip.disabled = immutable
     entryNoteInput.disabled = next.entry?.is_locked === true
     entrySubmit.hidden = next.entry?.is_locked === true
-    entrySubmitLabel.textContent = running
+    entrySubmitLabel.textContent = reviewingProposal ? 'Accept proposal' : running
       ? 'Save note'
       : next.timer
         ? 'Start timer'
@@ -5079,6 +6110,7 @@ export const mountShell = async (
     // can only refuse is worse than no control beside a sentence that already
     // explains itself (issue 496).
     deleteEntry.hidden = next.entry === null || running || next.entry.is_locked
+    updateEntryBilling()
     entryResult.textContent = message
     open(entryDialog)
     // A locked entry disables every field and hides both actions, so the usual
@@ -5086,6 +6118,17 @@ export const mountShell = async (
     // leaving the keyboard behind the modal.
     if (next.entry?.is_locked === true) {
       entryDialog.querySelector<HTMLButtonElement>('[data-dialog-close]')?.focus()
+      return
+    }
+    // A span drawn on the calendar arrives with its times set: the note is the
+    // one thing left to say, and Enter in it saves.
+    if (next.context === 'proposal') {
+      updateEntrySuggestions({ project: '', task: '' })
+      entryProject.focus()
+      return
+    }
+    if (next.context === 'calendar') {
+      entryNoteInput.focus()
       return
     }
     ;(running ||
@@ -5252,7 +6295,43 @@ export const mountShell = async (
     void stopRowTimer(snapshot.running.id)
   })
   required<HTMLButtonElement>('[data-timer-chip]').addEventListener('click', () => {
-    if (currentIdentity === null || snapshot === null) return
+    void openTimerEditor()
+  })
+  // The same staleness reaches the grid: a timer started elsewhere is missing
+  // from the week on screen, its cell reads empty, and the pencil there opens
+  // Add entry on a day that already holds one. Coming back to the tab reloads
+  // the week, unless something is open or being typed into.
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState !== 'visible') return
+    const operation = sessionOperation()
+    if (operation === null || snapshot === null) return
+    if (document.querySelector('dialog[open]') !== null) return
+    const active = document.activeElement
+    if (
+      active instanceof HTMLInputElement ||
+      active instanceof HTMLTextAreaElement ||
+      active instanceof HTMLSelectElement
+    )
+      return
+    refresh(operation).catch((error: unknown) => {
+      handleSessionFailure(error, operation)
+    })
+  })
+  // The timer is started and stopped from the CLI, the extension and other tabs,
+  // so the snapshot this page loaded can name an entry that has since stopped
+  // (issue 1005). The modal reads the running entry from the server, never from
+  // what was true when the page loaded, and its Save note writes to that id.
+  async function openTimerEditor(): Promise<void> {
+    const operation = sessionOperation()
+    if (operation === null || snapshot === null) return
+    try {
+      if (!(await refresh(operation))) return
+    } catch (error) {
+      if (handleSessionFailure(error, operation)) return
+      setSessionStatus(messageFor(error), 'error')
+      return
+    }
+    if (snapshot === null) return
     if (snapshot.running !== null) {
       const running = snapshot.running
       configureEntryEditor({
@@ -5275,6 +6354,10 @@ export const mountShell = async (
       setSessionStatus('Go back to your own timesheet to start a timer.', 'ready')
       return
     }
+    if (snapshot.catalog.timeEntryOptions.length === 0) {
+      openRowDialog('timer')
+      return
+    }
     configureEntryEditor({
       context: 'timer',
       entry: null,
@@ -5287,7 +6370,7 @@ export const mountShell = async (
       timer: true,
       minimumNoteLength: snapshot.catalog.timeEntryOptions[0]?.minimum_note_length ?? 0,
     })
-  })
+  }
   required<HTMLButtonElement>('[data-menu-trigger]').addEventListener('click', () => {
     loadProfileTimezone()
     open(menuDialog)
@@ -5300,8 +6383,16 @@ export const mountShell = async (
     )
     firstLink?.focus()
   })
+  function openRowDialog(purpose: 'row' | 'timer' = 'row'): void {
+    if (currentIdentity === null || snapshot === null) return
+    updateRowOptions()
+    required<HTMLElement>('#row-title').textContent =
+      purpose === 'timer' ? 'Start timer' : 'Add project and task'
+    required<HTMLElement>('[data-row-result]').textContent = ''
+    open(rowDialog)
+  }
   required<HTMLButtonElement>('[data-add-row-trigger]').addEventListener('click', () => {
-    if (currentIdentity !== null) open(rowDialog)
+    openRowDialog()
   })
   for (const close of document.querySelectorAll<HTMLButtonElement>('[data-dialog-close]')) {
     close.addEventListener('click', () => close.closest('dialog')?.close())
@@ -5363,7 +6454,7 @@ export const mountShell = async (
     // modifier and works from inside a cell.
     if (modified && event.key === 'Enter') {
       event.preventDefault()
-      open(rowDialog)
+      openRowDialog()
       return
     }
     if (event.altKey || modified || typingInAField()) return
@@ -5620,6 +6711,23 @@ export const mountShell = async (
     refreshPaletteEntities(commandInput.value)
   })
 
+  // The calendar's new entry is a draft until it is saved; closing the editor
+  // any other way (Esc, Cancel) discards it.
+  entryDialog.addEventListener('close', () => {
+    calendar.clearDraft()
+  })
+  entryNoteInput.addEventListener('keydown', (event) => {
+    if (
+      activeEntry?.context !== 'calendar' ||
+      event.key !== 'Enter' ||
+      event.shiftKey ||
+      event.isComposing
+    )
+      return
+    event.preventDefault()
+    entryForm.requestSubmit()
+  })
+
   entryForm.addEventListener('submit', (event) => {
     event.preventDefault()
     const operation = sessionOperation()
@@ -5654,6 +6762,11 @@ export const mountShell = async (
       configureNoteInput(entryNoteInput, entryNoteHint, minimumNoteLength)
       entryResult.textContent = noteRequirementMessage(minimumNoteLength)
       entryNoteInput.focus()
+      return
+    }
+    if (editor.proposal !== undefined) {
+      if (editor.proposalUnconfirmed || calendarProposals.pending()) return
+      submitProposal(editor, operation, { project_id: projectId, task_id: taskId, notes: notes.trim() === '' ? null : notes })
       return
     }
     const running = editor.entry?.is_running === true
@@ -5773,11 +6886,50 @@ export const mountShell = async (
     configureNoteInput(entryNoteInput, entryNoteHint, option.minimum_note_length)
   }
 
+  /**
+   * What the entry on screen will bill as, under the rule of the project it is
+   * filed against (issue 949). It follows the duration or the times as they are
+   * typed, and says nothing while they do not parse: a half-typed "1h" is not
+   * an error to report, only a figure not to show yet.
+   */
+  const updateEntryBilling = (): void => {
+    const editor = activeEntry
+    entryBilling.hidden = true
+    entryBilling.textContent = ''
+    if (editor === null || snapshot === null || editor.timer || editor.entry?.is_running === true) return
+    const projectId = editorResourceId('project', entryProject.value, editor.projectId)
+    const taskId = editorResourceId('task', entryTask.value, editor.taskId)
+    const option = editorOptions().find(
+      (candidate) => candidate.project_id === projectId && candidate.task_id === taskId,
+    )
+    if (option === undefined) return
+    let seconds: number
+    try {
+      seconds = editor.proposal !== undefined && editor.proposalZone !== undefined
+        ? proposalBillingSeconds(editor.proposal, editor.mode, editor.proposalZone)
+        : editor.mode === 'duration'
+          ? parseCellSeconds(entryDurationInput.value)
+          : secondsBetweenTimes(
+              parseTimeForClock(entryStart.value, snapshot.timeEntrySettings.clock),
+              parseTimeForClock(entryEnd.value, snapshot.timeEntrySettings.clock),
+            )
+    } catch {
+      return
+    }
+    if (!Number.isSafeInteger(seconds) || seconds < 1) return
+    entryBilling.textContent = `${editor.proposal === undefined ? '' : 'If accepted: '}${billsAsText(seconds, option.time_rounding)}`
+    entryBilling.hidden = false
+  }
+
   for (const control of [entryProject, entryTask]) {
     control.addEventListener('change', () => {
       entryResult.textContent = ''
       syncAssignmentNoteRule()
+      updateEntryBilling()
     })
+  }
+  for (const control of [entryDurationInput, entryStart, entryEnd]) {
+    control.addEventListener('input', updateEntryBilling)
   }
 
   for (const input of entryForm.querySelectorAll<HTMLInputElement | HTMLTextAreaElement>(
@@ -6313,22 +7465,22 @@ export const mountShell = async (
     approvalHistoryLoadMore.hidden = true
   })
 
-  function moveWeekTo(nextWithin: string): void {
-    const operation = sessionOperation()
-    if (operation === null || operation.userId === null) return
-    within = nextWithin
-    supplementalRows = loadSupplementalRows(weekPersonId(operation), within, weekStartDay)
-    selectedDay = 0
-    cellStates.clear()
-    setWeekUrl(within, weekStartDay)
+  const loadChangedWeek = (operation: AuthOperation): void => {
     setSessionStatus('Loading week…', 'loading')
+    const token = beginWeekLoading()
     void refresh(operation)
       .then((loaded) => {
+        if (token !== weekLoadSeq) return
+        endWeekLoading()
         if (!loaded || !isSessionCurrent(operation)) return
         setSessionStatus(`Connected. Changes save directly to ${brandName}.`, 'ready', false, true)
       })
       .catch((error: unknown) => {
-        if (handleSessionFailure(error, operation)) return
+        if (token !== weekLoadSeq) return
+        if (handleSessionFailure(error, operation)) {
+          endWeekLoading()
+          return
+        }
         renderWeekLoadFailure()
         setSessionStatus(
           'Signed in, but your week could not load. Check the connection and retry.',
@@ -6336,6 +7488,17 @@ export const mountShell = async (
           true,
         )
       })
+  }
+  function moveWeekTo(nextWithin: string): void {
+    suspendCalendarProposals()
+    const operation = sessionOperation()
+    if (operation === null || operation.userId === null) return
+    within = nextWithin
+    supplementalRows = loadSupplementalRows(weekPersonId(operation), within, weekStartDay)
+    selectedDay = 0
+    cellStates.clear()
+    setWeekUrl(within, weekStartDay)
+    loadChangedWeek(operation)
   }
   /**
    * Kept for the callers that still think in days rather than in periods: the
@@ -6345,12 +7508,13 @@ export const mountShell = async (
   required<HTMLButtonElement>('[data-week-current]').addEventListener('click', () => {
     const operation = sessionOperation()
     if (operation === null || operation.userId === null) return
+    suspendCalendarProposals()
     within = localDate()
     supplementalRows = loadSupplementalRows(weekPersonId(operation), within, weekStartDay)
     selectedDay = Math.max(0, weekDates(within, weekStartDay).indexOf(localDate()))
     cellStates.clear()
     setWeekUrl(within, weekStartDay)
-    void loadWeek(operation)
+    loadChangedWeek(operation)
   })
   const selectDay = (index: number): void => {
     if (currentIdentity === null || index < 0 || index > 6 || index === selectedDay) return
@@ -6633,7 +7797,7 @@ export const mountShell = async (
         return
       }
       if (rawTimeSummary === '' && rawExpenseSummary === '') {
-        invoiceResult.textContent = 'Include time, expenses, or both.'
+        invoiceResult.textContent = snapshot?.expensesAvailable === false ? 'Include tracked time.' : 'Include time, expenses, or both.'
         return
       }
       input = {
@@ -6699,6 +7863,22 @@ export const mountShell = async (
       .catch((error: unknown) => {
         if (handleSessionFailure(error, operation)) return
         invoiceResult.textContent = messageFor(error)
+        if (error instanceof EzactoApiError && error.body !== null && typeof error.body === 'object') {
+          const detail = Reflect.get(error.body, 'error')
+          const fields: unknown = detail !== null && typeof detail === 'object' ? Reflect.get(detail, 'fields') : undefined
+          if (Array.isArray(fields)) {
+            for (const field of fields) {
+              if (field?.code !== 'missing_billable_rate' || typeof field.field !== 'string') continue
+              const match = /^project_ids\.([1-9]\d*)$/.exec(field.field)
+              if (match === null) continue
+              const link = document.createElement('a')
+              link.href = `/projects/${match[1]}`
+              link.textContent = 'Open project to fix rates'
+              invoiceResult.append(' ', link)
+              break
+            }
+          }
+        }
       })
       .finally(() => {
         if (!isSessionCurrent(operation)) return
@@ -6760,7 +7940,7 @@ export const mountShell = async (
         // this response, so going on to load the shell would 401 and read as a
         // failed password.
         if (isTwoFactorRequired(result)) {
-          openTwoFactorStep(result.challenge)
+          openTwoFactorStep(result.challenge, result.methods)
           return
         }
         await loadAuthenticatedShell(operation)
@@ -6781,7 +7961,7 @@ export const mountShell = async (
     if (verifyingSecondFactor || pendingChallenge === null) return
     const code = twoFactorCode.value.trim()
     if (code === '') {
-      twoFactorResult.textContent = 'Enter the code from your authenticator app.'
+      twoFactorResult.textContent = 'Enter your verification code.'
       return
     }
     const complete = api.completeTwoFactorChallenge
@@ -6816,6 +7996,41 @@ export const mountShell = async (
         verifyingSecondFactor = false
         setTwoFactorPending(false)
         twoFactorCode.value = ''
+      })
+  })
+
+  twoFactorEmail.addEventListener('click', () => {
+    const send = api.sendTwoFactorEmailCode
+    if (verifyingSecondFactor || pendingChallenge === null) return
+    if (send === undefined) {
+      twoFactorResult.textContent =
+        'This instance cannot email a code. Contact your administrator.'
+      return
+    }
+    const challenge = pendingChallenge
+    const operation = beginAuthGeneration(null)
+    twoFactorEmail.disabled = true
+    twoFactorResult.textContent = 'Sending…'
+    void send(challenge === '' ? {} : { challenge }, operation.signal)
+      .then((issued) => {
+        if (!isGenerationCurrent(operation)) return
+        // The earlier challenge died when this one was made.
+        pendingChallenge = issued.challenge
+        pendingMethods = issued.methods
+        paintTwoFactorMethods(true)
+        twoFactorCode.value = ''
+        twoFactorResult.textContent = 'Code sent. Check your email.'
+        twoFactorCode.focus()
+      })
+      .catch((error: unknown) => {
+        if (!isGenerationCurrent(operation)) return
+        const message = emailCodeMessage(error)
+        if (message.expired) closeTwoFactorStep(message.text)
+        else twoFactorResult.textContent = message.text
+      })
+      .finally(() => {
+        if (!isGenerationCurrent(operation)) return
+        twoFactorEmail.disabled = false
       })
   })
 
@@ -6912,16 +8127,56 @@ export const mountShell = async (
   if (moduleSettingsPage) {
     const sections = [...document.querySelectorAll<HTMLElement>('[data-settings-section]')]
     const links = [...document.querySelectorAll<HTMLElement>('[data-settings-section-link]')]
+    const strip = document.querySelector<HTMLElement>('[data-settings-sections]')
+    // A deployment with accounting off or unconfigured has no Accounting
+    // section to offer (issue 1217), and the same holds for every module the
+    // operator switched off (issue 1254). Marked before the first show, so the
+    // hash never lands on one.
+    withdrawUnavailableSettingsSections()
     const unavailable = (section: HTMLElement): boolean =>
       section.hasAttribute('data-settings-unavailable')
+    // The strip is one line that scrolls sideways where the width runs out, so
+    // the segment a link opened on may start past its edge: bring it in, by
+    // the strip's own scroll alone and never the page's.
+    const keepCurrentInStrip = (): void => {
+      const link = links.find((candidate) => candidate.getAttribute('aria-current') === 'page')
+      if (strip === null || link === undefined) return
+      const bounds = strip.getBoundingClientRect()
+      const segment = link.getBoundingClientRect()
+      if (segment.left < bounds.left) strip.scrollLeft -= bounds.left - segment.left + 24
+      else if (segment.right > bounds.right) strip.scrollLeft += segment.right - bounds.right + 24
+    }
     const showSection = (): void => {
       let current = resolveSettingsSection(globalThis.location.hash)
       const chosen = sections.find((section) => section.dataset.settingsSection === current)
       if (chosen !== undefined && unavailable(chosen)) current = DEFAULT_COMPANY_SETTINGS_SECTION
       applySettingsSection(current, sections, links, unavailable)
+      keepCurrentInStrip()
     }
     showSection()
     globalThis.addEventListener('hashchange', showSection)
+  }
+
+  // The personal settings page, one part at a time (issue 1152): the same hash
+  // rule as the company page, with panes of their own, so the controllers that
+  // show and hide their sections are left alone.
+  if (settingsUserPage) {
+    const panes = [...document.querySelectorAll<HTMLElement>('[data-settings-user-pane]')]
+    const links = [...document.querySelectorAll<HTMLElement>('[data-settings-user-link]')]
+    const showPart = (): void => {
+      const callback = new URLSearchParams(globalThis.location.search).get('calendar')
+      const wanted = resolveSettingsSection(
+        globalThis.location.hash || (callback === 'connected' || callback === 'failed' || callback === 'admin_consent_required' ? '#calendars' : ''),
+        USER_SETTINGS_SECTIONS,
+      )
+      for (const pane of panes) pane.hidden = pane.dataset['settingsUserPane'] !== wanted
+      for (const link of links) {
+        if (link.dataset['settingsUserLink'] === wanted) link.setAttribute('aria-current', 'page')
+        else link.removeAttribute('aria-current')
+      }
+    }
+    showPart()
+    globalThis.addEventListener('hashchange', showPart)
   }
 
   // The theme runtime resolved a stored choice against an organization default
@@ -7019,6 +8274,25 @@ export const mountShell = async (
       const chosen = button.dataset.navLayoutChoice
       if (chosen === undefined || !(navLayouts as readonly string[]).includes(chosen)) return
       syncNavLayoutChoice(navLayout.set(chosen as NavLayout))
+    })
+  }
+  // Week or Day on the calendar: remembered the same way, and redrawn in place.
+  const syncCalendarLayoutChoice = (current: CalendarLayout): void => {
+    for (const button of document.querySelectorAll<HTMLButtonElement>(
+      '[data-calendar-layout-choice]',
+    )) {
+      button.setAttribute('aria-pressed', String(button.dataset.calendarLayoutChoice === current))
+    }
+  }
+  syncCalendarLayoutChoice(calendarLayout.start())
+  for (const button of document.querySelectorAll<HTMLButtonElement>(
+    '[data-calendar-layout-choice]',
+  )) {
+    button.addEventListener('click', () => {
+      const chosen = button.dataset.calendarLayoutChoice
+      if (chosen === undefined || !(calendarLayouts as readonly string[]).includes(chosen)) return
+      syncCalendarLayoutChoice(calendarLayout.set(chosen as CalendarLayout))
+      render()
     })
   }
   const sidebarState = createSidebarRuntime({

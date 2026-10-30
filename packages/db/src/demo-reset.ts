@@ -155,13 +155,46 @@ const runAll = (
  */
 export const PRESERVED_TABLES: ReadonlySet<string> = new Set([
   '_ezacto_migrations',
+  'planning_calendar_source',
+  'planning_calendar_instance',
+  'csv_staging_instance',
+  'csv_worker_revision',
   'invoice_number_sequence',
   'email_template_versions',
   'email_template_heads',
   // Instance security material is seeded once; keeping the migration ledger
   // while deleting this row would permanently disable closure proofs.
   'account_closure_security',
+  // The migration creates this singleton once. Authorization triggers update
+  // it in place, so deleting it would disable all subsequent revision changes.
+  'idempotency_authorization',
+  // The migration creates this singleton with the manual default. Keeping it
+  // means a demo wipe does not switch an instance's Deel sync mode or time (#1102).
+  'deel_sync_settings',
+  // Keep the migration-seeded throttle row; reset its transient state below.
+  'deel_status_refresh_lock',
+  // Seeded with both providers enabled. Keeping it means a demo wipe does not
+  // switch an instance's payout providers off (#1152).
+  'payout_provider_enablement',
+  // Source triggers update this migration-seeded singleton in place. Keep its
+  // sequence monotonic while clearing the per-person/month source versions.
+  'contractor_source_clock',
+  // Connection incarnations must remain monotonic across destructive resets.
+  // The wipe advances this singleton while connection triggers are lifted.
+  'quickbooks_connection_generation',
+  // Same for the Deel connection (#1238): the wipe deletes the connection row
+  // with its triggers lifted, so the counter is advanced explicitly below.
+  'deel_connection_generation',
+  // The migration seeds this singleton and its retain trigger refuses deletion.
+  // The wipe advances its generation and disconnects it (issue 1252).
+  'bill_managed_connection',
+  'calendar_sync_instance',
+  'github_publication_instance',
+  'github_publication_dispatch',
 ])
+
+/** Pending external cleanup is encrypted custody, not seed data. */
+const RETAINED_CUSTODY_TABLES = new Set(['calendar_cleanup_obligations', 'calendar_manual_cleanup_receipts', 'calendar_operator_cleanup_receipts'])
 
 /**
  * D1 keeps its own bookkeeping in the same database, under a reserved `_cf_`
@@ -190,19 +223,40 @@ const isD1Internal = (table: string): boolean => table.startsWith('_cf_')
  * the `_cf_KV` failure above did to ezacto.io, and losing a night of the demo
  * was the smaller half of it.
  */
-const wipeStatements = (objects: DemoSchemaObjects): readonly DemoSeedStatement[] => [
+const wipeStatements = (objects: DemoSchemaObjects, now: string): readonly DemoSeedStatement[] => [
   ...objects.triggers.map((trigger) => ({
     text: `DROP TRIGGER IF EXISTS ${quoted(trigger.name)}`,
     bindings: [],
   })),
   { text: 'PRAGMA defer_foreign_keys = true', bindings: [] },
+  { text: `INSERT OR IGNORE INTO calendar_cleanup_obligations(id,user_id,provider,instance_nonce,generation,credential_revision,key_id,sealed_grant,reason,status,created_at)
+      SELECT lower(hex(randomblob(32))),user_id,provider,instance_nonce,generation,credential_revision,key_id,sealed_grant,'reset','manual_required',? FROM calendar_connections WHERE sealed_grant IS NOT NULL`, bindings: [now] },
+  { text: "UPDATE calendar_cleanup_obligations SET status='manual_required' WHERE status='pending'", bindings: [] },
   ...objects.tables
-    .filter((table) => !PRESERVED_TABLES.has(table) && !isD1Internal(table))
+    .filter((table) => !PRESERVED_TABLES.has(table) && !RETAINED_CUSTODY_TABLES.has(table) && !isD1Internal(table))
     .map((table) => ({ text: `DELETE FROM ${quoted(table)}`, bindings: [] })),
   // Preserved, but not carried over: the counter is kept because generation
   // needs a row to read, and reset because yesterday's demo took every number
   // below it and none of those invoices exist any more.
   { text: 'UPDATE invoice_number_sequence SET next_number = 1', bindings: [] },
+  { text: "UPDATE deel_status_refresh_lock SET lease_id=NULL,lease_until=NULL,cooldown_until='1970-01-01T00:00:00.000Z' WHERE id=1", bindings: [] },
+  { text: "UPDATE planning_calendar_instance SET nonce=lower(hex(randomblob(32))) WHERE singleton=1", bindings: [] },
+  { text: 'UPDATE planning_calendar_source SET revision=revision+1 WHERE singleton=1', bindings: [] },
+  // Authority changed while its triggers were lifted. Advance the preserved
+  // revision in the wipe transaction, even if bootstrap/seed never resumes.
+  { text: 'UPDATE idempotency_authorization SET revision = revision + 1 WHERE id = 1', bindings: [] },
+  // Connection deletion is a lifecycle change even while its triggers are lifted.
+  // Invalidate pending grants even if the subsequent bootstrap never resumes.
+  { text: 'UPDATE quickbooks_connection_generation SET generation = generation + 1 WHERE singleton = 1', bindings: [] },
+  { text: 'UPDATE deel_connection_generation SET generation = generation + 1 WHERE singleton = 1', bindings: [] },
+  // The wipe emptied the users and links this connection was bound to. Drop the
+  // sealed credential and binding; the generation advances, so no stale command applies.
+  { text: "UPDATE bill_managed_connection SET generation = generation + 1, status = 'disconnected', company_id = NULL, binding_company_id = NULL, sealed_credential = NULL, connected_by_user_id = NULL, health_at = NULL WHERE singleton = 1", bindings: [] },
+  { text: "UPDATE calendar_sync_instance SET nonce=lower(hex(randomblob(32))) WHERE singleton=1", bindings: [] },
+  { text: "UPDATE github_publication_instance SET nonce=lower(hex(randomblob(32))) WHERE singleton=1", bindings: [] },
+  { text: "UPDATE github_publication_dispatch SET token=NULL,expires_at=0 WHERE id=1", bindings: [] },
+  { text: 'UPDATE contractor_source_clock SET revision = revision + 1 WHERE id = 1', bindings: [] },
+  { text: "INSERT INTO contractor_source_versions(scope,revision) SELECT 'all',revision FROM contractor_source_clock WHERE id=1 ON CONFLICT(scope) DO UPDATE SET revision=excluded.revision", bindings: [] },
   // Preserved, but not carried over either: a template version records who
   // saved it, and that person was a row in `users`, which this wipe has just
   // emptied. Deferred, the foreign key bites at commit and D1 rolls the whole
@@ -210,12 +264,14 @@ const wipeStatements = (objects: DemoSchemaObjects): readonly DemoSeedStatement[
   // silently, once an operator had saved an invoice template on it. The
   // template outlives its author; the authorship does not.
   { text: 'UPDATE email_template_versions SET created_by_user_id = NULL', bindings: [] },
+  { text: "UPDATE csv_staging_instance SET nonce=lower(hex(randomblob(32))) WHERE singleton=1", bindings: [] },
+  { text: "UPDATE csv_worker_revision SET revision=revision+1,orphan_cursor=NULL WHERE singleton=1", bindings: [] },
   ...objects.triggers.map((trigger) => ({ text: trigger.sql, bindings: [] })),
 ]
 
 /** The tables the wipe emptied, which is what the summary reports. */
 const clearedTableCount = (objects: DemoSchemaObjects): number =>
-  objects.tables.filter((table) => !PRESERVED_TABLES.has(table) && !isD1Internal(table)).length
+  objects.tables.filter((table) => !PRESERVED_TABLES.has(table) && !RETAINED_CUSTODY_TABLES.has(table) && !isD1Internal(table)).length
 
 const base64Url = (bytes: Uint8Array): string => {
   let binary = ''
@@ -384,7 +440,7 @@ export const wipeAndSeedDemo = async (
   // A demo that has never been built has no schema to empty.
   await driver.migrate()
   const objects = await driver.schemaObjects()
-  await driver.executeAtomic(wipeStatements(objects))
+  await driver.executeAtomic(wipeStatements(objects, now))
 
   const owner = demoAccounts.find((account) => account.userId === 1)
   if (owner === undefined) throw new TypeError('the demo has no owner account')

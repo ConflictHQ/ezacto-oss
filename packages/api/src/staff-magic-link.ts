@@ -1,4 +1,5 @@
 import type { Context, Hono } from 'hono'
+import { requireSameOriginForUnsafeSessionRequest } from './auth.js'
 import type { ApiContext } from './context.js'
 import { ApiError, readJsonBody, validationError } from './errors.js'
 import type { OidcAppCodeStorePort } from './oidc.js'
@@ -36,6 +37,7 @@ export interface StaffMagicLinkStorePort {
     userId: number
     tokenHash: string
     codeHash: string
+    requesterHash: string
     flow: StaffMagicLinkFlow
     expiresAt: string
     createdAt: string
@@ -49,7 +51,8 @@ export interface StaffMagicLinkStorePort {
     userId: number,
     codeHash: string,
     now: string,
-    maxAttempts: number
+    maxAttempts: number,
+    requesterHash: string
   ): Promise<{ userId: number; flow: StaffMagicLinkFlow } | null>
   hasActiveLink(userId: number, now: string, since: string): Promise<boolean>
 }
@@ -88,6 +91,31 @@ export interface StaffMagicLinkRouteOptions<Bindings extends object> {
   linkOrigin(bindings: Bindings): string
   appRedirectUri?: string
   now?: () => string
+}
+
+export const STAFF_CODE_COOKIE = '__Host-ezacto_staff_code'
+const requesterCookie = (request: Request): string | null => {
+  const values = (request.headers.get('cookie') ?? '')
+    .split(';')
+    .map((part) => part.trim())
+    .filter((part) => part.startsWith(`${STAFF_CODE_COOKIE}=`))
+  if (values.length !== 1) return null
+  const value = values[0]!.slice(STAFF_CODE_COOKIE.length + 1)
+  return /^[A-Za-z0-9_-]{43}$/.test(value) ? value : null
+}
+const codeCookieHeader = (value: string, maxAge = 600): string =>
+  `${STAFF_CODE_COOKIE}=${value}; Path=/; Secure; HttpOnly; SameSite=Lax; Max-Age=${maxAge}`
+const requireCodeRequestOrigin = (request: Request): void => {
+  if (request.headers.has('origin')) return requireSameOriginForUnsafeSessionRequest(request)
+  const site = request.headers.get('sec-fetch-site')
+  // Native HTTP clients do not send Fetch Metadata. Browser cross-site calls
+  // must never mint or spend a requester-bound credential.
+  if (site !== null && site !== 'same-origin')
+    throw new ApiError({
+      status: 403,
+      code: 'cross_origin_auth_request',
+      message: 'Use the sign-in page on this instance.'
+    })
 }
 
 const emailPattern = /^[^\s@]+@[^\s@]+\.[^\s@]+$/u
@@ -138,6 +166,32 @@ const generateCode = (): string => {
 const codePattern = /^[0-9]{6}$/
 const tokenPattern = /^[A-Za-z0-9_-]{43}$/
 
+type ConfirmationScheme = 'system' | 'light' | 'dim' | 'dark'
+
+/** Match the web display-cookie parser: first exact name, raw value, closed preference. */
+const confirmationScheme = (cookie: string | undefined): ConfirmationScheme => {
+  for (const part of (cookie ?? '').split(';')) {
+    const separator = part.indexOf('=')
+    if (separator < 0 || part.slice(0, separator).trim() !== 'ezacto_scheme') continue
+    const value = part.slice(separator + 1).trim()
+    return value === 'light' || value === 'dim' || value === 'dark' ? value : 'system'
+  }
+  return 'system'
+}
+
+// compile-theme-tokens.mjs requires Precision as the only OSS/default theme.
+// The native web audit compares this marker and effective ink to canonical web tokens.
+const confirmPage = (token: string, scheme: ConfirmationScheme): string =>
+  `<!doctype html><html lang="en" data-ez-theme="precision" data-ez-scheme="${scheme}"><head><meta charset="utf-8">` +
+  `<meta name="color-scheme" content="${scheme === 'system' ? 'light dark' : scheme === 'dim' ? 'dark' : scheme}">` +
+  '<meta name="viewport" content="width=device-width,initial-scale=1">' +
+  '<meta name="robots" content="noindex"><title>Finish signing in</title><link rel="stylesheet" href="/assets/ezacto.css"></head>' +
+  '<body><main class="standalone-auth"><section class="auth-card"><h1>Finish signing in</h1>' +
+  '<p>Confirm to sign in with this link. It works once.</p>' +
+  '<form method="post" action="/auth/magic-link/verify">' +
+  `<input type="hidden" name="token" value="${token}">` +
+  '<button class="primary-action" type="submit">Continue</button></form></section></main></body></html>'
+
 const accepted = <Bindings extends object>(
   context: Context<ApiContext<Bindings>>
 ) =>
@@ -170,6 +224,7 @@ export const installStaffMagicLinkRoutes = <Bindings extends object>(
 
   app.post('/auth/magic-link', async (context) => {
     await assertLive(context.env)
+    requireCodeRequestOrigin(context.req.raw)
     // A deployment-level state, identical for every address, so returning it
     // before the lookup leaks nothing about who has an account.
     if (options.mailer === undefined) {
@@ -203,6 +258,12 @@ export const installStaffMagicLinkRoutes = <Bindings extends object>(
       }
     }
 
+    // Cookie behavior cannot depend on account existence or throttling: reuse
+    // any valid incoming random binding, otherwise mint one for every request.
+    const requester = requesterCookie(context.req.raw) ?? generateToken()
+    context.header('set-cookie', codeCookieHeader(requester), { append: true })
+    const requesterHash = await sha256Hex(requester)
+
     // Never reveal whether an address maps to a user: unknown emails and
     // throttled repeats return the same 202 as a freshly sent link.
     const user = await options.users.findByEmail(email)
@@ -225,6 +286,7 @@ export const installStaffMagicLinkRoutes = <Bindings extends object>(
       userId: user.userId,
       tokenHash: await sha256Hex(token),
       codeHash: await hmacHex(code, options.codeKey),
+      requesterHash,
       flow,
       expiresAt,
       createdAt: issuedAt,
@@ -248,10 +310,36 @@ export const installStaffMagicLinkRoutes = <Bindings extends object>(
     return accepted(context)
   })
 
+  // Issue 740. A GET must not spend the link: mail scanners and link previews
+  // fetch every URL in a message, and would burn it before the person taps.
+  // The GET only renders a confirm page; the POST below redeems.
   app.get('/auth/magic-link/verify', async (context) => {
     await assertLive(context.env)
     const token = context.req.query('token')
     if (typeof token !== 'string' || !tokenPattern.test(token)) {
+      throw new ApiError({
+        status: 400,
+        code: 'magic_link_invalid',
+        message: 'The sign-in link is malformed.',
+      })
+    }
+    return new Response(confirmPage(token, confirmationScheme(context.req.header('cookie'))), {
+      status: 200,
+      headers: {
+        'cache-control': 'no-store',
+        'referrer-policy': 'no-referrer',
+        'x-robots-tag': 'noindex',
+        'content-type': 'text/html; charset=utf-8',
+      },
+    })
+  })
+
+  app.post('/auth/magic-link/verify', async (context) => {
+    await assertLive(context.env)
+    requireSameOriginForUnsafeSessionRequest(context.req.raw)
+    const raw = await context.req.text()
+    const token = raw.length > 1024 ? null : new URLSearchParams(raw).get('token')
+    if (token === null || !tokenPattern.test(token)) {
       throw new ApiError({
         status: 400,
         code: 'magic_link_invalid',
@@ -308,6 +396,7 @@ export const installStaffMagicLinkRoutes = <Bindings extends object>(
 
   app.post('/auth/magic-link/exchange', async (context) => {
     await assertLive(context.env)
+    requireCodeRequestOrigin(context.req.raw)
     const body = await readJsonBody<unknown>(context, { maxBytes: 4 * 1024 })
     if (typeof body !== 'object' || body === null || Array.isArray(body)) {
       throw validationError([
@@ -330,17 +419,21 @@ export const installStaffMagicLinkRoutes = <Bindings extends object>(
     const invalid = new ApiError({
       status: 401,
       code: 'magic_link_invalid',
-      message: 'The code is invalid, already used, or expired.',
+      message: 'The code is invalid, already used, expired, or belongs to another sign-in request. Request a new code here or open the email link.',
     })
+    const requester = requesterCookie(context.req.raw)
+    if (requester === null) throw invalid
     const user = await options.users.findByEmail(email)
     if (user === null) throw invalid
     const redemption = await options.magicLinks.consumeByCode(
       user.userId,
       await hmacHex(code, options.codeKey),
       now(),
-      STAFF_MAGIC_LINK_MAX_CODE_ATTEMPTS
+      STAFF_MAGIC_LINK_MAX_CODE_ATTEMPTS,
+      await sha256Hex(requester)
     )
     if (redemption === null) throw invalid
+    context.header('set-cookie', codeCookieHeader('', 0), { append: true })
     const challenge = await issueSessionOrChallenge(
       context,
       {

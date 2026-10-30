@@ -1,0 +1,50 @@
+{
+  "issue": 1181,
+  "scope": "Container/SQLite private administrator CSV staging and immutable preview; browser and public apply disabled",
+  "environment": {
+    "kind": "disposable local container process",
+    "network": "loopback only",
+    "providerCalls": false,
+    "productionWrites": false
+  },
+  "ownedProcessTest": "entries/container/test/csv-staging-process.test.ts",
+  "observed": [
+    "Built and launched real container entry plus adjacent parser worker",
+    "Anonymous upload refused",
+    "Administrator session uploaded exact hash/length checked bytes",
+    "Explicit mapping accepted",
+    "Preview returned one new row and 60 source/destination seconds",
+    "Organization rows, time entries, native import ledger and event outbox unchanged by preview",
+    "Private input purged through API",
+    "Source note absent from process output",
+    "Process and temporary database/files removed"
+  ],
+  "securityRegression": "Injected raw-cell sentinel in ordinary Error and ApiError parser exceptions; HTTP, console and reportError error/stack contain no sentinel. Duplicate upload rechecks revoked session after async cleanup.",
+  "lifecycleRegression": "Real CLI backup/restore rotates CSV and calendar incarnations while preserving time. Explicit purge and expiry sweep retain deletion custody after injected unlink failure, then retry removes bytes and clears custody.",
+  "tests": {
+    "dbAuthority": 4,
+    "apiContract": 14,
+    "containerStagingAndOwnedProcess": 16,
+    "snapshotAndPrivacyRestore": 10,
+    "clientBinaryUpload": 4,
+    "workerContractReachability": 4,
+    "cliBackup": 13
+  },
+  "limits": {
+    "bytes": 5242880,
+    "rows": 50000,
+    "columns": 40,
+    "fieldCharacters": 10000,
+    "nameCharacters": 255,
+    "mappingBytes": 1048576,
+    "retentionHours": 24,
+    "workerMemoryMiB": 128,
+    "workerBudgetMs": 10000
+  },
+  "migration": "0169_csv_staging_instance",
+  "limitations": [
+    "No hosted/Worker staging support",
+    "No browser admission flow in this issue",
+    "No public confirmation or apply in this issue"
+  ]
+}

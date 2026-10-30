@@ -4,6 +4,7 @@ import type { AccountDeletionRecord } from "@ezacto/core";
 import { EzactoApiError } from "@conflict-hq/ezacto-client";
 import type { SessionPresenter } from "../session.js";
 import { apiErrorMessage } from "./model.js";
+import { shellFetch } from "../shell/net.js";
 
 type Active = SessionPresenter & {
   signal: AbortSignal;
@@ -51,7 +52,7 @@ export function createDeletionRequestsController(
     method = "GET",
     body?: unknown,
   ): Promise<T> => {
-    const response = await fetch(path, {
+    const response = await shellFetch(path, {
       method,
       credentials: "same-origin",
       signal: active.signal,

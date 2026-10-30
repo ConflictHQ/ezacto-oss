@@ -1,7 +1,29 @@
+import { githubPublicationOperations, githubPublicationSchemas } from './github-publication-contract.js'
+import { calendarOperatorCleanupOperations, calendarOperatorCleanupSchemas } from './calendar-operator-cleanup-contract.js'
+import { calendarConnectionOperations, calendarConnectionSchemas } from './calendar-connection-contract.js'
+import { invoiceProviderAlertOperations, invoiceProviderAlertSchemas } from './invoice-provider-alert-contract.js'
+import { bankDepositOperations, bankDepositSchemas } from './bank-deposit-contract.js'
+import { calendarFeedOperations, calendarFeedSchemas } from './calendar-feed-contract.js'
+import { githubReaderOperations, githubReaderSchemas } from './github-reader-contract.js'
+import { deelStagingOperations, deelStagingSchemas } from './deel-staging-contract.js'
+import { csvImportApplyOperations, csvImportApplySchemas } from './csv-import-apply-contract.js'
+import { csvImportStagingOperations, csvImportStagingSchemas } from './csv-import-staging-contract.js'
+import { moduleForPath } from './module-availability.js'
+import { organizationHolidayOperations, organizationHolidaySchemas } from './organization-holiday-contract.js'
+import { placeholderPlanningOperations, placeholderPlanningSchemas } from './placeholder-planning-contract.js'
+import { resourceCalendarOperations, resourceCalendarSchemas } from './resource-calendar-contract.js'
+import { outboundWebhookOperations, outboundWebhookSchemas } from './outbound-webhook-contract.js'
+import { invoiceElevationOperations, invoiceElevationSchemas, documentInvoiceTokenElevation } from './invoice-elevation-contract.js'
+import { scheduledJobOperations, scheduledJobSchemas } from './scheduled-job-contract.js'
+import { contractorReviewOperations, contractorReviewSchemas } from './contractor-review-contract.js'
+import { staffInvoiceOperations, staffInvoiceSchemas } from './staff-invoice-contract.js'
+import { advanceCreditOperations, advanceCreditSchemas } from './advance-credit-contract.js'
 import { ACCOUNT_PRIVACY_FRAMEWORKS } from '@ezacto/core';
+import { scheduledRunOperations, scheduledRunSchemas } from './scheduled-run-contract.js'
 import { paymentRunOperations, paymentRunSchemas } from './payment-run-contract.js'
 import { staffPaymentOperations, staffPaymentSchemas } from './staff-payment-contract.js';
-import { commercialTermFields, DETAILED_TIME_PDF_ROW_LIMIT, maximumBulkApprovalSelections } from "@ezacto/core";
+import { deelSyncOperations, deelSyncSchemas } from './deel-sync-contract.js';
+import { commercialTermFields, DETAILED_TIME_PDF_ROW_LIMIT, maximumBulkApprovalSelections, timeRoundingIncrements, timeRoundingModes } from "@ezacto/core";
 import {
   attachmentContractOperations,
   attachmentContractSchemas,
@@ -27,12 +49,15 @@ export interface ApiContractOperation {
   tag: string;
   responseStatus: number;
   additionalResponseStatuses?: readonly number[];
+  /** Additional failures use the canonical error envelope, never the success DTO. */
+  additionalErrorResponseStatuses?: readonly number[];
   responseSchema?: string;
   requestSchema?: string;
   requestRequired?: boolean;
-  requestContentType?: "application/json" | "multipart/form-data";
+  requestContentType?: "application/json" | "multipart/form-data" | "application/octet-stream";
   binaryResponse?: boolean;
   sessionOnly?: boolean;
+  tokenOnly?: boolean;
   public?: boolean;
   parameters?: readonly ApiContractParameter[];
   generateClient?: boolean;
@@ -381,6 +406,47 @@ const timeEntryOperations: ApiContractOperation[] = [
     sessionOnly: true,
   },
   {
+    method: "patch",
+    path: "/api/v1/time-entry-rounding-settings",
+    operationId: "updateTimeEntryRoundingSettings",
+    summary: "Update the organization's time rounding rule",
+    description:
+      "A direction and an increment, either or both. Nothing already saved changes: the rule rounds time saved from now on, and open time is re-rounded only by `/time-rounding-recalculation`, after a preview. Executive managers and administrators only.",
+    tag: "time-entries",
+    responseStatus: 200,
+    responseSchema: "TimeRoundingEnvelope",
+    requestSchema: "TimeRoundingPatch",
+    requestRequired: true,
+    sessionOnly: true,
+  },
+  {
+    method: "get",
+    path: "/api/v1/time-rounding-recalculation",
+    operationId: "previewTimeRoundingRecalculation",
+    summary: "Preview re-rounding open time under the current rules",
+    description:
+      "What the apply would change, writing nothing: how many open entries change, their rounded hours before and after, a breakdown by project, the date span, and what is left alone and why. Open means the same as for a single edit: stopped, not invoiced, not approved, on an unlocked date, under an active client, project and task. The `fingerprint` names exactly this set. Executive managers and administrators only.",
+    tag: "time-entries",
+    responseStatus: 200,
+    responseSchema: "TimeRoundingRecalculationPreviewEnvelope",
+    parameters: [query("project_id", integerSchema), query("from", dateSchema), query("to", dateSchema)],
+    sessionOnly: true,
+  },
+  {
+    method: "post",
+    path: "/api/v1/time-rounding-recalculation",
+    operationId: "applyTimeRoundingRecalculation",
+    summary: "Re-round open time under the current rules",
+    description:
+      "Applies the preview whose `fingerprint` is sent, for the same scope. If anything has changed since that preview, nothing is written and the answer is 409 `preview_stale`. Executive managers and administrators only.",
+    tag: "time-entries",
+    responseStatus: 200,
+    responseSchema: "TimeRoundingRecalculationAppliedEnvelope",
+    requestSchema: "TimeRoundingRecalculationRequest",
+    requestRequired: true,
+    sessionOnly: true,
+  },
+  {
     method: "get",
     path: "/api/v1/time-entry-options",
     operationId: "listTimeEntryOptions",
@@ -416,7 +482,7 @@ const timeEntryOperations: ApiContractOperation[] = [
     operationId: "createTimeEntry",
     summary: "Create or start a time entry",
     description:
-      "`started_time` with `ended_time` logs a stopped start/end entry in either organization mode, its `seconds` derived from the two times (an end before the start is past midnight); `seconds` beside them is 422 `mode_mismatch`. Without times the organization's `time_entry_mode` decides: in `duration`, `seconds` logs a stopped entry and leaving it out starts a timer; in `start_end`, leaving out `ended_time` starts a timer at the current local time and `seconds` is 422 `mode_mismatch`. A timer in a `duration` organization never carries times, so `started_time` without `ended_time` there is 422 `mode_mismatch`. Entries may overlap; each counts its own full duration.",
+      "`started_time` with `ended_time` logs a stopped start/end entry in either organization mode, its `seconds` derived from the two times (an end before the start is past midnight); `seconds` beside them is 422 `mode_mismatch`. Without times the organization's `time_entry_mode` decides: in `duration`, `seconds` logs a stopped entry and leaving it out starts a timer; in `start_end`, leaving out `ended_time` starts a timer at the current local time and `seconds` is 422 `mode_mismatch`. A timer in a `duration` organization never carries times, so `started_time` without `ended_time` there is 422 `mode_mismatch`. Stopped entries must have a positive rounded duration; zero-hour entries are refused. Entries may overlap; each counts its own full duration.",
     tag: "time-entries",
     responseStatus: 201,
     responseSchema: "TimeEntryEnvelope",
@@ -449,6 +515,262 @@ const timeEntryOperations: ApiContractOperation[] = [
     tag: "time-entries",
     responseStatus: 200,
     responseSchema: "TimeEntryEnvelope",
+    parameters: [path("id")],
+  })),
+];
+
+const calendarProposalOperations: ApiContractOperation[] = [
+  {
+    method: "get",
+    path: "/api/v1/calendar-proposals",
+    operationId: "listCalendarProposals",
+    summary: "List the acting user's calendar events offered as time",
+    description:
+      "Only the acting user's own, administrators included. A proposal is a calendar event held beside the timesheet, not a time entry: it reaches no report, lock or invoice until it is accepted. `status` defaults to `proposed`, what is waiting for a decision. `from` and `to` are calendar days on the user's own calendar, both included, and filter on the day the event starts.",
+    tag: "time-entries",
+    responseStatus: 200,
+    responseSchema: "CalendarProposalPage",
+    parameters: [
+      ...pageParameters,
+      query("from", dateSchema),
+      query("to", dateSchema),
+      query("status", { type: "string", enum: ["proposed", "accepted", "discarded", "cancelled"] }),
+    ],
+  },
+  {
+    method: "post",
+    path: "/api/v1/calendar-proposals/:id/accept",
+    operationId: "acceptCalendarProposal",
+    summary: "Accept a calendar proposal as a time entry",
+    description:
+      "Creates the entry through the same path as `POST /time-entries`, so rounding, timesheet locks, approval membership, assignment and note rules all apply, and marks the proposal accepted in the same write. In a `duration` organization the entry carries the event's length and no times; in `start_end` it carries the event's times on the user's own clock, and an event that runs past local midnight is 422 `spans_days`. `notes` defaults to the event's title. The proposal's `time_entry_id` and the `Location` header name the entry. A proposal already decided is 409 `proposal_not_open`, and nothing is created.",
+    tag: "time-entries",
+    responseStatus: 201,
+    responseSchema: "CalendarProposalEnvelope",
+    requestSchema: "CalendarProposalAcceptInput",
+    requestRequired: true,
+    parameters: [path("id")],
+  },
+  {
+    method: "post",
+    path: "/api/v1/calendar-proposals/:id/discard",
+    operationId: "discardCalendarProposal",
+    summary: "Discard a calendar proposal",
+    description:
+      "A discarded event is not offered again when the calendar is read again. A proposal already decided is 409 `proposal_not_open`.",
+    tag: "time-entries",
+    responseStatus: 200,
+    responseSchema: "CalendarProposalEnvelope",
+    parameters: [path("id")],
+  },
+];
+
+const allocationOperations: ApiContractOperation[] = [
+  {
+    method: "get",
+    path: "/api/v1/allocations",
+    operationId: "listAllocations",
+    summary: "List planned allocations",
+    description:
+      "Planned hours per week for a person on a project over a range of dates. Administrators and executive managers read all of them; a project manager reads their own and those for the people and projects they manage; everyone else reads only their own. `from` and `to` keep the allocations that reach into that span of days. A plan is not work: it is separate from time entries and never billed.",
+    tag: "schedule",
+    responseStatus: 200,
+    responseSchema: "AllocationPage",
+    parameters: [
+      ...pageParameters,
+      query("user_id", integerSchema),
+      query("project_id", integerSchema),
+      query("from", dateSchema),
+      query("to", dateSchema),
+    ],
+  },
+  {
+    method: "post",
+    path: "/api/v1/allocations",
+    operationId: "createAllocation",
+    summary: "Plan hours for a person on a project",
+    description:
+      "Administrators, executive managers and project managers only, a project manager only for people and projects they manage. Dates are plain local days, both included; the figure counts in full for every week the range touches. An end before the start is 422 `invalid_range`, an archived or unknown person or project is 422 `inactive_user`, `inactive_project`, `unknown_user` or `unknown_project`, and a range that overlaps another for the same person and project is 409 `allocation_overlap`. Planning more than a person's capacity is allowed: the capacity view flags it.",
+    tag: "schedule",
+    responseStatus: 201,
+    responseSchema: "AllocationEnvelope",
+    requestSchema: "AllocationInput",
+    requestRequired: true,
+  },
+  ...(["get", "patch", "delete"] as const).map((method) => ({
+    method,
+    path: "/api/v1/allocations/:id",
+    operationId: `${method === "get" ? "get" : method === "patch" ? "update" : "delete"}Allocation`,
+    summary: `${method === "get" ? "Get" : method === "patch" ? "Update" : "Delete"} an allocation`,
+    tag: "schedule",
+    responseStatus: 200,
+    responseSchema: "AllocationEnvelope",
+    ...(method === "patch"
+      ? {
+          description:
+            "Dates and hours only: the person and project of a plan do not change, so to move one, delete it and make another. The same rules as creating apply, and a plan changed by someone else in the meantime is 409 `allocation_changed`.",
+          requestSchema: "AllocationPatch",
+          requestRequired: true,
+        }
+      : method === "delete" ? { requestSchema: "PlanningRevisionInput", requestRequired: false, description: "Send the version last read in the JSON body. A stale version is 409; omitted versions are deprecated until the 2027-01-22 sunset, then refused." } : {}),
+    parameters: [path("id")],
+  })),
+  {
+    method: "get",
+    path: "/api/v1/capacity",
+    operationId: "getCapacity",
+    summary: "Read planned hours against capacity and tracked time, person by week",
+    description:
+      "Read-only. Weeks begin on the organization's week start day and run from the week holding `from` through the week holding `to`, at most 53. Per person and week: `planned_seconds` (the sum of the allocations touching that week, on active projects), `weekly_capacity_seconds` (the person's current weekly capacity, so part-time is honoured), `tracked_seconds` (rounded time actually logged, a separate figure and never changed by the plan) and `over_allocated` when planned exceeds capacity, which is a flag and never a refusal. Archived people are left out. Administrators and executive managers see everyone, a project manager the people they manage, everyone else only themselves.",
+    tag: "schedule",
+    responseStatus: 200,
+    responseSchema: "CapacityEnvelope",
+    parameters: [
+      { name: "from", location: "query", required: true, schema: dateSchema },
+      { name: "to", location: "query", required: true, schema: dateSchema },
+    ],
+  },
+];
+
+const workItemOperations: ApiContractOperation[] = [
+  {
+    method: "get",
+    path: "/api/v1/settings/work-item-connections",
+    operationId: "listWorkItemConnections",
+    summary: "List the issue trackers this instance has connected",
+    description:
+      "Administrators in a session only. `credential_configured` says whether the deployment holds the provider's credential; the credential itself is never returned.",
+    tag: "work-items",
+    responseStatus: 200,
+    responseSchema: "WorkItemConnectionListEnvelope",
+    sessionOnly: true,
+  },
+  {
+    method: "post",
+    path: "/api/v1/settings/work-item-connections",
+    operationId: "connectWorkItemProvider",
+    summary: "Connect an issue tracker",
+    description:
+      "Administrators in a session only, recorded in the activity log. The credential is a deployment secret chosen by the server, never sent here: a provider with no secret configured is 409 `credential_not_configured`. Connecting a provider that was disconnected revives its row, so earlier links stay attached.",
+    tag: "work-items",
+    responseStatus: 201,
+    responseSchema: "WorkItemConnectionEnvelope",
+    requestSchema: "WorkItemConnectionInput",
+    requestRequired: true,
+    sessionOnly: true,
+  },
+  {
+    method: "post",
+    path: "/api/v1/settings/work-item-connections/:id/disconnect",
+    operationId: "disconnectWorkItemProvider",
+    summary: "Disconnect an issue tracker",
+    description:
+      "Administrators in a session only, recorded in the activity log. Drops the connection's credential reference and keeps the connection and every link made through it. Disconnecting one already disconnected changes nothing.",
+    tag: "work-items",
+    responseStatus: 200,
+    responseSchema: "WorkItemConnectionEnvelope",
+    sessionOnly: true,
+    parameters: [path("id")],
+  },
+  {
+    method: "get",
+    path: "/api/v1/work-item-links",
+    operationId: "listWorkItemLinks",
+    summary: "List links between time or projects and issue tracker items",
+    description:
+      "Administrators see every link; everyone else sees links on their own time entries only.",
+    tag: "work-items",
+    responseStatus: 200,
+    responseSchema: "WorkItemLinkPage",
+    parameters: [
+      ...pageParameters,
+      query("connection_id", integerSchema),
+      query("time_entry_id", integerSchema),
+      query("project_id", integerSchema),
+      query("item_id"),
+    ],
+  },
+  {
+    method: "post",
+    path: "/api/v1/work-item-links",
+    operationId: "createWorkItemLink",
+    summary: "Link a time entry or project to an issue tracker item",
+    description:
+      "Name exactly one of `time_entry_id` or `project_id`. A time entry links to one item per connection (409 `work_item_link_exists` otherwise). Administrators may link any entry or project; everyone else only their own entries, and an entry that is not theirs is 404. The item is recorded as given and is not yet checked with the tracker. A disconnected connection is 409 `work_item_connection_inactive`.",
+    tag: "work-items",
+    responseStatus: 201,
+    responseSchema: "WorkItemLinkEnvelope",
+    requestSchema: "WorkItemLinkInput",
+    requestRequired: true,
+  },
+  {
+    method: "get",
+    path: "/api/v1/work-item-links/:id",
+    operationId: "getWorkItemLink",
+    summary: "Get one work item link",
+    tag: "work-items",
+    responseStatus: 200,
+    responseSchema: "WorkItemLinkEnvelope",
+    parameters: [path("id")],
+  },
+  {
+    method: "delete",
+    path: "/api/v1/work-item-links/:id",
+    operationId: "deleteWorkItemLink",
+    summary: "Remove a work item link",
+    tag: "work-items",
+    responseStatus: 204,
+    parameters: [path("id")],
+  },
+];
+
+const timeOffOperations: ApiContractOperation[] = [
+  {
+    method: "get",
+    path: "/api/v1/time-off",
+    operationId: "listTimeOff",
+    summary: "List time off",
+    description:
+      "Days a person is away, entered by an administrator. Administrators and executive managers read all of it; a project manager reads their own and that of the people they manage; everyone else reads only their own. `from` and `to` keep the entries that reach into that span of days. Time off reduces the capacity the capacity view counts as available; it is not work, is never billed, and has no approval step.",
+    tag: "schedule",
+    responseStatus: 200,
+    responseSchema: "TimeOffPage",
+    parameters: [
+      ...pageParameters,
+      query("user_id", integerSchema),
+      query("from", dateSchema),
+      query("to", dateSchema),
+    ],
+  },
+  {
+    method: "post",
+    path: "/api/v1/time-off",
+    operationId: "createTimeOff",
+    summary: "Enter time off for a person",
+    description:
+      "Administrators, executive managers and project managers only, a project manager only for the people they manage. Dates are plain local days, both included; only Monday to Friday remove capacity. `seconds_per_day` null is a whole day (a fifth of the person's weekly capacity); a figure is that many seconds away on each working day. An end before the start or an unknown `kind` is 422, an archived or unknown person is 422 `inactive_user` or `unknown_user`, and a range that overlaps other time off for the same person is 409 `time_off_overlap`, so a day is never taken off twice.",
+    tag: "schedule",
+    responseStatus: 201,
+    responseSchema: "TimeOffEnvelope",
+    requestSchema: "TimeOffInput",
+    requestRequired: true,
+  },
+  ...(["get", "patch", "delete"] as const).map((method) => ({
+    method,
+    path: "/api/v1/time-off/:id",
+    operationId: `${method === "get" ? "get" : method === "patch" ? "update" : "delete"}TimeOff`,
+    summary: `${method === "get" ? "Get" : method === "patch" ? "Update" : "Delete"} time off`,
+    tag: "schedule",
+    responseStatus: 200,
+    responseSchema: "TimeOffEnvelope",
+    ...(method === "patch"
+      ? {
+          description:
+            "Dates, kind and hours only: the person does not change, so to move time off to someone else, delete it and make another. The same rules as creating apply, and an entry changed by someone else in the meantime is 409 `time_off_changed`.",
+          requestSchema: "TimeOffPatch",
+          requestRequired: true,
+        }
+      : method === "delete" ? { requestSchema: "PlanningRevisionInput", requestRequired: false, description: "Send the version last read in the JSON body. A stale version is 409; omitted versions are deprecated until the 2027-01-22 sunset, then refused." } : {}),
     parameters: [path("id")],
   })),
 ];
@@ -718,7 +1040,8 @@ const moneyOperations: ApiContractOperation[] = [
       "Newest first: by issue_date, latest first; then by number, highest first -- compared as a number when it is made of digits alone (leading zeros ignored) and as text, by Unicode code point, otherwise, with all-digit numbers ahead of the rest on a day that has both; then by id, highest first, so no two invoices tie. " +
       "The first page fixes the traversal to the invoices that existed when it was read: an invoice created after it does not appear on later pages of the same traversal, and is listed by a new one. " +
       "Editing an invoice's issue_date or number moves it in the order, so a traversal already under way may miss it or list it twice. " +
-      "The number parameter narrows the list to the invoice with exactly that number, compared as text, so 089 is not 89; numbers are unique, so the page holds that invoice or nothing.",
+      "The number parameter narrows the list to the invoice with exactly that number, compared as text, so 089 is not 89; numbers are unique, so the page holds that invoice or nothing. " +
+      "The sort parameter orders by issue_date, due_date, number, amount or balance, with - in front for descending (the default is -issue_date, the order above). The chosen column ranks first, then the number, then the id, all in the one direction. A cursor belongs to the sort it was issued under and is refused under another.",
     tag: "invoices",
     responseStatus: 200,
     responseSchema: "InvoicePage",
@@ -735,6 +1058,13 @@ const moneyOperations: ApiContractOperation[] = [
       // One number, exactly: how a page addressed by an invoice number finds
       // the record behind it.
       query("number", { type: "string", minLength: 1, maxLength: 64 }),
+      // Server-side, so Load more continues in the chosen order. Client and
+      // status are not sortable here: a client's display name and the derived
+      // overdue pill cannot be ordered consistently with the cursor.
+      query("sort", {
+        type: "string",
+        pattern: "^-?(issue_date|due_date|number|amount|balance)$",
+      }),
     ],
   },
   {
@@ -788,6 +1118,20 @@ const moneyOperations: ApiContractOperation[] = [
     requestSchema: "EstimateMessageInput",
     requestRequired: true,
     parameters: [path("id"), idempotency],
+  },
+  {
+    method: "patch",
+    path: "/api/v1/estimates/:id/expiry",
+    operationId: "setEstimateExpiry",
+    summary: "Set or clear the last day a customer can answer an estimate",
+    description:
+      "The expiry is the last day the estimate can still be answered, to the end of that day in the instance timezone; null clears it and the organization's estimate validity applies. Moving it does not change the content version a customer was shown. Asking for the expiry the estimate already has changes nothing.",
+    tag: "estimates",
+    responseStatus: 200,
+    responseSchema: "EstimateEnvelope",
+    requestSchema: "EstimateExpiryInput",
+    requestRequired: true,
+    parameters: [path("id")],
   },
   {
     method: "post",
@@ -1199,6 +1543,16 @@ const signInMethodOperations: ApiContractOperation[] = [
  */
 const backupOperations: ApiContractOperation[] = [
   {
+    method: "post",
+    path: "/api/v1/backup/offsite/check",
+    operationId: "checkOffsiteBackupDestination",
+    summary: "Verify the deployment-configured encrypted off-site backup destination",
+    sessionOnly: true,
+    tag: "backup",
+    responseStatus: 200,
+    responseSchema: "OffsiteBackupCheckEnvelope",
+  },
+  {
     method: "get",
     path: "/api/v1/backup/status",
     operationId: "getBackupStatus",
@@ -1206,6 +1560,44 @@ const backupOperations: ApiContractOperation[] = [
     tag: "backup",
     responseStatus: 200,
     responseSchema: "BackupStatusEnvelope",
+    sessionOnly: true,
+  },
+  {
+    method: "get",
+    path: "/api/v1/backup/runs",
+    operationId: "listBackupRuns",
+    summary: "List backup runs, newest first, a page at a time",
+    description:
+      "The history behind the backup status, which holds only the latest runs. " +
+      "page.total counts everything the filters match, not only this page.",
+    tag: "backup",
+    responseStatus: 200,
+    responseSchema: "BackupRunPage",
+    sessionOnly: true,
+    parameters: [
+      ...pageParameters,
+      query("status", { type: "string", enum: ["running", "completed", "failed"] }),
+      query("trigger", { type: "string", enum: ["nightly", "manual"] }),
+    ],
+  },
+  {
+    method: "post",
+    path: "/api/v1/backup/download-links",
+    operationId: "createBackupDownloadLink",
+    summary: "Create a single-use, ten-minute link that downloads a backup as one ZIP",
+    description:
+      "Administrator session only; an API token is refused. The backup carries " +
+      "credential hashes and authenticator seeds, so the link is a secret: " +
+      "it works once, expires in ten minutes, and the token in url is shown only " +
+      "in this response. Where the administrator has an authenticator enrolled, " +
+      "code must be a current authenticator or recovery code. run_id defaults to " +
+      "the latest completed run. Following the link answers 404 to anything that " +
+      "is not a live link, whatever the reason.",
+    tag: "backup",
+    responseStatus: 201,
+    responseSchema: "BackupDownloadLinkEnvelope",
+    requestSchema: "BackupDownloadLinkInput",
+    requestRequired: true,
     sessionOnly: true,
   },
 ];
@@ -1264,6 +1656,16 @@ const quickBooksOperations: ApiContractOperation[] = [
     summary: "Disconnect the QuickBooks company and revoke the grant",
     tag: "integrations",
     responseStatus: 204,
+    sessionOnly: true,
+  },
+  {
+    method: "get",
+    path: "/api/v1/integrations/quickbooks/reconciliation",
+    operationId: "getQuickBooksReconciliation",
+    summary: "Differences between our invoices and the QuickBooks company, listed and never corrected",
+    tag: "integrations",
+    responseStatus: 200,
+    responseSchema: "QuickBooksReconciliationEnvelope",
     sessionOnly: true,
   },
   // Where one invoice stands with QuickBooks, and the button that mirrors it
@@ -1688,6 +2090,58 @@ const invoiceThankYouPreferenceOperations: ApiContractOperation[] = [
   },
 ];
 
+// Company settings for the mail the instance sends its own people (issue 934).
+const notificationSettingsOperations: ApiContractOperation[] = [
+  {
+    method: "get",
+    path: "/api/v1/settings/notifications",
+    operationId: "getNotificationSettings",
+    summary: "Company settings for the mail the instance sends its own people",
+    tag: "admin-modules",
+    responseStatus: 200,
+    responseSchema: "NotificationSettingsEnvelope",
+    sessionOnly: true,
+  },
+  {
+    method: "post",
+    path: "/api/v1/settings/notifications",
+    operationId: "setNotificationSettings",
+    summary: "Change the company settings for budget alerts and reminders",
+    tag: "admin-modules",
+    responseStatus: 200,
+    responseSchema: "NotificationSettingsEnvelope",
+    requestSchema: "NotificationSettingsInput",
+    requestRequired: true,
+    sessionOnly: true,
+  },
+];
+
+// Issue 1009: the optional automatic approval of submitted timesheets.
+const timesheetAutoApprovalOperations: ApiContractOperation[] = [
+  {
+    method: "get",
+    path: "/api/v1/settings/timesheet-auto-approval",
+    operationId: "getTimesheetAutoApproval",
+    summary: "The automatic timesheet approval policy",
+    tag: "admin-modules",
+    responseStatus: 200,
+    responseSchema: "TimesheetAutoApprovalEnvelope",
+    sessionOnly: true,
+  },
+  {
+    method: "post",
+    path: "/api/v1/settings/timesheet-auto-approval",
+    operationId: "setTimesheetAutoApproval",
+    summary: "Turn automatic timesheet approval on or off, or change its window",
+    tag: "admin-modules",
+    responseStatus: 200,
+    responseSchema: "TimesheetAutoApprovalEnvelope",
+    requestSchema: "TimesheetAutoApprovalInput",
+    requestRequired: true,
+    sessionOnly: true,
+  },
+];
+
 // Invoices › Configure: company information and default values.
 const invoiceDefaultsOperations: ApiContractOperation[] = [
   {
@@ -1843,6 +2297,20 @@ const invoiceDocumentPreferenceOperations: ApiContractOperation[] = [
       query("detail", { type: "string", enum: ["detailed", "summary"] }),
     ],
   },
+  // Billed hours against the entries the invoice claims (issue 924): per
+  // project and whole invoice, within a rounding tolerance. Read with the
+  // invoice's own authority, like the report it checks.
+  {
+    method: "get",
+    path: "/api/v1/invoices/:id/hours-reconciliation",
+    operationId: "getInvoiceHoursReconciliation",
+    summary: "Compare the hours an invoice bills with the time entries it claims",
+    tag: "money",
+    responseStatus: 200,
+    responseSchema: "InvoiceHoursReconciliationEnvelope",
+    parameters: [path("id")],
+  },
+  {method:'post',path:'/api/v1/invoices/:id/hours-reconciliation/release',operationId:'releaseInvoiceLineTime',sessionOnly:true,summary:'Explicitly release selected whole entries from a saved draft line to match its billed hours',tag:'money',responseStatus:200,responseSchema:'InvoiceLineTimeReleaseEnvelope',requestSchema:'InvoiceLineTimeReleaseInput',parameters:[path('id')]},
 ];
 
 const payoutAccountOperations: ApiContractOperation[] = [
@@ -1879,6 +2347,71 @@ const payoutAccountOperations: ApiContractOperation[] = [
     responseStatus: 204,
     sessionOnly: true,
     parameters: [path("id")],
+  },
+  {
+    method: "get",
+    path: "/api/v1/payout-providers",
+    operationId: "listPayoutProviders",
+    summary: "The payout providers an administrator has made available",
+    tag: "payout-accounts",
+    responseStatus: 200,
+    responseSchema: "PayoutProviderListEnvelope",
+    sessionOnly: true,
+  },
+  {
+    method: "patch",
+    path: "/api/v1/payout-providers/:provider",
+    operationId: "setPayoutProviderEnabled",
+    summary: "Enable or disable a payout provider for new links",
+    description: "Disabling a provider stops new links to it. Accounts already linked are kept.",
+    tag: "payout-accounts",
+    responseStatus: 204,
+    requestSchema: "PayoutProviderSettingInput",
+    requestRequired: true,
+    sessionOnly: true,
+    parameters: [
+      {
+        name: "provider",
+        location: "path",
+        schema: { type: "string", enum: ["deel", "wise"] },
+      },
+    ],
+  },
+  {
+    method: "get",
+    path: "/api/v1/users/:id/payout-preference",
+    operationId: "getPayoutPreference",
+    summary: "A person's default payout provider, and the organization's",
+    description: "Their own choice, or an administrator's. effective_provider is the default used for their payouts: their choice, else the organization default.",
+    tag: "payout-accounts",
+    responseStatus: 200,
+    responseSchema: "PayoutPreferenceEnvelope",
+    sessionOnly: true,
+    parameters: [path("id")],
+  },
+  {
+    method: "patch",
+    path: "/api/v1/users/:id/payout-preference",
+    operationId: "setPayoutPreference",
+    summary: "Choose a person's default payout provider",
+    description: "A person chooses their own; an administrator may choose it for them. Only a provider the person holds and the instance has enabled. Null returns to the organization default. expected_version must match the current version, or the answer is 409.",
+    tag: "payout-accounts",
+    responseStatus: 204,
+    additionalResponseStatuses: [409, 422],
+    requestSchema: "PayoutPreferenceInput",
+    requestRequired: true,
+    sessionOnly: true,
+    parameters: [path("id")],
+  },
+  {
+    method: "get",
+    path: "/api/v1/payout-preferences",
+    operationId: "listPayoutPreferences",
+    summary: "Every person's default payout provider, for administrators",
+    tag: "payout-accounts",
+    responseStatus: 200,
+    responseSchema: "PayoutPreferenceRosterEnvelope",
+    sessionOnly: true,
   },
 ];
 
@@ -1964,6 +2497,56 @@ const twoFactorOperations: ApiContractOperation[] = [
     requestRequired: true,
     sessionOnly: true,
   },
+  // Issue 770: a code by email, alongside the authenticator rather than
+  // instead of it. Password sign-in only.
+  {
+    method: "post",
+    path: "/api/v1/two-factor/email",
+    operationId: "enableTwoFactorEmail",
+    summary: "Turn on the emailed second factor",
+    description:
+      "Needs a verified email address. A code is mailed at password sign-in; magic-link and federated sign-in never use this factor.",
+    tag: "two-factor",
+    responseStatus: 200,
+    responseSchema: "TwoFactorStatusEnvelope",
+    sessionOnly: true,
+  },
+  {
+    method: "delete",
+    path: "/api/v1/two-factor/email",
+    operationId: "disableTwoFactorEmail",
+    summary: "Turn off the emailed second factor",
+    tag: "two-factor",
+    responseStatus: 200,
+    responseSchema: "TwoFactorStatusEnvelope",
+    sessionOnly: true,
+  },
+  {
+    method: "get",
+    path: "/api/v1/users/:id/two-factor/email",
+    operationId: "getUserTwoFactorEmail",
+    summary: "Whether a user has the emailed second factor on (administrator)",
+    description:
+      "Lets an administrator see the state before turning it off. Administrators only; session only.",
+    tag: "two-factor",
+    responseStatus: 200,
+    responseSchema: "TwoFactorEmailStateEnvelope",
+    sessionOnly: true,
+    parameters: [path("id")],
+  },
+  {
+    method: "delete",
+    path: "/api/v1/users/:id/two-factor/email",
+    operationId: "disableUserTwoFactorEmail",
+    summary: "Turn off a user's emailed second factor (administrator)",
+    description:
+      "Lockout recovery for a user who lost their mailbox. Administrators only; the change is recorded in the activity log.",
+    tag: "two-factor",
+    responseStatus: 200,
+    responseSchema: "TwoFactorEmailDisabledEnvelope",
+    sessionOnly: true,
+    parameters: [path("id")],
+  },
 ];
 
 const userEmailOperations: ApiContractOperation[] = [
@@ -2030,6 +2613,9 @@ const detailedTimeParameters: readonly ApiContractParameter[] = [
     enum: ["all", "invoiced", "uninvoiced"],
   }),
   query("active_projects_only", booleanSchema),
+  // Entries whose note contains this text, case-insensitively. Under the
+  // `client` audience only notes a client may read are searched.
+  query("notes", { type: "string", maxLength: 200 }),
 ];
 
 const reportOperations: ApiContractOperation[] = [
@@ -2054,6 +2640,12 @@ const reportOperations: ApiContractOperation[] = [
     requestSchema: "SavedReportInput", requestRequired: true,
   },
   {
+    method: "post", path: "/api/v1/report-views",
+    operationId: "createReportView", summary: "Save the report on screen: a report kind and its address, private to the author",
+    tag: "reports", responseStatus: 201, responseSchema: "SavedReportEnvelope",
+    requestSchema: "SavedReportViewInput", requestRequired: true,
+  },
+  {
     method: "post", path: "/api/v1/report-definitions/preview",
     operationId: "previewReportDefinition", summary: "Run an unsaved report definition",
     tag: "reports", responseStatus: 200, responseSchema: "ReportRunnerEnvelope",
@@ -2074,7 +2666,7 @@ const reportOperations: ApiContractOperation[] = [
   },
   {
     method: "delete", path: "/api/v1/report-definitions/:reportId",
-    operationId: "deleteSavedReport", summary: "Delete an owned saved report",
+    operationId: "deleteSavedReport", summary: "Delete a saved report you own, or any saved report as an administrator",
     tag: "reports", responseStatus: 204,
     parameters: [stringPath("reportId")],
   },
@@ -2105,6 +2697,18 @@ const reportOperations: ApiContractOperation[] = [
     operationId: "unshareSavedReport", summary: "Revoke a teammate's report share",
     tag: "reports", responseStatus: 204,
     parameters: [stringPath("reportId"), path("userId")],
+  },
+  {
+    method: "post", path: "/api/v1/report-definitions/:reportId/role-shares/:profile",
+    operationId: "shareSavedReportWithRole", summary: "Share an owned report with everyone in a role",
+    tag: "reports", responseStatus: 204,
+    parameters: [stringPath("reportId"), stringPath("profile")],
+  },
+  {
+    method: "delete", path: "/api/v1/report-definitions/:reportId/role-shares/:profile",
+    operationId: "unshareSavedReportWithRole", summary: "Revoke a role's access to an owned report",
+    tag: "reports", responseStatus: 204,
+    parameters: [stringPath("reportId"), stringPath("profile")],
   },
   {
     method: "post", path: "/api/v1/report-definitions/:reportId/run",
@@ -2170,6 +2774,8 @@ const reportOperations: ApiContractOperation[] = [
     parameters: [
       { ...query("as_of", dateSchema), required: true },
       query("client_id", integerSchema),
+      // Per invoice, before the aging columns and totals are built.
+      query("due_state", { type: "string", enum: ["not_due", "past_due"] }),
     ],
   },
   {
@@ -2380,6 +2986,137 @@ const clientTreeOperations: ApiContractOperation[] = [
   },
 ];
 
+
+const migrationLoadOperations: ApiContractOperation[] = [
+  {
+    method: "get",
+    path: "/api/v1/migration-loads/:id",
+    operationId: "getMigrationLoadStatus",
+    summary: "Read migration progress (administrator session)",
+    description:
+      "Reports safe aggregate progress and an error code. During import quarantine the operator uses Cloudflare CLI status; ordinary application traffic remains unavailable.",
+    tag: "migration",
+    responseStatus: 200,
+    responseSchema: "MigrationLoadStatusEnvelope",
+    sessionOnly: true,
+    parameters: [stringPath("id")],
+  },
+];
+
+const estimateTemplateOperations: ApiContractOperation[] = [
+  {
+    method: "get",
+    path: "/api/v1/estimate-templates",
+    operationId: "listEstimateTemplates",
+    summary: "List reusable quote content",
+    description:
+      "Requires invoices:write. Archived templates remain visible for audit; only active templates can create drafts. At most 1000 rows with an explicit truncated indicator.",
+    tag: "estimates",
+    responseStatus: 200,
+    responseSchema: "EstimateTemplateListEnvelope",
+  },
+  {
+    method: "post",
+    path: "/api/v1/estimate-templates",
+    operationId: "createEstimateTemplate",
+    summary: "Save reusable quote content",
+    description:
+      "Creates audited reusable content without customer, document or delivery identity.",
+    tag: "estimates",
+    responseStatus: 201,
+    responseSchema: "EstimateTemplateEnvelope",
+    requestSchema: "EstimateTemplateInput",
+    requestRequired: true,
+  },
+  {
+    method: "patch",
+    path: "/api/v1/estimate-templates/:id",
+    operationId: "updateEstimateTemplate",
+    summary: "Edit or archive reusable quote content",
+    description:
+      "Requires the current version; changes never rewrite estimates already created. Archiving is final.",
+    tag: "estimates",
+    responseStatus: 200,
+    responseSchema: "EstimateTemplateEnvelope",
+    requestSchema: "EstimateTemplateUpdateInput",
+    requestRequired: true,
+    parameters: [stringPath("id")],
+  },
+  {
+    method: "post",
+    path: "/api/v1/estimates",
+    operationId: "createEstimateDraft",
+    summary: "Create a new estimate draft",
+    description:
+      "Requires invoices:write and an idempotency key. Copies content into independent quote rows, with explicit client, number and issue date. Never sends, accepts, charges or converts. Optional template provenance must still be current and active.",
+    tag: "estimates",
+    responseStatus: 201,
+    responseSchema: "EstimateDraftEnvelope",
+    requestSchema: "EstimateDraftInput",
+    requestRequired: true,
+    parameters: [header("Idempotency-Key")],
+  },
+];
+
+const clientRateCardOperations: ApiContractOperation[] = [
+  {
+    method: "get",
+    path: "/api/v1/clients/:id/rate-card",
+    operationId: "getClientRateCard",
+    summary: "Get the rate card attached to a client",
+    description:
+      "The card attached directly to this client, with every version, oldest first; inheritance is not applied (use the effective lookup for that). 404 `rate_card_not_found` when the client has no card. Billable rates are money: only the profiles that may see billable rates (administrator, accounting, executive manager, and a project manager granted `billable_rates_manager`) read a card, and everyone else is 403 `money_forbidden`.",
+    tag: "client-rate-cards",
+    responseStatus: 200,
+    responseSchema: "ClientRateCardEnvelope",
+    parameters: [path("id")],
+  },
+  {
+    method: "post",
+    path: "/api/v1/clients/:id/rate-card",
+    operationId: "createClientRateCard",
+    summary: "Attach a named rate card to a client",
+    description:
+      "A client has at most one card (409 `rate_card_exists`); change its rates by adding a version. The card starts with no versions and prices nothing until one is added. Same visibility rule as reading, and the caller must also be allowed to write clients.",
+    tag: "client-rate-cards",
+    responseStatus: 201,
+    responseSchema: "ClientRateCardEnvelope",
+    requestSchema: "ClientRateCardInput",
+    requestRequired: true,
+    parameters: [path("id")],
+  },
+  {
+    method: "post",
+    path: "/api/v1/clients/:id/rate-card/versions",
+    operationId: "createClientRateCardVersion",
+    summary: "Append a version to a client's rate card",
+    description:
+      "Versions are append-only and effective-dated: the version in force on a date is the one with the latest `start_date` on or before it, and a null `start_date` means all prior dates. A new version must start after every existing one (409 `rate_card_version_order`); a correction is simply a later version. A line with a null `task_id` is the card default; a task line wins for that task. An empty `lines` array retires the card, so it is skipped and the next ancestor's card applies. Adding a version prices work resolved afterwards; it never changes an existing entry, snapshot or invoice, and existing entries change only through the audited reprice.",
+    tag: "client-rate-cards",
+    responseStatus: 201,
+    responseSchema: "ClientRateCardEnvelope",
+    requestSchema: "ClientRateCardVersionInput",
+    requestRequired: true,
+    parameters: [path("id")],
+  },
+  {
+    method: "get",
+    path: "/api/v1/clients/:id/effective-rate-card",
+    operationId: "getClientEffectiveRateCard",
+    summary: "Look up the card rate that prices a task for a client",
+    description:
+      "Walks the client and its ancestors through `parent_client_id` only (never the bill-to client), nearest first, with the same rules the rate resolver uses: a card with no version in force, an empty version, or no line for the task and no default line is skipped. `supplied_by_client_id` is the node whose card priced it and `depth` how far up that node sits (0 is the client itself). The card prices only projects billed by people that use default rates. `spent_date` defaults to today in the instance time zone. 404 `rate_card_not_found` when no card prices it.",
+    tag: "client-rate-cards",
+    responseStatus: 200,
+    responseSchema: "EffectiveClientRateCardEnvelope",
+    parameters: [
+      path("id"),
+      { ...query("task_id", integerSchema), required: true },
+      query("spent_date", dateSchema),
+    ],
+  },
+];
+
 const teamOperations: ApiContractOperation[] = [
   {
     method: "get",
@@ -2454,7 +3191,7 @@ const teamOperations: ApiContractOperation[] = [
     method: "post",
     path: "/api/v1/team/people/:id/notifications",
     operationId: "updateTeamPersonNotifications",
-    summary: "Persist inactive notification preferences; delivery is unavailable",
+    summary: "Save a person's reminder and digest preferences",
     tag: "team",
     responseStatus: 200,
     responseSchema: "TeamCommandReceiptEnvelope",
@@ -2494,9 +3231,29 @@ const teamOperations: ApiContractOperation[] = [
     sessionOnly: true,
     parameters: [path("id"), path("rateId"), header("Idempotency-Key")],
   },
+  {
+    // Pricing the cost of hours tracked before a person had a cost rate (#750).
+    // Rehearsal is the default: a call writes nothing unless it says `apply`.
+    // The rate and the range are always the caller's; the idempotency key names
+    // the run recorded on every reprice row it writes.
+    method: "post",
+    path: "/api/v1/team/people/:id/cost-rate-backfill",
+    operationId: "backfillTeamPersonCostRate",
+    summary: "Rehearse or apply a cost rate over hours tracked before the person had one",
+    tag: "team",
+    responseStatus: 200,
+    responseSchema: "CostRateBackfillEnvelope",
+    requestSchema: "CostRateBackfillInput",
+    requestRequired: true,
+    sessionOnly: true,
+    parameters: [path("id"), header("Idempotency-Key")],
+  },
 ];
 
 export const apiContractOperations: readonly ApiContractOperation[] = [
+  ...githubReaderOperations,
+  ...githubPublicationOperations,
+  { method: "post", path: "/api/v1/projects/:id/missing-rates", operationId: "recoverProjectMissingRates", summary: "Preview or explicitly repair missing project-rate snapshots on open time", tag: "projects", responseStatus: 200, responseSchema: "ProjectMissingRatesEnvelope", requestSchema: "ProjectMissingRatesInput", requestRequired: true, sessionOnly: true, parameters: [path("id")] },
   { method:"get",path:"/auth/apple/native-capabilities",operationId:"getNativeAppleCapabilities",summary:"Check explicit native Apple lifecycle protocol support",tag:"authentication",public:true,responseStatus:200,responseSchema:"NativeAppleCapabilities" },
   { method:"post",path:"/auth/apple",operationId:"signInNativeApple",summary:"Verify origin-bound Apple lifecycle custody and native identity before sign-in",tag:"authentication",public:true,responseStatus:200,responseSchema:"NativeAppleSignInEnvelope",requestSchema:"NativeAppleSignInInput",requestRequired:true },
   { method:"post",path:"/auth/apple/deletion-requests/:id/binding",operationId:"rebindAppleCleanup",summary:"Bind fresh cleanup-purpose Apple custody to a pending deletion request",tag:"authentication",public:true,responseStatus:204,requestSchema:"AppleLifecycleProofInput",requestRequired:true,parameters:[stringPath("id")] },
@@ -2585,6 +3342,20 @@ export const apiContractOperations: readonly ApiContractOperation[] = [
   },
   {
     method: "post",
+    path: "/auth/two-factor/email-code",
+    operationId: "sendTwoFactorEmailCode",
+    summary: "Email a verification code for a pending sign-in",
+    description:
+      "Supersedes the earlier challenge: the response carries the new one. Limited to one a minute and five an hour per user. Only a password sign-in can ask.",
+    tag: "authentication",
+    responseStatus: 200,
+    responseSchema: "TwoFactorChallengeIssuedEnvelope",
+    requestSchema: "TwoFactorEmailCodeInput",
+    requestRequired: true,
+    public: true,
+  },
+  {
+    method: "post",
     path: "/auth/password/forgot",
     operationId: "requestPasswordReset",
     summary: "Request a password-reset email",
@@ -2622,17 +3393,42 @@ export const apiContractOperations: readonly ApiContractOperation[] = [
     path: "/api/v1/email-log",
     operationId: "listEmailLog",
     summary: "List outbound email delivery outcomes",
+    description:
+      "Newest first, or oldest first with order=oldest, a page at a time. " +
+      "The first page fixes the traversal to the mail that existed when it was read: mail sent after it does not appear on later pages of the same traversal. " +
+      "The filters combine. from and to are calendar days in the organization's timezone, both included. " +
+      "q matches part of a recipient's address or name in To or Cc, ignoring case. " +
+      "page.total counts everything the filters match, not only this page.",
     tag: "email",
     responseStatus: 200,
     responseSchema: "EmailLogPage",
     sessionOnly: true,
     parameters: [
+      ...pageParameters,
       query("status", {
         type: "string",
         enum: ["queued", "sent", "bounced", "complained", "failed"],
       }),
-      query("per_page", { type: "integer", minimum: 1, maximum: 200 }),
+      query("kind", {
+        type: "string",
+        enum: ["invoice", "invoice_preview", "reminder", "thank_you", "sign_in", "account"],
+      }),
+      query("from", dateSchema),
+      query("to", dateSchema),
+      query("q", { type: "string", minLength: 1, maxLength: 200 }),
+      query("order", { type: "string", enum: ["newest", "oldest"] }),
     ],
+  },
+  {
+    method: "get", path: "/api/v1/email-suppressions", operationId: "listEmailSuppressions",
+    summary: "List suppressed recipients with immutable provider evidence", tag: "email",
+    responseStatus: 200, responseSchema: "EmailSuppressionsPage", sessionOnly: true, parameters: [...pageParameters],
+  },
+  {
+    method: "post", path: "/api/v1/email-suppressions/:id/lift", operationId: "liftEmailSuppression",
+    summary: "Allow future delivery after reviewing the current suppression evidence", tag: "email",
+    responseStatus: 200, responseSchema: "EmailSuppressionLiftEnvelope", requestSchema: "EmailSuppressionLiftInput",
+    sessionOnly: true, parameters: [path("id")],
   },
   {
     method: "get",
@@ -2778,35 +3574,105 @@ export const apiContractOperations: readonly ApiContractOperation[] = [
   },
   {
     method: "get",
+    path: "/api/v1/activity-log/status",
+    operationId: "getActivityLogStatus",
+    summary: "Get Activity log module availability for navigation",
+    tag: "activity",
+    responseStatus: 200,
+    responseSchema: "ActivityLogStatusEnvelope",
+  },
+  {
+    method: "get",
     path: "/api/v1/activity-log",
     operationId: "listActivityLog",
-    summary: "List activity recorded from delivered domain events",
+    summary: "List activity recorded from delivered domain events (403 `module_disabled` when the module is off)",
     tag: "activity",
     responseStatus: 200,
     responseSchema: "ActivityLogPage",
+    description:
+      "Newest first, a page at a time, ordered by when each entry was recorded and then its event id. " +
+      "Every filter narrows together; a value that is not valid is a 422, never an empty page. " +
+      "aggregate_id needs aggregate_type. Sign-in, token and account-deletion events are left out unless the reader is an administrator.",
     parameters: [
-      query("per_page", { type: "integer", minimum: 1, maximum: 200 }),
+      ...pageParameters,
       query("from", dateSchema),
       query("to", dateSchema),
       query("event_type", stringSchema),
       query("actor_id", integerSchema),
+      query("aggregate_type", stringSchema),
+      query("aggregate_id", integerSchema),
     ],
+  },
+  {
+    method: "get",
+    path: "/api/v1/activity-log/export",
+    operationId: "exportActivityLog",
+    summary: "Download the filtered Activity log as CSV (403 `module_disabled` when the module is off)",
+    tag: "activity",
+    responseStatus: 200,
+    binaryResponse: true,
+    description:
+      "The same filters as the list, applied together, and the same entries a reader may see. " +
+      "At most 5000 entries, newest first; a longer log is cut and the file ends with a Truncated line, " +
+      "with the x-export-truncated response header set to true. Event payloads are not included.",
+    parameters: [
+      query("from", dateSchema),
+      query("to", dateSchema),
+      query("event_type", stringSchema),
+      query("actor_id", integerSchema),
+      query("aggregate_type", stringSchema),
+      query("aggregate_id", integerSchema),
+    ],
+  },
+  {
+    method: "get",
+    path: "/api/v1/activity-log/rolls",
+    operationId: "listRollableActivityYears",
+    summary: "List the finished years the Activity log can still roll (administrator session; 403 `module_disabled` when the module is off)",
+    tag: "activity",
+    responseStatus: 200,
+    responseSchema: "RollableActivityYearsEnvelope",
+    sessionOnly: true,
+  },
+  {
+    method: "post",
+    path: "/api/v1/activity-log/rolls",
+    operationId: "rollActivityYear",
+    summary: "Roll a finished year of the Activity log into its own table (administrator session; 403 `module_disabled` when the module is off)",
+    tag: "activity",
+    responseStatus: 201,
+    responseSchema: "ActivityYearRolledEnvelope",
+    requestSchema: "RollActivityYearInput",
+    requestRequired: true,
+    sessionOnly: true,
+    description:
+      "Nothing is deleted: the year's entries move to activity_log_<year>, still append-only, and stay readable. " +
+      "The current year and a year that has already been rolled are refused with 409. " +
+      "The roll is recorded in the log as activity_log.rolled. An API token cannot call this.",
   },
   {
     method: "get",
     path: "/api/v1/outbox-deliveries",
     operationId: "listOutboxDeliveries",
     summary: "List domain-event subscriber delivery outcomes",
+    description:
+      "Newest first, or oldest first with order=oldest, a page at a time, by when the delivery was created. " +
+      "from and to are calendar days in the organization's timezone, both included. " +
+      "page.total counts everything the filters match, not only this page.",
     tag: "operations",
     responseStatus: 200,
     responseSchema: "OutboxDeliveryPage",
     sessionOnly: true,
     parameters: [
+      ...pageParameters,
       query("status", {
         type: "string",
         enum: ["pending", "processing", "delivered", "failed"],
       }),
-      query("per_page", { type: "integer", minimum: 1, maximum: 200 }),
+      query("event_type", stringSchema),
+      query("from", dateSchema),
+      query("to", dateSchema),
+      query("order", { type: "string", enum: ["newest", "oldest"] }),
     ],
   },
   {
@@ -2892,6 +3758,28 @@ export const apiContractOperations: readonly ApiContractOperation[] = [
     responseSchema: "ProfileEnvelope",
   },
   {
+    method: "get",
+    path: "/api/v1/profile/notifications",
+    operationId: "getProfileNotifications",
+    summary: "The signed-in user's own reminder and digest preferences",
+    tag: "profile",
+    responseStatus: 200,
+    responseSchema: "ProfileNotificationEnvelope",
+    sessionOnly: true,
+  },
+  {
+    method: "post",
+    path: "/api/v1/profile/notifications",
+    operationId: "updateProfileNotifications",
+    summary: "Change the signed-in user's own reminder and digest preferences",
+    tag: "profile",
+    responseStatus: 200,
+    responseSchema: "ProfileNotificationEnvelope",
+    requestSchema: "ProfileNotificationInput",
+    requestRequired: true,
+    sessionOnly: true,
+  },
+  {
     method: "patch",
     path: "/api/v1/profile",
     operationId: "updateProfile",
@@ -2916,13 +3804,32 @@ export const apiContractOperations: readonly ApiContractOperation[] = [
   ...generalOperations(),
   ...rateOperations(),
   ...timeEntryOperations,
+  ...calendarProposalOperations,
+  ...calendarConnectionOperations,
+  ...calendarOperatorCleanupOperations,
+  ...allocationOperations,
+  ...timeOffOperations,
+  ...organizationHolidayOperations,
+  ...placeholderPlanningOperations,
+  ...resourceCalendarOperations,
+  ...calendarFeedOperations,
+  ...workItemOperations,
   ...timesheetApprovalOperations,
   ...timesheetLockPolicyOperations,
   ...expenseOperations,
-  ...moneyOperations,
+  ...moneyOperations.map(documentInvoiceTokenElevation),
   ...attachmentContractOperations,
   ...staffPaymentOperations,
+  ...invoiceProviderAlertOperations,
+  ...bankDepositOperations,
+  ...deelSyncOperations,
+  ...deelStagingOperations,
   ...paymentRunOperations,
+  ...advanceCreditOperations,
+  ...staffInvoiceOperations,
+  ...contractorReviewOperations,
+  ...scheduledRunOperations,
+  ...scheduledJobOperations,
   ...reportOperations,
   ...moduleSettingsOperations,
   ...signInMethodOperations,
@@ -2938,6 +3845,8 @@ export const apiContractOperations: readonly ApiContractOperation[] = [
   ...invoiceTimeClaimOperations,
   ...invoiceDocumentPreferenceOperations,
   ...invoiceDefaultsOperations,
+  ...notificationSettingsOperations,
+  ...timesheetAutoApprovalOperations,
   ...invoiceThankYouPreferenceOperations,
   ...recurringRepairOperations,
   ...payoutAccountOperations,
@@ -2946,8 +3855,19 @@ export const apiContractOperations: readonly ApiContractOperation[] = [
   ...userEmailOperations,
   ...teamOperations,
   ...clientTreeOperations,
+  ...clientRateCardOperations,
+  ...estimateTemplateOperations,
+  ...migrationLoadOperations,
+  ...invoiceElevationOperations,
+  ...outboundWebhookOperations,
+  ...csvImportStagingOperations,
+  ...csvImportApplyOperations,
 ];
 
+const reconciliationStatusSchema: JsonSchema = {
+  type: "string",
+  enum: ["matched", "billed_below_linked", "billed_above_linked", "not_comparable"],
+};
 const nullable = (schema: JsonSchema): JsonSchema => ({
   anyOf: [schema, { type: "null" }],
 });
@@ -2970,6 +3890,18 @@ const page = (name: string): JsonSchema => ({
     data: { type: "array", items: reference(name) },
     links: reference("PageLinks"),
     page: reference("PageMetadata"),
+  },
+  additionalProperties: false,
+});
+
+/** A page that also says how many rows its filters match (issue 929). */
+const countedPage = (name: string): JsonSchema => ({
+  type: "object",
+  required: ["data", "links", "page"],
+  properties: {
+    data: { type: "array", items: reference(name) },
+    links: reference("PageLinks"),
+    page: reference("CountedPageMetadata"),
   },
   additionalProperties: false,
 });
@@ -3167,9 +4099,28 @@ const timeReportTotalsRequired: readonly string[] = [
 ];
 
 export const apiContractSchemas: Readonly<Record<string, JsonSchema>> = {
+  ...githubReaderSchemas,
+  ...githubPublicationSchemas,
+  ...outboundWebhookSchemas,
+  ...invoiceElevationSchemas,
+  ...organizationHolidaySchemas,
+  ...placeholderPlanningSchemas,
+  ...resourceCalendarSchemas,
+  ...calendarConnectionSchemas,
+  ...calendarOperatorCleanupSchemas,
+  ...calendarFeedSchemas,
   ...attachmentContractSchemas,
   ...staffPaymentSchemas,
+  ...invoiceProviderAlertSchemas,
+  ...bankDepositSchemas,
+  ...deelSyncSchemas,
+  ...deelStagingSchemas,
   ...paymentRunSchemas,
+  ...advanceCreditSchemas,
+  ...staffInvoiceSchemas,
+  ...contractorReviewSchemas,
+  ...scheduledRunSchemas,
+  ...scheduledJobSchemas,
   InvoiceReminderPolicy: {
     type: "object",
     required: ["first_after_days", "every_days"],
@@ -3194,6 +4145,8 @@ export const apiContractSchemas: Readonly<Record<string, JsonSchema>> = {
     type: "object",
     required: ["code", "message", "fields"],
     properties: {
+      currentVersion: { type: "integer", minimum: 0, maximum: 9007199254740991 },
+      current: { oneOf: [reference("Allocation"), reference("TimeOff")] },
       code: stringSchema,
       message: stringSchema,
       fields: { type: "array", items: reference("FieldError") },
@@ -3377,6 +4330,7 @@ export const apiContractSchemas: Readonly<Record<string, JsonSchema>> = {
       "attempt_count",
       "failure_code",
       "failure_reason",
+      "viewed_at",
       "created_at",
       "updated_at",
     ],
@@ -3408,20 +4362,15 @@ export const apiContractSchemas: Readonly<Record<string, JsonSchema>> = {
         enum: ["queue_unavailable", "provider_timeout", "provider_rejected"],
       }),
       failure_reason: nullable(stringSchema),
+      // When the client first opened the invoice this email carried a link to
+      // (issue 936); null for every email that carried none, and until opened.
+      viewed_at: nullable(timestampSchema),
       created_at: timestampSchema,
       updated_at: timestampSchema,
     },
     additionalProperties: false,
   },
-  EmailLogPage: {
-    type: "object",
-    required: ["data", "links"],
-    properties: {
-      data: { type: "array", items: reference("EmailLog") },
-      links: reference("Links"),
-    },
-    additionalProperties: false,
-  },
+  EmailLogPage: countedPage("EmailLog"),
   EmailReputationSnapshot: {
     type: "object",
     required: [
@@ -3442,11 +4391,46 @@ export const apiContractSchemas: Readonly<Record<string, JsonSchema>> = {
     },
     additionalProperties: false,
   },
+  EmailIdentityReputation: {
+    type: "object",
+    required: [
+      "sender",
+      "sent",
+      "bounced",
+      "complained",
+      "failed",
+      "bounce_rate_ppm",
+      "complaint_rate_ppm",
+    ],
+    properties: {
+      sender: stringSchema,
+      sent: { type: "integer", minimum: 0 },
+      bounced: { type: "integer", minimum: 0 },
+      complained: { type: "integer", minimum: 0 },
+      failed: { type: "integer", minimum: 0 },
+      bounce_rate_ppm: { type: "integer", minimum: 0, maximum: 1_000_000 },
+      complaint_rate_ppm: { type: "integer", minimum: 0, maximum: 1_000_000 },
+    },
+    additionalProperties: false,
+  },
+  EmailSuppression: {
+    type: "object", required: ["id","address","reason","first_seen_at","last_seen_at","event_count"],
+    properties: {id: integerSchema,address: {type:"string",format:"email"},reason:{type:"string",enum:["bounce","complaint"]},first_seen_at:timestampSchema,last_seen_at:timestampSchema,event_count:{type:"integer",minimum:1}}, additionalProperties:false,
+  },
+  EmailSuppressionsPage: page("EmailSuppression"),
+  EmailSuppressionLiftInput: {
+    type:"object",required:["note"],properties:{note:{type:"string",minLength:1,maxLength:1000},confirmation:{type:"string",maxLength:254}},additionalProperties:false,
+  },
+  EmailSuppressionLift: {
+    type:"object",required:["id","address","through_event_id","actor_user_id","note","complaint_acknowledged","lifted_at"],properties:{id:integerSchema,address:{type:"string",format:"email"},through_event_id:integerSchema,actor_user_id:integerSchema,note:{type:"string"},complaint_acknowledged:{type:"boolean"},lifted_at:timestampSchema},additionalProperties:false,
+  },
+  EmailSuppressionLiftEnvelope: envelope("EmailSuppressionLift"),
   EmailHealth: {
     type: "object",
-    required: ["reputation"],
+    required: ["reputation", "identities"],
     properties: {
       reputation: reference("EmailReputationSnapshot"),
+      identities: { type: "array", items: reference("EmailIdentityReputation") },
     },
     additionalProperties: false,
   },
@@ -3698,6 +4682,48 @@ export const apiContractSchemas: Readonly<Record<string, JsonSchema>> = {
     },
     additionalProperties: false,
   },
+  BackupRunPage: countedPage("BackupRun"),
+  BackupDownloadLinkInput: {
+    type: "object",
+    properties: { run_id: integerSchema, code: { type: "string", minLength: 1, maxLength: 64 } },
+    additionalProperties: false,
+  },
+  BackupDownloadLinkEnvelope: {
+    type: "object",
+    required: ["data"],
+    properties: {
+      data: {
+        type: "object",
+        required: ["id", "run_id", "url", "expires_at"],
+        properties: {
+          id: integerSchema,
+          run_id: integerSchema,
+          url: stringSchema,
+          expires_at: timestampSchema,
+        },
+        additionalProperties: false,
+      },
+    },
+    additionalProperties: false,
+  },
+  OffsiteBackupRun: {
+    type: "object",
+    required: ["id","backup_run_id","status","started_at","completed_at","uploaded_objects","total_objects","error_message"],
+    properties: { id:stringSchema,backup_run_id:integerSchema,status:{type:"string",enum:["pending","running","completed","failed"]},
+      started_at:timestampSchema,completed_at:nullable(timestampSchema),uploaded_objects:{type:"integer",minimum:0},total_objects:{type:"integer",minimum:0},error_message:nullable(stringSchema)},
+    additionalProperties:false,
+  },
+  OffsiteBackupStatus: {
+    type:"object",required:["configured","state","destination","last_completed","latest","error"],
+    properties:{configured:booleanSchema,state:{type:"string",enum:["disabled","misconfigured","waiting","running","completed","failed"]},
+      destination:nullable(stringSchema),last_completed:nullable(reference("OffsiteBackupRun")),latest:nullable(reference("OffsiteBackupRun")),
+      error:nullable({type:"object",required:["code","message"],properties:{code:{type:"string",enum:["E14"]},message:stringSchema},additionalProperties:false})},
+    additionalProperties:false,
+  },
+  OffsiteBackupCheckEnvelope: {
+    type:"object",required:["data"],properties:{data:{type:"object",required:["verified","checked_at"],
+      properties:{verified:{type:"boolean",enum:[true]},checked_at:timestampSchema},additionalProperties:false}},additionalProperties:false,
+  },
   BackupStatusEnvelope: {
     type: "object",
     required: ["data", "links"],
@@ -3710,6 +4736,7 @@ export const apiContractSchemas: Readonly<Record<string, JsonSchema>> = {
           last_failed: nullable(reference("BackupRun")),
           recent_runs: { type: "array", items: reference("BackupRun") },
           has_failure: { type: "boolean" },
+          offsite: reference("OffsiteBackupStatus"),
         },
         additionalProperties: false,
       },
@@ -3952,6 +4979,130 @@ export const apiContractSchemas: Readonly<Record<string, JsonSchema>> = {
     properties: { allow_online_payment: { type: "boolean" } },
     additionalProperties: false,
   },
+  QuickBooksReconciliationEnvelope: {
+    type: "object",
+    required: ["data"],
+    properties: {
+      data: {
+        type: "object",
+        required: [
+          "realm_id",
+          "generated_at",
+          "counts",
+          "rows",
+          "payment_divergences",
+          "recovery",
+        ],
+        properties: {
+          realm_id: stringSchema,
+          generated_at: timestampSchema,
+          // Rows per status, every status present (zero included).
+          counts: { type: "object", additionalProperties: integerSchema },
+          rows: {
+            type: "array",
+            items: {
+              type: "object",
+              required: [
+                "status",
+                "issues",
+                "invoice_id",
+                "number",
+                "quickbooks_id",
+                "linked",
+                "ezacto_amount_cents",
+                "quickbooks_amount_cents",
+                "ezacto_currency",
+                "quickbooks_currency",
+                "ezacto_paid_cents",
+                "quickbooks_paid_cents",
+                "detail",
+              ],
+              properties: {
+                status: {
+                  type: "string",
+                  enum: [
+                    "matched",
+                    "voided_in_quickbooks",
+                    "missing_in_quickbooks",
+                    "amount_differs",
+                    "currency_differs",
+                    "payments_differ",
+                    "missing_here",
+                  ],
+                },
+                issues: { type: "array", items: stringSchema },
+                invoice_id: nullable(integerSchema),
+                number: stringSchema,
+                quickbooks_id: nullable(stringSchema),
+                linked: booleanSchema,
+                ezacto_amount_cents: nullable(integerSchema),
+                quickbooks_amount_cents: nullable(integerSchema),
+                ezacto_currency: nullable(stringSchema),
+                quickbooks_currency: nullable(stringSchema),
+                ezacto_paid_cents: nullable(integerSchema),
+                quickbooks_paid_cents: nullable(integerSchema),
+                detail: stringSchema,
+              },
+              additionalProperties: false,
+            },
+          },
+          // Payments voided or deleted in QuickBooks that a receipt here came
+          // from (slice 3). The receipts are listed, never changed.
+          payment_divergences: {
+            type: "array",
+            items: {
+              type: "object",
+              required: [
+                "quickbooks_payment_id",
+                "kind",
+                "quickbooks_updated_at",
+                "detected_at",
+                "receipts",
+              ],
+              properties: {
+                quickbooks_payment_id: stringSchema,
+                kind: { type: "string", enum: ["voided", "deleted"] },
+                quickbooks_updated_at: timestampSchema,
+                detected_at: timestampSchema,
+                receipts: {
+                  type: "array",
+                  items: {
+                    type: "object",
+                    required: ["payment_id", "invoice_id", "invoice_number", "amount_cents"],
+                    properties: {
+                      payment_id: integerSchema,
+                      invoice_id: integerSchema,
+                      invoice_number: stringSchema,
+                      amount_cents: integerSchema,
+                    },
+                    additionalProperties: false,
+                  },
+                },
+              },
+              additionalProperties: false,
+            },
+          },
+          // How the change-data-capture catch-up last went; null until its
+          // first run has placed a cursor (slice 2).
+          recovery: nullable({
+            type: "object",
+            required: ["cdc_cursor", "last_run_at", "last_outcome"],
+            properties: {
+              cdc_cursor: timestampSchema,
+              last_run_at: timestampSchema,
+              last_outcome: {
+                type: "string",
+                enum: ["caught_up", "failed", "full_reconcile_needed"],
+              },
+            },
+            additionalProperties: false,
+          }),
+        },
+        additionalProperties: false,
+      },
+    },
+    additionalProperties: false,
+  },
   InvoiceQuickBooksEnvelope: {
     type: "object",
     required: ["data"],
@@ -4103,15 +5254,7 @@ export const apiContractSchemas: Readonly<Record<string, JsonSchema>> = {
     },
     additionalProperties: false,
   },
-  ActivityLogPage: {
-    type: "object",
-    required: ["data", "links"],
-    properties: {
-      data: { type: "array", items: reference("ActivityLog") },
-      links: reference("Links"),
-    },
-    additionalProperties: false,
-  },
+  ActivityLogPage: page("ActivityLog"),
   OutboxDelivery: {
     type: "object",
     required: [
@@ -4152,15 +5295,7 @@ export const apiContractSchemas: Readonly<Record<string, JsonSchema>> = {
     },
     additionalProperties: false,
   },
-  OutboxDeliveryPage: {
-    type: "object",
-    required: ["data", "links"],
-    properties: {
-      data: { type: "array", items: reference("OutboxDelivery") },
-      links: reference("Links"),
-    },
-    additionalProperties: false,
-  },
+  OutboxDeliveryPage: countedPage("OutboxDelivery"),
   OutboxDeliveryEnvelope: {
     type: "object",
     required: ["data", "links"],
@@ -4188,6 +5323,16 @@ export const apiContractSchemas: Readonly<Record<string, JsonSchema>> = {
     properties: {
       per_page: { type: "integer", minimum: 1, maximum: 200 },
       next_cursor: nullable(stringSchema),
+    },
+    additionalProperties: false,
+  },
+  CountedPageMetadata: {
+    type: "object",
+    required: ["per_page", "next_cursor", "total"],
+    properties: {
+      per_page: { type: "integer", minimum: 1, maximum: 200 },
+      next_cursor: nullable(stringSchema),
+      total: { type: "integer", minimum: 0 },
     },
     additionalProperties: false,
   },
@@ -4360,6 +5505,43 @@ export const apiContractSchemas: Readonly<Record<string, JsonSchema>> = {
     additionalProperties: false,
   },
   TeamStatusEnvelope: envelope("TeamStatus"),
+  ActivityLogStatus: {
+    type: "object",
+    required: ["enabled"],
+    properties: { enabled: booleanSchema },
+    additionalProperties: false,
+  },
+  ActivityLogStatusEnvelope: envelope("ActivityLogStatus"),
+  RollableActivityYearsEnvelope: envelope("RollableActivityYears"),
+  RollableActivityYears: {
+    type: "object",
+    required: ["rollable"],
+    properties: {
+      rollable: {
+        type: "array",
+        items: {
+          type: "object",
+          required: ["year", "entries"],
+          properties: { year: integerSchema, entries: integerSchema },
+          additionalProperties: false,
+        },
+      },
+    },
+    additionalProperties: false,
+  },
+  ActivityYearRolledEnvelope: envelope("ActivityYearRolled"),
+  ActivityYearRolled: {
+    type: "object",
+    required: ["year", "rolled"],
+    properties: { year: integerSchema, rolled: booleanSchema },
+    additionalProperties: false,
+  },
+  RollActivityYearInput: {
+    type: "object",
+    required: ["year"],
+    properties: { year: { type: "integer", minimum: 2000, maximum: 9999 } },
+    additionalProperties: false,
+  },
   TeamNamedRelation: {
     type: "object",
     required: ["id", "name"],
@@ -4425,11 +5607,13 @@ export const apiContractSchemas: Readonly<Record<string, JsonSchema>> = {
     properties: { email: booleanSchema, desktop: booleanSchema, slack: booleanSchema },
     additionalProperties: false,
   },
-  TeamInactiveNotificationChannels: {
+  // What can be set: mail is delivered (issue 935); desktop and Slack have no
+  // delivery, so the only value accepted for them is off.
+  TeamNotificationChannelsInput: {
     type: "object",
     required: ["email", "desktop", "slack"],
     properties: {
-      email: { type: "boolean", enum: [false] },
+      email: booleanSchema,
       desktop: { type: "boolean", enum: [false] },
       slack: { type: "boolean", enum: [false] },
     },
@@ -4443,7 +5627,7 @@ export const apiContractSchemas: Readonly<Record<string, JsonSchema>> = {
       "include_in_team_reminders", "weekly_digest", "notify_project_deleted", "updated_at",
     ],
     properties: {
-      delivery_active: { type: "boolean", enum: [false] },
+      delivery_active: { type: "boolean", enum: [true] },
       daily_reminder_enabled: booleanSchema,
       reminder_time: nullable({ type: "string", pattern: "^(?:[01][0-9]|2[0-3]):[0-5][0-9]$" }),
       reminder_days: {
@@ -4569,18 +5753,46 @@ export const apiContractSchemas: Readonly<Record<string, JsonSchema>> = {
     ],
     properties: {
       expected_version: { type: "integer", minimum: 0 },
-      daily_reminder_enabled: { type: "boolean", enum: [false] },
+      daily_reminder_enabled: booleanSchema,
       reminder_time: nullable({ type: "string", pattern: "^(?:[01][0-9]|2[0-3]):[0-5][0-9]$" }),
       reminder_days: {
         type: "array",
         uniqueItems: true,
         items: { type: "string", enum: ["monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday"] },
       },
-      channels: reference("TeamInactiveNotificationChannels"),
-      include_in_team_reminders: { type: "boolean", enum: [false] },
-      weekly_digest: { type: "boolean", enum: [false] },
+      channels: reference("TeamNotificationChannelsInput"),
+      include_in_team_reminders: booleanSchema,
+      weekly_digest: booleanSchema,
       notify_project_deleted: { type: "boolean", enum: [false] },
     },
+    additionalProperties: false,
+  },
+  // The same preferences set by the person themselves (issue 935).
+  ProfileNotificationInput: {
+    type: "object",
+    required: [
+      "daily_reminder_enabled", "reminder_time", "reminder_days",
+      "channels", "include_in_team_reminders", "weekly_digest", "notify_project_deleted",
+    ],
+    properties: {
+      daily_reminder_enabled: booleanSchema,
+      reminder_time: nullable({ type: "string", pattern: "^(?:[01][0-9]|2[0-3]):[0-5][0-9]$" }),
+      reminder_days: {
+        type: "array",
+        uniqueItems: true,
+        items: { type: "string", enum: ["monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday"] },
+      },
+      channels: reference("TeamNotificationChannelsInput"),
+      include_in_team_reminders: booleanSchema,
+      weekly_digest: booleanSchema,
+      notify_project_deleted: { type: "boolean", enum: [false] },
+    },
+    additionalProperties: false,
+  },
+  ProfileNotificationEnvelope: {
+    type: "object",
+    required: ["data"],
+    properties: { data: reference("TeamNotificationPreference") },
     additionalProperties: false,
   },
   TeamRateInput: {
@@ -4611,6 +5823,75 @@ export const apiContractSchemas: Readonly<Record<string, JsonSchema>> = {
     },
     additionalProperties: false,
   },
+  ProjectMissingRatesInput: { type: "object", properties: { fingerprint: { type: "string", pattern: "^[a-f0-9]{64}$" } }, additionalProperties: false },
+  ProjectMissingRatesEnvelope: { type: "object", required: ["data"], properties: { data: reference("ProjectMissingRates") }, additionalProperties: false },
+  ProjectMissingRates: { type: "object", required: ["project_id", "hourly_rate_cents", "currency", "entry_count", "seconds", "earliest_date", "latest_date", "fingerprint", "applied_entries"], properties: {
+    project_id: integerSchema, hourly_rate_cents: { type: "integer", minimum: 0 }, currency: stringSchema, entry_count: { type: "integer", minimum: 0 }, seconds: { type: "integer", minimum: 0 }, earliest_date: { type: "string", nullable: true }, latest_date: { type: "string", nullable: true }, fingerprint: stringSchema, applied_entries: { type: "integer", minimum: 0 }
+  }, additionalProperties: false },
+  CostRateBackfillInput: {
+    type: "object",
+    required: ["from", "to", "cost_rate_cents", "reason"],
+    properties: {
+      // Both ends are required: "all of history" is something somebody chooses.
+      from: dateSchema,
+      to: dateSchema,
+      // The effective rate for the whole range. Nothing in the data can say what
+      // a person cost in a past year, so it is supplied, never inferred.
+      cost_rate_cents: { type: "integer", minimum: 0 },
+      reason: { type: "string", minLength: 1, maxLength: 500 },
+      // Also restamp entries carrying a different cost rate. Absent leaves them.
+      replace_captured: booleanSchema,
+      // Absent rehearses. A run writes nothing unless it says so.
+      apply: booleanSchema,
+    },
+    additionalProperties: false,
+  },
+  CostRateBackfillPeriod: {
+    type: "object",
+    required: ["month", "entry_count", "seconds", "cost_cents"],
+    properties: {
+      month: stringSchema,
+      entry_count: { type: "integer", minimum: 0 },
+      seconds: signedIntegerSchema,
+      cost_cents: signedIntegerSchema,
+    },
+    additionalProperties: false,
+  },
+  CostRateBackfill: {
+    type: "object",
+    required: [
+      "run_id",
+      "applied",
+      "user_id",
+      "from",
+      "to",
+      "cost_rate_cents",
+      "entry_count",
+      "seconds",
+      "cost_cents",
+      "periods",
+      "captured_entry_count",
+      "running_entry_count",
+    ],
+    properties: {
+      run_id: stringSchema,
+      applied: booleanSchema,
+      user_id: integerSchema,
+      from: dateSchema,
+      to: dateSchema,
+      cost_rate_cents: { type: "integer", minimum: 0 },
+      // What the run stamps, or in a rehearsal would stamp.
+      entry_count: { type: "integer", minimum: 0 },
+      seconds: signedIntegerSchema,
+      cost_cents: signedIntegerSchema,
+      periods: { type: "array", items: reference("CostRateBackfillPeriod") },
+      // In range but left alone: already priced, or the timer is still running.
+      captured_entry_count: { type: "integer", minimum: 0 },
+      running_entry_count: { type: "integer", minimum: 0 },
+    },
+    additionalProperties: false,
+  },
+  CostRateBackfillEnvelope: envelope("CostRateBackfill"),
   TeamCommandReceipt: {
     type: "object",
     required: ["target_user_id", "version", "resource_id", "occurred_at"],
@@ -4668,7 +5949,11 @@ export const apiContractSchemas: Readonly<Record<string, JsonSchema>> = {
         uniqueItems: true,
         items: { type: "string", enum: apiScopes },
       },
-      expires_at: nullable(timestampSchema),
+      expires_at: {
+        ...nullable(timestampSchema),
+        description:
+          "Omitted: the token expires one year after issue. Anyone may ask for a sooner expiry; only an administrator may ask for one more than a year away or for null (never). Others are refused with 422 and code too_long.",
+      },
     },
     additionalProperties: false,
   },
@@ -4765,13 +6050,12 @@ export const apiContractSchemas: Readonly<Record<string, JsonSchema>> = {
       project_id: integerSchema,
       task_id: integerSchema,
       spent_date: dateSchema,
-      // Non-negative on the way in. A correction entry exists because Harvest
-      // will not let a locked timesheet be edited; here the entry that was
-      // wrong is the thing to edit, so there is nothing for a typed negative
-      // to offset.
+      // Positive on the way in. A zero-duration entry has no work to review or
+      // invoice; a correction entry exists because the wrong entry itself is
+      // edited, so there is nothing for a typed zero to erase.
       seconds: {
         type: "integer",
-        minimum: 0,
+        minimum: 1,
         description: "A duration entry's length. Not accepted with started_time or ended_time.",
       },
       started_time: {
@@ -4800,7 +6084,7 @@ export const apiContractSchemas: Readonly<Record<string, JsonSchema>> = {
       project_id: integerSchema,
       task_id: integerSchema,
       spent_date: dateSchema,
-      seconds: { type: "integer", minimum: 0 },
+      seconds: { type: "integer", minimum: 1 },
       started_time: { type: "string" },
       ended_time: { type: "string" },
       notes: nullable(stringSchema),
@@ -4815,10 +6099,328 @@ export const apiContractSchemas: Readonly<Record<string, JsonSchema>> = {
   },
   TimeEntryEnvelope: envelope("TimeEntry"),
   TimeEntryPage: page("TimeEntry"),
+  CalendarCleanupStatus: {type:'object',additionalProperties:false,required:['pending','manual_required','revoked'],properties:{pending:{type:'integer',minimum:0},manual_required:{type:'integer',minimum:0},revoked:{type:'integer',minimum:0},manual_confirmed:{type:'integer',minimum:0},operator_confirmed:{type:'integer',minimum:0}}},
+  CalendarProposal: {
+    type: "object",
+    required: [
+      "id",
+      "provider",
+      "calendar_id",
+      "event_id",
+      "occurrence",
+      "title",
+      "starts_at",
+      "ends_at",
+      "status",
+      "time_entry_id",
+      "decided_at",
+      "created_at",
+      "updated_at",
+    ],
+    properties: {
+      id: integerSchema,
+      provider: { type: "string", enum: ["google", "microsoft"] },
+      calendar_id: stringSchema,
+      event_id: stringSchema,
+      occurrence: {
+        ...stringSchema,
+        description: "Tells the instances of a recurring event apart; empty otherwise.",
+      },
+      title: stringSchema,
+      starts_at: timestampSchema,
+      ends_at: timestampSchema,
+      status: { type: "string", enum: ["proposed", "accepted", "discarded", "cancelled"] },
+      time_entry_id: {
+        ...nullable(integerSchema),
+        description: "The entry an accepted proposal became; null until then.",
+      },
+      decided_at: nullable(timestampSchema),
+      source_changed_at: nullable(timestampSchema),
+      source_cancelled_at: nullable(timestampSchema),
+      created_at: timestampSchema,
+      updated_at: timestampSchema,
+    },
+    additionalProperties: false,
+  },
+  CalendarProposalAcceptInput: {
+    type: "object",
+    required: ["project_id", "task_id"],
+    properties: {
+      project_id: integerSchema,
+      task_id: integerSchema,
+      notes: {
+        ...nullable(stringSchema),
+        description: "Defaults to the event's title.",
+      },
+      budgeted: booleanSchema,
+    },
+    additionalProperties: false,
+  },
+  CalendarProposalEnvelope: envelope("CalendarProposal"),
+  CalendarProposalPage: page("CalendarProposal"),
+  PlanningRevisionInput: { type: "object", properties: { version: { type: "integer", minimum: 0, maximum: 9007199254740991 } }, additionalProperties: false },
+  Allocation: {
+    type: "object",
+    required: [
+      "version",
+      "id",
+      "user_id",
+      "project_id",
+      "start_date",
+      "end_date",
+      "planned_seconds_per_week",
+      "created_at",
+      "updated_at",
+    ],
+    properties: {
+      version: { type: "integer", minimum: 0, maximum: 9007199254740991 },
+      id: integerSchema,
+      user_id: integerSchema,
+      project_id: integerSchema,
+      start_date: dateSchema,
+      end_date: { ...dateSchema, description: "Included. Never before `start_date`." },
+      planned_seconds_per_week: {
+        ...integerSchema,
+        description: "Planned seconds in each week the range touches, between 1 and 604800.",
+      },
+      created_at: timestampSchema,
+      updated_at: timestampSchema,
+    },
+    additionalProperties: false,
+  },
+  AllocationInput: {
+    type: "object",
+    required: ["user_id", "project_id", "start_date", "end_date", "planned_seconds_per_week"],
+    properties: {
+      user_id: integerSchema,
+      project_id: integerSchema,
+      start_date: dateSchema,
+      end_date: dateSchema,
+      planned_seconds_per_week: integerSchema,
+    },
+    additionalProperties: false,
+  },
+  AllocationPatch: {
+    type: "object",
+    properties: {
+      version: { type: "integer", minimum: 0, maximum: 9007199254740991, description: "Version last read. Required from 2027-01-22; supplied values are always enforced." },
+      start_date: dateSchema,
+      end_date: dateSchema,
+      planned_seconds_per_week: integerSchema,
+    },
+    additionalProperties: false,
+  },
+  AllocationEnvelope: envelope("Allocation"),
+  AllocationPage: page("Allocation"),
+  CapacityWeek: {
+    type: "object",
+    required: [
+      "week_start",
+      "planned_seconds",
+      "time_off_seconds",
+      "available_capacity_seconds",
+      "tracked_seconds",
+      "over_allocated",
+    ],
+    properties: {
+      week_start: dateSchema,
+      planned_seconds: integerSchema,
+      time_off_seconds: {
+        ...integerSchema,
+        description:
+          "Capacity removed by the person's time off in the week (Monday to Friday only, never more than the capacity).",
+      },
+      available_capacity_seconds: {
+        ...integerSchema,
+        description: "`weekly_capacity_seconds` less `time_off_seconds`; what the plan is held against.",
+      },
+      tracked_seconds: {
+        ...integerSchema,
+        description: "Rounded time logged in the week; separate from the plan.",
+      },
+      over_allocated: {
+        ...booleanSchema,
+        description:
+          "Planned exceeds available capacity (capacity less time off). A flag for the reader, never a refusal.",
+      },
+    },
+    additionalProperties: false,
+  },
+  CapacityPerson: {
+    type: "object",
+    required: ["user_id", "first_name", "last_name", "weekly_capacity_seconds", "weeks"],
+    properties: {
+      user_id: integerSchema,
+      first_name: stringSchema,
+      last_name: stringSchema,
+      weekly_capacity_seconds: integerSchema,
+      weeks: { type: "array", items: reference("CapacityWeek") },
+    },
+    additionalProperties: false,
+  },
+  Capacity: {
+    type: "object",
+    required: ["week_start_day", "weeks", "people"],
+    properties: {
+      week_start_day: { type: "string", enum: ["saturday", "sunday", "monday"] },
+      weeks: { type: "array", items: dateSchema },
+      people: { type: "array", items: reference("CapacityPerson") },
+    },
+    additionalProperties: false,
+  },
+  CapacityEnvelope: envelope("Capacity"),
+  TimeOff: {
+    type: "object",
+    required: [
+      "version",
+      "id",
+      "user_id",
+      "start_date",
+      "end_date",
+      "kind",
+      "seconds_per_day",
+      "created_at",
+      "updated_at",
+    ],
+    properties: {
+      version: { type: "integer", minimum: 0, maximum: 9007199254740991 },
+      id: integerSchema,
+      user_id: integerSchema,
+      start_date: dateSchema,
+      end_date: { ...dateSchema, description: "Included. Never before `start_date`." },
+      kind: { type: "string", enum: ["vacation", "sick", "holiday", "other"] },
+      seconds_per_day: {
+        ...nullable(integerSchema),
+        description:
+          "Seconds away on each working day, between 1 and 86400; null is a whole day.",
+      },
+      created_at: timestampSchema,
+      updated_at: timestampSchema,
+    },
+    additionalProperties: false,
+  },
+  TimeOffInput: {
+    type: "object",
+    required: ["user_id", "start_date", "end_date", "kind"],
+    properties: {
+      user_id: integerSchema,
+      start_date: dateSchema,
+      end_date: dateSchema,
+      kind: { type: "string", enum: ["vacation", "sick", "holiday", "other"] },
+      seconds_per_day: nullable(integerSchema),
+    },
+    additionalProperties: false,
+  },
+  TimeOffPatch: {
+    type: "object",
+    properties: {
+      version: { type: "integer", minimum: 0, maximum: 9007199254740991, description: "Version last read. Required from 2027-01-22; supplied values are always enforced." },
+      start_date: dateSchema,
+      end_date: dateSchema,
+      kind: { type: "string", enum: ["vacation", "sick", "holiday", "other"] },
+      seconds_per_day: nullable(integerSchema),
+    },
+    additionalProperties: false,
+  },
+  TimeOffEnvelope: envelope("TimeOff"),
+  TimeOffPage: page("TimeOff"),
+  WorkItemConnection: {
+    type: "object",
+    required: [
+      "id",
+      "provider",
+      "status",
+      "owner_user_id",
+      "credential_configured",
+      "connected_at",
+      "disconnected_at",
+      "created_at",
+      "updated_at",
+    ],
+    properties: {
+      id: integerSchema,
+      provider: { type: "string", enum: ["github"] },
+      status: { type: "string", enum: ["active", "disconnected"] },
+      owner_user_id: { ...integerSchema, description: "The administrator who connected it." },
+      credential_configured: {
+        ...booleanSchema,
+        description: "Whether the deployment holds the provider's credential. The credential is never returned.",
+      },
+      connected_at: timestampSchema,
+      disconnected_at: nullable(timestampSchema),
+      created_at: timestampSchema,
+      updated_at: timestampSchema,
+    },
+    additionalProperties: false,
+  },
+  WorkItemConnectionInput: {
+    type: "object",
+    required: ["provider"],
+    properties: { provider: { type: "string", enum: ["github"] } },
+    additionalProperties: false,
+  },
+  WorkItemConnectionEnvelope: {
+    type: "object",
+    required: ["data"],
+    properties: { data: reference("WorkItemConnection") },
+    additionalProperties: false,
+  },
+  WorkItemConnectionListEnvelope: {
+    type: "object",
+    required: ["data", "links"],
+    properties: {
+      data: { type: "array", items: reference("WorkItemConnection") },
+      links: reference("Links"),
+    },
+    additionalProperties: false,
+  },
+  WorkItemLink: {
+    type: "object",
+    required: [
+      "id",
+      "connection_id",
+      "provider",
+      "time_entry_id",
+      "project_id",
+      "item_id",
+      "url",
+      "created_by",
+      "created_at",
+      "updated_at",
+    ],
+    properties: {
+      id: integerSchema,
+      connection_id: integerSchema,
+      provider: { type: "string", enum: ["github"] },
+      time_entry_id: nullable(integerSchema),
+      project_id: nullable(integerSchema),
+      item_id: { ...stringSchema, description: "The provider's own identity for the item." },
+      url: nullable(stringSchema),
+      created_by: integerSchema,
+      created_at: timestampSchema,
+      updated_at: timestampSchema,
+    },
+    additionalProperties: false,
+  },
+  WorkItemLinkInput: {
+    type: "object",
+    required: ["connection_id", "item_id"],
+    properties: {
+      connection_id: integerSchema,
+      time_entry_id: integerSchema,
+      project_id: integerSchema,
+      item_id: stringSchema,
+      url: nullable(stringSchema),
+    },
+    additionalProperties: false,
+  },
+  WorkItemLinkEnvelope: envelope("WorkItemLink"),
+  WorkItemLinkPage: page("WorkItemLink"),
   TimeEntrySettings: {
     type: "object",
-    required: ["time_entry_mode", "time_format", "clock", "week_start_day"],
+    required: ["time_entry_mode", "time_format", "clock", "week_start_day", "time_rounding"],
     properties: {
+      time_rounding: reference("TimeRounding"),
       time_entry_mode: { type: "string", enum: ["duration", "start_end"] },
       time_format: { type: "string", enum: ["decimal", "hours_minutes"] },
       clock: { type: "string", enum: ["12h", "24h"] },
@@ -4830,6 +6432,126 @@ export const apiContractSchemas: Readonly<Record<string, JsonSchema>> = {
     additionalProperties: false,
   },
   TimeEntrySettingsEnvelope: envelope("TimeEntrySettings"),
+  TimeRounding: {
+    type: "object",
+    required: ["mode", "minutes"],
+    properties: {
+      mode: { type: "string", enum: [...timeRoundingModes] },
+      minutes: { type: "integer", enum: [...timeRoundingIncrements] },
+    },
+    additionalProperties: false,
+  },
+  TimeRoundingPatch: {
+    type: "object",
+    minProperties: 1,
+    properties: {
+      mode: { type: "string", enum: [...timeRoundingModes] },
+      minutes: { type: "integer", enum: [...timeRoundingIncrements] },
+    },
+    additionalProperties: false,
+  },
+  TimeRoundingEnvelope: envelope("TimeRounding"),
+  EffectiveTimeRounding: {
+    type: "object",
+    required: ["mode", "minutes", "source"],
+    description: "The rule an entry on a project is saved under, and whose it is.",
+    properties: {
+      mode: { type: "string", enum: [...timeRoundingModes] },
+      minutes: { type: "integer", enum: [...timeRoundingIncrements] },
+      source: { type: "string", enum: ["organization", "project"] },
+    },
+    additionalProperties: false,
+  },
+  TimeRoundingRecalculationScope: {
+    type: "object",
+    required: ["project_id", "from", "to"],
+    properties: {
+      project_id: nullable(integerSchema),
+      from: nullable(dateSchema),
+      to: nullable(dateSchema),
+    },
+    additionalProperties: false,
+  },
+  TimeRoundingRecalculationProject: {
+    type: "object",
+    required: [
+      "project_id",
+      "project_name",
+      "time_rounding",
+      "changed_entries",
+      "rounded_seconds_before",
+      "rounded_seconds_after",
+    ],
+    properties: {
+      project_id: integerSchema,
+      project_name: stringSchema,
+      time_rounding: reference("EffectiveTimeRounding"),
+      changed_entries: { type: "integer", minimum: 0 },
+      rounded_seconds_before: { type: "integer", minimum: 0 },
+      rounded_seconds_after: { type: "integer", minimum: 0 },
+    },
+    additionalProperties: false,
+  },
+  TimeRoundingRecalculationPreview: {
+    type: "object",
+    required: [
+      "scope",
+      "open_entries",
+      "changed_entries",
+      "rounded_seconds_before",
+      "rounded_seconds_after",
+      "earliest_spent_date",
+      "latest_spent_date",
+      "projects",
+      "kept",
+      "fingerprint",
+    ],
+    properties: {
+      scope: reference("TimeRoundingRecalculationScope"),
+      open_entries: { type: "integer", minimum: 0 },
+      changed_entries: { type: "integer", minimum: 0 },
+      rounded_seconds_before: { type: "integer", minimum: 0 },
+      rounded_seconds_after: { type: "integer", minimum: 0 },
+      earliest_spent_date: nullable(dateSchema),
+      latest_spent_date: nullable(dateSchema),
+      projects: { type: "array", items: reference("TimeRoundingRecalculationProject") },
+      kept: {
+        type: "object",
+        required: ["invoiced", "approved", "locked", "other"],
+        properties: {
+          invoiced: { type: "integer", minimum: 0 },
+          approved: { type: "integer", minimum: 0 },
+          locked: { type: "integer", minimum: 0 },
+          other: { type: "integer", minimum: 0 },
+        },
+        additionalProperties: false,
+      },
+      fingerprint: { type: "string", pattern: "^[0-9a-f]{64}$" },
+    },
+    additionalProperties: false,
+  },
+  TimeRoundingRecalculationPreviewEnvelope: envelope("TimeRoundingRecalculationPreview"),
+  TimeRoundingRecalculationRequest: {
+    type: "object",
+    required: ["fingerprint"],
+    properties: {
+      project_id: integerSchema,
+      from: dateSchema,
+      to: dateSchema,
+      fingerprint: { type: "string", pattern: "^[0-9a-f]{64}$" },
+    },
+    additionalProperties: false,
+  },
+  TimeRoundingRecalculationApplied: {
+    type: "object",
+    required: ["recalculated_entries", "preview"],
+    properties: {
+      recalculated_entries: { type: "integer", minimum: 0 },
+      preview: reference("TimeRoundingRecalculationPreview"),
+    },
+    additionalProperties: false,
+  },
+  TimeRoundingRecalculationAppliedEnvelope: envelope("TimeRoundingRecalculationApplied"),
   TimeEntryNoteSettings: {
     type: "object",
     required: ["required", "minimum_length"],
@@ -4860,6 +6582,9 @@ export const apiContractSchemas: Readonly<Record<string, JsonSchema>> = {
       last_name: stringSchema,
       email: nullable(stringSchema),
       timezone: { type: "string", minLength: 1 },
+      // Server filing zone, including the organization fallback. Read-only and
+      // absent where an older/custom deployment does not compose its reader.
+      effective_timezone: { type: "string", minLength: 1, readOnly: true },
       // Whether this person is copied on the invoice emails they send. Absent
       // where the deployment sends no invoice email.
       invoice_copy_to_self: booleanSchema,
@@ -4882,7 +6607,7 @@ export const apiContractSchemas: Readonly<Record<string, JsonSchema>> = {
   AppleLifecycleProofInput: {type:"object",additionalProperties:false,required:["receipt"],properties:{receipt:{type:"string",maxLength:16384}}},
   AppleCleanupStatus: {type:"string",enum:["not_linked","pending","revoked","manual_required"]},
   AccountClosureInventoryItem: { type: "object", additionalProperties: false, required: ["location", "count", "category"], properties: { location: stringSchema, count: integerSchema, category: { type: "string", enum: ["time_and_worker_attribution", "billing_and_payments", "audit_and_security", "legal_hold"] } } },
-  AccountClosureRecord: { type: "object", additionalProperties: false, required: ["request_id", "user_id", "actor_user_id", "closed_at", "policy_version", "policy_snapshot", "inventory", "retained_identity", "apple_cleanup"], properties: { request_id: stringSchema, user_id: integerSchema, actor_user_id: integerSchema, closed_at: timestampSchema, policy_version: integerSchema, policy_snapshot: reference("AccountRetentionPolicy"), inventory: { type: "array", items: reference("AccountClosureInventoryItem") }, retained_identity: booleanSchema, apple_cleanup: reference("AppleCleanupStatus") } },
+  AccountClosureRecord: { type: "object", additionalProperties: false, required: ["request_id", "user_id", "actor_user_id", "closed_at", "policy_version", "policy_snapshot", "inventory", "retained_identity", "apple_cleanup"], properties: { request_id: stringSchema, user_id: integerSchema, actor_user_id: integerSchema, closed_at: timestampSchema, policy_version: integerSchema, policy_snapshot: reference("AccountRetentionPolicy"), inventory: { type: "array", items: reference("AccountClosureInventoryItem") }, retained_identity: booleanSchema, calendar_cleanup: reference("CalendarCleanupStatus"), apple_cleanup: reference("AppleCleanupStatus") } },
   AccountClosurePreview: { type: "object", additionalProperties: false, required: ["request_id", "user_id", "request_version", "review_token", "policy_version", "policy_snapshot", "inventory", "uncovered_categories", "owner_transfer_required", "running_timer", "closure"], properties: { apple_cleanup_retry_available:booleanSchema, request_id: stringSchema, user_id: integerSchema, request_version: integerSchema, review_token: { type: "string", pattern: "^[0-9a-f]{64}$" }, policy_version: nullable(integerSchema), policy_snapshot: nullable(reference("AccountRetentionPolicy")), inventory: { type: "array", items: reference("AccountClosureInventoryItem") }, uncovered_categories: { type: "array", items: { type: "string", enum: ["time_and_worker_attribution", "billing_and_payments", "audit_and_security", "legal_hold"] } }, owner_transfer_required: booleanSchema, running_timer: booleanSchema, closure: nullable(reference("AccountClosureRecord")) } },
   EmptyObject: {type:"object",additionalProperties:false,properties:{}},
   AppleCleanupStatusEnvelope: {type:"object",additionalProperties:false,required:["data"],properties:{data:{type:"object",additionalProperties:false,required:["apple_cleanup"],properties:{apple_cleanup:reference("AppleCleanupStatus")}}}},
@@ -4899,7 +6624,7 @@ export const apiContractSchemas: Readonly<Record<string, JsonSchema>> = {
   AccountDeletionTrackingInput: { type: "object", required: ["token"], additionalProperties: false, properties: { token: { type: "string", maxLength: 100 } } },
   AccountDeletionRetainedDisclosure: { type: "object", additionalProperties: false, required: ["category", "reason", "period", "review_after_days", "review_due"], properties: { category: stringSchema, reason: stringSchema, period: stringSchema, review_after_days: integerSchema, review_due: timestampSchema } },
   AccountDeletionClosureDisclosure: { type: "object", additionalProperties: false, required: ["retained_records", "backup_handling", "user_notice", "operator_contact"], properties: { retained_records: { type: "array", items: reference("AccountDeletionRetainedDisclosure") }, backup_handling: stringSchema, user_notice: stringSchema, operator_contact: stringSchema } },
-  AccountDeletionTrackingStatus: { type: "object", additionalProperties: false, required: ["request_id", "status", "requested_at", "expected_completion_at", "closed_at", "completed_at", "message", "completion_confirmation", "policy_version", "policy_snapshot", "policy_reviewed", "closure_disclosure", "operator_contact", "expires_at"], properties: { apple_cleanup: reference("AppleCleanupStatus"), request_id: stringSchema, status: { type: "string", enum: ["pending", "in_progress", "action_required", "completed"] }, requested_at: timestampSchema, expected_completion_at: nullable(timestampSchema), closed_at: nullable(timestampSchema), completed_at: nullable(timestampSchema), message: stringSchema, completion_confirmation: nullable(stringSchema), policy_version: nullable(integerSchema), policy_snapshot: nullable(reference("AccountRetentionPolicy")), policy_reviewed: booleanSchema, closure_disclosure: nullable(reference("AccountDeletionClosureDisclosure")), operator_contact: nullable(stringSchema), expires_at: timestampSchema } },
+  AccountDeletionTrackingStatus: { type: "object", additionalProperties: false, required: ["request_id", "status", "requested_at", "expected_completion_at", "closed_at", "completed_at", "message", "completion_confirmation", "policy_version", "policy_snapshot", "policy_reviewed", "closure_disclosure", "operator_contact", "expires_at"], properties: { calendar_cleanup: reference("CalendarCleanupStatus"), apple_cleanup: reference("AppleCleanupStatus"), request_id: stringSchema, status: { type: "string", enum: ["pending", "in_progress", "action_required", "completed"] }, requested_at: timestampSchema, expected_completion_at: nullable(timestampSchema), closed_at: nullable(timestampSchema), completed_at: nullable(timestampSchema), message: stringSchema, completion_confirmation: nullable(stringSchema), policy_version: nullable(integerSchema), policy_snapshot: nullable(reference("AccountRetentionPolicy")), policy_reviewed: booleanSchema, closure_disclosure: nullable(reference("AccountDeletionClosureDisclosure")), operator_contact: nullable(stringSchema), expires_at: timestampSchema } },
   AccountDeletionTrackingEnvelope: { type: "object", additionalProperties: false, required: ["data"], properties: { data: reference("AccountDeletionTrackingStatus") } },
   AccountDeletionSubmission: {
     type: "object", additionalProperties: false,
@@ -4918,7 +6643,7 @@ export const apiContractSchemas: Readonly<Record<string, JsonSchema>> = {
     type: "object", additionalProperties: false,
     required: ["id", "user_id", "requested_at", "policy_version", "policy_snapshot", "policy_reviewed", "status", "version", "message", "response_target_at", "expected_completion_at", "completed_at", "completion_confirmation", "notification", "notification_updated_at", "notification_delivery_id", "updated_at"],
     properties: {
-      apple_cleanup: reference("AppleCleanupStatus"),
+      calendar_cleanup: reference("CalendarCleanupStatus"), apple_cleanup: reference("AppleCleanupStatus"),
       id: stringSchema, user_id: integerSchema, requested_at: timestampSchema,
       policy_version: nullable(integerSchema), policy_snapshot: nullable(reference("AccountRetentionPolicy")), policy_reviewed: booleanSchema,
       status: { type: "string", enum: ["pending", "in_progress", "action_required", "completed"] },
@@ -4945,10 +6670,11 @@ export const apiContractSchemas: Readonly<Record<string, JsonSchema>> = {
     properties: { data: { anyOf: [reference("AccountDeletionRecord"), reference("AccountDeletionRequest")] }, links: reference("Links"), status_access: reference("AccountDeletionStatusAccess") } },
   TimeEntryOption: {
     type: "object",
-    required: ["project_id", "task_id", "minimum_note_length"],
+    required: ["project_id", "task_id", "minimum_note_length", "time_rounding"],
     properties: {
       project_id: integerSchema,
       task_id: integerSchema,
+      time_rounding: reference("EffectiveTimeRounding"),
       minimum_note_length: { type: "integer", minimum: 0, maximum: 10000 },
     },
     additionalProperties: false,
@@ -5009,6 +6735,10 @@ export const apiContractSchemas: Readonly<Record<string, JsonSchema>> = {
       source_observed_at: nullable(timestampSchema),
       submitted_by_user_id: nullable(integerSchema),
       submitted_at: nullable(timestampSchema),
+      automatic_approval: {
+        type: "object", required:["actor","authorized_by_user_id","window_days","effective_from","submitted_at","approved_at","command_id"],
+        properties:{actor:{type:"string",enum:["system"]},authorized_by_user_id:integerSchema,window_days:{type:"integer",minimum:1,maximum:60},effective_from:timestampSchema,submitted_at:timestampSchema,approved_at:timestampSchema,command_id:stringSchema},
+      },
       reviewed_by_user_id: nullable(integerSchema),
       reviewed_at: nullable(timestampSchema),
       rejection_reason: nullable(stringSchema),
@@ -5634,6 +7364,8 @@ export const apiContractSchemas: Readonly<Record<string, JsonSchema>> = {
       "discount_amount_cents",
       "created_at",
       "updated_at",
+      "expires_on",
+      "effective_expires_on",
       "line_items",
     ],
     properties: {
@@ -5675,11 +7407,214 @@ export const apiContractSchemas: Readonly<Record<string, JsonSchema>> = {
       discount_amount_cents: { type: "integer" },
       created_at: timestampSchema,
       updated_at: timestampSchema,
+      // The last day a customer can answer, as staff set it (issue 1010).
+      expires_on: nullable(dateSchema),
+      // What applies: expires_on, else the organization's validity days from sent_at.
+      effective_expires_on: nullable(dateSchema),
       line_items: { type: "array", items: reference("EstimateLine") },
     },
     additionalProperties: false,
   },
+
+  EstimateContent: {
+    type: "object",
+    required: [
+      "subject",
+      "notes",
+      "currency",
+      "tax_rate_ppm",
+      "tax2_rate_ppm",
+      "discount_rate_ppm",
+      "lines",
+    ],
+    properties: {
+      subject: nullable({ type: "string", maxLength: 500 }),
+      notes: nullable({ type: "string", maxLength: 20000 }),
+      currency: { type: "string", pattern: "^[A-Z]{3}$" },
+      tax_rate_ppm: nullable({ type: "integer", minimum: 0, maximum: 1000000 }),
+      tax2_rate_ppm: nullable({
+        type: "integer",
+        minimum: 0,
+        maximum: 1000000,
+      }),
+      discount_rate_ppm: nullable({
+        type: "integer",
+        minimum: 0,
+        maximum: 1000000,
+      }),
+      lines: {
+        type: "array",
+        minItems: 1,
+        maxItems: 100,
+        items: reference("EstimateContentLine"),
+      },
+    },
+    additionalProperties: false,
+  },
+  EstimateContentLine: {
+    type: "object",
+    required: [
+      "kind",
+      "description",
+      "quantity",
+      "unit_price_cents",
+      "taxed",
+      "taxed2",
+    ],
+    properties: {
+      kind: { type: "string", minLength: 1, maxLength: 100 },
+      description: nullable({ type: "string", maxLength: 10000 }),
+      quantity: {
+        type: "number",
+        minimum: -9007199254740991,
+        maximum: 9007199254740991,
+      },
+      unit_price_cents: {
+        type: "integer",
+        minimum: -9000000000000,
+        maximum: 9000000000000,
+      },
+      taxed: { type: "boolean" },
+      taxed2: { type: "boolean" },
+    },
+    additionalProperties: false,
+  },
+  EstimateTemplate: {
+    type: "object",
+    required: [
+      "id",
+      "name",
+      "version",
+      "archived",
+      "content",
+      "created_at",
+      "updated_at",
+    ],
+    properties: {
+      id: stringSchema,
+      name: stringSchema,
+      version: { type: "integer", minimum: 0 },
+      archived: { type: "boolean" },
+      content: reference("EstimateContent"),
+      created_at: timestampSchema,
+      updated_at: timestampSchema,
+    },
+    additionalProperties: false,
+  },
+  EstimateTemplateInput: {
+    type: "object",
+    required: ["name", "content"],
+    properties: {
+      name: { type: "string", minLength: 1, maxLength: 120 },
+      content: reference("EstimateContent"),
+    },
+    additionalProperties: false,
+  },
+  EstimateTemplateUpdateInput: {
+    type: "object",
+    required: ["name", "content", "expected_version"],
+    properties: {
+      name: { type: "string", minLength: 1, maxLength: 120 },
+      content: reference("EstimateContent"),
+      expected_version: { type: "integer", minimum: 0 },
+      archived: { type: "boolean" },
+    },
+    additionalProperties: false,
+  },
+  MigrationLoadStatus: {
+    type: "object",
+    additionalProperties: false,
+    required: [
+      "id",
+      "status",
+      "snapshot_sha256",
+      "source_rows",
+      "resource",
+      "rows_done",
+      "sequence",
+      "attempts",
+      "error_code",
+      "created_at",
+      "started_at",
+      "completed_at",
+      "source_cleaned_at",
+      "updated_at",
+    ],
+    properties: {
+      id: { type: "string", format: "uuid" },
+      status: {
+        type: "string",
+        enum: [
+          "ready",
+          "queued",
+          "running",
+          "completed",
+          "failed",
+          "cancelled",
+        ],
+      },
+      snapshot_sha256: { type: "string", pattern: "^[a-f0-9]{64}$" },
+      source_rows: { type: "integer", minimum: 0 },
+      resource: nullable(stringSchema),
+      rows_done: { type: "integer", minimum: 0 },
+      sequence: { type: "integer", minimum: 0 },
+      attempts: { type: "integer", minimum: 0 },
+      error_code: nullable(stringSchema),
+      created_at: timestampSchema,
+      started_at: nullable(timestampSchema),
+      completed_at: nullable(timestampSchema),
+      source_cleaned_at: nullable(timestampSchema),
+      updated_at: timestampSchema,
+    },
+  },
+  MigrationLoadStatusEnvelope: envelope("MigrationLoadStatus"),
+  EstimateTemplateEnvelope: envelope("EstimateTemplate"),
+  EstimateTemplateListEnvelope: {
+    type: "object",
+    required: ["data", "truncated"],
+    properties: {
+      data: { type: "array", items: reference("EstimateTemplate") },
+      truncated: { type: "boolean" },
+    },
+    additionalProperties: false,
+  },
+  EstimateDraftInput: {
+    type: "object",
+    required: ["client_id", "number", "issue_date", "content"],
+    properties: {
+      client_id: integerSchema,
+      number: { type: "string", minLength: 1, maxLength: 100 },
+      issue_date: dateSchema,
+      content: reference("EstimateContent"),
+      template_id: nullable(stringSchema),
+      template_version: nullable({ type: "integer", minimum: 0 }),
+    },
+    additionalProperties: false,
+  },
+  EstimateDraftEnvelope: {
+    type: "object",
+    required: ["data"],
+    properties: {
+      data: {
+        type: "object",
+        required: ["id"],
+        properties: { id: integerSchema },
+        additionalProperties: false,
+      },
+    },
+    additionalProperties: false,
+  },
+
   EstimateEnvelope: envelope("Estimate"),
+  EstimateExpiryInput: {
+    type: "object",
+    required: ["expected_version", "expires_on"],
+    properties: {
+      expected_version: { type: "integer", minimum: 0 },
+      expires_on: nullable(dateSchema),
+    },
+    additionalProperties: false,
+  },
   EstimatePage: page("Estimate"),
   EstimateMessage: {
     type: "object",
@@ -5697,6 +7632,9 @@ export const apiContractSchemas: Readonly<Record<string, JsonSchema>> = {
       "event_type",
       "delivery_status",
       "provider_message_id",
+      "contact_id",
+      "content_hash",
+      "estimate_version",
       "created_at",
       "updated_at",
     ],
@@ -5720,6 +7658,12 @@ export const apiContractSchemas: Readonly<Record<string, JsonSchema>> = {
         enum: ["queued", "sent", "bounced", "complained", "failed"],
       }),
       provider_message_id: nullable(stringSchema),
+      // Set only on an answer a contact gave through the customer page: who
+      // answered, the content version they were shown, and the estimate version
+      // the answer was recorded against.
+      contact_id: nullable(integerSchema),
+      content_hash: nullable({ type: "string", pattern: "^[0-9a-f]{64}$" }),
+      estimate_version: nullable({ type: "integer", minimum: 0 }),
       created_at: timestampSchema,
       updated_at: timestampSchema,
     },
@@ -6425,6 +8369,7 @@ export const apiContractSchemas: Readonly<Record<string, JsonSchema>> = {
           "client_id",
           "company_name",
           "client_name",
+          "time_zone",
           "template_version",
           "subject",
           "message",
@@ -6441,6 +8386,8 @@ export const apiContractSchemas: Readonly<Record<string, JsonSchema>> = {
           client_id: integerSchema,
           company_name: stringSchema,
           client_name: stringSchema,
+          // The organization's zone, which `%send_weekday%` is read in.
+          time_zone: stringSchema,
           template_version: integerSchema,
           subject: stringSchema,
           message: stringSchema,
@@ -7275,6 +9222,7 @@ export const apiContractSchemas: Readonly<Record<string, JsonSchema>> = {
       "unclaimed_seconds",
       "time_entry_count",
       "currencies",
+      "facets",
       "rows",
     ],
     properties: {
@@ -7316,7 +9264,27 @@ export const apiContractSchemas: Readonly<Record<string, JsonSchema>> = {
         type: "array",
         items: reference("DetailedTimeCurrencyTotal"),
       },
+      facets: reference("DetailedTimeFacets"),
       rows: { type: "array", items: reference("DetailedTimeRow") },
+    },
+    additionalProperties: false,
+  },
+  DetailedTimeFacet: {
+    type: "object",
+    required: ["id", "name"],
+    properties: { id: integerSchema, name: { type: "string" } },
+    additionalProperties: false,
+  },
+  // What each picker can narrow the report to, each list computed with every
+  // filter but its own applied.
+  DetailedTimeFacets: {
+    type: "object",
+    required: ["people", "tasks", "roles", "tags"],
+    properties: {
+      people: { type: "array", items: reference("DetailedTimeFacet") },
+      tasks: { type: "array", items: reference("DetailedTimeFacet") },
+      roles: { type: "array", items: reference("DetailedTimeFacet") },
+      tags: { type: "array", items: reference("DetailedTimeFacet") },
     },
     additionalProperties: false,
   },
@@ -7752,13 +9720,30 @@ export const apiContractSchemas: Readonly<Record<string, JsonSchema>> = {
       metrics: { type: "array", items: { type: "string" } },
       filters: { type: "array", items: { type: "object", additionalProperties: true } },
       group_by: nullable({ type: "object", additionalProperties: true }),
+      // Only for a saved view: the report's new address.
+      view: { $ref: "#/components/schemas/SavedReportAddress" },
       presentation: { $ref: "#/components/schemas/ReportDefinitionPresentation" },
     },
     additionalProperties: false,
   },
+  SavedReportAddress: {
+    type: "object",
+    required: ["report", "query"],
+    properties: {
+      report: { type: "string", description: "The Reports kind, such as time or invoiced." },
+      query: { type: "string", description: "The report's query string: filters, grouping, sort and range." },
+    },
+    additionalProperties: false,
+  },
+  SavedReportViewInput: {
+    type: "object",
+    required: ["name", "view"],
+    properties: { name: stringSchema, view: { $ref: "#/components/schemas/SavedReportAddress" } },
+    additionalProperties: false,
+  },
   SavedReport: {
     type: "object",
-    required: ["id", "name", "version", "fields", "metrics", "filters", "group_by", "presentation", "owner", "is_custom", "pinned", "shared", "created_at", "updated_at"],
+    required: ["id", "name", "version", "fields", "metrics", "filters", "group_by", "presentation", "owner", "is_custom", "view", "pinned", "shared", "shared_with", "owned_by_viewer", "can_delete", "created_at", "updated_at"],
     properties: {
       id: stringSchema, name: stringSchema, version: integerSchema,
       fields: { type: "array", items: { type: "object", additionalProperties: true } },
@@ -7768,6 +9753,24 @@ export const apiContractSchemas: Readonly<Record<string, JsonSchema>> = {
       presentation: { $ref: "#/components/schemas/ReportDefinitionPresentation" },
       owner: { type: "object", additionalProperties: true },
       is_custom: booleanSchema, pinned: booleanSchema, shared: booleanSchema,
+      // The report's address when this is a saved view of a report; null for a builder definition.
+      view: nullable({ $ref: "#/components/schemas/SavedReportAddress" }),
+      // Who the owner shared it with. Empty for everyone but the owner.
+      shared_with: {
+        type: "object", required: ["users", "profiles"],
+        properties: {
+          users: {
+            type: "array",
+            items: {
+              type: "object", required: ["user_id", "name"],
+              properties: { user_id: integerSchema, name: stringSchema }, additionalProperties: false,
+            },
+          },
+          profiles: { type: "array", items: { type: "string", enum: ["member", "project_manager", "people_admin", "accounting", "executive_manager", "administrator"] } },
+        },
+        additionalProperties: false,
+      },
+      owned_by_viewer: booleanSchema, can_delete: booleanSchema,
       created_at: timestampSchema, updated_at: timestampSchema,
     },
     additionalProperties: false,
@@ -8441,7 +10444,7 @@ export const apiContractSchemas: Readonly<Record<string, JsonSchema>> = {
     type: "object",
     required: ["module", "enabled"],
     properties: {
-      module: { type: "string", enum: ["approval", "expenses", "own_money"] },
+      module: { type: "string", enum: ["approval", "expenses", "own_money", "activity_log"] },
       enabled: booleanSchema,
     },
     additionalProperties: false,
@@ -8875,6 +10878,71 @@ export const apiContractSchemas: Readonly<Record<string, JsonSchema>> = {
     },
     additionalProperties: false,
   },
+  NotificationSettingsInput: {
+    type: "object",
+    properties: {
+      // Issue 934: copy administrators on every budget alert, not only when a
+      // project has no manager with an address.
+      budget_alerts_include_admins: { type: "boolean" },
+      // Issue 935: when everyone is reminded to submit last week's time, read
+      // on each person's own wall clock. Null switches it off.
+      submission_reminder: { anyOf: [{ $ref: "#/components/schemas/SubmissionReminderSchedule" }, { type: "null" }] },
+    },
+    additionalProperties: false,
+  },
+  SubmissionReminderSchedule: {
+    type: "object",
+    required: ["day", "time"],
+    properties: {
+      day: { type: "string", enum: ["monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday"] },
+      time: { type: "string", pattern: "^(?:[01][0-9]|2[0-3]):[0-5][0-9]$" },
+    },
+    additionalProperties: false,
+  },
+  NotificationSettingsEnvelope: {
+    type: "object",
+    required: ["data"],
+    properties: {
+      data: {
+        type: "object",
+        required: ["budget_alerts_include_admins", "submission_reminder"],
+        properties: {
+          budget_alerts_include_admins: { type: "boolean" },
+          submission_reminder: { anyOf: [{ $ref: "#/components/schemas/SubmissionReminderSchedule" }, { type: "null" }] },
+        },
+        additionalProperties: false,
+      },
+    },
+    additionalProperties: false,
+  },
+  TimesheetAutoApprovalInput: {
+    type: "object",
+    properties: {
+      enabled: { type: "boolean" },
+      // Calendar days from the week's submission. Needed once, to enable.
+      window_days: { type: "integer", minimum: 1, maximum: 60 },
+    },
+    additionalProperties: false,
+  },
+  TimesheetAutoApprovalEnvelope: {
+    type: "object",
+    required: ["data"],
+    properties: {
+      data: {
+        type: "object",
+        required: ["enabled", "window_days", "clock_starts_at", "effective_from", "approval_module_enabled"],
+        properties: {
+          enabled: { type: "boolean" },
+          window_days: { anyOf: [{ type: "integer", minimum: 1, maximum: 60 }, { type: "null" }] },
+          clock_starts_at: { type: "string", enum: ["submitted_at"] },
+          effective_from: { anyOf: [{ type: "string", format: "date-time" }, { type: "null" }] },
+          approval_module_enabled: { type: "boolean" },
+        },
+        additionalProperties: false,
+      },
+    },
+    additionalProperties: false,
+  },
   // The files the work journal goes as (issue 647): a non-empty set, held in
   // this order, which is the order they attach in. One level serves them all.
   JournalFormats: {
@@ -8917,13 +10985,24 @@ export const apiContractSchemas: Readonly<Record<string, JsonSchema>> = {
   },
   InvoiceDefaults: {
     type: "object",
-    required: ["company_name", "company_address", "notes", "subject"],
+    required: [
+      "company_name",
+      "company_address",
+      "notes",
+      "subject",
+      "estimate_validity_days",
+      "view_receipts",
+    ],
     properties: {
       company_name: { type: "string" },
       company_address: nullable({ type: "string" }),
       // Harvest's lightweight markup (*bold*, _italic_) is kept verbatim.
       notes: nullable({ type: "string" }),
       subject: nullable({ type: "string" }),
+      // Days an estimate stays answerable from the day it is first sent (issue 1010).
+      estimate_validity_days: nullable({ type: "integer", minimum: 1, maximum: 3650 }),
+      // Link the invoice online in the email and record when it is first opened.
+      view_receipts: { type: "boolean" },
     },
     additionalProperties: false,
   },
@@ -8937,6 +11016,8 @@ export const apiContractSchemas: Readonly<Record<string, JsonSchema>> = {
       company_address: nullable({ type: "string", maxLength: 2000 }),
       notes: nullable({ type: "string", maxLength: 100000 }),
       subject: nullable({ type: "string", maxLength: 998 }),
+      estimate_validity_days: nullable({ type: "integer", minimum: 1, maximum: 3650 }),
+      view_receipts: { type: "boolean" },
     },
     additionalProperties: false,
   },
@@ -9026,6 +11107,86 @@ export const apiContractSchemas: Readonly<Record<string, JsonSchema>> = {
     },
     additionalProperties: false,
   },
+  InvoiceHoursReconciliationEnvelope: {
+    type: "object",
+    required: ["data"],
+    properties: {
+      data: {
+        type: "object",
+        required: [
+          "invoice_id",
+          "linked_seconds",
+          "billed_seconds",
+          "difference_seconds",
+          "status",
+          "tolerance_seconds",
+          "projects",
+          "not_compared",
+          "hours_version","total_tolerance_seconds","comparison_complete","has_mismatch","invoice_version","invoice_state","not_compared_entry_ids","lines","entries",
+        ],
+        properties: {
+          invoice_id: integerSchema,
+          linked_seconds: signedIntegerSchema,
+          billed_seconds: signedIntegerSchema,
+          difference_seconds: signedIntegerSchema,
+          status: reconciliationStatusSchema,
+          tolerance_seconds: { type: "integer", minimum: 0 },
+          hours_version:nullable({type:'string'}),
+          total_tolerance_seconds:{type:'integer',minimum:0},
+          comparison_complete:{type:'boolean'},has_mismatch:{type:'boolean'},
+          invoice_version:nullable({type:'integer',minimum:0}),invoice_state:nullable({type:'string'}),
+          not_compared_entry_ids:{type:'array',items:integerSchema},
+          lines:{type:'array',items:{type:'object',required:['line_id','project_id','entry_ids','linked_seconds','billed_seconds','difference_seconds','status'],properties:{line_id:integerSchema,project_id:nullable(integerSchema),entry_ids:{type:'array',items:integerSchema},linked_seconds:signedIntegerSchema,billed_seconds:signedIntegerSchema,difference_seconds:signedIntegerSchema,status:reconciliationStatusSchema},additionalProperties:false}},
+          entries:{type:'array',items:{type:'object',required:['entry_id','user_id','user_name','spent_date','project_id','project_name','seconds','eligible_for_release'],properties:{entry_id:nullable(integerSchema),user_id:nullable(integerSchema),user_name:nullable({type:'string'}),spent_date:nullable({type:'string'}),project_id:integerSchema,project_name:nullable({type:'string'}),seconds:signedIntegerSchema,eligible_for_release:{type:'boolean'}},additionalProperties:false}},
+          projects: {
+            type: "array",
+            items: {
+              type: "object",
+              required: [
+                "project_id",
+                "project_name",
+                "tolerance_seconds",
+                "linked_seconds",
+                "billed_seconds",
+                "difference_seconds",
+                "status",
+              ],
+              properties: {
+                project_id: integerSchema,
+                project_name: nullable({ type: "string" }),
+                tolerance_seconds:{type:"integer",minimum:0},
+                linked_seconds: signedIntegerSchema,
+                billed_seconds: signedIntegerSchema,
+                difference_seconds: signedIntegerSchema,
+                status: reconciliationStatusSchema,
+              },
+              additionalProperties: false,
+            },
+          },
+          // Fees, expenses and lines whose time provenance cannot be established.
+          not_compared: {
+            type: "array",
+            items: {
+              type: "object",
+              required: ["line_id", "position", "description", "quantity"],
+              properties: {
+                line_id: integerSchema,
+                position: { type: "integer", minimum: 0 },
+                description: nullable({ type: "string" }),
+                quantity: { type: "number" },
+              },
+              additionalProperties: false,
+            },
+          },
+        },
+        additionalProperties: false,
+      },
+    },
+    additionalProperties: false,
+  },
+  InvoiceLineTimeReleaseInput:{type:'object',required:['command_id','line_id','expected_version','hours_version','entry_ids','confirmed'],properties:{command_id:{type:'string',pattern:'^[A-Za-z0-9_-]{1,128}$'},line_id:integerSchema,expected_version:{type:'integer',minimum:0},hours_version:{type:'string',pattern:'^[a-f0-9]{64}$'},entry_ids:{type:'array',minItems:1,maxItems:1000,items:integerSchema},confirmed:{type:'boolean',enum:[true]}},additionalProperties:false},
+  InvoiceLineTimeReleaseEnvelope:{type:'object',required:['data'],properties:{data:{type:'object',required:['command_id','invoice_id','line_id','expected_version','hours_version','released_entry_ids','released_seconds','recorded_at','replayed'],properties:{command_id:{type:'string'},invoice_id:integerSchema,line_id:integerSchema,expected_version:{type:'integer',minimum:0},hours_version:{type:'string'},released_entry_ids:{type:'array',items:integerSchema},released_seconds:signedIntegerSchema,recorded_at:{type:'string'},replayed:{type:'boolean'}},additionalProperties:false}},additionalProperties:false},
+
   ReleasedTimeEnvelope: {
     type: "object",
     required: ["data"],
@@ -9065,6 +11226,87 @@ export const apiContractSchemas: Readonly<Record<string, JsonSchema>> = {
     },
     additionalProperties: false,
   },
+  PayoutPreference: {
+    type: "object",
+    required: ["user_id", "provider", "effective_provider", "organization_default", "version", "set_by", "linked_providers"],
+    properties: {
+      user_id: { type: "integer", minimum: 1 },
+      provider: { anyOf: [{ type: "string", enum: ["deel", "wise"] }, { type: "null" }] },
+      effective_provider: { type: "string", enum: ["deel", "wise"] },
+      organization_default: { type: "string", enum: ["deel", "wise"] },
+      version: { type: "integer", minimum: 0 },
+      set_by: { anyOf: [{ type: "string", enum: ["person", "administrator", "automatic"] }, { type: "null" }] },
+      linked_providers: { type: "array", items: { type: "string", enum: ["deel", "wise"] } },
+    },
+    additionalProperties: false,
+  },
+  PayoutPreferenceEnvelope: {
+    type: "object",
+    required: ["data"],
+    properties: { data: reference("PayoutPreference") },
+    additionalProperties: false,
+  },
+  PayoutPreferenceInput: {
+    type: "object",
+    required: ["provider", "expected_version"],
+    properties: {
+      provider: { anyOf: [{ type: "string", enum: ["deel", "wise"] }, { type: "null" }] },
+      expected_version: { type: "integer", minimum: 0 },
+    },
+    additionalProperties: false,
+  },
+  PayoutPreferenceRosterEnvelope: {
+    type: "object",
+    required: ["data"],
+    properties: {
+      data: {
+        type: "object",
+        required: ["organization_default", "people"],
+        properties: {
+          organization_default: { type: "string", enum: ["deel", "wise"] },
+          people: {
+            type: "array",
+            items: {
+              type: "object",
+              required: ["user_id", "name", "provider", "version", "set_by", "linked_providers"],
+              properties: {
+                user_id: { type: "integer", minimum: 1 },
+                name: { type: "string" },
+                provider: { anyOf: [{ type: "string", enum: ["deel", "wise"] }, { type: "null" }] },
+                version: { type: "integer", minimum: 0 },
+                set_by: { anyOf: [{ type: "string", enum: ["person", "administrator", "automatic"] }, { type: "null" }] },
+                linked_providers: { type: "array", items: { type: "string", enum: ["deel", "wise"] } },
+              },
+              additionalProperties: false,
+            },
+          },
+        },
+        additionalProperties: false,
+      },
+    },
+    additionalProperties: false,
+  },
+  PayoutProviderListEnvelope: {
+    type: "object",
+    required: ["data"],
+    properties: { data: { type: "array", items: reference("PayoutProviderSetting") } },
+    additionalProperties: false,
+  },
+  PayoutProviderSetting: {
+    type: "object",
+    required: ["provider", "enabled"],
+    properties: {
+      provider: { type: "string", enum: ["deel", "wise"] },
+      enabled: { type: "boolean" },
+    },
+    additionalProperties: false,
+  },
+  PayoutProviderSettingInput: {
+    type: "object",
+    required: ["enabled"],
+    properties: { enabled: { type: "boolean" } },
+    additionalProperties: false,
+  },
   PayoutAccountListEnvelope: {
     type: "object",
     required: ["data"],
@@ -9100,9 +11342,16 @@ export const apiContractSchemas: Readonly<Record<string, JsonSchema>> = {
   },
   TwoFactorStatus: {
     type: "object",
-    required: ["enrolled", "pending_confirmation", "recovery_codes_remaining"],
+    required: [
+      "enrolled",
+      "email_enabled",
+      "pending_confirmation",
+      "recovery_codes_remaining",
+    ],
     properties: {
       enrolled: booleanSchema,
+      // Issue 770: a code by email. Independent of the authenticator.
+      email_enabled: booleanSchema,
       pending_confirmation: booleanSchema,
       // Counts down as codes are spent, so zero is a real answer.
       recovery_codes_remaining: { type: "integer", minimum: 0 },
@@ -9150,13 +11399,53 @@ export const apiContractSchemas: Readonly<Record<string, JsonSchema>> = {
   // a confirmed second factor. No session accompanies it.
   TwoFactorChallengeIssued: {
     type: "object",
-    required: ["status", "challenge", "expires_at"],
+    required: ["status", "challenge", "expires_at", "methods"],
     properties: {
       status: { type: "string", enum: ["two_factor_required"] },
       // Also set as an HttpOnly cookie. Named here for clients that keep none.
       challenge: stringSchema,
       expires_at: stringSchema,
+      // What can answer it: an authenticator or recovery code, or a mailed one.
+      methods: { type: "array", items: { type: "string", enum: ["totp", "email"] } },
     },
+    additionalProperties: false,
+  },
+  TwoFactorChallengeIssuedEnvelope: {
+    type: "object",
+    required: ["data"],
+    properties: { data: reference("TwoFactorChallengeIssued") },
+    additionalProperties: false,
+  },
+  TwoFactorEmailCodeInput: {
+    type: "object",
+    properties: {
+      // Omitted by anything that kept the cookie the sign-in set.
+      challenge: stringSchema,
+    },
+    additionalProperties: false,
+  },
+  TwoFactorEmailState: {
+    type: "object",
+    required: ["user_id", "email_enabled"],
+    properties: { user_id: integerSchema, email_enabled: { type: "boolean" } },
+    additionalProperties: false,
+  },
+  TwoFactorEmailStateEnvelope: {
+    type: "object",
+    required: ["data"],
+    properties: { data: reference("TwoFactorEmailState") },
+    additionalProperties: false,
+  },
+  TwoFactorEmailDisabled: {
+    type: "object",
+    required: ["user_id", "email_enabled"],
+    properties: { user_id: integerSchema, email_enabled: { type: "boolean", enum: [false] } },
+    additionalProperties: false,
+  },
+  TwoFactorEmailDisabledEnvelope: {
+    type: "object",
+    required: ["data"],
+    properties: { data: reference("TwoFactorEmailDisabled") },
     additionalProperties: false,
   },
   TwoFactorChallengeInput: {
@@ -9220,6 +11509,99 @@ export const apiContractSchemas: Readonly<Record<string, JsonSchema>> = {
     },
     additionalProperties: false,
   },
+  ClientRateCardLine: {
+    type: "object",
+    required: ["task_id", "amount_cents"],
+    properties: {
+      task_id: {
+        ...nullable(integerSchema),
+        description: "The task this rate is for; null is the card default.",
+      },
+      amount_cents: {
+        type: "integer",
+        minimum: 0,
+        maximum: 1000000000,
+        description: "Hourly rate in integer cents.",
+      },
+    },
+    additionalProperties: false,
+  },
+  ClientRateCardVersion: {
+    type: "object",
+    required: ["id", "start_date", "lines", "created_at"],
+    properties: {
+      id: integerSchema,
+      start_date: {
+        ...nullable(dateSchema),
+        description: "First day this version is in force; null means all prior dates.",
+      },
+      lines: { type: "array", items: reference("ClientRateCardLine") },
+      created_at: timestampSchema,
+    },
+    additionalProperties: false,
+  },
+  ClientRateCard: {
+    type: "object",
+    required: ["id", "client_id", "name", "created_at", "versions"],
+    properties: {
+      id: integerSchema,
+      client_id: integerSchema,
+      name: stringSchema,
+      created_at: timestampSchema,
+      versions: { type: "array", items: reference("ClientRateCardVersion") },
+    },
+    additionalProperties: false,
+  },
+  ClientRateCardInput: {
+    type: "object",
+    required: ["name"],
+    properties: { name: { type: "string", minLength: 1, maxLength: 200 } },
+    additionalProperties: false,
+  },
+  ClientRateCardVersionInput: {
+    type: "object",
+    required: ["start_date", "lines"],
+    properties: {
+      start_date: nullable(dateSchema),
+      lines: {
+        type: "array",
+        maxItems: 200,
+        items: reference("ClientRateCardLine"),
+      },
+    },
+    additionalProperties: false,
+  },
+  ClientRateCardEnvelope: envelope("ClientRateCard"),
+  EffectiveClientRateCard: {
+    type: "object",
+    required: [
+      "client_id",
+      "supplied_by_client_id",
+      "depth",
+      "card_id",
+      "card_name",
+      "version_start_date",
+      "task_id",
+      "amount_cents",
+    ],
+    properties: {
+      client_id: integerSchema,
+      supplied_by_client_id: integerSchema,
+      depth: { type: "integer", minimum: 0 },
+      card_id: integerSchema,
+      card_name: stringSchema,
+      version_start_date: nullable(dateSchema),
+      task_id: {
+        ...nullable(integerSchema),
+        description: "The matching line's task; null when the card default priced it.",
+      },
+      amount_cents: { type: "integer", minimum: 0 },
+    },
+    additionalProperties: false,
+  },
+  EffectiveClientRateCardEnvelope: envelope("EffectiveClientRateCard"),
+  ...csvImportStagingSchemas,
+  ...csvImportApplySchemas,
 };
 
 const openApiPath = (runtimePath: string): string =>
@@ -9275,7 +11657,12 @@ export const generateOpenApiDocument = (): Record<string, unknown> => {
       [operation.responseStatus]: successResponse(operation),
       "400": { $ref: "#/components/responses/MalformedRequest" },
       "401": { $ref: "#/components/responses/AuthenticationRequired" },
-      "403": { $ref: "#/components/responses/InsufficientPermission" },
+      "403": {
+        $ref:
+          moduleForPath(operation.path) === undefined
+            ? "#/components/responses/InsufficientPermission"
+            : "#/components/responses/InsufficientPermissionOrModuleDisabled",
+      },
       "404": { $ref: "#/components/responses/ResourceNotFound" },
       "409": { $ref: "#/components/responses/StateConflict" },
       "413": { $ref: "#/components/responses/PayloadTooLarge" },
@@ -9286,6 +11673,7 @@ export const generateOpenApiDocument = (): Record<string, unknown> => {
     for (const status of operation.additionalResponseStatuses ?? []) {
       responses[status] = successResponse(operation);
     }
+    for(const status of operation.additionalErrorResponseStatuses??[]) responses[status]={description:"Error response",content:{"application/json":{schema:{$ref:"#/components/schemas/ErrorEnvelope"}}}};
     const entry: Record<string, unknown> = {
       operationId: operation.operationId,
       summary: operation.summary,
@@ -9297,7 +11685,9 @@ export const generateOpenApiDocument = (): Record<string, unknown> => {
         ? []
         : operation.sessionOnly
           ? [{ cookieSession: [] }]
-          : [{ bearerAuth: [] }, { cookieSession: [] }],
+          : operation.tokenOnly
+            ? [{ bearerAuth: [] }]
+            : [{ bearerAuth: [] }, { cookieSession: [] }],
       responses,
       "x-ezacto-runtime-path": operation.path,
       "x-ezacto-generate-client": operation.generateClient !== false,
@@ -9328,7 +11718,7 @@ export const generateOpenApiDocument = (): Record<string, unknown> => {
       title: "ezacto API",
       version: "1.0.0",
       description:
-        "The native ezacto v1 contract. Contract and generated clients are deterministic build artifacts.",
+        "The native ezacto v1 contract. Contract and generated clients are deterministic build artifacts. An operator can switch whole modules off (SSO_ENABLED, BACKUPS_ENABLED, INVOICES_ENABLED, ACCOUNTING_ENABLED, each `true` or `false`): every operation of a switched-off module answers 403 `module_disabled`, makes no provider call and leaves its data untouched.",
     },
     servers: [{ url: "https://ezacto.io" }],
     paths,
@@ -9345,6 +11735,9 @@ export const generateOpenApiDocument = (): Record<string, unknown> => {
         MalformedRequest: errorResponse("Malformed request"),
         AuthenticationRequired: errorResponse("Authentication required"),
         InsufficientPermission: errorResponse("Insufficient permission"),
+        InsufficientPermissionOrModuleDisabled: errorResponse(
+          "Insufficient permission, or `module_disabled`: the operator of this instance switched the module off",
+        ),
         ResourceNotFound: errorResponse("Resource not found"),
         StateConflict: errorResponse("State conflict"),
         PayloadTooLarge: errorResponse("Payload too large"),

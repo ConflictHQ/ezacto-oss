@@ -1,7 +1,7 @@
 name: publish-npm
 
-# Publishes @conflict-hq/ezacto-client and @conflict-hq/ezacto-cli to npm from a tag of the form
-# npm-v<version>, where <version> must equal both package versions. Needs the
+# Publishes @conflict-hq/ezacto-client, @conflict-hq/ezacto-cli and @conflict-hq/ezacto-migrate to npm
+# from a tag of the form npm-v<version>, where <version> must equal all three package versions. Needs the
 # NPM_TOKEN secret (an automation token from the npm account that owns the
 # @ezacto scope); without it the job stops before touching the registry.
 on:
@@ -29,14 +29,16 @@ jobs:
         run: |
           set -euo pipefail
           tag="${GITHUB_REF_NAME#npm-v}"
-          for p in packages/client packages/cli; do
+          for p in packages/client packages/cli packages/migrate; do
             v="$(node -p "require('./$p/package.json').version")"
             [ "$v" = "$tag" ] || { echo "$p is $v, tag is $tag" >&2; exit 1; }
           done
-      - run: npm run build -w @ezacto/core -w @conflict-hq/ezacto-client -w @conflict-hq/ezacto-cli
+      - run: npm run build -w @ezacto/core -w @ezacto/integrations -w @ezacto/db -w @conflict-hq/ezacto-client -w @conflict-hq/ezacto-cli -w @conflict-hq/ezacto-migrate
       - run: npm test -w @conflict-hq/ezacto-client -w @conflict-hq/ezacto-cli
-      - name: install and exercise release tarballs before publishing either package
-        run: npm run test:package -w @conflict-hq/ezacto-cli
+      - name: install and exercise release tarballs before publishing any package
+        run: |
+          npm run test:package -w @conflict-hq/ezacto-cli
+          npm run test:package -w @conflict-hq/ezacto-migrate
       - name: Refuse to publish without a token
         run: test -n "${NODE_AUTH_TOKEN}"
         env:
@@ -45,5 +47,8 @@ jobs:
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
       - run: npm publish -w @conflict-hq/ezacto-cli --access public --provenance
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+      - run: npm publish -w @conflict-hq/ezacto-migrate --access public --provenance
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}

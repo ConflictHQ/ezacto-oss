@@ -1,0 +1,61 @@
+{
+  "id": 5022,
+  "spent_date": "2024-02-03",
+  "hours": 2,
+  "hours_without_timer": 2,
+  "rounded_hours": 2,
+  "notes": "Sample time_entries notes 5022",
+  "is_locked": false,
+  "locked_reason": null,
+  "is_closed": false,
+  "approval_status": "unsubmitted",
+  "is_billed": false,
+  "timer_started_at": null,
+  "started_time": null,
+  "ended_time": null,
+  "is_running": false,
+  "billable": false,
+  "budgeted": false,
+  "billable_rate": null,
+  "cost_rate": 2,
+  "created_at": "2024-02-03T10:20:30Z",
+  "updated_at": "2024-02-03T10:20:30Z",
+  "user": {
+    "id": 4020,
+    "name": "Sample users first_name 4020 Sample users last_name 4020"
+  },
+  "client": {
+    "id": 1030,
+    "name": "Sample clients name 1030",
+    "currency": "USD"
+  },
+  "project": {
+    "id": 2009,
+    "name": "Sample projects name 2009",
+    "code": "SMP-2009"
+  },
+  "task": {
+    "id": 3013,
+    "name": "Sample tasks name 3013"
+  },
+  "user_assignment": {
+    "id": 7044,
+    "is_project_manager": false,
+    "is_active": true,
+    "budget": null,
+    "created_at": "2024-02-03T10:20:30Z",
+    "updated_at": "2024-02-03T10:20:30Z",
+    "hourly_rate": 2
+  },
+  "task_assignment": {
+    "id": 8030,
+    "billable": false,
+    "is_active": true,
+    "created_at": "2024-02-03T10:20:30Z",
+    "updated_at": "2024-02-03T10:20:30Z",
+    "hourly_rate": null,
+    "budget": null
+  },
+  "invoice": null,
+  "external_reference": null
+}

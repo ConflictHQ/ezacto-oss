@@ -36,7 +36,46 @@ export interface InvoiceListPosition {
   readonly issueDate: string;
   readonly number: string;
   readonly id: number;
+  /** Set when the list is sorted by due date, amount or balance (issue 852). */
+  readonly dueDate?: string;
+  readonly amountCents?: number;
+  readonly balanceCents?: number;
 }
+
+/**
+ * The columns the invoice list can be sorted by on the server (issue 852). A
+ * client's display name and the derived "overdue" pill cannot be ordered
+ * consistently with a cursor, so Client and Status are not among them.
+ */
+export const invoiceListSortFields = [
+  "issue_date",
+  "due_date",
+  "number",
+  "amount",
+  "balance",
+] as const;
+
+export type InvoiceListSortField = (typeof invoiceListSortFields)[number];
+
+export interface InvoiceListSort {
+  readonly field: InvoiceListSortField;
+  readonly descending: boolean;
+}
+
+/** Newest first: the order the list has always had, and the one absent `sort` means. */
+export const defaultInvoiceListSort: InvoiceListSort = {
+  field: "issue_date",
+  descending: true,
+};
+
+/** `due_date` ascending, `-due_date` descending; null for anything else. */
+export const parseInvoiceListSort = (token: string): InvoiceListSort | null => {
+  const descending = token.startsWith("-");
+  const field = descending ? token.slice(1) : token;
+  return (invoiceListSortFields as readonly string[]).includes(field)
+    ? { field: field as InvoiceListSortField, descending }
+    : null;
+};
 
 const digitsOnly = /^[0-9]+$/u;
 
@@ -84,3 +123,38 @@ export const compareInvoiceListPositions = (
   compareCodePoints(right.issueDate, left.issueDate) ||
   compareInvoiceNumbers(right.number, left.number) ||
   right.id - left.id;
+
+const comparePrimary = (
+  field: InvoiceListSortField,
+  left: InvoiceListPosition,
+  right: InvoiceListPosition,
+): number => {
+  switch (field) {
+    case "issue_date":
+      return compareCodePoints(left.issueDate, right.issueDate);
+    case "due_date":
+      return compareCodePoints(left.dueDate ?? "", right.dueDate ?? "");
+    case "number":
+      return 0;
+    case "amount":
+      return (left.amountCents ?? 0) - (right.amountCents ?? 0);
+    case "balance":
+      return (left.balanceCents ?? 0) - (right.balanceCents ?? 0);
+  }
+};
+
+/**
+ * The same comparison for any of the list's sorts. The column asked for ranks
+ * first, then the invoice number, then the id, all in the one direction, so no
+ * two rows tie and a cursor still names one place. The default sort is
+ * `compareInvoiceListPositions` exactly.
+ */
+export const compareInvoiceListPositionsBy =
+  (sort: InvoiceListSort) =>
+  (left: InvoiceListPosition, right: InvoiceListPosition): number => {
+    const order =
+      comparePrimary(sort.field, left, right) ||
+      compareInvoiceNumbers(left.number, right.number) ||
+      left.id - right.id;
+    return sort.descending ? -order : order;
+  };

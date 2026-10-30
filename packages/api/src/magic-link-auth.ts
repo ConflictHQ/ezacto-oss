@@ -1,6 +1,10 @@
-import type { Hono } from 'hono'
+import type { Hono, Context } from 'hono'
 import type { ApiContext } from './context.js'
-import type { SessionPrincipal, ApiSessionResolver } from './auth.js'
+import {
+  requireSameOriginForUnsafeSessionRequest,
+  type SessionPrincipal,
+  type ApiSessionResolver,
+} from './auth.js'
 import { ApiError, readJsonBody, validationError } from './errors.js'
 
 export const PORTAL_SESSION_COOKIE_NAME = '__Host-ezacto_portal'
@@ -81,12 +85,31 @@ export interface PortalInvoiceSummary {
   dueAmountCents: number
 }
 
+/**
+ * What a contact sees of their own client's estimates. The shapes are the
+ * database package's customer views, passed through as JSON.
+ */
+export interface PortalEstimateService {
+  /** Sent, accepted and declined estimates of the client; never drafts. */
+  list(clientId: number): Promise<readonly { id: number }[]>
+  /** Null when the estimate is missing, a draft, or another client's. */
+  get(clientId: number, estimateId: number): Promise<{ id: number } | null>
+  respond(input: {
+    clientId: number
+    contactId: number
+    estimateId: number
+    decision: 'accept' | 'decline'
+    version: string
+  }): Promise<{ estimate: { id: number }; replayed: boolean }>
+}
+
 export interface MagicLinkRouteOptions {
   service: MagicLinkService
   sessions: PortalSessionIssuer
   sessionStore: PortalSessionStore
   mailer?: MagicLinkMailer
   statements?: PortalStatementReader
+  estimates?: PortalEstimateService
 }
 
 const requireMailer = (mailer: MagicLinkMailer | undefined): MagicLinkMailer => {
@@ -175,8 +198,9 @@ export const installMagicLinkRoutes = <Bindings extends object>(
     )
   })
 
-  app.get('/portal/verify', async (context) => {
-    const token = context.req.query('token')
+  const verify = async (context: Context<ApiContext<Bindings>>, token: string | undefined) => {
+    context.header('cache-control', 'no-store')
+    context.header('referrer-policy', 'no-referrer')
     if (token === undefined || token === '') {
       throw new ApiError({
         status: 400,
@@ -194,10 +218,7 @@ export const installMagicLinkRoutes = <Bindings extends object>(
       })
     }
 
-    const session = await options.sessions.issue(
-      result.contactId,
-      result.clientId,
-    )
+    const session = await options.sessions.issue(result.contactId, result.clientId)
     context.header('set-cookie', session.setCookie, { append: true })
 
     return context.json(
@@ -211,6 +232,27 @@ export const installMagicLinkRoutes = <Bindings extends object>(
       200,
       { 'cache-control': 'no-store' },
     )
+  }
+  // Legacy direct callers may still verify by GET. Emailed links and the web
+  // page use the POST exchange so credentials do not enter request URLs.
+  app.get('/portal/verify', (context) => verify(context, context.req.query('token')))
+  app.post('/portal/verify', async (context) => {
+    context.header('cache-control', 'no-store')
+    requireSameOriginForUnsafeSessionRequest(context.req.raw)
+    const body = await readJsonBody<unknown>(context, { maxBytes: 8192 })
+    if (
+      typeof body !== 'object' ||
+      body === null ||
+      Array.isArray(body) ||
+      Object.keys(body).length !== 1 ||
+      !('token' in body) ||
+      typeof body.token !== 'string' ||
+      !body.token.trim()
+    )
+      throw validationError([
+        { field: 'token', code: 'invalid', message: 'Provide one sign-in token.' },
+      ])
+    return verify(context, body.token)
   })
 
   app.get('/portal/statements', async (context) => {
@@ -254,6 +296,138 @@ export const installMagicLinkRoutes = <Bindings extends object>(
       { 'cache-control': 'no-store' },
     )
   })
+
+  const requirePortalContact = async (request: Request) => {
+    const principal = await resolvePortalSession(request, options)
+    if (principal === null) {
+      throw new ApiError({
+        status: 401,
+        code: 'authentication_required',
+        message: 'A valid portal session is required.',
+      })
+    }
+    if (options.estimates === undefined) {
+      throw new ApiError({
+        status: 503,
+        code: 'service_unavailable',
+        message: 'Estimate review is temporarily unavailable.',
+      })
+    }
+    return { principal, estimates: options.estimates }
+  }
+
+  const estimateId = (raw: string | undefined): number => {
+    if (raw === undefined || !/^[1-9][0-9]{0,15}$/.test(raw) || !Number.isSafeInteger(Number(raw))) {
+      throw estimateNotFound()
+    }
+    return Number(raw)
+  }
+
+  app.get('/portal/estimates', async (context) => {
+    const { principal, estimates } = await requirePortalContact(context.req.raw)
+    return context.json(
+      { data: { estimates: await estimates.list(principal.clientId) } },
+      200,
+      { 'cache-control': 'no-store' },
+    )
+  })
+
+  app.get('/portal/estimates/:id', async (context) => {
+    const { principal, estimates } = await requirePortalContact(context.req.raw)
+    const estimate = await estimates.get(principal.clientId, estimateId(context.req.param('id')))
+    if (estimate === null) throw estimateNotFound()
+    return context.json({ data: estimate }, 200, { 'cache-control': 'no-store' })
+  })
+
+  app.post('/portal/estimates/:id/response', async (context) => {
+    requireSameOriginForUnsafeSessionRequest(context.req.raw)
+    const { principal, estimates } = await requirePortalContact(context.req.raw)
+    const id = estimateId(context.req.param('id'))
+    const body = await readJsonBody<unknown>(context, { maxBytes: 1024 })
+    if (typeof body !== 'object' || body === null || Array.isArray(body)) {
+      throw validationError([
+        { field: 'body', code: 'invalid', message: 'body must be a JSON object' },
+      ])
+    }
+    const record = body as Record<string, unknown>
+    const fields = [
+      ...Object.keys(record)
+        .filter((key) => key !== 'decision' && key !== 'version')
+        .map((field) => ({ field, code: 'unknown', message: `${field} is not accepted` })),
+      ...(record.decision === 'accept' || record.decision === 'decline'
+        ? []
+        : [{ field: 'decision', code: 'invalid', message: 'decision must be accept or decline' }]),
+      ...(typeof record.version === 'string' && /^[0-9a-f]{64}$/.test(record.version)
+        ? []
+        : [
+            {
+              field: 'version',
+              code: 'invalid',
+              message: 'version must be the version of the estimate that was shown',
+            },
+          ]),
+    ]
+    if (fields.length > 0) throw validationError(fields)
+    try {
+      const result = await estimates.respond({
+        clientId: principal.clientId,
+        contactId: principal.contactId,
+        estimateId: id,
+        decision: record.decision as 'accept' | 'decline',
+        version: record.version as string,
+      })
+      return context.json(
+        { data: result.estimate, replayed: result.replayed },
+        200,
+        { 'cache-control': 'no-store' },
+      )
+    } catch (error) {
+      throw translateEstimateResponseError(error)
+    }
+  })
+}
+
+const estimateNotFound = (): ApiError =>
+  new ApiError({
+    status: 404,
+    code: 'not_found',
+    message: 'The requested estimate does not exist.',
+  })
+
+const translateEstimateResponseError = (error: unknown): unknown => {
+  if (error instanceof ApiError) return error
+  const code =
+    typeof error === 'object' && error !== null && 'code' in error ? (error as { code: unknown }).code : null
+  if (code === 'estimate_not_found') return estimateNotFound()
+  if (code === 'estimate_content_changed') {
+    return new ApiError({
+      status: 409,
+      code,
+      message: 'This estimate changed after it was shown. Reload it to review the current version.',
+    })
+  }
+  if (code === 'estimate_needs_resend') {
+    return new ApiError({
+      status: 409,
+      code,
+      message: 'This estimate is being revised and cannot be answered until it is sent again.',
+    })
+  }
+  if (code === 'estimate_expired') {
+    return new ApiError({
+      status: 410,
+      code,
+      message: 'This estimate has expired and can no longer be answered. Ask the sender for a new one.',
+    })
+  }
+  if (code === 'estimate_state_conflict') {
+    return new ApiError({
+      status: 409,
+      code,
+      message: 'This estimate has already been answered.',
+    })
+  }
+  return error
 }
 
 /** Resolve a contact principal from the portal session cookie. */

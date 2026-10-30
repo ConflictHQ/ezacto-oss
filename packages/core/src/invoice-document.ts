@@ -14,6 +14,7 @@ import {
 import { wrapMarkup, wrapText, type TextRun } from "./pdf-text.js";
 import type { InvoiceEmailLine } from "./invoice-email.js";
 import { invoicePaymentTermsLabel } from "./payment-terms.js";
+import { normalizePaletteColor } from "./instance-theme.js";
 
 /**
  * The invoice as a document (issue 626), laid out as Harvest's.
@@ -42,6 +43,64 @@ export type InvoicePaymentTerms =
   | "net_60"
   | "custom";
 
+/**
+ * A line and, for an invoice raised for a parent client, the end-client whose
+ * work it bills: the client of the project the line carries. Absent or null on
+ * a line with no project and on any invoice for a single client.
+ */
+export interface InvoiceDocumentLine extends InvoiceEmailLine {
+  readonly endClientId?: number | null;
+  readonly endClientName?: string | null;
+}
+
+/** The lines of one end-client, and what they come to. */
+export interface EndClientSection {
+  readonly endClientId: number;
+  readonly endClientName: string;
+  readonly lines: readonly InvoiceDocumentLine[];
+  readonly subtotalCents: number;
+}
+
+/**
+ * An invoice's lines gathered by end-client, in the order each first appears,
+ * each with its subtotal -- or null where the lines name fewer than two
+ * end-clients, which is every invoice that is for one client and which is laid
+ * out as it always was. `ungrouped` is the lines that name none (a free-form
+ * line), kept in their order after the sections.
+ *
+ * The grouping is read from the lines' own attribution, never from the
+ * subject. Subtotals are sums of whole cents, so the sections add up to
+ * exactly the lines they were cut from.
+ */
+export const groupInvoiceLinesByEndClient = (
+  lines: readonly InvoiceDocumentLine[],
+): { readonly sections: readonly EndClientSection[]; readonly ungrouped: readonly InvoiceDocumentLine[] } | null => {
+  const sections = new Map<number, { name: string; lines: InvoiceDocumentLine[] }>();
+  const ungrouped: InvoiceDocumentLine[] = [];
+  for (const line of lines) {
+    const id = line.endClientId ?? null;
+    if (id === null) {
+      ungrouped.push(line);
+      continue;
+    }
+    const section = sections.get(id);
+    if (section === undefined) sections.set(id, { name: line.endClientName ?? `Client ${String(id)}`, lines: [line] });
+    else section.lines.push(line);
+  }
+  if (sections.size < 2) return null;
+  return {
+    sections: [...sections].map(([endClientId, section]) => {
+      let subtotalCents = 0;
+      for (const line of section.lines) {
+        subtotalCents += line.amountCents;
+        if (!Number.isSafeInteger(subtotalCents)) throw new RangeError("end-client subtotal exceeds the safe integer range");
+      }
+      return { endClientId, endClientName: section.name, lines: section.lines, subtotalCents };
+    }),
+    ungrouped,
+  };
+};
+
 export interface InvoiceDocumentInput {
   readonly number: string;
   readonly companyName: string;
@@ -49,6 +108,12 @@ export interface InvoiceDocumentInput {
   readonly companyAddress?: string | null;
   /** The organization's light-ground wordmark; the name is set in its place without one. */
   readonly logo?: PdfImage | null;
+  /**
+   * The instance accent, a `#RRGGBB`. Drawn only as rules -- never as text on
+   * the page -- so a pale accent cannot cost the document its legibility; a
+   * value that is not a six-digit hex leaves the page greyscale.
+   */
+  readonly accentColor?: string | null;
   readonly clientName: string;
   readonly clientAddress?: string | null;
   readonly issueDate: string;
@@ -58,7 +123,7 @@ export interface InvoiceDocumentInput {
   readonly purchaseOrder?: string | null;
   readonly currency: string;
   readonly subject: string | null;
-  readonly lines: readonly InvoiceEmailLine[];
+  readonly lines: readonly InvoiceDocumentLine[];
   readonly subtotalCents: number;
   readonly discountCents: number;
   /** Parts per million, for the "(20%)" beside the discount. */
@@ -237,11 +302,34 @@ export const layoutInvoiceDocument = (input: InvoiceDocumentInput): PdfDocument 
       at += textWidth(run.text, run.font, size);
     }
   };
-  const vertical = (x: number, top: number, bottom: number, grey = HAIRLINE): void => {
-    sheet.operations.push({ kind: "line", x1: x, y1: top, x2: x, y2: bottom, width: 0.6, grey });
+  const accentHex = normalizePaletteColor(input.accentColor);
+  const accent =
+    accentHex === null
+      ? null
+      : ([1, 3, 5].map((at) => Number.parseInt(accentHex.slice(at, at + 2), 16) / 255) as [number, number, number]);
+  const vertical = (x: number, top: number, bottom: number, grey = HAIRLINE, rgb = false): void => {
+    sheet.operations.push({
+      kind: "line",
+      x1: x,
+      y1: top,
+      x2: x,
+      y2: bottom,
+      width: rgb && accent !== null ? 1.2 : 0.6,
+      grey,
+      ...(rgb && accent !== null ? { rgb: accent } : {}),
+    });
   };
-  const horizontal = (at: number, grey = HAIRLINE, width = 0.6): void => {
-    sheet.operations.push({ kind: "line", x1: LEFT, y1: at, x2: RIGHT, y2: at, width, grey });
+  const horizontal = (at: number, grey = HAIRLINE, width = 0.6, rgb = false): void => {
+    sheet.operations.push({
+      kind: "line",
+      x1: LEFT,
+      y1: at,
+      x2: RIGHT,
+      y2: at,
+      width: rgb && accent !== null ? 1.8 : width,
+      grey,
+      ...(rgb && accent !== null ? { rgb: accent } : {}),
+    });
   };
   /** A figure right-aligned in its column, set smaller only if it would not fit. */
   const figure = (right: number, left: number, baseline: number, value: string, font: PdfFont, size = BODY): void => {
@@ -282,7 +370,7 @@ export const layoutInvoiceDocument = (input: InvoiceDocumentInput): PdfDocument 
     }
   }
   const senderBottom = baseline + LEADING - 3;
-  vertical(RIGHT_RULE, TOP - 35, senderBottom);
+  vertical(RIGHT_RULE, TOP - 35, senderBottom, HAIRLINE, true);
 
   // Who it is for, left; what it is, right.
   const blockTop = Math.min(leftBottom, senderBottom) - 26;
@@ -354,10 +442,10 @@ export const layoutInvoiceDocument = (input: InvoiceDocumentInput): PdfDocument 
   }
   y = headerTop - 17;
   separators(headerTop, y);
-  horizontal(y, 0.75, 1);
+  horizontal(y, 0.75, 1, true);
 
   const descriptionMeasure = TABLE.description.right - TABLE.description.left - PAD * 2;
-  input.lines.forEach((line, index) => {
+  const drawLine = (line: InvoiceDocumentLine, index: number): void => {
     const description =
       line.description === null || line.description.trim() === ""
         ? [[]]
@@ -409,7 +497,43 @@ export const layoutInvoiceDocument = (input: InvoiceDocumentInput): PdfDocument 
     });
     y = baselineAt - below;
     close(y);
-  });
+  };
+
+  /** A full-width row naming an end-client, or closing its section with the subtotal. */
+  const drawBand = (label: string, cents: number | null): void => {
+    const height = 17;
+    room(height + (cents === null ? 17 : 0));
+    const top = y;
+    const bottom = top - height;
+    sheet.operations.unshift({ kind: "rect", x: LEFT, y: bottom, width: RIGHT - LEFT, height, grey: cents === null ? 0.88 : 0.95 });
+    const baselineAt = top - 11.5;
+    // A long name is cut rather than left to run into the margin.
+    const shown = label.length > 70 ? `${label.slice(0, 67)}...` : label;
+    if (cents === null) {
+      text(TABLE.kind.left + PAD, baselineAt, shown, { font: "bold" });
+    } else {
+      text(TABLE.unitPrice.right - PAD, baselineAt, shown, { font: "bold", align: "right" });
+      figure(TABLE.amount.right, TABLE.amount.left, baselineAt, invoiceDocumentMoney(cents, input.currency), "bold");
+      vertical(TABLE.amount.left, top, bottom);
+    }
+    y = bottom;
+    horizontal(y);
+  };
+
+  // An invoice for a parent reads as a section per end-client, each closed by
+  // its subtotal; one for a single client is the plain list it has always been.
+  const grouped = groupInvoiceLinesByEndClient(input.lines);
+  if (grouped === null) {
+    input.lines.forEach(drawLine);
+  } else {
+    let index = 0;
+    for (const section of grouped.sections) {
+      drawBand(section.endClientName, null);
+      for (const line of section.lines) drawLine(line, index++);
+      drawBand(`Subtotal: ${section.endClientName}`, section.subtotalCents);
+    }
+    for (const line of grouped.ungrouped) drawLine(line, index++);
+  }
 
   // The totals, right. Harvest's read straight to the amount due when nothing
   // adjusts the total, but an accounts-payable department books an invoice by

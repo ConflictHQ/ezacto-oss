@@ -1,3 +1,4 @@
+import { createD1EmailFeedbackLedger } from '@ezacto/db'
 import { Miniflare } from 'miniflare'
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest'
 import type {
@@ -37,6 +38,100 @@ describe('Worker email queue composition', () => {
   })
 
   afterAll(async () => miniflare.dispose())
+
+  it('[reliability #42] the D1 queue refuses copied suppressed recipients and sends a fresh job after review', async () => {
+    const isolated = new Miniflare({
+      modules: true,
+      script: 'export default {fetch(){return new Response("ok")}}',
+      d1Databases: ['DB'],
+    })
+    try {
+      const database = await isolated.getD1Database('DB')
+      const services = await createRuntimeServices({
+        DB: database,
+        API_CURSOR_SIGNING_KEY: cursorKey,
+        ENVIRONMENT: 'test',
+        RELEASE: 'suppression-queue-test',
+      })
+      const now = new Date().toISOString()
+      await database
+        .prepare(
+          `INSERT OR IGNORE INTO users(id,first_name,last_name,profile,manager_grants,created_at,updated_at)
+  VALUES(900001,'Admin','Reviewer','administrator','[]',?,?)`,
+        )
+        .bind(now, now)
+        .run()
+      const log = services.emailLog
+      const suppressions = services.emailSuppressions!
+      const mail = {
+        from: { email: 'billing@example.test' },
+        to: [{ email: 'fresh@example.test' }],
+        cc: [{ email: 'queue-copy@example.test' }],
+        template: 'verify_email',
+        subject: 'Queue fixture',
+        text: 'Body',
+      }
+      const old = await log.createQueued(mail)
+      await log.claimAttempt(old.id, 'mailgun', 'old-send', 60)
+      await log.markSent(old.id, 'mailgun', { messageId: 'mg-queue-old' }, 'old-send')
+      const ledger = createD1EmailFeedbackLedger(database)
+      await ledger.claim({
+        eventId: 'queue-complaint',
+        signatureToken: 'queue-fixture-token',
+        eventType: 'complained',
+        severity: null,
+        recipient: 'queue-copy@example.test',
+        providerMessageId: 'mg-queue-old',
+        deliveryId: old.id,
+        now,
+      })
+      await ledger.finish('queue-complaint', now, 'complained', null)
+      const provider = { name: 'mailgun', send: vi.fn(async () => ({ messageId: 'mg-queue-new' })) }
+      const consume = async () => {
+        const record = await log.createQueued(mail)
+        const ack = vi.fn(),
+          retry = vi.fn()
+        await consumeCloudflareEmailBatch(
+          {
+            messages: [
+              {
+                body: { schemaVersion: 1, deliveryId: record.id, message: mail },
+                attempts: 1,
+                ack,
+                retry,
+              },
+            ],
+          } as unknown as MessageBatch<QueuedEmailJob>,
+          log,
+          provider,
+          undefined,
+          undefined,
+          suppressions.lookup,
+        )
+        expect(ack).toHaveBeenCalledOnce()
+        expect(retry).not.toHaveBeenCalled()
+        return log.get(record.id)
+      }
+      expect(await consume()).toMatchObject({
+        status: 'failed',
+        failureReason: 'recipient_suppressed:COMPLAINT',
+      })
+      expect(provider.send).not.toHaveBeenCalled()
+      await suppressions.lift(
+        {
+          eventId: await suppressions.snapshot(),
+          actorId: 900001,
+          note: 'Recipient requested future mail',
+          confirmation: 'queue-copy@example.test',
+        },
+        new Date().toISOString(),
+      )
+      expect(await consume()).toMatchObject({ status: 'sent', providerMessageId: 'mg-queue-new' })
+      expect(provider.send).toHaveBeenCalledOnce()
+    } finally {
+      await isolated.dispose()
+    }
+  }, 20_000)
 
   it('[unit] maps the provider-neutral producer to a concrete Cloudflare Queue send', async () => {
     const send = vi.fn(async () => undefined)

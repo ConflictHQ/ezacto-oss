@@ -1,6 +1,8 @@
 import assert from 'node:assert/strict'
+import { Buffer } from 'node:buffer'
+import { createCipheriv, createHash, randomBytes } from 'node:crypto'
 import { execFileSync } from 'node:child_process'
-import { mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import process from 'node:process'
@@ -38,7 +40,37 @@ try {
     assert.ok(!name.startsWith('@ezacto/'), `unpublished runtime dependency: ${name}`)
   }
   const ez = join(prefix, 'bin/ez')
-  assert.match(run(ez, ['--help']), /ez <command>/)
+  const help = run(ez, ['--help'])
+  assert.match(help, /ez <command>/)
+  assert.match(help, /backup-decrypt/)
+  assert.match(help, /calendar-cleanup/)
+
+  // Write the documented V1 format with Node's cipher API, independently of
+  // the WebCrypto implementation embedded in the installed command.
+  const encrypted = join(directory, 'encrypted-logical-run')
+  const decrypted = join(directory, 'decrypted-logical-run')
+  mkdirSync(join(encrypted, 'tables'), {recursive:true})
+  const encryptionKey = randomBytes(32)
+  const digest = bytes => createHash('sha256').update(bytes).digest('hex')
+  const csv = Buffer.from('id,note\n1,packed decryption\n')
+  const logicalManifest = {schema_version:1,table_count:1,total_rows:1,tables:{package_smoke:{sha256:digest(csv)}}}
+  for (const [name,bytes] of [
+    ['tables/package_smoke.csv',csv],
+    ['RESTORE.md',Buffer.from('Logical bundle recovery instructions')],
+    ['manifest.json',Buffer.from(JSON.stringify(logicalManifest))],
+  ]) {
+    const nonce = randomBytes(12)
+    const header = Buffer.from(JSON.stringify({version:1,name,sha256:digest(bytes),nonce:nonce.toString('base64url'),key_id:digest(encryptionKey).slice(0,32)}))
+    const cipher = createCipheriv('aes-256-gcm',encryptionKey,nonce)
+    cipher.setAAD(header)
+    const payload = Buffer.concat([cipher.update(bytes),cipher.final(),cipher.getAuthTag()])
+    writeFileSync(join(encrypted,name+'.ezenc'),Buffer.concat([Buffer.from('EZACTO-BACKUP-AES256GCM-V1\n'),header,Buffer.from('\n'),payload]))
+  }
+  environment.EZACTO_BACKUP_ENCRYPTION_KEY = encryptionKey.toString('base64url')
+  const decryption = JSON.parse(run(ez,['backup-decrypt',encrypted,'--output',decrypted,'--json']))
+  delete environment.EZACTO_BACKUP_ENCRYPTION_KEY
+  assert.equal(decryption.tableCount,1)
+  assert.deepEqual(readFileSync(join(decrypted,'tables/package_smoke.csv')),csv)
   const reports = JSON.parse(run(ez, ['report', 'list', '--json']))
   assert.ok(reports.includes('my-hours'))
   assert.ok(reports.includes('project-budget'))
@@ -62,7 +94,23 @@ try {
   assert.equal(backup.tables, 1)
   assert.equal(backup.rows, 1)
   assert.match(readFileSync(join(backup.bundle, 'tables/package_smoke.csv'), 'utf8'), /packed install/)
-  process.stdout.write(`Packed CLI ${manifest.version}: isolated global install, reports, and SQLite backup passed.\n`)
+  // The new command and generated methods must travel in the same release pair.
+  writeFileSync(fixture, `
+    const { createRequire } = require('node:module')
+    const installedRequire = createRequire(${JSON.stringify(join(cliDirectory, 'package.json'))})
+    const Database = installedRequire('better-sqlite3')
+    const { EzactoClient } = installedRequire('@conflict-hq/ezacto-client')
+    if (typeof EzactoClient.prototype.listCalendarOperatorCleanup !== 'function' || typeof EzactoClient.prototype.confirmCalendarOperatorCleanup !== 'function') throw new Error('Packed client lacks calendar operator methods')
+    const db = new Database('operator.sqlite')
+    db.exec("CREATE TABLE calendar_sync_instance(singleton INTEGER,nonce TEXT); INSERT INTO calendar_sync_instance VALUES(1,'current'); CREATE TABLE calendar_cleanup_obligations(id TEXT,user_id INTEGER,provider TEXT,instance_nonce TEXT,generation INTEGER,credential_revision INTEGER,key_id TEXT,request_id TEXT,reason TEXT,status TEXT,created_at TEXT,lease_holder TEXT,lease_expires_at TEXT,sealed_grant TEXT); INSERT INTO calendar_cleanup_obligations VALUES('owned',1,'google','old',1,1,'key',NULL,'restore','manual_required','2026-10-26T00:00:00Z',NULL,NULL,'PRIVATE_PACKED_GRANT')")
+    db.close()
+  `)
+  run(process.execPath, [fixture])
+  const inspected = run(ez, ['calendar-cleanup', 'inspect', realpathSync(join(directory, 'operator.sqlite'))])
+  assert.equal(JSON.parse(inspected).data[0].id, 'owned')
+  assert.equal(JSON.parse(inspected).inspection_only, true)
+  assert.ok(!inspected.includes('PRIVATE_PACKED_GRANT'))
+  process.stdout.write(`Packed CLI ${manifest.version}: isolated global install, reports, decryption, SQLite backup, and calendar operator inspection/client contract passed.\n`)
 } finally {
   rmSync(directory, { recursive: true, force: true })
 }

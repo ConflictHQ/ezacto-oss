@@ -1,4 +1,9 @@
 import {
+  CALENDAR_LAYOUT_COOKIE,
+  type CalendarLayout,
+  resolveCalendarLayout,
+} from './calendar/layout.js'
+import {
   NAV_LAYOUT_COOKIE,
   type NavLayout,
   resolveNavLayout,
@@ -28,6 +33,8 @@ export interface DisplayPreferences {
   readonly colorScheme: ColorScheme
   readonly navLayout: NavLayout
   readonly sidebar: SidebarState
+  /** The calendar's Week or Day layout (issue 943). */
+  readonly timeLayout: CalendarLayout
 }
 
 export const readDisplayPreferences = (
@@ -36,4 +43,5 @@ export const readDisplayPreferences = (
   colorScheme: resolveColorScheme(readCookie(cookieHeader, COLOR_SCHEME_COOKIE)),
   navLayout: resolveNavLayout(readCookie(cookieHeader, NAV_LAYOUT_COOKIE)),
   sidebar: resolveSidebarState(readCookie(cookieHeader, SIDEBAR_COOKIE)),
+  timeLayout: resolveCalendarLayout(readCookie(cookieHeader, CALENDAR_LAYOUT_COOKIE)),
 })

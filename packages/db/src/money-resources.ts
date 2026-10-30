@@ -1,7 +1,12 @@
 import type BetterSqlite3 from 'better-sqlite3'
 import type { BetterSQLite3Database } from 'drizzle-orm/better-sqlite3'
 import type { DrizzleD1Database } from 'drizzle-orm/d1'
-import type { InvoiceListPosition } from '@ezacto/core'
+import { defaultInvoiceListSort, type InvoiceListPosition, type InvoiceListSort } from '@ezacto/core'
+import {
+  effectiveEstimateExpiry,
+  estimateContentHash,
+  isEstimateExpired,
+} from './estimates.js'
 import type * as schema from './schema.js'
 import {
   deleteInvoicePayment,
@@ -83,6 +88,11 @@ export interface InvoiceListWindow {
    * index, so the page is that invoice or nothing.
    */
   number?: string
+  /**
+   * The column the page is ordered by, or undefined for newest first. The
+   * window's `after` is a position in this order, and the page is read in it.
+   */
+  sort?: InvoiceListSort
 }
 
 export type InvoiceState = 'draft' | 'open' | 'paid' | 'closed'
@@ -152,12 +162,33 @@ export interface InvoiceResource {
   line_items: InvoiceLineResource[]
 }
 
+export interface HarvestInvoiceFilters {
+  clientId?: number
+  projectId?: number
+  updatedSince?: string
+  from?: string
+  to?: string
+  state?: 'draft' | 'open' | 'paid' | 'closed'
+}
+export interface HarvestInvoiceRead {
+  invoice: InvoiceResource
+  client: { id: number; name: string }
+  creator: { id: number; name: string } | null
+  projects: Array<{ id: number; name: string; code: string | null }>
+}
+
 export interface InvoiceDeliveryLine {
   kind: string
   description: string | null
   quantity: number
   unitPriceCents: number
   amountCents: number
+}
+
+/** A document line and the end-client it bills, where its project names one (issue 33). */
+export interface InvoiceDocumentContextLine extends InvoiceDeliveryLine {
+  endClientId: number | null
+  endClientName: string | null
 }
 
 export interface InvoiceDeliveryContext {
@@ -183,6 +214,14 @@ export interface InvoiceDeliveryContext {
   notes: string | null
   paymentTerms: 'upon_receipt' | 'net_15' | 'net_30' | 'net_45' | 'net_60' | 'custom'
   dueAmountCents: number
+  /**
+   * The billing period and the zone the organization keeps its days in, which
+   * `%invoice_period%` and `%send_weekday%` read (issue 925). The period is
+   * null on a free-form invoice.
+   */
+  periodStart: string | null
+  periodEnd: string | null
+  organizationTimeZone: string
 }
 
 /**
@@ -193,6 +232,7 @@ export interface InvoiceDeliveryContext {
  * uploaded mark goes in the corner.
  */
 export interface InvoiceDocumentContext extends InvoiceDeliveryContext {
+  lineItems: InvoiceDocumentContextLine[]
   discountRatePpm: number | null
   taxRatePpm: number | null
   tax2RatePpm: number | null
@@ -264,6 +304,10 @@ export interface EstimateResource {
   discount_amount_cents: number
   created_at: string
   updated_at: string
+  /** The last day staff allow a customer to answer; null when staff set none (issue 1010). */
+  expires_on: string | null
+  /** The expiry that applies: `expires_on`, else the organization's validity days from `sent_at`. */
+  effective_expires_on: string | null
   line_items: EstimateLineResource[]
 }
 
@@ -281,6 +325,12 @@ export interface EstimateMessageResource {
   event_type: 'send' | 'accept' | 'decline' | 're-open' | 'view' | 'invoice' | null
   delivery_status: 'queued' | 'sent' | 'bounced' | 'complained' | 'failed' | null
   provider_message_id: string | null
+  /** The contact who answered (issue 1010); null for everything staff recorded. */
+  contact_id: number | null
+  /** The content version the contact was shown; null unless a contact answered. */
+  content_hash: string | null
+  /** The estimate version their answer was recorded against; null unless a contact answered. */
+  estimate_version: number | null
   created_at: string
   updated_at: string
 }
@@ -300,6 +350,77 @@ export interface ExecuteEstimateMessageInput {
   subject: string | null
   body: string | null
   sendMeACopy: boolean
+  occurredAt: string
+}
+
+export interface CustomerEstimateSummary {
+  id: number
+  number: string
+  subject: string | null
+  currency: string
+  state: 'sent' | 'accepted' | 'declined'
+  issue_date: string
+  amount_cents: number
+  sent_at: string | null
+  accepted_at: string | null
+  declined_at: string | null
+}
+
+export interface CustomerEstimateResponse {
+  decision: 'accept' | 'decline'
+  at: string
+  /** The contact's name as it was when they answered; null for a staff-recorded answer. */
+  by: string | null
+  /** The content version that was answered; null when staff recorded it on the customer's behalf. */
+  version: string | null
+  /** False once the estimate has been edited since this answer. */
+  current: boolean
+}
+
+export interface CustomerEstimate extends CustomerEstimateSummary {
+  purchase_order: string | null
+  notes: string | null
+  tax_rate_ppm: number | null
+  tax2_rate_ppm: number | null
+  discount_rate_ppm: number | null
+  tax_amount_cents: number
+  tax2_amount_cents: number
+  discount_amount_cents: number
+  line_items: Array<{
+    position: number
+    kind: string
+    description: string | null
+    quantity: number
+    unit_price_cents: number
+    amount_cents: number
+    taxed: boolean
+    taxed2: boolean
+  }>
+  /** What a response must quote: the hash of the content shown. */
+  version: string
+  /** The last day the estimate can be answered, or null when it does not expire (issue 1010). */
+  expires_on: string | null
+  /** True once the expiry has passed; an expired estimate cannot be answered. */
+  expired: boolean
+  /** False when the estimate was edited after it was sent, until it is sent again, or when it has expired. */
+  answerable: boolean
+  response: CustomerEstimateResponse | null
+}
+
+export interface RespondToEstimateInput {
+  estimateId: number
+  clientId: number
+  contactId: number
+  decision: 'accept' | 'decline'
+  version: string
+  occurredAt: string
+}
+
+export interface SetEstimateExpiryInput {
+  estimateId: number
+  expectedVersion: number
+  /** The last day a customer can answer, as YYYY-MM-DD; null clears it. */
+  expiresOn: string | null
   occurredAt: string
 }
 
@@ -509,6 +630,9 @@ export type MoneyResourceOperationErrorCode =
   | 'estimate_not_found'
   | 'estimate_version_conflict'
   | 'estimate_state_conflict'
+  | 'estimate_content_changed'
+  | 'estimate_needs_resend'
+  | 'estimate_expired'
   | 'estimate_already_converted'
   | 'command_id_reused'
 
@@ -608,6 +732,17 @@ const assertTimestamp = (value: string, field: string): void => {
   }
 }
 
+const assertCanonicalDay = (value: string, field: string): void => {
+  const epoch = Date.parse(`${value}T00:00:00.000Z`)
+  if (
+    !/^\d{4}-\d{2}-\d{2}$/.test(value) ||
+    !Number.isSafeInteger(epoch) ||
+    new Date(epoch).toISOString().slice(0, 10) !== value
+  ) {
+    throw new RangeError(`${field} must be a real calendar day`)
+  }
+}
+
 const invoiceSelect = `SELECT id, client_id, created_by_user_id, number, subject,
   purchase_order, notes, currency, issue_date, due_date, payment_terms, state, version,
   close_reason, close_write_off_cents, sent_at, paid_at, paid_date, closed_at,
@@ -668,7 +803,41 @@ const invoiceNumberOrderKey = (column: string): string => `(CASE
  */
 const createdInstant = `strftime('%Y-%m-%dT%H:%M:%fZ', created_at)`
 
-const invoiceListOrder = `issue_date DESC, ${invoiceNumberOrderKey('number')} DESC, id DESC`
+/**
+ * The column a sort ranks first, as SQL, or null for the number sort, which
+ * ranks by the number alone. `due_amount_cents` is the stored balance.
+ */
+const invoiceSortColumn = (sort: InvoiceListSort): string | null =>
+  sort.field === 'issue_date'
+    ? 'issue_date'
+    : sort.field === 'due_date'
+      ? 'due_date'
+      : sort.field === 'amount'
+        ? 'amount_cents'
+        : sort.field === 'balance'
+          ? 'due_amount_cents'
+          : null
+
+/** The value a cursor position carries for the sort's first column. */
+const invoiceSortPositionValue = (
+  sort: InvoiceListSort,
+  after: InvoiceListPosition,
+): string | number | undefined =>
+  sort.field === 'issue_date'
+    ? after.issueDate
+    : sort.field === 'due_date'
+      ? after.dueDate
+      : sort.field === 'amount'
+        ? after.amountCents
+        : sort.field === 'balance'
+          ? after.balanceCents
+          : undefined
+
+const invoiceListOrder = (sort: InvoiceListSort): string => {
+  const direction = sort.descending ? 'DESC' : 'ASC'
+  const column = invoiceSortColumn(sort)
+  return `${column === null ? '' : `${column} ${direction}, `}${invoiceNumberOrderKey('number')} ${direction}, id ${direction}`
+}
 
 /**
  * The ids on one page of the invoice list, newest first, as a common table
@@ -681,8 +850,11 @@ const invoiceListOrder = `issue_date DESC, ${invoiceNumberOrderKey('number')} DE
  * key is computed from its number by the same expression, inside the query,
  * so the database never compares against a key worked out anywhere else.
  */
-const invoicePageFor = (window: Readonly<InvoiceListWindow>): string =>
-  `WITH page AS (
+const invoicePageFor = (window: Readonly<InvoiceListWindow>): string => {
+  const sort = window.sort ?? defaultInvoiceListSort
+  const column = invoiceSortColumn(sort)
+  const compare = sort.descending ? '<' : '>'
+  return `WITH page AS (
     SELECT id FROM invoices
     WHERE ${createdInstant} <= ?${inClause('state', window.states)}${inClause(
       'client_id',
@@ -691,14 +863,15 @@ const invoicePageFor = (window: Readonly<InvoiceListWindow>): string =>
       window.after === null
         ? ''
         : `
-      AND (issue_date, ${invoiceNumberOrderKey('number')}, id) < (
-        SELECT resume.issue_date, ${invoiceNumberOrderKey('resume.number')}, resume.id
-        FROM (SELECT ? AS issue_date, ? AS number, ? AS id) AS resume
+      AND (${column === null ? '' : `${column}, `}${invoiceNumberOrderKey('number')}, id) ${compare} (
+        SELECT ${column === null ? '' : 'resume.sort_value, '}${invoiceNumberOrderKey('resume.number')}, resume.id
+        FROM (SELECT ${column === null ? '' : '? AS sort_value, '}? AS number, ? AS id) AS resume
       )`
     }
-    ORDER BY ${invoiceListOrder}
+    ORDER BY ${invoiceListOrder(sort)}
     LIMIT ?
   )`
+}
 
 // The order here is the order the placeholders appear in `invoicePageFor`;
 // the two must be read together, or the take binds to a filter slot and the
@@ -710,7 +883,13 @@ const invoicePageParams = (window: Readonly<InvoiceListWindow>): unknown[] => [
   ...(window.number === undefined ? [] : [window.number]),
   ...(window.after === null
     ? []
-    : [window.after.issueDate, window.after.number, window.after.id]),
+    : [
+        ...(invoiceSortColumn(window.sort ?? defaultInvoiceListSort) === null
+          ? []
+          : [invoiceSortPositionValue(window.sort ?? defaultInvoiceListSort, window.after)]),
+        window.after.number,
+        window.after.id,
+      ]),
   window.take,
 ]
 
@@ -726,6 +905,10 @@ const assertInvoiceListWindow = (window: Readonly<InvoiceListWindow>): void => {
     }
     if (typeof window.after.number !== 'string' || window.after.number === '') {
       throw new RangeError('after.number must be a nonblank string')
+    }
+    const sort = window.sort ?? defaultInvoiceListSort
+    if (invoiceSortColumn(sort) !== null && invoiceSortPositionValue(sort, window.after) === undefined) {
+      throw new RangeError(`after must carry the ${sort.field} the page is sorted by`)
     }
   }
 }
@@ -754,7 +937,15 @@ const estimateSelect = `SELECT id, client_id, created_by_user_id, number,
   purchase_order, subject, notes, currency, state, version, issue_date, sent_at,
   accepted_at, declined_at, tax_rate_ppm, tax2_rate_ppm, discount_rate_ppm,
   amount_cents, tax_amount_cents, tax2_amount_cents, discount_amount_cents,
-  created_at, updated_at FROM estimates`
+  created_at, updated_at, expires_on,
+  (SELECT timezone FROM organizations ORDER BY id LIMIT 1) AS org_timezone,
+  (SELECT estimate_validity_days FROM organizations ORDER BY id LIMIT 1) AS org_validity_days
+  FROM estimates`
+
+type RawEstimate = Omit<EstimateResource, 'line_items' | 'effective_expires_on'> & {
+  org_timezone: string | null
+  org_validity_days: number | null
+}
 
 type RawEstimateLine = Omit<EstimateLineResource, 'taxed' | 'taxed2'> & {
   taxed: number | boolean
@@ -769,10 +960,16 @@ const hydrateEstimateLines = (lines: RawEstimateLine[]): EstimateLineResource[] 
   lines.map((line) => ({ ...line, taxed: Boolean(line.taxed), taxed2: Boolean(line.taxed2) }))
 
 const hydrateEstimate = (
-  row: Omit<EstimateResource, 'line_items'>,
+  { org_timezone: timeZone, org_validity_days: validityDays, ...row }: RawEstimate,
   lineItems: EstimateLineResource[],
 ): EstimateResource => ({
   ...row,
+  effective_expires_on: effectiveEstimateExpiry({
+    expiresOn: row.expires_on,
+    sentAt: row.sent_at,
+    validityDays,
+    timeZone: timeZone ?? 'UTC',
+  }),
   line_items: lineItems,
 })
 
@@ -811,7 +1008,9 @@ const deliveryContextSelect = `SELECT invoice.id AS "invoiceId", invoice.number,
     organization.name AS "organizationName", client.name AS "clientName",
     invoice.purchase_order AS "purchaseOrder", invoice.notes,
     invoice.payment_terms AS "paymentTerms",
-    invoice.due_amount_cents AS "dueAmountCents"
+    invoice.due_amount_cents AS "dueAmountCents",
+    invoice.period_start AS "periodStart", invoice.period_end AS "periodEnd",
+    organization.timezone AS "organizationTimeZone"
   FROM invoices invoice
   JOIN clients client ON client.id = invoice.client_id
   JOIN organizations organization ON organization.id = 1
@@ -820,6 +1019,19 @@ const deliveryContextSelect = `SELECT invoice.id AS "invoiceId", invoice.number,
 const deliveryLinesSelect = `SELECT kind, description, quantity,
   unit_price_cents AS "unitPriceCents", amount_cents AS "amountCents"
   FROM invoice_line_items WHERE invoice_id = ? ORDER BY position, id`
+
+/**
+ * The document's lines also say whose work each is: the client of the project
+ * a line carries (issue 33), so an invoice for a parent prints a section and a
+ * subtotal per end-client. A line with no project has none.
+ */
+const documentLinesSelect = `SELECT line.kind, line.description, line.quantity,
+  line.unit_price_cents AS "unitPriceCents", line.amount_cents AS "amountCents",
+  client.id AS "endClientId", client.name AS "endClientName"
+  FROM invoice_line_items line
+  LEFT JOIN projects project ON project.id = line.project_id
+  LEFT JOIN clients client ON client.id = project.client_id
+  WHERE line.invoice_id = ? ORDER BY line.position, line.id`
 
 type RawDeliveryContext = Omit<InvoiceDeliveryContext, 'lineItems'>
 
@@ -835,6 +1047,8 @@ const documentContextSelect = `SELECT invoice.id AS "invoiceId", invoice.number,
     invoice.discount_rate_ppm AS "discountRatePpm",
     invoice.tax_rate_ppm AS "taxRatePpm", invoice.tax2_rate_ppm AS "tax2RatePpm",
     invoice.due_amount_cents AS "dueAmountCents",
+    invoice.period_start AS "periodStart", invoice.period_end AS "periodEnd",
+    organization.timezone AS "organizationTimeZone",
     (SELECT coalesce(sum(payment.amount_cents), 0) FROM invoice_payments payment
      WHERE payment.invoice_id = invoice.id) AS "paidAmountCents",
     organization.address AS "organizationAddress", client.address AS "clientAddress",
@@ -852,7 +1066,7 @@ type RawDocumentContext = Omit<InvoiceDocumentContext, 'lineItems' | 'logo'> & {
 
 const documentContext = (
   { logoFileKey, logoContentType, ...row }: RawDocumentContext,
-  lineItems: InvoiceDeliveryLine[],
+  lineItems: InvoiceDocumentContextLine[],
 ): InvoiceDocumentContext => ({
   ...row,
   lineItems,
@@ -871,19 +1085,19 @@ const readConsistentDocumentContext = async (
   if (isD1Client(client)) {
     const [header, lines] = await client.batch([
       client.prepare(documentContextSelect).bind(invoiceId),
-      client.prepare(deliveryLinesSelect).bind(invoiceId),
+      client.prepare(documentLinesSelect).bind(invoiceId),
     ])
     if (header === undefined || lines === undefined) {
       throw new Error('D1 invoice document snapshot batch returned incomplete results')
     }
     const row = (header.results[0] as RawDocumentContext | undefined) ?? null
     if (row === null) return null
-    return documentContext(row, lines.results as unknown as InvoiceDeliveryLine[])
+    return documentContext(row, lines.results as unknown as InvoiceDocumentContextLine[])
   }
   return client.transaction(() => {
     const row = client.prepare(documentContextSelect).get(invoiceId) as RawDocumentContext | undefined
     if (row === undefined) return null
-    return documentContext(row, client.prepare(deliveryLinesSelect).all(invoiceId) as InvoiceDeliveryLine[])
+    return documentContext(row, client.prepare(documentLinesSelect).all(invoiceId) as InvoiceDocumentContextLine[])
   })()
 }
 
@@ -927,7 +1141,7 @@ const readConsistentInvoicePage = async (
   const page = invoicePageFor(window)
   const params = invoicePageParams(window)
   const headerSelect = `${page}
-  ${invoiceSelect} WHERE id IN (SELECT id FROM page) ORDER BY ${invoiceListOrder}`
+  ${invoiceSelect} WHERE id IN (SELECT id FROM page) ORDER BY ${invoiceListOrder(window.sort ?? defaultInvoiceListSort)}`
   const linesSelect = `${page}
   ${invoiceLineSelect} WHERE invoice_id IN (SELECT id FROM page)
   ORDER BY invoice_id, position, id`
@@ -952,6 +1166,117 @@ const readConsistentInvoicePage = async (
   })()
 }
 
+const readHarvestInvoicePage = async (
+  database: MoneyResourceDatabase,
+  filters: Readonly<HarvestInvoiceFilters>,
+  window: Readonly<{ offset: number; take: number }>,
+  invoiceId?: number,
+): Promise<{ total: number; records: HarvestInvoiceRead[] }> => {
+  if (
+    !Number.isSafeInteger(window.offset) ||
+    window.offset < 0 ||
+    !Number.isSafeInteger(window.take) ||
+    window.take < 1 ||
+    window.take > 2000
+  )
+    throw new RangeError('Invalid Harvest invoice window')
+  const predicates: string[] = [],
+    params: unknown[] = []
+  for (const key of ['clientId', 'projectId'] as const)
+    if (filters[key] !== undefined) assertPositiveId(filters[key]!, key)
+  if (invoiceId !== undefined) {
+    assertPositiveId(invoiceId, 'invoiceId')
+    predicates.push('id = ?')
+    params.push(invoiceId)
+  }
+  if (filters.clientId !== undefined) {
+    predicates.push('client_id = ?')
+    params.push(filters.clientId)
+  }
+  if (filters.projectId !== undefined) {
+    predicates.push(
+      '(project_id = ? OR EXISTS (SELECT 1 FROM invoice_line_items line WHERE line.invoice_id=invoices.id AND line.project_id=?))',
+    )
+    params.push(filters.projectId, filters.projectId)
+  }
+  if (filters.state !== undefined) {
+    if (!isInvoiceState(filters.state)) throw new RangeError('Invalid invoice state')
+    predicates.push('state = ?')
+    params.push(filters.state)
+  }
+  if (filters.updatedSince !== undefined) {
+    assertTimestamp(filters.updatedSince, 'updatedSince')
+    predicates.push("strftime('%Y-%m-%dT%H:%M:%fZ',updated_at) >= ?")
+    params.push(new Date(filters.updatedSince).toISOString())
+  }
+  for (const [key, operator] of [
+    ['from', '>='],
+    ['to', '<='],
+  ] as const)
+    if (filters[key] !== undefined) {
+      assertCanonicalDay(filters[key]!, key)
+      predicates.push(`issue_date ${operator} ?`)
+      params.push(filters[key])
+    }
+  const where = predicates.length ? ' WHERE ' + predicates.join(' AND ') : ''
+  const page = `WITH page AS (SELECT id FROM invoices${where} ORDER BY issue_date DESC,id DESC LIMIT ? OFFSET ?)`
+  const pageParams = [...params, window.take, window.offset]
+  const header = `${page} ${invoiceSelect.replace(
+    'SELECT id,',
+    `SELECT (SELECT name FROM clients WHERE clients.id=invoices.client_id) AS client_name,
+    (SELECT trim(first_name||' '||last_name) FROM users WHERE users.id=invoices.created_by_user_id) AS creator_name, id,`,
+  )} WHERE id IN (SELECT id FROM page) ORDER BY issue_date DESC,id DESC`
+  const lines = `${page} ${invoiceLineSelect} WHERE invoice_id IN (SELECT id FROM page) ORDER BY invoice_id,position,id`
+  const projects = `${page} SELECT id,name,code FROM projects WHERE id IN (SELECT project_id FROM invoice_line_items WHERE invoice_id IN (SELECT id FROM page))`
+  type Header = RawInvoice & { client_name: string | null; creator_name: string | null }
+  const client = database.$client
+  let total: number,
+    headers: Header[],
+    lineRows: RawInvoiceLine[],
+    projectRows: Array<{ id: number; name: string; code: string | null }>
+  if (isD1Client(client)) {
+    const result = await client.batch([
+      client.prepare(`SELECT count(*) n FROM invoices${where}`).bind(...params),
+      client.prepare(header).bind(...pageParams),
+      client.prepare(lines).bind(...pageParams),
+      client.prepare(projects).bind(...pageParams),
+    ])
+    if (result.length !== 4 || result.some((value) => !value.success))
+      throw new Error('Incomplete Harvest invoice snapshot')
+    total = (result[0]!.results[0] as { n: number }).n
+    headers = result[1]!.results as unknown as Header[]
+    lineRows = result[2]!.results as unknown as RawInvoiceLine[]
+    projectRows = result[3]!.results as unknown as typeof projectRows
+  } else {
+    const read = client.transaction(() => ({
+      total: (
+        client.prepare(`SELECT count(*) n FROM invoices${where}`).get(...params) as { n: number }
+      ).n,
+      headers: client.prepare(header).all(...pageParams) as Header[],
+      lineRows: client.prepare(lines).all(...pageParams) as RawInvoiceLine[],
+      projectRows: client.prepare(projects).all(...pageParams) as typeof projectRows,
+    }))
+    ;({ total, headers, lineRows, projectRows } = read())
+  }
+  const byId = new Map(hydrateInvoicePage(headers, lineRows).map((row) => [row.id, row]))
+  const projectsById = new Map(projectRows.map(project => [project.id, project]))
+  return {
+    total,
+    records: headers.map((row) => {
+      if (row.client_name === null) throw new Error('Harvest invoice client is missing')
+      return {
+        invoice: byId.get(row.id)!,
+        client: { id: row.client_id, name: row.client_name },
+        creator:
+          row.created_by_user_id === null || row.creator_name === null
+            ? null
+            : { id: row.created_by_user_id, name: row.creator_name },
+        projects: [...new Set(byId.get(row.id)!.line_items.flatMap(line => line.project_id===null?[]:[line.project_id]))].map(id => { const project=projectsById.get(id); if(!project)throw new Error('Harvest invoice line project is missing'); return project }),
+      }
+    }),
+  }
+}
+
 const readConsistentEstimate = async (
   database: MoneyResourceDatabase,
   estimateId: number,
@@ -965,13 +1290,13 @@ const readConsistentEstimate = async (
     if (header === undefined || lines === undefined) {
       throw new Error('D1 estimate snapshot batch returned incomplete results')
     }
-    const row = (header.results[0] as Omit<EstimateResource, 'line_items'> | undefined) ?? null
+    const row = (header.results[0] as RawEstimate | undefined) ?? null
     if (row === null) return null
     return hydrateEstimate(row, hydrateEstimateLines(lines.results as unknown as RawEstimateLine[]))
   }
   return client.transaction(() => {
     const row = client.prepare(`${estimateSelect} WHERE id = ?`).get(estimateId) as
-      Omit<EstimateResource, 'line_items'> | undefined
+      RawEstimate | undefined
     if (row === undefined) return null
     const lines = client.prepare(estimateLinesSelect).all(estimateId) as RawEstimateLine[]
     return hydrateEstimate(row, hydrateEstimateLines(lines))
@@ -991,7 +1316,8 @@ const hydrateEstimateMessage = (row: RawEstimateMessage): EstimateMessageResourc
 
 const estimateMessageSelect = `SELECT id, estimate_id, sent_by, sent_by_email,
   sent_from, sent_from_email, recipients, subject, body, send_me_a_copy, event_type,
-  delivery_status, provider_message_id, created_at, updated_at FROM estimate_messages`
+  delivery_status, provider_message_id, contact_id, content_hash, estimate_version,
+  created_at, updated_at FROM estimate_messages`
 
 type EstimateCommandKind =
   'estimate.send' | 'estimate.accept' | 'estimate.decline' | 'estimate.re-open' | 'estimate.convert'
@@ -1246,6 +1572,20 @@ export class MoneyResourceRepository {
    * the reason the high-water ids are: it bounds a traversal against later
    * inserts and is not a count of what matches.
    */
+  async harvestInvoices(
+    filters: Readonly<HarvestInvoiceFilters>,
+    window: Readonly<{ offset: number; take: number }>,
+  ): Promise<{ total: number; records: HarvestInvoiceRead[] }> {
+    return readHarvestInvoicePage(this.database, filters, window)
+  }
+
+  async harvestInvoice(id: number): Promise<HarvestInvoiceRead | null> {
+    return (
+      (await readHarvestInvoicePage(this.database, {}, { offset: 0, take: 1 }, id)).records[0] ??
+      null
+    )
+  }
+
   async invoiceListSnapshot(): Promise<string | null> {
     const row = await first<{ createdThrough: string | null }>(this.database, {
       text: `SELECT max(${createdInstant}) AS "createdThrough" FROM invoices`,
@@ -1357,6 +1697,13 @@ export class MoneyResourceRepository {
     }
     const commandKind = `estimate.${input.eventType}` as EstimateCommandKind
     const recipients = JSON.stringify(input.recipients)
+    // What the customer will be shown, recorded so that a later edit is
+    // noticed. The UPDATE below is guarded by `version`, so a stale read here
+    // fails the whole command rather than recording the wrong hash; any edit to
+    // a sent estimate has to bump `version` like every other command does.
+    const sentSnapshot =
+      input.eventType === 'send' ? await readConsistentEstimate(this.database, input.estimateId) : null
+    const sentContentHash = sentSnapshot === null ? null : await estimateContentHash(sentSnapshot)
     const inputFingerprint = await fingerprint({
       schema_version: 1,
       command_kind: commandKind,
@@ -1498,6 +1845,7 @@ export class MoneyResourceRepository {
             WHEN 're-open' THEN 'sent'
           END,
           version = version + 1,
+          sent_content_hash = CASE WHEN ? = 'send' THEN ? ELSE sent_content_hash END,
           sent_at = CASE WHEN ? = 'send' THEN COALESCE(sent_at, ?) ELSE sent_at END,
           accepted_at = CASE WHEN ? = 'accept' THEN ? WHEN ? = 're-open' THEN NULL ELSE accepted_at END,
           declined_at = CASE WHEN ? = 'decline' THEN ? WHEN ? = 're-open' THEN NULL ELSE declined_at END,
@@ -1517,6 +1865,8 @@ export class MoneyResourceRepository {
           )`,
         params: [
           input.eventType,
+          input.eventType,
+          sentContentHash,
           input.eventType,
           input.occurredAt,
           input.eventType,
@@ -1594,6 +1944,307 @@ export class MoneyResourceRepository {
       )
     }
     return { estimate, message: hydrateEstimateMessage(messageRow) }
+  }
+
+  async listCustomerEstimates(clientId: number): Promise<CustomerEstimateSummary[]> {
+    assertPositiveId(clientId, 'clientId')
+    return all<CustomerEstimateSummary>(this.database, {
+      text: `SELECT id, number, subject, currency, state, issue_date, amount_cents,
+        sent_at, accepted_at, declined_at FROM estimates
+        WHERE client_id = ? AND state <> 'draft' ORDER BY id DESC LIMIT 200`,
+      params: [clientId],
+    })
+  }
+
+  /** Null for an estimate that does not exist, belongs to another client, or is still a draft. */
+  async getCustomerEstimate(
+    clientId: number,
+    estimateId: number,
+    now: string = new Date().toISOString(),
+  ): Promise<CustomerEstimate | null> {
+    assertPositiveId(clientId, 'clientId')
+    assertPositiveId(estimateId, 'estimateId')
+    const estimate = await readConsistentEstimate(this.database, estimateId)
+    if (estimate === null || estimate.client_id !== clientId || estimate.state === 'draft') {
+      return null
+    }
+    return this.customerView(estimate, now)
+  }
+
+  private async instanceTimezone(): Promise<string> {
+    const row = await first<{ timezone: string }>(this.database, {
+      text: 'SELECT timezone FROM organizations ORDER BY id LIMIT 1',
+      params: [],
+    })
+    return row?.timezone ?? 'UTC'
+  }
+
+  private async customerView(estimate: EstimateResource, now: string): Promise<CustomerEstimate> {
+    const version = await estimateContentHash(estimate)
+    const expired =
+      estimate.state === 'sent' &&
+      isEstimateExpired(estimate.effective_expires_on, await this.instanceTimezone(), now)
+    const sent = await first<{ sentContentHash: string | null }>(this.database, {
+      text: `SELECT sent_content_hash AS "sentContentHash" FROM estimates WHERE id = ?`,
+      params: [estimate.id],
+    })
+    let response: CustomerEstimateResponse | null = null
+    if (estimate.state === 'accepted' || estimate.state === 'declined') {
+      const message = await first<{
+        eventType: 'accept' | 'decline'
+        createdAt: string
+        sentBy: string | null
+        contentHash: string | null
+      }>(this.database, {
+        text: `SELECT event_type AS "eventType", created_at AS "createdAt", sent_by AS "sentBy",
+          content_hash AS "contentHash" FROM estimate_messages
+          WHERE estimate_id = ? AND event_type IN ('accept', 'decline')
+          ORDER BY created_at DESC, id DESC LIMIT 1`,
+        params: [estimate.id],
+      })
+      if (message !== null) {
+        response = {
+          decision: message.eventType,
+          at: message.createdAt,
+          by: message.contentHash === null ? null : message.sentBy,
+          version: message.contentHash,
+          current: message.contentHash === version,
+        }
+      }
+    }
+    return {
+      id: estimate.id,
+      number: estimate.number,
+      subject: estimate.subject,
+      currency: estimate.currency,
+      state: estimate.state as CustomerEstimate['state'],
+      issue_date: estimate.issue_date,
+      amount_cents: estimate.amount_cents,
+      sent_at: estimate.sent_at,
+      accepted_at: estimate.accepted_at,
+      declined_at: estimate.declined_at,
+      purchase_order: estimate.purchase_order,
+      notes: estimate.notes,
+      tax_rate_ppm: estimate.tax_rate_ppm,
+      tax2_rate_ppm: estimate.tax2_rate_ppm,
+      discount_rate_ppm: estimate.discount_rate_ppm,
+      tax_amount_cents: estimate.tax_amount_cents,
+      tax2_amount_cents: estimate.tax2_amount_cents,
+      discount_amount_cents: estimate.discount_amount_cents,
+      line_items: estimate.line_items.map((line) => ({
+        position: line.position,
+        kind: line.kind,
+        description: line.description,
+        quantity: line.quantity,
+        unit_price_cents: line.unit_price_cents,
+        amount_cents: line.amount_cents,
+        taxed: line.taxed,
+        taxed2: line.taxed2,
+      })),
+      version,
+      expires_on: estimate.effective_expires_on,
+      expired,
+      answerable: estimate.state === 'sent' && sent?.sentContentHash === version && !expired,
+      response,
+    }
+  }
+
+  /**
+   * A contact of the estimate's client answers it. The answer is bound to the
+   * content version the contact was shown, never charges anyone and never
+   * creates an invoice. The first valid answer wins: the same answer to the same
+   * version again is a replay and writes nothing, any other answer is refused
+   * until staff re-open the estimate.
+   */
+  async respondToEstimate(
+    input: RespondToEstimateInput,
+  ): Promise<{ estimate: CustomerEstimate; replayed: boolean }> {
+    assertPositiveId(input.estimateId, 'estimateId')
+    assertPositiveId(input.clientId, 'clientId')
+    assertPositiveId(input.contactId, 'contactId')
+    assertTimestamp(input.occurredAt, 'occurredAt')
+    if (input.decision !== 'accept' && input.decision !== 'decline') {
+      throw new TypeError('decision must be accept or decline')
+    }
+    if (!/^[0-9a-f]{64}$/.test(input.version)) throw new TypeError('version must be a content hash')
+    const notFound = () =>
+      new MoneyResourceOperationError('estimate_not_found', 'estimate does not exist')
+    const contact = await first<{ firstName: string; lastName: string | null; email: string | null }>(
+      this.database,
+      {
+        text: `SELECT first_name AS "firstName", last_name AS "lastName", email
+          FROM contacts WHERE id = ? AND client_id = ?`,
+        params: [input.contactId, input.clientId],
+      },
+    )
+    if (contact === null) throw notFound()
+    const name = [contact.firstName, contact.lastName].filter(Boolean).join(' ')
+    const target = input.decision === 'accept' ? 'accepted' : 'declined'
+    const timeZone = await this.instanceTimezone()
+
+    for (let attempt = 0; ; attempt += 1) {
+      const estimate = await readConsistentEstimate(this.database, input.estimateId)
+      if (estimate === null || estimate.client_id !== input.clientId || estimate.state === 'draft') {
+        throw notFound()
+      }
+      if (estimate.state !== 'sent') {
+        const view = await this.customerView(estimate, input.occurredAt)
+        if (
+          estimate.state === target &&
+          view.response?.decision === input.decision &&
+          view.response.version === input.version
+        ) {
+          return { estimate: view, replayed: true }
+        }
+        throw new MoneyResourceOperationError(
+          'estimate_state_conflict',
+          'estimate has already been answered',
+        )
+      }
+      if (isEstimateExpired(estimate.effective_expires_on, timeZone, input.occurredAt)) {
+        throw new MoneyResourceOperationError(
+          'estimate_expired',
+          'estimate expired and can no longer be answered',
+        )
+      }
+      const hash = await estimateContentHash(estimate)
+      if (input.version !== hash) {
+        throw new MoneyResourceOperationError(
+          'estimate_content_changed',
+          'estimate changed since the version that was answered',
+        )
+      }
+      const sent = await first<{ sentContentHash: string | null }>(this.database, {
+        text: `SELECT sent_content_hash AS "sentContentHash" FROM estimates WHERE id = ?`,
+        params: [estimate.id],
+      })
+      if (sent?.sentContentHash !== hash) {
+        throw new MoneyResourceOperationError(
+          'estimate_needs_resend',
+          'estimate was edited after it was sent and has to be sent again',
+        )
+      }
+      try {
+        await runAtomic(this.database, [
+          {
+            text: `INSERT INTO estimate_messages (
+              estimate_id, sent_by, sent_by_email, recipients, send_me_a_copy, event_type,
+              contact_id, content_hash, estimate_version, created_at, updated_at
+            ) SELECT id, ?, ?, '[]', 0, ?, ?, ?, version, ?, ? FROM estimates
+              WHERE id = ? AND version = ? AND state = 'sent' AND sent_content_hash = ?`,
+            params: [
+              name,
+              contact.email,
+              input.decision,
+              input.contactId,
+              hash,
+              input.occurredAt,
+              input.occurredAt,
+              estimate.id,
+              estimate.version,
+              hash,
+            ],
+          },
+          {
+            text: `UPDATE estimates SET
+              state = ?, version = version + 1,
+              accepted_at = CASE WHEN ? = 'accept' THEN ? ELSE accepted_at END,
+              declined_at = CASE WHEN ? = 'decline' THEN ? ELSE declined_at END,
+              updated_at = ?
+              WHERE id = ? AND version = ? AND state = 'sent' AND sent_content_hash = ?
+                AND EXISTS (
+                  SELECT 1 FROM estimate_messages message
+                  WHERE message.estimate_id = estimates.id AND message.estimate_version = ?
+                    AND message.contact_id = ? AND message.event_type = ?
+                )`,
+            params: [
+              target,
+              input.decision,
+              input.occurredAt,
+              input.decision,
+              input.occurredAt,
+              input.occurredAt,
+              estimate.id,
+              estimate.version,
+              hash,
+              estimate.version,
+              input.contactId,
+              input.decision,
+            ],
+          },
+        ])
+      } catch (error) {
+        // Another answer won the unique (estimate, version) slot between the read
+        // and the write. Read again and classify rather than report a 500.
+        if (attempt > 0) throw error
+        continue
+      }
+      const written = await first<{ id: number }>(this.database, {
+        text: `SELECT id FROM estimate_messages
+          WHERE estimate_id = ? AND estimate_version = ? AND contact_id = ? AND event_type = ?`,
+        params: [estimate.id, estimate.version, input.contactId, input.decision],
+      })
+      if (written !== null) {
+        const after = await readConsistentEstimate(this.database, estimate.id)
+        if (after === null) throw notFound()
+        return { estimate: await this.customerView(after, input.occurredAt), replayed: false }
+      }
+      if (attempt > 0) {
+        throw new MoneyResourceOperationError(
+          'estimate_state_conflict',
+          'estimate could not be answered in its current state',
+        )
+      }
+    }
+  }
+
+  /**
+   * Staff set, move or clear the last day a customer can answer (issue 1010).
+   * The expiry is not part of the content hash, so this never invalidates the
+   * version a customer was shown or an answer already given; it does bump the
+   * estimate's version like every other write. Asking for the expiry it already
+   * has changes nothing, so a retried request is safe.
+   */
+  async setEstimateExpiry(input: SetEstimateExpiryInput): Promise<EstimateResource> {
+    assertPositiveId(input.estimateId, 'estimateId')
+    if (!Number.isSafeInteger(input.expectedVersion) || input.expectedVersion < 0) {
+      throw new RangeError('expectedVersion must be a non-negative safe integer')
+    }
+    assertTimestamp(input.occurredAt, 'occurredAt')
+    if (input.expiresOn !== null) assertCanonicalDay(input.expiresOn, 'expiresOn')
+    const current = await readConsistentEstimate(this.database, input.estimateId)
+    if (current === null) {
+      throw new MoneyResourceOperationError('estimate_not_found', 'estimate does not exist')
+    }
+    if (current.expires_on === input.expiresOn) return current
+    if (current.state !== 'draft' && current.state !== 'sent') {
+      throw new MoneyResourceOperationError(
+        'estimate_state_conflict',
+        'an answered estimate no longer expires',
+      )
+    }
+    if (current.version !== input.expectedVersion) {
+      throw new MoneyResourceOperationError(
+        'estimate_version_conflict',
+        'estimate version no longer matches',
+      )
+    }
+    const result = await run(this.database, {
+      text: `UPDATE estimates SET expires_on = ?, version = version + 1, updated_at = ?
+        WHERE id = ? AND version = ? AND state IN ('draft', 'sent')`,
+      params: [input.expiresOn, input.occurredAt, input.estimateId, input.expectedVersion],
+    })
+    if (result.changes === 0) {
+      throw new MoneyResourceOperationError(
+        'estimate_version_conflict',
+        'estimate changed while its expiry was being set',
+      )
+    }
+    const updated = await readConsistentEstimate(this.database, input.estimateId)
+    if (updated === null) {
+      throw new MoneyResourceOperationError('estimate_not_found', 'estimate does not exist')
+    }
+    return updated
   }
 
   async convertEstimate(input: ConvertEstimateInput): Promise<EstimateConversionResult> {

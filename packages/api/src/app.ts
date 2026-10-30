@@ -1,11 +1,13 @@
+import { installCsvImportApplyRoutes } from './csv-import-apply.js'
 import { Hono } from 'hono'
+import { csvStagingCapabilities, isCsvStagingPath, installCsvImportStagingRoutes } from './csv-import-staging.js'
 import {
   apiAuthenticationMiddleware,
   installApiTokenRoutes,
   installTwoFactorRoutes,
 } from './auth.js'
 import type { ApiContext, CreateApiAppOptions } from './context.js'
-import { errorResponse, notFoundResponse } from './errors.js'
+import { ApiError, errorResponse, notFoundResponse } from './errors.js'
 
 export const createApiApp = <Bindings extends object = object>(
   options: CreateApiAppOptions<Bindings> = {},
@@ -36,6 +38,11 @@ export const createApiApp = <Bindings extends object = object>(
       context.res = errorResponse(new Error('Conditional responses are forbidden for authenticated API resources'), context)
     }
   })
+  app.get('/api/v1/csv-import-capabilities', c => c.json({data:csvStagingCapabilities(options.csvImportStaging,options.csvImportApply!==undefined)},200,{'cache-control':'no-store'}))
+  app.use('*', (context,next)=> {
+    if (isCsvStagingPath(context.req.path) && options.csvImportStaging === undefined) throw new ApiError({status:404,code:'capability_unsupported',message:'Browser CSV staging is not supported by this runtime.'})
+    return next()
+  })
   app.use('*', (context, next) => {
     const path = context.req.path
     if (path === '/api/v1' || path.startsWith('/api/v1/')) {
@@ -44,6 +51,21 @@ export const createApiApp = <Bindings extends object = object>(
     return next()
   })
 
+  // The shim speaks Harvest's credential: `Authorization: Bearer <token>`, where
+  // the token is one of ours. A cookie never reaches it, so a browser holding a
+  // session cannot be made to read the shim by a third-party page.
+  app.use('/harvest/v2/*', async (context, next) => {
+    if (context.req.header('authorization') === undefined) {
+      context.header('www-authenticate', 'Bearer realm="ezacto"')
+      throw new ApiError({
+        status: 401,
+        code: 'authentication_required',
+        message: 'A valid API token is required.',
+      })
+    }
+    await authenticateApi(context, next)
+    context.header('cache-control', 'no-store')
+  })
   app.onError((error, context) => errorResponse(error, context, options.reportError))
   app.notFound((context) => notFoundResponse(context))
   options.installApp?.(app)
@@ -79,7 +101,12 @@ export const createApiApp = <Bindings extends object = object>(
     )
   })
   if (options.authentication?.twoFactor !== undefined) {
-    installTwoFactorRoutes(api, options.authentication.twoFactor)
+    installTwoFactorRoutes(api, options.authentication.twoFactor, {
+      emailCodes: options.authentication.twoFactorEmailCodes === true,
+      ...(options.authentication.activity === undefined
+        ? {}
+        : { activity: options.authentication.activity }),
+    })
   }
   if (options.authentication?.tokens !== undefined) {
     installApiTokenRoutes(
@@ -88,8 +115,18 @@ export const createApiApp = <Bindings extends object = object>(
       options.authentication.activity,
     )
   }
+  if(options.csvImportStaging)installCsvImportStagingRoutes(api,options.csvImportStaging)
+  if(options.csvImportApply){
+    if(!options.csvImportStaging)throw new Error('CSV apply requires private staging')
+    installCsvImportApplyRoutes(api,options.csvImportStaging,options.csvImportApply)
+  }
   options.installApi?.(api)
   app.route('/api/v1', api)
+  if (options.installHarvestV2 !== undefined) {
+    const harvest = new Hono<ApiContext<Bindings>>()
+    options.installHarvestV2(harvest)
+    app.route('/harvest/v2', harvest)
+  }
 
   return app
 }

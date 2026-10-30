@@ -186,6 +186,55 @@ const detailApi = (overrides: Partial<ProjectDirectoryApi> = {}): Partial<Projec
 })
 
 describe('Projects V1 browser controller', () => {
+  it('[#1163] identifies practice data even after the example project is renamed', async () => {
+    writeDocument('project-detail', '/projects/7')
+    await createProjectDirectoryController(detailApi({getDirectoryProject: async () => ({...project, name: 'Renamed', is_example: true})})).activate(identity('administrator'), new AbortController().signal, () => false)
+    expect(document.querySelector('[data-project-facts]')?.textContent).toContain('For practice only')
+    expect(document.querySelector('[data-project-facts]')?.textContent).toContain('Archive this example')
+  })
+
+  it('[browser] explains missing project rates and why a person rate may not apply', async () => {
+    writeDocument('project-detail', '/projects/7')
+    await createProjectDirectoryController(detailApi({ getDirectoryProject: vi.fn(async () => ({ ...project, hourly_rate_cents: null })) })).activate(identity('administrator'), new AbortController().signal, () => false)
+    document.querySelector<HTMLButtonElement>('[data-project-edit]')!.click()
+    await vi.waitFor(() => expect(document.querySelector('[data-project-rate-hint]')?.textContent).toContain('Person and task rates are ignored'))
+    const rate = document.querySelector<HTMLInputElement>('[data-project-form] [name="hourly_rate_cents"]')!
+    rate.value = '10'
+    rate.dispatchEvent(new Event('input', { bubbles: true }))
+    expect(document.querySelector('[data-project-rate-hint]')?.textContent).toContain('existing snapshots are preserved')
+    document.querySelector<HTMLButtonElement>('[data-user-assignment-create]')!.click()
+    expect(document.querySelector('[data-user-assignment-form]')?.textContent).toContain('used only when the project bills by person')
+  })
+
+  it('[money] requires a preview and explicit confirmation before repairing project time', async () => {
+    writeDocument('project-detail', '/projects/7')
+    const report = { project_id: 7, hourly_rate_cents: 15000, currency: 'EUR', entry_count: 2, seconds: 7200, earliest_date: '2026-09-01', latest_date: '2026-09-02', fingerprint: 'a'.repeat(64), applied_entries: 0 }
+    const recover = vi.fn().mockResolvedValueOnce(report).mockResolvedValueOnce({ ...report, applied_entries: 2 })
+    await createProjectDirectoryController(detailApi({ recoverProjectMissingRates: recover })).activate(identity('administrator'), new AbortController().signal, () => false)
+    const button = document.querySelector<HTMLButtonElement>('[data-project-missing-rates]')!
+    expect(recover).not.toHaveBeenCalled()
+    button.click()
+    await vi.waitFor(() => expect(button.textContent).toBe('Confirm repair of 2 entries'))
+    expect(recover).toHaveBeenCalledWith(7, undefined, expect.any(AbortSignal))
+    expect(document.querySelector('[data-project-facts]')?.textContent).toContain('2 entries (2.00 hours)')
+    expect(document.querySelector('[data-project-facts]')?.textContent).toContain('€150.00/hour')
+    expect(document.querySelector('[data-project-facts]')?.textContent).not.toContain('[object')
+    button.click()
+    await vi.waitFor(() => expect(document.querySelector('[data-project-facts]')?.textContent).toContain('2 entries repaired'))
+    expect(recover).toHaveBeenLastCalledWith(7, report.fingerprint, expect.any(AbortSignal))
+  })
+
+  it('[#1167] loads project detail without requesting unavailable attachments', async () => {
+    writeDocument('project-detail', '/projects/7')
+    document.documentElement.setAttribute('data-attachments-unavailable', '')
+    const api = detailApi()
+    await createProjectDirectoryController(api).activate(identity('administrator'), new AbortController().signal, () => false)
+    expect(api.listDirectoryProjectAttachments).not.toHaveBeenCalled()
+    expect(document.querySelector<HTMLElement>('[data-project-detail]')?.hidden).toBe(false)
+    expect(document.querySelector<HTMLElement>('[data-project-attachment-form]')?.hidden).toBe(true)
+    expect(document.querySelector('[data-project-attachment-status]')?.textContent).toContain('not enabled')
+  })
+
   it('[security] renders read-only detail without restricted values or mutation controls', async () => {
     writeDocument('project-detail', '/projects/7')
     const api = detailApi()
@@ -219,6 +268,28 @@ describe('Projects V1 browser controller', () => {
     expect(projectForm.elements.namedItem('notes')).toBeNull()
     expect(projectForm.elements.namedItem('hourly_rate_cents')).toBeNull()
     expect(api.updateDirectoryProject).not.toHaveBeenCalled()
+  })
+
+  it('[browser #934] shows when the budget last crossed its threshold and the managers were told', async () => {
+    writeDocument('project-detail', '/projects/7')
+    const alerted = { ...project, over_budget_notified_on: '2026-10-14' }
+    await createProjectDirectoryController(
+      detailApi({ getDirectoryProject: vi.fn(async () => alerted) }),
+    ).activate(identity('member'), new AbortController().signal, () => false)
+    expect(document.querySelector('[data-project-facts]')?.textContent).toContain(
+      'Last over-budget alert2026-10-14',
+    )
+
+    // Never crossed: said so, rather than a blank that reads as a missing field.
+    writeDocument('project-detail', '/projects/7')
+    await createProjectDirectoryController(detailApi()).activate(
+      identity('member'),
+      new AbortController().signal,
+      () => false,
+    )
+    expect(document.querySelector('[data-project-facts]')?.textContent).toContain(
+      'Last over-budget alertNone',
+    )
   })
 
   it('[security] on the public demo, withholds the upload and says why, and lists the files it has', async () => {
@@ -358,7 +429,7 @@ describe('Projects V1 browser controller', () => {
     expect(form.elements.namedItem('cost_budget_cents')).toBeNull()
     expect(form.elements.namedItem('notes')).toBeNull()
     ;(form.elements.namedItem('name') as HTMLInputElement).value = 'Manager update'
-    for (const field of ['billing_method', 'bill_by', 'billing_currency']) expect(form.elements.namedItem(field)).toBeNull()
+    for (const field of ['billing_method', 'bill_by', 'billing_currency', 'time_rounding_mode', 'time_rounding_minutes']) expect(form.elements.namedItem(field)).toBeNull()
     form.dispatchEvent(new SubmitEvent('submit', { bubbles: true, cancelable: true }))
 
     await vi.waitFor(() => expect(updateDirectoryProject).toHaveBeenCalledTimes(1))
@@ -373,7 +444,57 @@ describe('Projects V1 browser controller', () => {
     expect(payload).not.toHaveProperty('fee_cents')
     expect(payload).not.toHaveProperty('cost_budget_cents')
     expect(payload).not.toHaveProperty('notes')
-    for (const field of ['billing_method', 'bill_by', 'billing_currency']) expect(payload).not.toHaveProperty(field)
+    for (const field of ['billing_method', 'bill_by', 'billing_currency', 'time_rounding_mode', 'time_rounding_minutes']) expect(payload).not.toHaveProperty(field)
+  })
+
+  it('[browser #949] sets a project rounding rule as a direction and an increment, or none', async () => {
+    writeDocument('project-detail', '/projects/7')
+    let stored: GeneralResource = { ...project, time_rounding_mode: null, time_rounding_minutes: null }
+    const updateDirectoryProject = vi.fn(async (_id, patch) => (stored = { ...stored, ...patch }))
+    const api = detailApi({ getDirectoryProject: vi.fn(async () => stored), updateDirectoryProject })
+    const controller = createProjectDirectoryController(api)
+
+    await controller.activate(identity('administrator'), new AbortController().signal, () => false)
+    const facts = (): string => document.querySelector('[data-project-facts]')?.textContent ?? ''
+    expect(facts()).toContain('Time rounding')
+    expect(facts()).toContain('Organization default')
+
+    document.querySelector<HTMLButtonElement>('[data-project-edit]')!.click()
+    const form = document.querySelector<HTMLFormElement>('[data-project-form]')!
+    const mode = form.elements.namedItem('time_rounding_mode') as HTMLSelectElement
+    const minutes = form.elements.namedItem('time_rounding_minutes') as HTMLSelectElement
+    // With no rule of its own there is nothing for an increment to belong to.
+    expect(mode.value).toBe('')
+    expect(minutes.disabled).toBe(true)
+    expect([...mode.options].map((option) => option.value)).toEqual(['', 'exact', 'up', 'down', 'nearest'])
+    expect([...minutes.options].map((option) => option.value)).toEqual(['6', '10', '15', '20', '30', '60'])
+
+    mode.value = 'up'
+    mode.dispatchEvent(new Event('change', { bubbles: true }))
+    expect(minutes.disabled).toBe(false)
+    minutes.value = '30'
+    form.dispatchEvent(new SubmitEvent('submit', { bubbles: true, cancelable: true }))
+    await vi.waitFor(() => expect(updateDirectoryProject).toHaveBeenCalledTimes(1))
+    expect(updateDirectoryProject.mock.calls[0]![1]).toMatchObject({
+      time_rounding_mode: 'up',
+      time_rounding_minutes: 30,
+    })
+    await vi.waitFor(() => expect(facts()).toContain('rounded up to 30 min'))
+
+    // Back to the organization's rule: both null, never half a rule.
+    document.querySelector<HTMLButtonElement>('[data-project-edit]')!.click()
+    const again = document.querySelector<HTMLFormElement>('[data-project-form]')!
+    const againMode = again.elements.namedItem('time_rounding_mode') as HTMLSelectElement
+    expect(againMode.value).toBe('up')
+    expect((again.elements.namedItem('time_rounding_minutes') as HTMLSelectElement).value).toBe('30')
+    againMode.value = ''
+    againMode.dispatchEvent(new Event('change', { bubbles: true }))
+    again.dispatchEvent(new SubmitEvent('submit', { bubbles: true, cancelable: true }))
+    await vi.waitFor(() => expect(updateDirectoryProject).toHaveBeenCalledTimes(2))
+    expect(updateDirectoryProject.mock.calls[1]![1]).toMatchObject({
+      time_rounding_mode: null,
+      time_rounding_minutes: null,
+    })
   })
 
   it('[browser] submits exact authorized project and task-assignment units', async () => {
@@ -676,6 +797,39 @@ describe('Projects V1 browser controller', () => {
       'No projects match these filters.',
     )
   })
+  it('[browser #852] sorts projects by a header inside their client bands, money by size', async () => {
+    writeDocument('project-list', '/projects')
+    const small: GeneralResource = { ...project, id: 8, name: 'Alpha', code: null, budget_seconds: 3_600 }
+    const big: GeneralResource = { ...project, id: 9, name: 'Zulu', code: null, budget_seconds: 72_000 }
+    const controller = createProjectDirectoryController({
+      listDirectoryProjects: vi.fn(async () => page([big, small])),
+      listProjectClients: vi.fn(async () => page([client])),
+    })
+    await controller.activate(identity('administrator'), new AbortController().signal, () => false)
+
+    const names = (): string[] =>
+      [...document.querySelectorAll('[data-project-list] tbody tr[data-row] td[data-column="name"]')].map(
+        (cell) => cell.textContent ?? '',
+      )
+    const header = (column: string): HTMLButtonElement =>
+      document.querySelector<HTMLButtonElement>(
+        `[data-project-list] thead button[data-sort-column="${column}"]`,
+      )!
+    // The list arrives by name inside the client's band, and says so.
+    expect(names()).toEqual(['Alpha', 'Zulu'])
+    expect(
+      document.querySelector('[data-project-list] thead th[data-column="name"]')?.getAttribute('aria-sort'),
+    ).toBe('ascending')
+
+    header('budget').click()
+    expect(names()).toEqual(['Alpha', 'Zulu'])
+    header('budget').click()
+    expect(names()).toEqual(['Zulu', 'Alpha'])
+    expect(
+      document.querySelector('[data-project-list] thead th[data-column="budget"]')?.getAttribute('aria-sort'),
+    ).toBe('descending')
+  })
+
   it('[browser] keeps the Costs column when a viewer can see cost', async () => {
     writeDocument('project-list', '/projects')
     const controller = createProjectDirectoryController({

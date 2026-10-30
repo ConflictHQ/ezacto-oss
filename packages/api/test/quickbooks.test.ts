@@ -4,6 +4,7 @@ import {
   installQuickBooksRoutes,
   installQuickBooksWebhookRoute,
   type QuickBooksInvoiceSyncState,
+  type QuickBooksReconciliation,
   type QuickBooksService,
 } from '../src/quickbooks.js'
 import { createApiApp } from '../src/index.js'
@@ -26,6 +27,43 @@ const synced: QuickBooksInvoiceSyncState = {
   lastOutcome: { kind: 'created', reason: null, at: '2026-09-17T12:00:01.000Z' },
 }
 
+const reconciliation: QuickBooksReconciliation = {
+  realmId: 'realm-a',
+  generatedAt: '2026-10-18T12:00:00.000Z',
+  counts: { matched: 0, amount_differs: 1 },
+  rows: [
+    {
+      status: 'amount_differs',
+      issues: ['amount_differs'],
+      ezactoInvoiceId: 7,
+      number: '1315',
+      quickBooksId: '147',
+      linked: true,
+      ezactoAmountCents: 100_000,
+      quickBooksAmountCents: 90_000,
+      ezactoCurrency: 'USD',
+      quickBooksCurrency: null,
+      ezactoPaidCents: 0,
+      quickBooksPaidCents: 0,
+      detail: 'total is 1000.00 here and 900.00 in QuickBooks',
+    },
+  ],
+  paymentDivergences: [
+    {
+      quickBooksPaymentId: '501',
+      kind: 'voided',
+      quickBooksUpdatedAt: '2026-10-17T09:00:00.000Z',
+      detectedAt: '2026-10-17T09:00:05.000Z',
+      receipts: [{ paymentId: 4, invoiceId: 7, invoiceNumber: '1315', amountCents: 30_000 }],
+    },
+  ],
+  recovery: {
+    cdcCursor: '2026-10-18T11:00:00.000Z',
+    lastRunAt: '2026-10-18T11:00:01.000Z',
+    lastOutcome: 'caught_up',
+  },
+}
+
 const service = (overrides: Partial<QuickBooksService> = {}): QuickBooksService => ({
   clientId: vi.fn(() => 'client-id'),
   callbackUrl: vi.fn(() => 'https://app.example.test/api/v1/integrations/quickbooks/callback'),
@@ -46,6 +84,7 @@ const service = (overrides: Partial<QuickBooksService> = {}): QuickBooksService 
     payments: [{ paymentId: 9, outcome: { kind: 'created', quickBooksId: '148' } }],
   })),
   syncState: vi.fn(async () => synced),
+  reconcile: vi.fn(async () => reconciliation),
   ...overrides,
 })
 
@@ -105,6 +144,55 @@ describe('the connect button', () => {
     })
   })
 
+  it('[security] the reconciliation report is for administrators and accounting only', async () => {
+    for (const profile of ['administrator', 'accounting']) {
+      const quickBooks = service()
+      const response = await app(quickBooks, { userId: 2, profile }).request(
+        '/integrations/quickbooks/reconciliation',
+      )
+      expect(response.status).toBe(200)
+      const body = (await response.json()) as {
+        data: { rows: Record<string, unknown>[]; payment_divergences: unknown; recovery: unknown }
+      }
+      expect(body.data.payment_divergences).toEqual([
+        {
+          quickbooks_payment_id: '501',
+          kind: 'voided',
+          quickbooks_updated_at: '2026-10-17T09:00:00.000Z',
+          detected_at: '2026-10-17T09:00:05.000Z',
+          receipts: [{ payment_id: 4, invoice_id: 7, invoice_number: '1315', amount_cents: 30_000 }],
+        },
+      ])
+      expect(body.data.recovery).toEqual({
+        cdc_cursor: '2026-10-18T11:00:00.000Z',
+        last_run_at: '2026-10-18T11:00:01.000Z',
+        last_outcome: 'caught_up',
+      })
+      expect(body.data.rows[0]).toMatchObject({
+        status: 'amount_differs',
+        invoice_id: 7,
+        quickbooks_id: '147',
+        ezacto_amount_cents: 100_000,
+        quickbooks_amount_cents: 90_000,
+      })
+      expect(response.headers.get('cache-control')).toBe('no-store')
+    }
+    for (const profile of ['member', 'project_manager', 'executive_manager']) {
+      const quickBooks = service()
+      const response = await app(quickBooks, { userId: 3, profile }).request(
+        '/integrations/quickbooks/reconciliation',
+      )
+      expect(response.status).toBe(403)
+      expect(quickBooks.reconcile).not.toHaveBeenCalled()
+    }
+  })
+
+  it('answers 409 when QuickBooks is not connected', async () => {
+    const quickBooks = service({ reconcile: vi.fn(async () => null) })
+    const response = await app(quickBooks).request('/integrations/quickbooks/reconciliation')
+    expect(response.status).toBe(409)
+  })
+
   it('[security] only an administrator may connect or disconnect', async () => {
     // Connecting an accounting system is a grant over the whole book, not a
     // per-user preference.
@@ -145,6 +233,16 @@ describe('the connect button', () => {
     })
     expect(response.status).toBe(403)
     expect(quickBooks.beginAuthorization).not.toHaveBeenCalled()
+  })
+
+  it('[api #1217] uses local native readiness without starting an unavailable connection', async () => {
+    const quickBooks = service({ configured: () => false })
+    const status = await app(quickBooks).request('/integrations/quickbooks')
+    expect((await status.json() as { data: { configured: boolean } }).data.configured).toBe(false)
+    const response = await app(quickBooks).request('/integrations/quickbooks/authorize', { method: 'POST' })
+    expect(response.status).toBe(503)
+    expect(quickBooks.beginAuthorization).not.toHaveBeenCalled()
+    expect(quickBooks.authorizeUrl).not.toHaveBeenCalled()
   })
 
   it('[api] says so rather than half-starting when the deployment has no Intuit keys', async () => {
@@ -226,6 +324,16 @@ describe('the webhook on the shipped surface', () => {
       payload: '{"eventNotifications":[]}',
       signature: 'a-signature',
     })
+  })
+
+  it('[1013 security] forwards a raw CloudEvents array to signature verification unchanged', async () => {
+    const payload = '[\n  {"specversion":"1.0","type":"qbo.payment.created.v1","intuitentityid":"17","intuitaccountid":"42","time":"2026-10-23T12:00:00.123456789Z"}\n]'
+    const quickBooks = service()
+    const response = await shippedApp(quickBooks).request('http://localhost/webhooks/quickbooks', {
+      method: 'POST', body: payload, headers: { 'intuit-signature': 'raw-body-signature' },
+    })
+    expect(response.status).toBe(200)
+    expect(quickBooks.receiveWebhook).toHaveBeenCalledWith({ payload, signature: 'raw-body-signature' })
   })
 
   it('[security] is not under /api/v1, where authentication refuses it first', async () => {

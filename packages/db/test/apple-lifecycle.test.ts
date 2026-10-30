@@ -99,6 +99,19 @@ for (const runtime of ['SQLite', 'D1'])
       const request = () =>
         requests.request({ userId: 2, id: 'request-one', expectedPolicyVersion: 1, now: at })
       const close = async () => {
+        if (legacy) {
+          // This row predates Apple channel custody and calendar storage. Build
+          // it through the actual 0103 schema/erasure triggers, rather than run
+          // today's repository against a deliberately incomplete old schema.
+          const secret = (await rows('SELECT secret FROM account_closure_security'))[0]!.secret as string
+          const digest = accountClosureDigest(secret, 'provider', closedAccountProviderKey('apple', 'apple-pat'))
+          await exec(`INSERT INTO account_closures
+            (request_id,user_id,actor_user_id,closed_at,policy_version,policy_snapshot,inventory_json,replay_keys,retained_identity,apple_cleanup)
+            SELECT 'request-one',2,1,'${at}',version,policy_json,'[]',
+              json_array(json_object('kind','provider','provider','apple','digest','${digest}')),0,'pending'
+            FROM account_retention_policies WHERE version=1`)
+          return
+        }
         const preview = await closure.preview(1, 'request-one')
         return closure.close({
           actorUserId: 1,
@@ -183,6 +196,10 @@ for (const runtime of ['SQLite', 'D1'])
       const { store, request, close, upgrade, rows } = await setup(true)
       await request()
       await close()
+      expect(await rows('SELECT id FROM _ezacto_migrations ORDER BY id DESC LIMIT 1')).toEqual([{ id: '0103_account_closure' }])
+      expect(await rows('SELECT is_active FROM users WHERE id=2')).toEqual([{ is_active: 0 }])
+      expect(await rows('SELECT * FROM user_identities WHERE user_id=2')).toHaveLength(0)
+      expect(await rows("SELECT kind FROM closed_account_sign_in_guards WHERE request_id='request-one'")).toEqual([{ kind: 'provider' }])
       await upgrade()
       expect(await rows('SELECT * FROM apple_deletion_unknown')).toHaveLength(1)
       expect(await store.status('request-one')).toBe('manual_required')

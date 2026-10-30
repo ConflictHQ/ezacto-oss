@@ -1,3 +1,5 @@
+import { createStaffInvoicesStore } from './staff-invoices.js'
+import { createAdvanceCreditsStore } from './contractor-advances.js'
 import { sql } from 'drizzle-orm'
 import type { BetterSQLite3Database } from 'drizzle-orm/better-sqlite3'
 import type { DrizzleD1Database } from 'drizzle-orm/d1'
@@ -6,6 +8,7 @@ import {
   StaffPaymentError,
   PaymentProviderError,
   validPaymentMonth,
+  wiseTransferException,
   type PaymentDestination,
   type PaymentItem,
   type PaymentQuote,
@@ -148,8 +151,10 @@ export const createPaymentRunsService = (
               item,
               {
                 state: 'paid',
-                failure: 'Wise status changed after payment; reconciliation required.',
-                next: later(now, 3600),
+                provider_status: transfer.status,
+                failure:
+                  'Wise cancelled this transfer after it was sent. Review it in Wise; the earlier payment remains recorded until a refund is confirmed.',
+                next: later(now, 300),
               },
               now,
             )
@@ -166,13 +171,36 @@ export const createPaymentRunsService = (
           )
           return
         }
+        const providerException = wiseTransferException(transfer.status)
+        if (providerException !== null) {
+          await update(
+            item,
+            {
+              state: item.state === 'paid' ? 'paid' : 'attention',
+              provider_status: transfer.status,
+              failure: providerException,
+              next: later(now, 300),
+            },
+            now,
+          )
+          return
+        }
         if (transfer.status !== 'incoming_payment_waiting') {
           await update(
             item,
             {
-              state: item.state === 'paid' ? 'paid' : 'processing',
+              state:
+                item.state === 'paid'
+                  ? 'paid'
+                  : item.state === 'attention' && item.failure !== null
+                    ? 'attention'
+                    : 'processing',
               provider_status: transfer.status,
-              next: later(now, item.state === 'paid' ? 3600 : 60),
+              failure:
+                (item.state === 'paid' || item.state === 'attention') && item.failure !== null
+                  ? "Wise has not confirmed this transfer's resolution after an earlier issue. Review its status in Wise; no new payment will be sent automatically."
+                  : null,
+              next: later(now, item.failure !== null ? 300 : item.state === 'paid' ? 3600 : 60),
             },
             now,
           )
@@ -315,6 +343,8 @@ export const createPaymentRunsService = (
     }
   }
   return {
+    advances: createAdvanceCreditsStore(database),
+    invoices: createStaffInvoicesStore(database),
     preview: async (command, actorId, requestId, now) => {
       if (provider === null) invalid('Wise is not configured for this instance.')
       if (
@@ -361,30 +391,38 @@ export const createPaymentRunsService = (
         const row = (await ledger.report(selection.month, now.slice(0, 10))).rows.find(
           (x) => x.user_id === selection.user_id,
         )
-        if (
-          !row ||
-          !row.active ||
-          row.payout_provider !== 'wise' ||
-          row.status === 'settled' ||
-          row.currency === null ||
-          row.balance_cents === null ||
-          selection.amount_cents > row.balance_cents ||
-          row.version !== selection.expected_version
-        )
+        const advance = selection.purpose === 'advance'
+        if (selection.purpose !== undefined && !['earnings','advance'].includes(selection.purpose))
+          invalid('Choose payment of earnings or an advance deposit.')
+        if (!row || !row.active || row.payout_provider !== 'wise')
+          conflict('Choose an active person with Wise as their payment provider.')
+        let currency = row!.currency
+        if (advance) {
+          if (typeof selection.currency !== 'string' || !/^[A-Z]{3}$/u.test(selection.currency) ||
+            typeof selection.advance_reason !== 'string' || !selection.advance_reason.trim() || selection.advance_reason.length > 2000)
+            invalid('An advance requires a currency and a reason.')
+          const contractor = (await database.all<{ id: number }>(sql`SELECT id FROM users WHERE id=${selection.user_id} AND is_contractor=1 AND is_active=1`))[0]
+          if (!contractor) invalid('Advances are available only for active contractors.')
+          if (selection.advance_project_id != null && (!Number.isSafeInteger(selection.advance_project_id) || selection.advance_project_id <= 0 ||
+            (await database.all(sql`SELECT id FROM projects WHERE id=${selection.advance_project_id}`)).length === 0))
+            invalid('Choose an existing intended project or leave it blank.')
+          currency = selection.currency!
+        } else if (row!.status === 'settled' || row!.currency === null || row!.balance_cents === null ||
+          selection.amount_cents > row!.balance_cents! || row!.version !== selection.expected_version)
           conflict('The selected balance changed or is not ready for Wise. Refresh the ledger.')
         const destination = await currentDestination(selection.user_id)
         if (!destination) invalid('Set a verified Wise destination for every selected person.')
         const quote = await provider!.quote(
           destination!,
           command.source_currency,
-          row!.currency!,
+          currency!,
           selection.amount_cents,
         )
         items.push({
           ...selection,
           id: crypto.randomUUID(),
           name: row!.name,
-          currency: row!.currency,
+          currency,
           destination,
           quote,
         })
@@ -492,7 +530,7 @@ export const createPaymentRunsService = (
         id: string
       }>(sql`SELECT i.id FROM payment_run_items i JOIN payment_runs r ON r.id=i.run_id
         WHERE r.state='approved' AND r.scheduled_at<=${now} AND i.next_attempt_at<=${now} AND (i.lease_until IS NULL OR i.lease_until<${now})
-        AND (i.state IN ('queued','creating','funding','processing') OR (i.state='attention' AND i.transfer_id IS NOT NULL) OR (i.state='paid' AND (r.approved_at>=${later(now, -90 * 86400)} OR EXISTS(SELECT 1 FROM wise_webhook_deliveries w WHERE w.transfer_id=i.transfer_id AND w.received_at>i.updated_at)))) ORDER BY i.next_attempt_at,i.id LIMIT 10`)
+        AND (i.state IN ('queued','creating','funding','processing') OR (i.state='attention' AND i.transfer_id IS NOT NULL) OR (i.state='paid' AND (i.failure IS NOT NULL OR i.provider_status IN ('bounced_back','charged_back') OR r.approved_at>=${later(now, -90 * 86400)} OR EXISTS(SELECT 1 FROM wise_all_webhook_deliveries w WHERE w.transfer_id=i.transfer_id AND w.received_at>i.updated_at)))) ORDER BY i.next_attempt_at,i.id LIMIT 10`)
       let examined = 0
       for (const { id } of due) {
         // Advance up to three durable stages per tick; each reacquires a lease.

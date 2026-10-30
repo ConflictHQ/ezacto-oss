@@ -7,8 +7,8 @@ Set up and operate an eZacto instance: identity, email, error reporting, account
 1. Install [Cloudflare Workers](self-host-worker.md) or the [container](self-host-container.md), choose the canonical HTTPS application URL and establish an administrator login.
 2. Confirm [backup and restore](../RESTORE.md) before connecting a real company's books.
 3. Configure [transactional email](email-setup.md) and [error reporting](sentry-setup.md).
-4. Configure a sign-in provider and test it in a second browser before disabling the current administrator's working sign-in method.
-5. Connect payment/accounting providers to the intended account. Separate configuration checks from actions that send invoices or move money.
+4. Confirm an enabled sign-in method in a second browser before disabling the current administrator's working method. Configure an SSO provider only if SSO is enabled and wanted.
+5. For enabled modules that need them, connect payment/accounting providers to the intended account. Separate configuration checks from actions that send invoices or move money.
 
 ## Setup guides
 
@@ -26,7 +26,7 @@ Set up and operate an eZacto instance: identity, email, error reporting, account
 | Daily payment operations | [Staff payments](staff-payments.md) | The operator understands approvals, scheduling, uncertain outcomes and reconciliation |
 | Storage and recovery | [Attachment storage](attachment-storage.md), [backup and restore](../RESTORE.md) | Durable files and a recoverable database exist independently of a running process |
 
-These guides cover the OSS application. Hosted subscription billing, marketing analytics, beta admission and the hosted router have separate operators and deployment configuration. A provider name in the data model or an adapter package does not mean a deployable connection exists: for example, do not invent `DEEL_TOKEN`, PayPal or Mercury setup variables from their appearance in payment history. GitHub login exists in the API, but its credential pair is not wired through the current stock Worker deploy workflow or container config parser; enabling it needs an explicit deployment change.
+These guides cover the OSS application. Hosted subscription billing, marketing analytics, beta admission and the hosted router have separate operators and deployment configuration. A provider name in the data model or an adapter package does not mean a deployable connection exists: for example, do not invent PayPal or Mercury setup variables (`DEEL_TOKEN` and `DEEL_SYNC_START_DATE` are real, but only for the Deel time sync in [Integrations](integrations.md)) from their appearance in payment history. GitHub login exists in the API, but its credential pair is not wired through the current stock Worker deploy workflow or container config parser; enabling it needs an explicit deployment change.
 
 ## Readiness record
 
@@ -45,8 +45,334 @@ Update the authoritative environment secret store, deploy through CI, verify the
 
 Before disconnecting a money provider, review pending invoices, scheduled payments and uncertain transfers with their operator. Preserve provider IDs and audit records for reconciliation. Before disabling an identity provider, verify another working administrator login. Disabling a login method is separate from deleting an account or revoking provider grants.
 
+## Switch whole modules off
+
+An operator can turn a company module off for the whole instance with one environment variable. This is the operator's switch, separate from the per-organization module toggles in Settings > Company: it outranks them, it is read only from the environment, and nothing in the app or the API can turn a module back on.
+
+| Module | Variable | Effect when `false` |
+| --- | --- | --- |
+| Single sign-on | `SSO_ENABLED` | Google, GitHub and Apple sign-in are not offered on the sign-in page, their routes and the SSO domain settings are refused, and the SSO section is hidden. Password and magic-link sign-in are untouched. |
+| Backups | `BACKUPS_ENABLED` | The backup status, history, download and off-site routes are refused, the off-site sync does not run, and the Backups section is hidden. |
+| Invoices | `INVOICES_ENABLED` | Invoice, recurring invoice, invoice setting, client sending, scheduled month-end run and client invoice page routes are refused, the Invoices section and its settings (with Reminders) disappear from the app, `/invoices` pages redirect to the home page, and recurring generation, payment reminders and month-end runs do not run. |
+| Accounting | `ACCOUNTING_ENABLED` | QuickBooks routes and its webhook are refused, the QuickBooks credentials are not used, and the Accounting section and the invoice QuickBooks line are hidden. |
+
+Unset means on, so an install that sets none of them is unchanged. The only accepted values are `true` and `false`, exactly, in lower case. Anything else, including an empty value, stops start-up with a message naming the variable, so a typo cannot leave a module on that was meant off. `BACKUPS_ENABLED` and `ACCOUNTING_ENABLED` keep their existing names and meaning.
+
+Requests to routes owned by a disabled operator module answer `403` with the stable code `module_disabled` before the module route runs, so that refused call makes no provider, mail or storage request. Existing data is not touched: switching the variable back to `true` (or removing it) and restarting restores the module with everything in it. A flag change is not an unsend or recall operation; review existing queued work before changing policy.
+
+To turn all four off on a Cloudflare Worker, set them as variables in `wrangler.jsonc` (the container reads the same names from its environment):
+
+```jsonc
+"vars": {
+  "SSO_ENABLED": "false",
+  "BACKUPS_ENABLED": "false",
+  "INVOICES_ENABLED": "false",
+  "ACCOUNTING_ENABLED": "false"
+}
+```
+
+Turn off one by setting only its variable. Sign-in stays available through password or magic link, so keep one working administrator sign-in before switching SSO off.
+
+### What people see
+
+The navigation, command palette, settings links and first-use guidance must
+follow the effective module state, including when a cached session resumes.
+An enabled module still requires the person's normal permissions; a provider
+credential alone does not make a disabled module available. See the
+[surface audit](module-ui-audit.md) for the screen-by-screen disposition.
+
+| Off switch or organization setting | Expected visible behavior |
+| --- | --- |
+| `SSO_ENABLED=false` | Provider sign-in choices and SSO domain settings disappear. Existing password and magic-link methods remain, subject to their own configuration. API-token login in `ez` is unchanged. |
+| `BACKUPS_ENABLED=false` | Company backup controls, history and download links disappear. Local CLI backup, restore, bundle verification and decryption remain operator recovery tools; they do not call the disabled server backup routes. |
+| `INVOICES_ENABLED=false` | Invoice, estimate/recurring and sending controls and their dependent settings and links are withdrawn. Historical invoice reports remain readable where their native report endpoint permits them; invoice numbers become text and invoice actions disappear. Time tracking and independent summaries must not fetch withdrawn invoice collections. |
+| `ACCOUNTING_ENABLED=false` | Accounting connection prompts, provider-specific invoice status/actions and accounting settings disappear. Manual native invoice records remain available when invoices are enabled; they are not an accounting-provider connection. This flag does not switch off contractor payouts or standalone payment providers. |
+| Organization `expenses=false` | Expense navigation, entry forms, expense report/export choices and generation options disappear. Time tracking remains available. |
+| Organization `own_money=false` | Personal payment and staff-invoice surfaces show their unavailable state rather than suggesting setup or submission. Administrative payment permissions are separate. |
+| Team unavailable | The runtime reads the existing organization `team` state and exposes Team status. Navigation and bookmarked pages follow that capability and the person's access; status discovery precedes protected reads and setup controls. |
+| Client portal unavailable | Do not offer portal setup or links when no portal capability is supplied. The current native module-settings API does not expose a `client_portal` toggle. |
+
+The native organization module-settings API accepts `approval`, `expenses`,
+`own_money` and `activity_log`. The runtime also reads the existing organization `team` key, but that key is not
+writable through this API. `client_portal` is named in the domain inventory but
+has no implemented native toggle. Neither is an additional environment variable;
+do not invent configuration keys expecting them to grant or revoke access.
+
+The CLI help and report catalog are intentionally available offline and list
+client-supported operations. They are not a list of enabled instance modules.
+A remote `module_disabled` refusal is operator policy, not a request to issue a
+broader token or reconnect a provider. Local recovery remains possible while a
+server module is off. Data already delivered outside the instance cannot be
+recalled by changing a module flag; review queued work before re-enabling it.
+
+## Archive a finished year of the activity log
+
+The activity log is append-only and nothing in it is ever deleted. Once a year has finished, an administrator can move the live log into its own archive table from Settings > Activity ("Archive a finished year"). The roll is an operator action, never a schedule: the page offers it, and it runs only when you confirm. It renames the live table to `activity_log_<year>`, keeps every guard on the archive, starts a fresh live table, and records itself in the log as `activity_log.rolled`, all in one transaction. Archived entries still appear in the log, the export and the backup bundle.
+
+The archive takes everything recorded up to the moment of the roll, so entries from the first days of the new year travel with it if you roll late. The current year and a year that was already rolled are refused. The roll needs an administrator session; an API token cannot run it. On Cloudflare D1, take a Time Travel bookmark first, as for any schema operation.
+
 ## Troubleshooting order
 
 Check the deployment/environment first, then its configuration status, provider permissions, exact callback or webhook URL, and finally the request ID and provider logs. A `401` from eZacto may mean the operator session expired; a provider `401` means something different. Never paste tokens or complete webhook payloads into public issues.
 
 Vendor setup instructions were checked on 2026-10-09. The named source files in each guide are the implementation reference; verify your release before following steps for a newer version.
+
+## Monthly job definitions and proposed manifests
+
+Administrators can configure month-end pack jobs through the session-only API.
+The cadence uses the organization's time zone. A monthly expression is
+`M H D * *`: minute 0–59, hour 0–23, day 1–31. A day absent from a month is
+skipped. The minute cron (Worker) or maintenance tick (container) catches up the
+current monthly occurrence once its scheduled clock has passed; it does not
+create a backlog for older missed months.
+
+From a signed-in administrator's browser console, create a job with the actual
+client IDs it should cover:
+
+```js
+const response = await fetch('/api/v1/scheduled-jobs', {
+  method: 'POST',
+  headers: { 'content-type': 'application/json' },
+  body: JSON.stringify({
+    name: 'Monthly client work detail',
+    action: 'month_end_pack',
+    scope: { client_ids: [1] },
+    cadence: '0 9 1 * *',
+    confirmation: 'required',
+    confirm_within_minutes: 1440,
+  }),
+})
+const { data: job } = await response.json()
+```
+
+An empty `client_ids` list covers all clients. A job proposes the preceding
+calendar month's eligible invoices with their concrete client, amount/currency,
+recipient and claimed rounded hours (null when the invoice claims no time),
+plus each named person's hours in the exact saved report.
+Reports must render before a proposal is stored. The proposal and all its items
+are committed together, so a failed item leaves no partial manifest. Overlapping
+ticks cannot materialize the same job/month twice. Nothing becomes confirmed or
+executes merely because a tick ran or a deadline passed.
+
+List jobs at `GET /api/v1/scheduled-jobs` (cursor-paginated), or read one at
+`GET /api/v1/scheduled-jobs/:id`. `last_error` explains an empty, malformed or
+unrenderable occurrence; `last_checked_at` and `last_run_id` show its latest
+inspection and proposal. One failed job does not stop other jobs from proposing.
+Read a materialized manifest at `GET /api/v1/scheduled-runs/:id`; this also
+provides its state, deadline and confirmation attribution.
+
+Update or pause against the version just reviewed:
+
+```js
+await fetch(`/api/v1/scheduled-jobs/${job.id}`, {
+  method: 'PATCH',
+  headers: { 'content-type': 'application/json' },
+  body: JSON.stringify({ expected_version: job.version, is_active: false }),
+})
+```
+
+A stale version returns 409; refresh before choosing a new change. Pausing stops
+new proposals. Existing manifests retain their concrete items and original
+confirmation deadline when a job is edited. A paused or changed job cannot
+commit a proposal from a stale configuration already being rendered. Job
+configuration requires an active administrator session; API tokens cannot create,
+change or read these definitions. Month-end jobs always require confirmation.
+
+This release supplies definition, proposal, administrator review notices,
+authenticated confirmation, durable dispatch and expiry handling. Creating a job
+does not authorize client email or initiate a payment.
+
+### Review notices and authenticated answers
+
+A due proposal sends a concrete manifest notice to each active administrator with
+a verified primary email, using the deployment sender and the normal durable
+Mailer queue. A notice lists the captured client, hours, amount/currency and
+recipient for each item, the deadline, and `/scheduled-runs/<id>`. Queue retries
+reuse the recorded delivery; they do not compose another notice for that run and
+person. Configure email and the application base URL to enable notices.
+
+The email URL carries a signed, single-use review credential in its fragment.
+It expires at the proposal's original deadline and is bound to the intended
+administrator, run and instance signing key. The browser removes it from the URL
+before sign-in, retains it only in memory, and submits it by authenticated POST
+after the administrator signs in. It is never sent in a query string, referrer,
+browser storage or GET request. The token hash and expiry are committed in the
+same transaction as the notification and email-log receipt; queue recovery sends
+the original recorded message instead of minting another link.
+
+This credential records only an authenticated opening. It grants no sign-in,
+confirmation, cancellation or execution authority. GET requests never spend it; spending requires a POST from the intended active
+administrator session. A second
+opening or an opening at/after the deadline is refused by the link endpoint. The
+canonical `/scheduled-runs/<id>` subject remains readable with an administrator
+session, including after a link was used or expired, so audit bookmarks remain
+useful. A stale email link explains its state and shows only the record that the
+current session is already allowed to read.
+
+Confirm or Cancel remains a separate explicit authenticated POST. The decision
+is single use: repeat confirmation returns the original decision, and expiry or
+cancellation cannot become confirmation. Opening or replaying a review link never
+answers the run. The instance uses its cursor-signing secret with a separate
+review-link signing context; rotating that secret invalidates old review links.
+Older emails without a review fragment remain ordinary authenticated subject
+bookmarks and never gain action authority.
+
+The manifest screen shows each captured item and its recorded result. If an
+answer's response is lost, refresh before trying again; the screen reloads the
+server's state instead of assuming the answer failed.
+
+### Saved reports, delivery and recovery
+
+Each proposal saves its exact PDFs in the attachment store before it becomes
+answerable. Use **Review saved PDF** beside an item to inspect that document.
+Changing a report brand, notes or live time afterwards does not replace the saved
+PDF. Report-note warnings are captured with it; when warnings exist, confirmation
+requires an explicit acknowledgement on the review screen. The acknowledgement is
+recorded with the administrator and the original confirmation time.
+
+After confirmation, the Worker minute cron starts a Cloudflare Workflow for the
+captured proposal. Each checkpoint dispatches a bounded item batch; durable
+one-minute sleeps separate retry passes. The container maintenance queue calls the
+same executor and receipts. A Workflow restart cannot repeat completed items.
+Cron checks at most ten eligible runs per pass in oldest-checked order, so a
+control-plane failure cannot indefinitely starve later proposals. Workflow IDs
+include proposal identity and retry-budget generation: an explicit failed-item
+retry creates a new instance, and a nightly demo reset cannot reuse an old one.
+Errored instances may restart; cron respects an operator's pause or termination.
+The binding is `SCHEDULED_RUN_WORKFLOW`, exported class `ScheduledRunWorkflow`;
+Wrangler provisions the named Workflow with the Worker deployment. Older unbound
+installations retain direct minute-cron dispatch until they adopt this config.
+
+For both runtimes, each item owns a 15-minute lease. Another executor cannot
+enter it while the lease is live, and a recovered lease cannot be settled by the old executor.
+Automatic attempts stop after three failures or interruptions. The manifest names
+the failed item and its reason. **Retry failed items** authorizes another bounded
+window for exhausted failures only; it never repeats a completed item. The same
+control is `POST /api/v1/scheduled-runs/:id/retry`, with an administrator session.
+
+Before queue handoff, the dispatcher records an immutable delivery intent, sender
+binding and attachment identity. An interrupted handoff reuses those identities
+and the captured recipient instead of composing another message or adding another
+attachment. A changed invoice recipient or a closed invoice is refused before a
+new intent is recorded. A missing or changed artifact is refused; restore the
+original artifact rather than replacing what was reviewed. Sender configuration
+must remain valid for the recorded binding when a queued handoff is retried.
+
+**Complete** means every item was handed to the mail queue. The per-item delivery
+status separately shows queued, sent or failed provider delivery. A scheduled pack
+sends work detail; it does not mark an invoice paid or initiate a transfer. The
+activity log records proposal, attributed confirmation/cancellation, expiry,
+per-item attempts/results, retry authorization and completion. These events and
+their subject links are administrator-only.
+
+The Worker needs configured attachment storage and organization email delivery;
+the container uses its normal disk attachment store and SMTP sender. Saved reports are registered as file objects; retain the instance's attachment
+store with its database when backing up or restoring.
+Older proposals without saved reports remain readable but are never silently
+rendered and sent by the dispatcher. Pause their old job and create a replacement
+job with the reviewed scope, then review and confirm its newly captured proposal;
+cancel an older unconfirmed proposal. A legacy confirmation with no captured PDF
+remains a named failed item rather than an invented delivery.
+
+### Off-site backup visibility
+
+Company → Backups labels L1 (the R2 logical export) and L2 (the verified encrypted
+S3-compatible copy) separately. A successful L1 does not imply an L2 copy exists.
+Progress, the last completed copy and actionable E14 failures come from durable
+receipts. **Check off-site destination** verifies an encrypted probe with the
+configured credentials; it does not create a backup. Configure the dedicated
+deployment secrets and retain the encryption key as described in RESTORE.md.
+Worker logical copies exclude attachment bytes and do not replace physical/SQL
+recovery. Self-hosted container operators schedule the existing CLI bundle copy.
+
+### Company import/export and bulk actions
+
+Administrators can open Company → Import and export to download time CSV/Excel
+files or the detailed expense CSV for an inclusive date range. Time files use
+client-visible notes unless internal notes are explicitly selected. Disabled
+modules hide the corresponding exports or links. The section links to the actual
+CSV and Harvest migration guides, with a working source-checkout command for the
+operator CLI; it does not run a browser import.
+
+Company → Bulk actions links to selected-week approval and the detailed-time
+report's mark-invoiced, mark-uninvoiced and move workflows. Choosing records and
+confirming a change happens in those workflows; opening the catalog makes no
+change. Company catalogs are administrator-only; each destination retains its
+own authorization and record-lock checks.
+
+## Reusable estimate content
+
+In **Invoices → Estimates → New estimate / templates**, accounting, executive
+managers and administrators can prepare quote lines, currency, taxes, discount,
+subject and notes. Unit prices use integer cents. The displayed total applies the
+discount before each independent tax and rounds half away from zero.
+
+Use **Save as new template** to name reusable content. Select a template to load
+its content, edit it, then use **Update selected template** to save a new audited
+version. Reload templates after a version conflict. **Archive selected template**
+is final: its content remains readable, but it cannot start another draft.
+Existing estimates keep the content they already copied.
+
+To create a quote, choose its client explicitly, enter a new estimate number and
+issue date, then choose **Create draft**. Changing the template clears the client
+and number. The draft receives fresh document identity and a snapshot of the
+content; it inherits no recipient, customer credential, response, payment or
+invoice association. Creation does not send a message, accept a quote, charge a
+customer or create an invoice. Open the resulting draft to review it and use the
+existing estimate correspondence and conversion commands separately.
+
+Templates have an append-only version audit in `estimate_template_versions`.
+Draft creation records its actor, request, optional source template/version and
+result in `estimate_draft_commands`; retries with the same idempotency key return
+the same draft. The native API exposes `GET/POST /api/v1/estimate-templates`,
+`PATCH /api/v1/estimate-templates/:id`, and `POST /api/v1/estimates` with
+`Idempotency-Key`. All four require `invoices:write`; the instance also checks the
+acting profile. The picker shows at most 1000 templates and states when the
+catalog is truncated.
+
+## Monthly operational SQL restore drill
+
+The `restore-drill` Actions workflow runs at 06:00 UTC on the first of each
+month, or by manual dispatch. It reads the latest complete SQL backup retained
+in the production R2 bucket, checks that it belongs to the configured instance
+and database and is no older than 72 hours, and restores it into private local
+SQLite scratch storage. It checks SHA-256, gzip sizes, SQLite integrity and
+foreign keys, invoice totals/payment balances, completed invoice command
+receipts and every table's recorded row count. It never boots the restored app.
+
+Filter the Activity log by `backup.restore_drilled` to see the pass/fail status,
+failed check, source key/checksum, aggregate counts and scratch-cleanup result.
+The shared outbox delivers that event normally. A persistence failure fails the
+Actions run; a green restore without a durable result is not reported as a
+completed operational drill. Restored rows and SQL are deleted on both success
+and failure and are never uploaded as Actions artifacts.
+
+The nightly `backup-sql` workflow publishes `backups/latest.json` only after
+uploading the complete dump/manifest pair. New manifests include per-table
+counts verified from a scratch restore. Existing older manifests without those
+counts cannot pass the monthly drill: run the updated SQL backup workflow first.
+A scratch-validation failure still retains the dated dump/manifest pair,
+leaves the previous latest pointer unchanged and fails the backup run visibly.
+Both workflows use the existing production Cloudflare credentials and share a
+concurrency lock. This checks the retained R2 SQL copy; encrypted off-site
+recovery and attachment-byte reconciliation remain separate restore checks.
+
+## Administrator CLI draft edits
+
+Use `ez sudo invoice edit <number>` or
+`ez sudo invoice unlink-time <number> --entries <ids>` from a current source
+build. See the [CLI reauthentication guide](../packages/cli/README.md#editing-draft-invoices)
+for scopes, private credential input, second factors and partial header/line
+failure handling. The short-lived elevation belongs to one administrator API
+token and one draft; password reset, token revocation, role changes and invoice
+state changes invalidate it. Browser invoice editing retains its existing
+session policy. Unlinking tracked time does not recalculate invoice lines.
+
+
+## Organization holidays in capacity planning
+
+Administrators add, rename, move and remove organization holidays under **Capacity → Organization holidays**. Enter explicit local dates and names; the app does not assume a country calendar. The list follows the complete weeks shown in the capacity grid. A stale edit or deletion is refused; refresh the view before retrying.
+
+A weekday holiday removes one fifth of each active person's current weekly capacity, matching the existing Monday–Friday planning convention and part-time hours. Weekend holidays remain visible in the calendar but do not remove capacity. A holiday and personal leave on the same date remove the larger daily amount, rather than adding them; available capacity stays at least zero. These dates change planning availability only. They do not create time entries or modify invoices, payments or tracked time. Historical capacity reads use the current holiday configuration and weekly capacity, alongside the existing allocation/time-off rules.
+
+The API lists global holiday dates for `schedule:read` users. Changes require an administrator with `schedule:write`, and the database rechecks the active administrator during the atomic write. A date is unique within the organization. Update and delete requests must carry the current `version`; every accepted change and its before/after audit commit together. Removing a holiday leaves personal leave intact. This is an operator calendar, with no leave approval workflow or public-holiday feed.

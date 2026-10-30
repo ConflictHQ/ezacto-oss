@@ -7,10 +7,12 @@ import { loadDevVars, readHarvestEnv } from './env.js'
 import { runAuth } from './auth.js'
 import { runExtract, type ExtractResult } from './extract.js'
 import { runLoad } from './load.js'
+import {queuedMigrationCommands,runQueuedMigrationCommand} from './queued-commands.js'
 import { reconciliationExitCode, runReconcile } from './reconcile.js'
 import { runSync, syncExitCode } from './sync.js'
 import { runVerify } from './verify.js'
 import { runCutoverPreflight } from './cutover-preflight.js'
+import { runCsvImport } from './csv-run.js'
 import { runInvoiceDelta } from './invoice-delta.js'
 import {
   applyRecurringInvoiceWorksheet,
@@ -30,22 +32,41 @@ Commands:
   sync     Run an incremental extract, then a complete full-ID delete witness.
   verify   Check snapshot counts/FKs and capture report checksums per currency
   load     Transform a verified snapshot into an ezacto SQLite database
+  queue-upload Upload and verify an allowlisted snapshot into R2; reserve an empty D1 target
+  queue-start Start the reviewed run; processing continues without this CLI process
+  queue-status Read safe aggregate progress through Cloudflare operator credentials
+  queue-retry Resume the same immutable failed run after its cause has been resolved
+  queue-cancel Stop processing; a partially loaded target remains quarantined
   reconcile Compare Harvest checksums, snapshot rows, and the loaded database
   preflight-migrations Assert an exact, checksum-verified deployment migration ledger
   carry-invoices Carry the invoices a live database is missing across from a
            freshly loaded one, through the same importer the load uses. For an
            instance that has moved on since its cutover, where reloading would
            take its own work with it.
+  import-csv Read a vendor-neutral time CSV (docs/csv-import.md) into --database.
+           With --dry-run it reports what would happen and changes nothing; without
+           it, it applies the file, and running it again adds nothing.
   finish-retainers Generate or apply the missing Harvest retainer-balance worksheet
   finish-recurring-invoices Generate or apply the missing recurring-invoice worksheet
 
 Options:
   --account-id <id>    Harvest account id to use (skips auto-pick/prompt)
   --snapshot-dir <dir> Snapshot directory to write manifest.json into (default: ./snapshot)
+  --target-d1 <uuid>   Queued commands: target D1 database UUID
+  --confirm-target-d1 <uuid> Repeat the target for queue-start/retry/cancel
+  --bucket <name>      Queued commands: target ATTACHMENTS bucket
+  --queue-id <id>      Queued commands: deployed MIGRATION_QUEUE id
+  --run-id <uuid>      Queued run identity (queue-upload generates one if omitted)
+                       Credentials: CLOUDFLARE_ACCOUNT_ID and CLOUDFLARE_API_TOKEN env only
   --database <path>    SQLite database path for load/reconcile (required)
   --input <path>       Completed worksheet JSON, or wrangler query JSON for preflight-migrations
   --organization-currency <code>  ISO currency when Company/client data is ambiguous
   --organization-address <text>   Organization address (Company API omits it)
+  --file <path>        import-csv: the CSV file
+  --mapping <path>     import-csv: JSON mapping of people, clients, projects and tasks
+  --source-id <id>     import-csv: a stable name for the system the file came from (default: csv)
+  --format <name>      import-csv: read a vendor's export instead of the contract (toggl, clockify)
+  --skip-rejected      import-csv: apply the rows that can be applied; the rest stay listed
   --force              Re-stamp a snapshot dir that holds a different account
   --upgrade            preflight-migrations: an ordinary deploy. Permits pending
                        migrations (the build is ahead of the database, which is what a
@@ -128,6 +149,7 @@ const main = async (): Promise<number> => {
     allowPositionals: true,
     options: {
       'account-id': { type: 'string' },
+      'target-d1':{type:'string'},'confirm-target-d1':{type:'string'},'bucket':{type:'string'},'queue-id':{type:'string'},'run-id':{type:'string'},
       'snapshot-dir': { type: 'string' },
       'request-timeout': { type: 'string' },
       database: { type: 'string' },
@@ -138,10 +160,16 @@ const main = async (): Promise<number> => {
       source: { type: 'string' },
       only: { type: 'string', multiple: true },
       'dry-run': { type: 'boolean' },
+      file: { type: 'string' },
+      mapping: { type: 'string' },
+      'source-id': { type: 'string' },
+      'skip-rejected': { type: 'boolean' },
+      format: { type: 'string' },
     upgrade: { type: 'boolean' },
     },
   })
   const command = positionals[0]
+  if(queuedMigrationCommands.some(value=>value===command)) return runQueuedMigrationCommand(command!,values)
 
   if (
     command !== 'auth' &&
@@ -153,7 +181,8 @@ const main = async (): Promise<number> => {
     command !== 'preflight-migrations' &&
     command !== 'finish-retainers' &&
     command !== 'finish-recurring-invoices' &&
-    command !== 'carry-invoices'
+    command !== 'carry-invoices' &&
+    command !== 'import-csv'
   ) {
     process.stdout.write(USAGE)
     return 1
@@ -195,6 +224,30 @@ const main = async (): Promise<number> => {
         `${result.anomalies.length} anomaly(s); snapshot ${result.snapshotSha256}`,
     )
     return 0
+  }
+
+  if (command === 'import-csv') {
+    if (!values.database) throw new Error('--database is required for import-csv')
+    if (!values.file) throw new Error('--file is required for import-csv')
+    if (values.format !== undefined && values.format !== 'toggl' && values.format !== 'clockify') {
+      throw new Error(`--format must be toggl or clockify, not ${values.format}`)
+    }
+    // Aborting stops further rows; it never rolls back what was written.
+    const controller = new AbortController()
+    process.once('SIGINT', () => controller.abort())
+    const { text, exitCode } = await runCsvImport({
+      databasePath: values.database,
+      filePath: values.file,
+      mappingPath: values.mapping,
+      sourceId: values['source-id'] ?? values.format ?? 'csv',
+      ...(values.format === 'toggl' ? { format: 'toggl' as const } : {}),
+      ...(values.format === 'clockify' ? { format: 'clockify' as const } : {}),
+      dryRun: values['dry-run'] === true,
+      skipRejected: values['skip-rejected'] === true,
+      signal: controller.signal,
+    })
+    console.log(text)
+    return exitCode
   }
 
   if (command === 'carry-invoices') {

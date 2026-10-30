@@ -13,7 +13,7 @@ const account = (overrides: Partial<PayoutAccount> = {}): PayoutAccount => ({
   id: 9,
   userId: 2,
   provider: 'deel',
-  externalId: 'deel-person-1',
+  externalId: 'ana.personal@example.test',
   linkedByUserId: 1,
   linkedAt,
   verifiedAt: null,
@@ -67,7 +67,7 @@ describe('reading a person’s payout accounts', () => {
           id: 9,
           user_id: 2,
           provider: 'deel',
-          external_id: 'deel-person-1',
+          external_id: 'ana.personal@example.test',
           linked_by_user_id: 1,
           linked_at: linkedAt,
           verified_at: null,
@@ -96,13 +96,13 @@ describe('linking an account', () => {
     const payouts = service()
     const response = await linkRequest(app(payouts), '2', {
       provider: 'deel',
-      external_id: 'deel-person-1',
+      external_id: 'ana.personal@example.test',
     })
     expect(response.status).toBe(201)
     expect(payouts.link).toHaveBeenCalledWith({
       userId: 2,
       provider: 'deel',
-      externalId: 'deel-person-1',
+      externalId: 'ana.personal@example.test',
       // The signed-in person, not the person being linked: an administrator
       // acting for somebody is recorded as the one who did it.
       linkedByUserId: 1,
@@ -130,7 +130,7 @@ describe('linking an account', () => {
       const payouts = service()
       const response = await linkRequest(app(payouts, { userId: 3, profile }), '2', {
         provider: 'deel',
-        external_id: 'deel-person-1',
+        external_id: 'ana.personal@example.test',
       })
       expect(response.status).toBe(403)
       expect(payouts.link).not.toHaveBeenCalled()
@@ -165,7 +165,7 @@ describe('linking an account', () => {
     const already = await linkRequest(
       app(service({ link: vi.fn(async () => ({ outcome: 'already_linked' as const })) })),
       '2',
-      { provider: 'deel', external_id: 'deel-person-1' },
+      { provider: 'deel', external_id: 'ana.personal@example.test' },
     )
     expect(already.status).toBe(409)
     expect((await already.json()) as { error: { code: string } }).toMatchObject({
@@ -175,7 +175,7 @@ describe('linking an account', () => {
     const taken = await linkRequest(
       app(service({ link: vi.fn(async () => ({ outcome: 'external_id_taken' as const })) })),
       '2',
-      { provider: 'deel', external_id: 'deel-person-1' },
+      { provider: 'deel', external_id: 'ana.personal@example.test' },
     )
     expect(taken.status).toBe(409)
     expect((await taken.json()) as { error: { code: string } }).toMatchObject({
@@ -187,7 +187,7 @@ describe('linking an account', () => {
     const response = await linkRequest(
       app(service({ link: vi.fn(async () => ({ outcome: 'unknown_user' as const })) })),
       '999',
-      { provider: 'deel', external_id: 'x' },
+      { provider: 'deel', external_id: 'x@example.test' },
     )
     expect(response.status).toBe(404)
   })
@@ -195,7 +195,7 @@ describe('linking an account', () => {
   it('[api] refuses an id that is not a positive integer', async () => {
     for (const id of ['abc', '0', '-1']) {
       expect(
-        (await linkRequest(app(service()), id, { provider: 'deel', external_id: 'x' })).status,
+        (await linkRequest(app(service()), id, { provider: 'deel', external_id: 'x@example.test' })).status,
       ).toBe(422)
     }
   })

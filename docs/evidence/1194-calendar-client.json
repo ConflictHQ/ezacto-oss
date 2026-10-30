@@ -1,0 +1,189 @@
+{
+  "testedAt": "2026-10-26T21:33:10.015Z",
+  "client": {
+    "name": "Thunderbird",
+    "version": "158.0.1",
+    "source": "https://download.mozilla.org/?product=thunderbird-latest-ssl&os=osx&lang=en-US",
+    "profile": "disposable /tmp profile-v2",
+    "os": "macOS 26.5.2 (25F84), arm64"
+  },
+  "server": {
+    "baseCommit": "dea0d46e5f6043e697faeb540c53e5034f93b350",
+    "scope": "Synthetic member own planning only",
+    "transport": "HTTP loopback only; product requires HTTPS for non-loopback",
+    "compiledSha256": {
+      "packages/db/dist/calendar-feeds.js": "ebd5d8d4a7b2530e29b05e106a2c5668d3ed0fb034c1b100fdf955de185f824a",
+      "packages/api/dist/calendar-feeds.js": "3efa83e86880d791c98e6bcb8f4c7d6887114a1575374e0dc180700a375a0492",
+      "packages/core/dist/resource-calendar-feed.js": "6f2ed43e408d10dabed67be5a8fe7349b6bfd63463421bbb1c76ef0df208cd14"
+    }
+  },
+  "observedResponses": [
+    {
+      "time": "2026-10-26T21:32:21.690Z",
+      "method": "HEAD",
+      "path": "/calendar/planning.ics",
+      "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10.15; rv:158.0) Gecko/20100101 Thunderbird/158.0.1",
+      "authorization": false,
+      "status": 401,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "bodyBytes": 0,
+      "events": []
+    },
+    {
+      "time": "2026-10-26T21:32:24.096Z",
+      "method": "HEAD",
+      "path": "/calendar/planning.ics",
+      "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10.15; rv:158.0) Gecko/20100101 Thunderbird/158.0.1",
+      "authorization": true,
+      "status": 200,
+      "sha256": "1326f70a244e274f06239a745adadfe76e7cc424c4180ee9f7c53f2cbe4d9ba6",
+      "bodyBytes": 1141,
+      "events": [
+        {
+          "uid": "1c34eafb4803c3fd157b086192dae3557078fca6e663d79381bfb71870638b10@calendar.ezacto",
+          "sequence": "0",
+          "status": "CONFIRMED",
+          "summary": "3h planned"
+        },
+        {
+          "uid": "29b9a8b79ec918cfef80d88425df073bda3e0778959a2136f2b6e28e3e59f40b@calendar.ezacto",
+          "sequence": "0",
+          "status": "CONFIRMED",
+          "summary": "40h available"
+        }
+      ]
+    },
+    {
+      "time": "2026-10-26T21:32:27.401Z",
+      "method": "GET",
+      "path": "/calendar/planning.ics",
+      "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10.15; rv:158.0) Gecko/20100101 Thunderbird/158.0.1",
+      "authorization": false,
+      "status": 401,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "bodyBytes": 0,
+      "events": []
+    },
+    {
+      "time": "2026-10-26T21:32:33.267Z",
+      "method": "GET",
+      "path": "/calendar/planning.ics",
+      "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10.15; rv:158.0) Gecko/20100101 Thunderbird/158.0.1",
+      "authorization": true,
+      "status": 200,
+      "sha256": "1326f70a244e274f06239a745adadfe76e7cc424c4180ee9f7c53f2cbe4d9ba6",
+      "bodyBytes": 1141,
+      "events": [
+        {
+          "uid": "1c34eafb4803c3fd157b086192dae3557078fca6e663d79381bfb71870638b10@calendar.ezacto",
+          "sequence": "0",
+          "status": "CONFIRMED",
+          "summary": "3h planned"
+        },
+        {
+          "uid": "29b9a8b79ec918cfef80d88425df073bda3e0778959a2136f2b6e28e3e59f40b@calendar.ezacto",
+          "sequence": "0",
+          "status": "CONFIRMED",
+          "summary": "40h available"
+        }
+      ]
+    },
+    {
+      "time": "2026-10-26T21:32:50.459Z",
+      "method": "GET",
+      "path": "/calendar/planning.ics",
+      "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10.15; rv:158.0) Gecko/20100101 Thunderbird/158.0.1",
+      "authorization": true,
+      "status": 200,
+      "sha256": "61c3256cb9c7172beeeadfb0f87d4671819ba181d3759abda21189ff6ed4e935",
+      "bodyBytes": 1141,
+      "events": [
+        {
+          "uid": "1c34eafb4803c3fd157b086192dae3557078fca6e663d79381bfb71870638b10@calendar.ezacto",
+          "sequence": "1",
+          "status": "CONFIRMED",
+          "summary": "4h planned"
+        },
+        {
+          "uid": "29b9a8b79ec918cfef80d88425df073bda3e0778959a2136f2b6e28e3e59f40b@calendar.ezacto",
+          "sequence": "1",
+          "status": "CONFIRMED",
+          "summary": "40h available"
+        }
+      ]
+    },
+    {
+      "time": "2026-10-26T21:32:57.821Z",
+      "method": "GET",
+      "path": "/calendar/planning.ics",
+      "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10.15; rv:158.0) Gecko/20100101 Thunderbird/158.0.1",
+      "authorization": true,
+      "status": 200,
+      "sha256": "0e9cafaf5a421ae6c14c57b821d9489254a7b8eb4391e9f66cac7f7067b79632",
+      "bodyBytes": 994,
+      "events": [
+        {
+          "uid": "1c34eafb4803c3fd157b086192dae3557078fca6e663d79381bfb71870638b10@calendar.ezacto",
+          "sequence": "2",
+          "status": "CANCELLED",
+          "summary": "Removed advisory information"
+        },
+        {
+          "uid": "29b9a8b79ec918cfef80d88425df073bda3e0778959a2136f2b6e28e3e59f40b@calendar.ezacto",
+          "sequence": "2",
+          "status": "CONFIRMED",
+          "summary": "40h available"
+        }
+      ]
+    },
+    {
+      "time": "2026-10-26T21:33:10.015Z",
+      "method": "GET",
+      "path": "/calendar/planning.ics",
+      "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10.15; rv:158.0) Gecko/20100101 Thunderbird/158.0.1",
+      "authorization": true,
+      "status": 404,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "bodyBytes": 0,
+      "events": []
+    }
+  ],
+  "clientCachedEventsAfterRevocation": [
+    {
+      "id": "1c34eafb4803c3fd157b086192dae3557078fca6e663d79381bfb71870638b10@calendar.ezacto",
+      "title": "Removed advisory information",
+      "ical_status": "CANCELLED",
+      "event_start": 1792972800000000,
+      "event_end": 1793577600000000,
+      "event_start_tz": "floating",
+      "event_end_tz": "floating"
+    },
+    {
+      "id": "29b9a8b79ec918cfef80d88425df073bda3e0778959a2136f2b6e28e3e59f40b@calendar.ezacto",
+      "title": "40h available",
+      "ical_status": "CONFIRMED",
+      "event_start": 1792972800000000,
+      "event_end": 1793577600000000,
+      "event_start_tz": "floating",
+      "event_end_tz": "floating"
+    }
+  ],
+  "clientSequencesAfterRevocation": [
+    {
+      "item_id": "1c34eafb4803c3fd157b086192dae3557078fca6e663d79381bfb71870638b10@calendar.ezacto",
+      "key": "SEQUENCE",
+      "value": "2"
+    },
+    {
+      "item_id": "29b9a8b79ec918cfef80d88425df073bda3e0778959a2136f2b6e28e3e59f40b@calendar.ezacto",
+      "key": "SEQUENCE",
+      "value": "2"
+    }
+  ],
+  "limitations": [
+    "Not a production deployment test.",
+    "Thunderbird renders cancellation as an all-day Removed advisory information tombstone.",
+    "Revocation denied the next read with empty HTTP404; it did not purge data already cached by the client.",
+    "No Google Calendar or Outlook compatibility claim."
+  ]
+}

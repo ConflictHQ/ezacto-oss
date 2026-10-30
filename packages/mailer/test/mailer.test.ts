@@ -87,6 +87,7 @@ const store = (): EmailLogStore => {
     countByStatus: vi.fn(async () => ({
       queued: 0, sent: 0, bounced: 0, complained: 0, failed: 0,
     })),
+    countByStatusPerSender: vi.fn(async () => []),
     list: vi.fn(async () => []),
   }
 }

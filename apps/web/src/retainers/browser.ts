@@ -1,4 +1,6 @@
+import { setRequestBusy } from '../request-feedback.js'
 import { renderDataTable, type CellContent } from '../components/data-table.js'
+import { loadedRowsSortNotice } from '../components/table-sort.js'
 import { markMoney, moneyText } from '../money-display.js'
 import {
   EzactoApiError,
@@ -347,6 +349,9 @@ export const createRetainerWorkspaceController = (
   }
 
   const syncWriteControls = (): void => {
+    if (!mutationPending) {
+      for (const region of [createResult, drawdownResult, movementResult, policyResult]) setRequestBusy(region, false)
+    }
     const writable = canWrite()
     createTrigger.hidden = !writable
     createTrigger.disabled = !writable || mutationPending || api.createRetainer === undefined
@@ -398,11 +403,13 @@ export const createRetainerWorkspaceController = (
     invoices = []
     invoiceCatalog = null
     mutationPending = false
+    for (const region of [createResult, drawdownResult, movementResult, policyResult, detailStatus]) setRequestBusy(region, false)
     createCommandId = null
     drawdownCommandId = null
     movementCommandId = null
     list.replaceChildren()
     list.removeAttribute('aria-busy')
+    setRequestBusy(listStatus, false)
     ledger.replaceChildren()
     notes.replaceChildren()
     notes.hidden = true
@@ -472,6 +479,8 @@ export const createRetainerWorkspaceController = (
     list.replaceChildren(
       renderDataTable<Retainer>({
         caption: 'Retainers',
+        table: 'retainers',
+        defaultSort: { column: 'project', direction: 'ascending' },
         rows,
         rowKey: (retainer) => String(retainer.id),
         groupBy: (retainer) => retainerClientLabel(retainer, clients),
@@ -480,12 +489,20 @@ export const createRetainerWorkspaceController = (
             key: 'project',
             label: 'Scope',
             render: (retainer) => retainerProjectLabel(retainer, projects),
+            sortValue: (retainer) => retainerProjectLabel(retainer, projects),
           },
-          { key: 'basis', label: 'Basis', render: retainerBasisLabel },
+          {
+            key: 'basis',
+            label: 'Basis',
+            fit: true,
+            render: retainerBasisLabel,
+            sortValue: (retainer) => retainerBasisLabel(retainer),
+          },
           {
             key: 'commitment',
             label: 'On retainer',
             numeric: true,
+            sortValue: (retainer) => retainerCommitment(retainer),
             render: (retainer) =>
               denominated(
                 retainerCommitmentLabel(retainer, retainerCurrency(retainer, clients)),
@@ -498,6 +515,7 @@ export const createRetainerWorkspaceController = (
             key: 'balance',
             label: 'Remaining',
             numeric: true,
+            sortValue: (retainer) => retainer.balance,
             render: (retainer) =>
               denominated(
                 retainerBalanceLabel(retainer, retainerCurrency(retainer, clients)),
@@ -508,11 +526,14 @@ export const createRetainerWorkspaceController = (
             key: 'share',
             label: 'Remaining share',
             numeric: true,
+            sortValue: (retainer) => retainerRemainingShare(retainer),
             render: retainerRemainingShareLabel,
           },
           {
             key: 'state',
+            fit: true,
             label: 'State',
+            sortValue: (retainer) => retainerStateLabel(retainer),
             render: (retainer) => {
               const pill = document.createElement('span')
               pill.className = 'invoice-state'
@@ -530,7 +551,7 @@ export const createRetainerWorkspaceController = (
         ],
       }),
     )
-    listStatus.textContent = `${rows.length} ${rows.length === 1 ? 'retainer' : 'retainers'} loaded${nextCursor === null ? '.' : '; more are available.'}`
+    listStatus.textContent = `${rows.length} ${rows.length === 1 ? 'retainer' : 'retainers'} loaded${nextCursor === null ? '.' : `; more are available.${loadedRowsSortNotice}`}`
   }
 
   const renderLedger = (
@@ -546,9 +567,10 @@ export const createRetainerWorkspaceController = (
         rowKey: (movement) => movement.entry.id,
         empty: 'No movements recorded yet.',
         columns: [
-          { key: 'date', label: 'Date', render: (movement) => movement.entry.occurred_on },
+          { key: 'date', label: 'Date', fit: true, render: (movement) => movement.entry.occurred_on },
           {
             key: 'kind',
+            fit: true,
             label: 'Movement',
             render: (movement) => retainerLedgerKindLabel(movement.entry.kind),
           },
@@ -701,6 +723,7 @@ export const createRetainerWorkspaceController = (
     detailBody.hidden = true
     detailRetry.hidden = true
     detailStatus.textContent = 'Loading retainer…'
+    setRequestBusy(detailStatus, true)
     // Nothing may be written against a retainer whose current state is in
     // flight; `renderDetail` restores the controls with the values they act on.
     selected = null
@@ -719,6 +742,8 @@ export const createRetainerWorkspaceController = (
       detailBody.hidden = true
       detailStatus.textContent = messageFor(error)
       detailRetry.hidden = false
+    } finally {
+      if (current() === session && generation === detailGeneration) setRequestBusy(detailStatus, false)
     }
   }
 
@@ -728,6 +753,7 @@ export const createRetainerWorkspaceController = (
     if (api.listRetainers === undefined) {
       list.replaceChildren()
       list.removeAttribute('aria-busy')
+      setRequestBusy(listStatus, false)
       listStatus.textContent = 'Retainers are unavailable in this build.'
       loadMore.hidden = true
       listRetry.hidden = true
@@ -743,6 +769,7 @@ export const createRetainerWorkspaceController = (
     }
     listPending = true
     list.setAttribute('aria-busy', 'true')
+    setRequestBusy(listStatus, true)
     listStatus.textContent = reset ? 'Loading retainers…' : 'Loading more retainers…'
     loadMore.hidden = true
     listRetry.hidden = true
@@ -772,6 +799,7 @@ export const createRetainerWorkspaceController = (
       if (current() === session && generation === listGeneration) {
         listPending = false
         list.removeAttribute('aria-busy')
+        setRequestBusy(listStatus, false)
         syncPending()
       }
     }
@@ -1185,6 +1213,7 @@ export const createRetainerWorkspaceController = (
     const activeCommand = createCommandId
     mutationPending = true
     createResult.textContent = 'Creating retainer…'
+    setRequestBusy(createResult, true)
     syncWriteControls()
     void create(activeCommand, input, session.signal)
       .then(async (created) => {
@@ -1262,6 +1291,7 @@ export const createRetainerWorkspaceController = (
     const activeCommand = drawdownCommandId
     mutationPending = true
     drawdownResult.textContent = 'Recording drawdown…'
+    setRequestBusy(drawdownResult, true)
     syncWriteControls()
     void drawDown(retainer.id, activeCommand, body, session.signal)
       .then(async (mutation) => {
@@ -1350,6 +1380,7 @@ export const createRetainerWorkspaceController = (
     const activeCommand = movementCommandId
     mutationPending = true
     movementResult.textContent = 'Recording movement…'
+    setRequestBusy(movementResult, true)
     syncWriteControls()
     void append(retainer.id, activeCommand, body, session.signal)
       .then(async (mutation) => {
@@ -1403,6 +1434,7 @@ export const createRetainerWorkspaceController = (
     }
     mutationPending = true
     policyResult.textContent = 'Saving policy…'
+    setRequestBusy(policyResult, true)
     syncWriteControls()
     void update(retainer.id, patch, session.signal)
       .then(async () => {

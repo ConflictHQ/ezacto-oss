@@ -1,0 +1,42 @@
+{
+  "adapterId": "clockify-detailed-browser@2",
+  "provenance": "Invented sanitized fixture, not a live or owned Clockify export. Reserved invalid domains; no credentials or customer data.",
+  "exporterZone": "America/New_York",
+  "dataRows": 3,
+  "accepted": [
+    {
+      "line": 3,
+      "date": "2026-11-01",
+      "seconds": 1800,
+      "startedTime": "01:15",
+      "endedTime": "01:45"
+    },
+    {
+      "line": 4,
+      "date": "2026-11-01",
+      "seconds": 10800,
+      "startedTime": null,
+      "endedTime": null
+    }
+  ],
+  "invalid": [
+    [
+      2,
+      "clockify_dst_gap"
+    ]
+  ],
+  "warnings": [
+    [
+      3,
+      "clockify_dst_repeated_hour"
+    ],
+    [
+      4,
+      "clockify_duration_differs_from_clock"
+    ],
+    [
+      4,
+      "clockify_timing_dropped"
+    ]
+  ]
+}

@@ -337,6 +337,55 @@ const deadlineDateTime = (periodEnd: string, deadline: TimesheetDeadline): strin
   return `${addDays(periodEnd, delta)}T${deadline.time}`
 }
 
+/** Shared deadline calculation: preview and materialization must honor explicit unlocks identically. */
+export const overdueTimesheetPeriods = (
+  settings: TimesheetLockPolicySettings,
+  occurredAt: string,
+  dates: readonly string[],
+  existingPeriods: ReadonlySet<string>,
+): readonly { periodStart: string; periodEnd: string }[] => {
+  if (!settings.autoLock || settings.timesheetDeadline === null) return []
+  const localNow = localDateTime(occurredAt, settings.timezone)
+  return [...new Set(dates.map((date) => weekStart(date, settings.weekStartDay)))]
+    .map((periodStart) => ({ periodStart, periodEnd: addDays(periodStart, 6) }))
+    .filter(({ periodEnd }) => deadlineDateTime(periodEnd, settings.timesheetDeadline!) <= localNow)
+    .filter(({ periodStart, periodEnd }) => !existingPeriods.has(`${periodStart}:${periodEnd}`))
+    .sort((left, right) => left.periodStart.localeCompare(right.periodStart))
+}
+
+export interface TimesheetLockPreviewWindow {
+  kind: TimesheetLockKind
+  period_start: string | null
+  period_end: string
+  unlocked_at: string | null
+}
+
+/** SELECT-only effective policy. Does not materialize a lock, sequence, receipt or outbox event. */
+export const previewTimesheetLockedDates = (
+  settings: TimesheetLockPolicySettings,
+  windows: readonly TimesheetLockPreviewWindow[],
+  dates: readonly string[],
+  occurredAt: string,
+): ReadonlyMap<string, boolean> => {
+  const existing = new Set(
+    windows
+      .filter((window) => window.kind === 'weekly_deadline')
+      .map((window) => `${window.period_start}:${window.period_end}`),
+  )
+  const due = overdueTimesheetPeriods(settings, occurredAt, dates, existing)
+  return new Map(
+    dates.map((date) => [
+      date,
+      windows.some(
+        (window) =>
+          window.unlocked_at === null &&
+          date <= window.period_end &&
+          (window.period_start === null || date >= window.period_start),
+      ) || due.some((period) => date >= period.periodStart && date <= period.periodEnd),
+    ]),
+  )
+}
+
 const translateWriteError = (error: unknown): never => {
   const message = error instanceof Error ? error.message.toLocaleLowerCase('en-US') : ''
   if (message.includes('running time entries')) {
@@ -638,7 +687,6 @@ export class DrizzleTimesheetLockPolicyRepository implements TimesheetLockPolicy
   ): Promise<readonly TimesheetLockWindowRecord[]> {
     const settings = await this.settings()
     if (!settings.autoLock || settings.timesheetDeadline === null) return []
-    const localNow = localDateTime(occurredAt, settings.timezone)
     const dates = await all<{ spent_date: string }>(
       this.#client,
       `SELECT spent_date FROM time_entries
@@ -654,17 +702,8 @@ export class DrizzleTimesheetLockPolicyRepository implements TimesheetLockPolicy
         )
       ).map(({ period_start, period_end }) => `${period_start}:${period_end}`),
     )
-    const periods = [
-      ...new Set(
-        [...dates.map(({ spent_date }) => spent_date), ...additionalDates].map((spentDate) =>
-          weekStart(spentDate, settings.weekStartDay),
-        ),
-      ),
-    ]
-      .map((periodStart) => ({ periodStart, periodEnd: addDays(periodStart, 6) }))
-      .filter(({ periodEnd }) => deadlineDateTime(periodEnd, settings.timesheetDeadline!) <= localNow)
-      .filter(({ periodStart, periodEnd }) => !existingPeriods.has(`${periodStart}:${periodEnd}`))
-      .sort((left, right) => left.periodStart.localeCompare(right.periodStart))
+    const periods = overdueTimesheetPeriods(settings, occurredAt,
+      [...dates.map(({ spent_date }) => spent_date), ...additionalDates], existingPeriods)
     const inserted: TimesheetLockWindowRecord[] = []
     for (const period of periods) {
       try {

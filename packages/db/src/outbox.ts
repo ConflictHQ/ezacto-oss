@@ -82,6 +82,30 @@ export interface OutboxDrainSummary {
   retried: number
   failed: number
   contention: number
+  /**
+   * Set only when the database failed while an event was being claimed. The
+   * tick stops there; nothing was claimed by the failed attempt, and every
+   * undelivered event is still queued for the next tick. Absent otherwise.
+   */
+  interrupted?: Error
+}
+
+export interface OutboxDeliveryFilter {
+  status?: OutboxDeliveryStatus
+  eventType?: string
+  /** First instant included, on when the delivery was created. */
+  createdFrom?: string
+  /** First instant excluded. */
+  createdBefore?: string
+}
+
+export interface OutboxDeliveryPageWindow extends OutboxDeliveryFilter {
+  order: 'newest' | 'oldest'
+  /** Where the previous page ended in `order`; null on the first page. */
+  after: { createdAt: string; subscriberId: string; eventId: string } | null
+  /** Deliveries created later than this are left out, so a traversal holds still. */
+  createdThrough: string
+  take: number
 }
 
 export interface OutboxService {
@@ -94,11 +118,27 @@ export interface OutboxService {
     eventType?: string
     /** The user whose actions to show. Never matches a system event. */
     actorId?: number
+    /** Event types to leave out, for a reader who may not see them. */
+    excludeEventTypes?: readonly string[]
+    /** The kind of record the event is about, such as `invoice`. */
+    aggregateType?: string
+    /** One record of that kind. Needs `aggregateType`: an id alone names no subject. */
+    aggregateId?: number
+    /** Where the previous page ended, newest first; null or absent on the first page. */
+    after?: { recordedAt: string; eventId: string } | null
+    /** Entries recorded later than this are left out, so a traversal holds still. */
+    recordedThrough?: string
   }): Promise<ActivityLogRecord[]>
+  /** The latest instant an entry was recorded, or null when the log is empty. */
+  activitySnapshot(): Promise<string | null>
   listDeliveries(input?: {
     status?: OutboxDeliveryStatus
     limit?: number
   }): Promise<OutboxDeliveryRecord[]>
+  /** The latest delivery creation instant, or null when there are none. */
+  deliveriesSnapshot(): Promise<string | null>
+  pageDeliveries(window: OutboxDeliveryPageWindow): Promise<OutboxDeliveryRecord[]>
+  countDeliveries(filter: OutboxDeliveryFilter): Promise<number>
   retryFailed(subscriberId: string, eventId: string): Promise<OutboxDeliveryRecord | null>
 }
 
@@ -220,6 +260,33 @@ const deliveryColumns = `receipt.subscriber_id AS subscriberId,
   event.aggregate_id AS aggregateId, event.aggregate_sequence AS aggregateSequence,
   event.occurred_at AS occurredAt`
 
+const deliveryFilter = (
+  filter: OutboxDeliveryFilter,
+): { conditions: string[]; bindings: unknown[] } => {
+  const conditions: string[] = []
+  const bindings: unknown[] = []
+  if (filter.status !== undefined) {
+    conditions.push('receipt.status = ?')
+    bindings.push(filter.status)
+  }
+  if (filter.eventType !== undefined) {
+    assertIdentifier(filter.eventType, 'outbox delivery event type')
+    conditions.push('event.event_type = ?')
+    bindings.push(filter.eventType)
+  }
+  if (filter.createdFrom !== undefined) {
+    assertCanonicalTimestamp(filter.createdFrom, 'outbox delivery from')
+    conditions.push('receipt.created_at >= ?')
+    bindings.push(filter.createdFrom)
+  }
+  if (filter.createdBefore !== undefined) {
+    assertCanonicalTimestamp(filter.createdBefore, 'outbox delivery before')
+    conditions.push('receipt.created_at < ?')
+    bindings.push(filter.createdBefore)
+  }
+  return { conditions, bindings }
+}
+
 const eventRecord = (row: OutboxEventRow): OutboxEventRecord => {
   let payload: unknown
   try {
@@ -241,6 +308,36 @@ const eventRecord = (row: OutboxEventRow): OutboxEventRecord => {
     availableAt: row.availableAt,
   }
 }
+
+/**
+ * The tables the activity log lives in: the hot one, then every year that has
+ * been rolled off (`activity_log_<year>`, see activity-partitions.ts).
+ *
+ * Discovered, not counted from the calendar, because a roll is an operator
+ * action and a year can be rolled late or not at all. The name is checked
+ * against the one shape a partition has before it is put in SQL.
+ */
+const activityTables = async (database: PortableDatabase): Promise<string[]> => {
+  const rows = await database.all<{ name: string }>(
+    `SELECT name FROM sqlite_master
+     WHERE type = 'table' AND name GLOB 'activity_log_[0-9][0-9][0-9][0-9]'
+     ORDER BY name`,
+    [],
+  )
+  return ['activity_log', ...rows.map((row) => row.name).filter((name) => /^activity_log_\d{4}$/u.test(name))]
+}
+
+/**
+ * What a read selects from. One table is read as itself, so an install that has
+ * never rolled runs the query it always did. With partitions it is their
+ * UNION ALL, ordered by the same (recorded_at, event_id) key the cursor uses:
+ * that key is total across tables because an event id is in at most one of
+ * them, so a cursor needs no partition in it to resume on the right row.
+ */
+const activitySource = (tables: readonly string[]): string =>
+  tables.length === 1
+    ? tables[0]!
+    : `(${tables.map((table) => `SELECT event_id, recorded_at FROM ${table}`).join(' UNION ALL ')})`
 
 /**
  * The actor an event's payload names, with the name the read joined for it.
@@ -650,15 +747,23 @@ const createService = (
         const at = timestamp()
         const attemptId = createAttemptId()
         assertIdentifier(attemptId, 'outbox attempt id')
-        const attemptCount = await claim(
-          database,
-          selected.subscriber.id,
-          selected.row.id,
-          attemptId,
-          at,
-          safeAddSeconds(at, attemptLeaseSeconds),
-          maxAttempts,
-        )
+        let attemptCount: number | 'expired-terminal' | null
+        try {
+          attemptCount = await claim(
+            database,
+            selected.subscriber.id,
+            selected.row.id,
+            attemptId,
+            at,
+            safeAddSeconds(at, attemptLeaseSeconds),
+            maxAttempts,
+          )
+        } catch (error) {
+          // The claim is one atomic batch, so a failure here wrote nothing. Stop
+          // this tick rather than throw, so the caller reports it once.
+          summary.interrupted = error instanceof Error ? error : new Error(String(error))
+          break
+        }
         if (attemptCount === 'expired-terminal') {
           summary.failed += 1
           continue
@@ -736,7 +841,10 @@ const createService = (
 
     async listActivity(input = {}) {
       const limit = input.limit ?? 100
-      assertLimit(limit, 200, 'activity log limit')
+      // The pager asks for one row beyond its largest page (200) to know whether
+      // another page exists, so a full page arrives as 201. At 200 the biggest
+      // page threw here and answered 500.
+      assertLimit(limit, 201, 'activity log limit')
       const conditions: string[] = []
       const params: unknown[] = []
       if (input.from !== undefined) {
@@ -765,6 +873,35 @@ const createService = (
         conditions.push("json_extract(event.payload_json, '$.actor.id') = ?")
         params.push(input.actorId)
       }
+      if (input.aggregateId !== undefined && input.aggregateType === undefined) {
+        throw new RangeError('activity log aggregate id needs an aggregate type')
+      }
+      if (input.aggregateType !== undefined) {
+        assertIdentifier(input.aggregateType, 'activity log aggregate type')
+        conditions.push('event.aggregate_type = ?')
+        params.push(input.aggregateType)
+      }
+      if (input.aggregateId !== undefined) {
+        assertRowId(input.aggregateId, 'activity log aggregate id')
+        conditions.push('event.aggregate_id = ?')
+        params.push(input.aggregateId)
+      }
+      if (input.recordedThrough !== undefined) {
+        assertCanonicalTimestamp(input.recordedThrough, 'activity log recorded through')
+        conditions.push('activity.recorded_at <= ?')
+        params.push(input.recordedThrough)
+      }
+      if (input.after !== undefined && input.after !== null) {
+        assertCanonicalTimestamp(input.after.recordedAt, 'activity log cursor recorded_at')
+        assertIdentifier(input.after.eventId, 'activity log cursor event id')
+        conditions.push('(activity.recorded_at, activity.event_id) < (?, ?)')
+        params.push(input.after.recordedAt, input.after.eventId)
+      }
+      if (input.excludeEventTypes !== undefined && input.excludeEventTypes.length > 0) {
+        for (const type of input.excludeEventTypes) assertIdentifier(type, 'activity log excluded event type')
+        conditions.push(`event.event_type NOT IN (${input.excludeEventTypes.map(() => '?').join(', ')})`)
+        params.push(...input.excludeEventTypes)
+      }
       // The actor's name is joined here, in the one read every surface uses, so
       // the screen, the API and an export all name the same person (issue 862).
       // A user is archived rather than deleted and keeps their name; a deleted
@@ -775,7 +912,7 @@ const createService = (
              nullif(trim(person.first_name || ' ' || person.last_name), ''),
              nullif(trim(contact.first_name || ' ' || coalesce(contact.last_name, '')), '')
            ) AS actorName
-         FROM activity_log activity
+         FROM ${activitySource(await activityTables(database))} activity
          JOIN event_outbox event ON event.id = activity.event_id
          LEFT JOIN users person
            ON json_extract(event.payload_json, '$.actor.type') = 'user'
@@ -798,6 +935,17 @@ const createService = (
       })
     },
 
+    async activitySnapshot() {
+      // The newest entry across every partition: right after a roll the hot
+      // table is empty, and a snapshot read from it alone would say the log
+      // had nothing in it while the archived year was still there to be read.
+      const rows = await database.all<{ recordedAt: string | null }>(
+        `SELECT max(recorded_at) AS recordedAt FROM ${activitySource(await activityTables(database))}`,
+        [],
+      )
+      return rows[0]?.recordedAt ?? null
+    },
+
     async listDeliveries(input = {}) {
       const limit = input.limit ?? 100
       assertLimit(limit, 200, 'outbox delivery limit')
@@ -813,6 +961,63 @@ const createService = (
           status === undefined ? [limit] : [status, limit],
         )
       ).map(deliveryRecord)
+    },
+
+    async deliveriesSnapshot() {
+      const row = await database.first<{ latest: string | null }>(
+        'SELECT max(created_at) AS latest FROM outbox_delivery_receipts',
+        [],
+      )
+      return row?.latest ?? null
+    },
+
+    async pageDeliveries(window) {
+      assertLimit(window.take, 201, 'outbox delivery page')
+      assertCanonicalTimestamp(window.createdThrough, 'outbox delivery snapshot')
+      const { conditions, bindings } = deliveryFilter(window)
+      conditions.push('receipt.created_at <= ?')
+      bindings.push(window.createdThrough)
+      const newest = window.order === 'newest'
+      if (window.after !== null) {
+        // Strictly past the last row of the previous page, in the direction the
+        // page runs; the receipt's key breaks a tie on the instant.
+        const past = newest ? '<' : '>'
+        conditions.push(
+          `(receipt.created_at ${past} ? OR (receipt.created_at = ? AND (receipt.subscriber_id ${past} ? OR (receipt.subscriber_id = ? AND receipt.event_id ${past} ?))))`,
+        )
+        bindings.push(
+          window.after.createdAt,
+          window.after.createdAt,
+          window.after.subscriberId,
+          window.after.subscriberId,
+          window.after.eventId,
+        )
+      }
+      const direction = newest ? 'DESC' : 'ASC'
+      return (
+        await database.all<OutboxDeliveryRow>(
+          `SELECT ${deliveryColumns}
+           FROM outbox_delivery_receipts receipt
+           JOIN event_outbox event ON event.id = receipt.event_id
+           WHERE ${conditions.join(' AND ')}
+           ORDER BY receipt.created_at ${direction}, receipt.subscriber_id ${direction},
+             receipt.event_id ${direction}
+           LIMIT ?`,
+          [...bindings, window.take],
+        )
+      ).map(deliveryRecord)
+    },
+
+    async countDeliveries(filter) {
+      const { conditions, bindings } = deliveryFilter(filter)
+      const row = await database.first<{ total: number }>(
+        `SELECT count(*) AS total
+         FROM outbox_delivery_receipts receipt
+         JOIN event_outbox event ON event.id = receipt.event_id
+         ${conditions.length === 0 ? '' : `WHERE ${conditions.join(' AND ')}`}`,
+        bindings,
+      )
+      return row?.total ?? 0
     },
 
     async retryFailed(subscriberId, eventId) {

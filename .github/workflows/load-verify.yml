@@ -1,0 +1,42 @@
+name: load-verify
+# Repeat one flake-prone verify shard N times on a starved runner and publish a
+# pass-rate table (issue 745). Manual only: it costs runner minutes, so it never
+# runs per PR. A known cause lowers the pass rate and is a finding; only a
+# failure matching no ledger signature fails the run. No retry anywhere.
+on:
+  workflow_dispatch:
+    inputs:
+      shard:
+        description: Verify shard to repeat
+        type: choice
+        required: true
+        default: migrate
+        options: [migrate, web, worker, api-1, db-10]
+      repeats:
+        description: Number of repeats
+        type: string
+        required: true
+        default: '10'
+permissions:
+  contents: read
+jobs:
+  repeat:
+    name: repeat (${{ inputs.shard }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 350
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/node-workspace
+        with:
+          playwright: ${{ inputs.shard == 'web' && 'true' || 'false' }}
+      - name: repeat the shard on one CPU beside a CPU burner
+        env:
+          # Same runner ceiling as verify.yml's test job.
+          NODE_OPTIONS: --max-old-space-size=4096
+        run: |
+          # The burner and the suite share CPU 0, so the suite gets about half
+          # of one of the runner's two cores.
+          taskset -c 0 sh -c 'while :; do :; done' &
+          burner=$!
+          trap 'kill "$burner"' EXIT
+          node scripts/load-verify.mjs --shard "${{ inputs.shard }}" --repeats "${{ inputs.repeats }}" --taskset 0 --out "$RUNNER_TEMP/load-verify"

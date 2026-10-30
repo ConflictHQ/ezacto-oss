@@ -1,6 +1,7 @@
 import BetterSqlite3 from "better-sqlite3";
 import { Miniflare } from "miniflare";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { compareInvoiceNumbers } from "@ezacto/core";
 import { SenderIdentityUnavailableError, type SenderBoundQueuedMailer } from "@ezacto/mailer";
 import {
   createContainerDatabase,
@@ -20,6 +21,7 @@ import {
   type InvoiceDocumentPort,
   type InvoiceSendingPort,
   type InvoiceGenerationCommand,
+  type MoneyResourceRouteOptions,
 } from "../src/money-resources.js";
 
 interface TestDatabase {
@@ -594,6 +596,7 @@ interface DeliveryTemplate {
 interface DeliveryPorts {
   documents?: InvoiceDocumentPort;
   sending?: InvoiceSendingPort;
+  viewLinks?: NonNullable<MoneyResourceRouteOptions["invoiceViewLinks"]>;
 }
 
 const harness = async (
@@ -651,6 +654,9 @@ const harness = async (
               },
             }),
         ...(invoicePaymentUrl === undefined ? {} : { invoicePaymentUrl }),
+        ...(deliveryPorts?.viewLinks === undefined
+          ? {}
+          : { invoiceViewLinks: deliveryPorts.viewLinks }),
         ...(deliveryMailer === undefined
           ? {}
           : {
@@ -900,6 +906,186 @@ for (const [runtime, factory] of factories) {
       );
       expect(response.status).toBe(202);
     }, slowRuntimeTimeout);
+
+    /**
+     * Issue 925. The weekday is read in the organization's zone at the moment
+     * the message is composed, and the period comes from the invoice's own
+     * period rather than its issue date, for the preview and the send alike.
+     */
+    it("[api] fills the send weekday and the billing period in the preview and in the sent body", async () => {
+      const mailer = {
+        assertAvailable: vi.fn(async () => undefined),
+        enqueue: vi.fn(),
+      } satisfies SenderBoundQueuedMailer;
+      const test = await setup(undefined, undefined, mailer, {
+        textTemplate: "Happy %send_weekday%! Invoice %invoice_number% covers [%invoice_period%].",
+      });
+      await seedInvoiceDeliveryConfiguration(test.database);
+      await test.database.run(`UPDATE organizations SET timezone = 'America/Costa_Rica'`);
+      // The period is derived from generated lines; stamped directly here.
+      await test.database.run("DROP TRIGGER invoice_period_d22_derived_update");
+      await test.database.run(
+        `UPDATE invoices SET period_start = '2026-08-15', period_end = '2026-09-14' WHERE id = 1`,
+      );
+      // Saturday 02:00 in UTC, still Friday evening in Costa Rica.
+      test.setTime("2026-10-10T02:00:00.000Z");
+      const preview = await test.request(
+        "/api/v1/invoices/1/deliveries/preview",
+        jsonRequest("POST", {
+          expected_version: 0,
+          recipients: [{ name: "Client", email: "client@example.net" }],
+        }),
+      );
+      expect(preview.status).toBe(200);
+      const { data } = (await preview.json()) as { data: { text: string } };
+      expect(data.text).toContain("Happy Friday! Invoice INV-DRAFT covers [August – September 2026].");
+
+      const sent = await test.request(
+        "/api/v1/invoices/1/deliveries",
+        jsonRequest("POST", {
+          expected_version: 0,
+          recipients: [{ name: "Client", email: "client@example.net" }],
+          confirmed: true,
+        }, "invoice-delivery-weekday"),
+      );
+      expect(sent.status).toBe(202);
+      const [intent] = await test.database.rows<{ text_body: string }>(
+        "SELECT text_body FROM invoice_email_intents",
+      );
+      expect(intent?.text_body).toContain(
+        "Happy Friday! Invoice INV-DRAFT covers [August – September 2026].",
+      );
+    }, slowRuntimeTimeout);
+
+    describe("view receipts (issue 936)", () => {
+      const origin = "https://billing.example.test";
+      const sha256 = async (value: string): Promise<string> =>
+        Array.from(
+          new Uint8Array(
+            await crypto.subtle.digest("SHA-256", new TextEncoder().encode(value)),
+          ),
+          (byte) => byte.toString(16).padStart(2, "0"),
+        ).join("");
+      const links = (enabled: boolean) => {
+        const mint = vi.fn(async (sentAt: string) => {
+          const token = Buffer.from(crypto.getRandomValues(new Uint8Array(32))).toString("base64url");
+          return {
+            url: `${origin}/portal/invoices/${token}`,
+            tokenHash: await sha256(token),
+            expiresAt: new Date(Date.parse(sentAt) + 86_400_000).toISOString(),
+          };
+        });
+        return {
+          mint,
+          ports: {
+            viewLinks: {
+              enabled: async () => enabled,
+              previewUrl: `${origin}/portal/invoices/a-link-is-created-when-sent`,
+              mint,
+            },
+          } satisfies DeliveryPorts,
+        };
+      };
+      const mailer = () =>
+        ({
+          assertAvailable: vi.fn(async () => undefined),
+          enqueue: vi.fn(),
+        }) satisfies SenderBoundQueuedMailer;
+      const body = {
+        expected_version: 0,
+        recipients: [{ name: "Client", email: "client@example.net" }],
+      };
+      const intent = async (test: Harness) =>
+        (
+          await test.database.rows<{ text_body: string }>(
+            "SELECT text_body FROM invoice_email_intents",
+          )
+        )[0]?.text_body;
+
+      it("[api] links the invoice online and stores only the hash, in the send's own transaction", async () => {
+        const on = links(true);
+        const test = await setup(undefined, undefined, mailer(), undefined, undefined, on.ports);
+        await seedInvoiceDeliveryConfiguration(test.database);
+        const response = await test.request(
+          "/api/v1/invoices/1/deliveries",
+          jsonRequest("POST", { ...body, confirmed: true }, "invoice-delivery-view-link"),
+        );
+        expect(response.status).toBe(202);
+        expect(on.mint).toHaveBeenCalledTimes(1);
+        const text = await intent(test);
+        const token = new RegExp(`View invoice\\n${origin}/portal/invoices/([A-Za-z0-9_-]{43})`, "u").exec(
+          text ?? "",
+        )?.[1];
+        expect(token).toBeDefined();
+        const rows = await test.database.rows<Record<string, unknown>>(
+          "SELECT * FROM invoice_view_links",
+        );
+        expect(rows).toHaveLength(1);
+        expect(rows[0]).toMatchObject({
+          token_hash: await sha256(token!),
+          invoice_id: 1,
+          first_viewed_at: null,
+        });
+        expect(JSON.stringify(rows)).not.toContain(token!);
+        const [message] = await test.database.rows<{ id: number; event_type: string }>(
+          "SELECT id, event_type FROM invoice_messages",
+        );
+        expect(rows[0]!.invoice_message_id).toBe(message!.id);
+        expect(message!.event_type).toBe("send");
+      }, slowRuntimeTimeout);
+
+      it("[api] with the setting off the email is exactly what it was and no link exists", async () => {
+        const off = links(false);
+        const withPort = await setup(undefined, undefined, mailer(), undefined, undefined, off.ports);
+        await seedInvoiceDeliveryConfiguration(withPort.database);
+        const response = await withPort.request(
+          "/api/v1/invoices/1/deliveries",
+          jsonRequest("POST", { ...body, confirmed: true }, "invoice-delivery-view-off"),
+        );
+        expect(response.status).toBe(202);
+        expect(off.mint).not.toHaveBeenCalled();
+        const offText = await intent(withPort);
+        expect(offText).not.toContain("/portal/invoices/");
+        expect(await withPort.database.rows("SELECT * FROM invoice_view_links")).toEqual([]);
+        await withPort.database.close();
+
+        const without = await setup(undefined, undefined, mailer());
+        await seedInvoiceDeliveryConfiguration(without.database);
+        await without.request(
+          "/api/v1/invoices/1/deliveries",
+          jsonRequest("POST", { ...body, confirmed: true }, "invoice-delivery-view-off"),
+        );
+        expect(offText).toBe(await intent(without));
+        // Two databases in one test, so twice the time the others get.
+      }, slowRuntimeTimeout === undefined ? undefined : slowRuntimeTimeout * 3);
+
+      it("[api] a preview shows where the link would be and mints none", async () => {
+        const on = links(true);
+        const test = await setup(undefined, undefined, mailer(), undefined, undefined, on.ports);
+        await seedInvoiceDeliveryConfiguration(test.database);
+        const response = await test.request(
+          "/api/v1/invoices/1/deliveries/preview",
+          jsonRequest("POST", body),
+        );
+        expect(response.status).toBe(200);
+        const { data } = (await response.json()) as { data: { text: string } };
+        expect(data.text).toContain(`View invoice\n${origin}/portal/invoices/a-link-is-created-when-sent`);
+        expect(on.mint).not.toHaveBeenCalled();
+        expect(await test.database.rows("SELECT * FROM invoice_view_links")).toEqual([]);
+      }, slowRuntimeTimeout);
+
+      it("[api] a send the version check refuses leaves no link", async () => {
+        const on = links(true);
+        const test = await setup(undefined, undefined, mailer(), undefined, undefined, on.ports);
+        await seedInvoiceDeliveryConfiguration(test.database);
+        const response = await test.request(
+          "/api/v1/invoices/1/deliveries",
+          jsonRequest("POST", { ...body, expected_version: 9, confirmed: true }, "invoice-delivery-view-stale"),
+        );
+        expect(response.status).toBe(409);
+        expect(await test.database.rows("SELECT * FROM invoice_view_links")).toEqual([]);
+      }, slowRuntimeTimeout);
+    });
 
     it("[security] a provider that fails does not stop the invoice going out", async () => {
       // Minting a convenience must never be why a client does not get billed.
@@ -1591,6 +1777,64 @@ for (const [runtime, factory] of factories) {
       };
       expect(restBody.data.map((row) => row.id)).toEqual([500]);
       expect(restBody.page.next_cursor).toBeNull();
+    });
+
+    it("[api] sorts the list on the server, pages in the chosen order, and binds a cursor to its sort", async () => {
+      const test = await setup();
+      await seedInvoicePage(test.database);
+      const walk = async (sort: string): Promise<{ id: number; number: string; amount_cents: number; due_date: string }[]> => {
+        const rows: { id: number; number: string; amount_cents: number; due_date: string }[] = [];
+        let cursor: string | null = null;
+        do {
+          const response = await test.request(
+            `/api/v1/invoices?sort=${sort}&per_page=60${cursor === null ? "" : `&cursor=${encodeURIComponent(cursor)}`}`,
+          );
+          expect(response.status, sort).toBe(200);
+          const body = (await response.json()) as {
+            data: typeof rows;
+            page: { next_cursor: string | null };
+          };
+          rows.push(...body.data);
+          cursor = body.page.next_cursor;
+        } while (cursor !== null);
+        return rows;
+      };
+
+      const byNumber = await walk("number");
+      expect(byNumber.length).toBeGreaterThan(200);
+      expect(new Set(byNumber.map((row) => row.id)).size).toBe(byNumber.length);
+      expect(byNumber.map((row) => row.number)).toEqual(
+        [...byNumber.map((row) => row.number)].sort(compareInvoiceNumbers),
+      );
+      const byNumberDescending = await walk("-number");
+      expect(byNumberDescending.map((row) => row.id)).toEqual(byNumber.map((row) => row.id).reverse());
+
+      // The one invoice with an amount leads the descending amount order and
+      // closes the ascending one.
+      expect((await walk("-amount"))[0]!.amount_cents).toBe(600);
+      expect((await walk("amount")).at(-1)!.amount_cents).toBe(600);
+
+      const byDue = await walk("due_date");
+      expect(byDue.map((row) => row.due_date)).toEqual([...byDue.map((row) => row.due_date)].sort());
+
+      // No sort is still newest first, so an existing caller is unchanged.
+      const newest = await test.request("/api/v1/invoices?per_page=200");
+      const explicit = await test.request("/api/v1/invoices?sort=-issue_date&per_page=200");
+      expect(((await explicit.json()) as { data: { id: number }[] }).data.map((row) => row.id)).toEqual(
+        ((await newest.json()) as { data: { id: number }[] }).data.map((row) => row.id),
+      );
+
+      for (const bad of ["client", "status", "-", "number,amount", "Number"]) {
+        expect((await test.request(`/api/v1/invoices?sort=${encodeURIComponent(bad)}`)).status, bad).toBe(422);
+      }
+
+      // A cursor is a place in one list: handed to another sort it is refused.
+      const first = await test.request("/api/v1/invoices?sort=number&per_page=10");
+      const cursor = ((await first.json()) as { page: { next_cursor: string } }).page.next_cursor;
+      const moved = await test.request(
+        `/api/v1/invoices?sort=-number&per_page=10&cursor=${encodeURIComponent(cursor)}`,
+      );
+      expect(moved.status).toBe(422);
     });
 
     it("[api] reads a comma-separated state set and rejects an unknown one", async () => {
@@ -3029,6 +3273,62 @@ for (const [runtime, factory] of factories) {
           "SELECT COUNT(*) AS count FROM invoice_command_ledger",
         ),
       ).toEqual([{ count: 0 }]);
+    });
+
+    it("[api] lets staff set, repeat and clear an estimate expiry and refuses what cannot hold", async () => {
+      const test = await setup();
+      const patch = (id: number, body: Record<string, unknown>, profile?: string) =>
+        test.request(`/api/v1/estimates/${id}/expiry`, {
+          ...jsonRequest("PATCH", body),
+          headers: {
+            "content-type": "application/json",
+            ...(profile === undefined ? {} : { "x-test-profile": profile }),
+          },
+        });
+      const set = await patch(12, { expected_version: 0, expires_on: "2026-12-01" });
+      expect(set.status).toBe(200);
+      expect(await responseData<Record<string, unknown>>(set)).toMatchObject({
+        id: 12,
+        version: 1,
+        expires_on: "2026-12-01",
+        effective_expires_on: "2026-12-01",
+      });
+      expect(
+        await responseData<Record<string, unknown>>(await test.request("/api/v1/estimates/12")),
+      ).toMatchObject({ expires_on: "2026-12-01" });
+
+      // The same request again changes nothing; a different day on a stale version is refused.
+      const repeated = await patch(12, { expected_version: 0, expires_on: "2026-12-01" });
+      expect(await responseData<{ version: number }>(repeated)).toMatchObject({ version: 1 });
+      const stale = await patch(12, { expected_version: 0, expires_on: "2026-12-05" });
+      expect(stale.status).toBe(409);
+      expect(
+        await test.database.rows<{ expires_on: string }>(
+          "SELECT expires_on FROM estimates WHERE id = 12",
+        ),
+      ).toEqual([{ expires_on: "2026-12-01" }]);
+
+      for (const bad of [
+        { expected_version: 1 },
+        { expected_version: 1, expires_on: "tomorrow" },
+        { expected_version: 1, expires_on: "2026-02-30" },
+        { expected_version: 1, expires_on: "2026-12-05", content_hash: "x" },
+        { expires_on: "2026-12-05" },
+      ]) {
+        expect((await patch(12, bad)).status).toBe(422);
+      }
+      expect((await patch(10, { expected_version: 2, expires_on: "2026-12-05" })).status).toBe(409);
+      expect((await patch(999, { expected_version: 0, expires_on: "2026-12-05" })).status).toBe(404);
+      expect(
+        (await patch(12, { expected_version: 1, expires_on: "2026-12-05" }, "member")).status,
+      ).toBe(403);
+
+      const cleared = await patch(12, { expected_version: 1, expires_on: null });
+      expect(await responseData<Record<string, unknown>>(cleared)).toMatchObject({
+        version: 2,
+        expires_on: null,
+        effective_expires_on: null,
+      });
     });
 
     it("[security] enforces profile and token scope ceilings before money access", async () => {

@@ -1,0 +1,105 @@
+{
+  "manifest": {
+    "name": "ezacto-csv1184-proof-fa082615",
+    "account_id": "00000000000000000000000000000000",
+    "created": [
+      "d1",
+      "r2",
+      "queue",
+      "dlq",
+      "worker",
+      "d1_cancel"
+    ],
+    "source_revision": "ba08dcdd15b4d99e0e4cb3bb64a0488402520377",
+    "bundle_sha256": "64a8013bfbc2d2794afed1d3a6185f1646a2f97c083cd4a54ec2af6a4e6efd0f",
+    "database_id": "43c5a6aa-78fa-48c8-bd0c-38b04764cd03",
+    "url": "https://ezacto-csv1184-proof-fa082615.conflict.workers.dev",
+    "deployed_revision": "88c57f6c-5ff7-4b8d-b17d-8768a566bdac",
+    "cancel_database_id": "8af9c43c-bfc2-4ba0-9915-05efaaeceb95",
+    "cancel_deployed_revision": "95972b07-d04a-4e1b-ad67-d779e14d1ca4",
+    "cleanup_errors": [],
+    "cleaned_at": "2026-10-26T22:34:48Z",
+    "resource_names": {
+      "worker": "ezacto-csv1184-proof-fa082615",
+      "r2_bucket": "ezacto-csv1184-proof-fa082615",
+      "queue": "ezacto-csv1184-proof-fa082615",
+      "dead_letter_queue": "ezacto-csv1184-proof-fa082615-dlq",
+      "completion_database": "ezacto-csv1184-proof-fa082615",
+      "cancellation_database": "ezacto-csv1184-proof-fa082615-cancel"
+    }
+  },
+  "checks": {
+    "ordinary_native_auth": true,
+    "other_admin_denied": true,
+    "staff_denied": true,
+    "anonymous_denied": true,
+    "preview_time_writes": 0,
+    "lost_publication_repaired": true,
+    "replay_and_duplicate_safe": true,
+    "time": {
+      "count": 2,
+      "seconds": 7200
+    },
+    "money_before": {
+      "invoices": 0,
+      "staff_payments": 0
+    },
+    "money_after": {
+      "invoices": 0,
+      "staff_payments": 0
+    },
+    "queue_d1_calls": [
+      4,
+      21,
+      50,
+      50,
+      20
+    ],
+    "private_objects_after_purge": 0,
+    "changed_file_refused_without_new_writes": true,
+    "cancel_queue_d1_calls": [
+      4,
+      21,
+      49,
+      2
+    ],
+    "partial_cancel_retains_exactly_one_row": true,
+    "after_partial_cancel_time": {
+      "count": 1,
+      "seconds": 3600
+    },
+    "altered_command_denied": true
+  },
+  "local_verification": {
+    "head": "ee2879339e4e303f4a075f50535108a9697b72ff",
+    "deployed_bundle_matches_current_source": true,
+    "miniflare": "4.20260730.0",
+    "workerd": "1.20260730.1",
+    "local_compatibility_date": "2026-08-06",
+    "deployed_compatibility_date": "2026-08-26",
+    "checks": {
+      "worker_csv_native_apply_staging_recovery_queue_maintenance": 20,
+      "db_worker_fences_and_read_budget": 5,
+      "demo_reset": 16,
+      "native_plan_size_boundaries": 2,
+      "web_csv_controller_review_catalog": 31,
+      "api_staging_contract": 14,
+      "worker_route_reachability": 4
+    },
+    "late_budget_recovery": "Whole Worker entry observer confirms actual budget catch after committed time (budget_progress>=1), subsequent completion and replay exactly2rows7200seconds, all invocations<=50D1calls."
+  },
+  "scope": {
+    "cloudflare_account": "owned CONFLICT LLC disposable resources only",
+    "production_provider_or_payment_calls": false,
+    "production_configuration_changed": false,
+    "billing_or_entitlement_gate_added": false,
+    "worker_availability": "Requires explicit DB, private ATTACHMENTS, CSV_IMPORT_QUEUE, CSV_IMPORT_QUEUE_NAME; existing deployments stay unchanged.",
+    "migration": "0172; reserved0171GitHub is absent in this proof. Adding0171later must be verified with that separate release."
+  },
+  "release_followup": {
+    "migration": "0171_csv_worker_staging",
+    "previous_proof_migration": "0172_csv_worker_staging",
+    "schema_statements_byte_identical": true,
+    "reason": "Unreleased migration renumbered to keep the shipped ledger contiguous; production read-only ledger inspection ends at0169. Historical owned-resource proof above retains its original source and migration identity."
+  }
+}

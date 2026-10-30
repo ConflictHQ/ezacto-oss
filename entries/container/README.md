@@ -64,3 +64,10 @@ integrity checks and pending migrations.
 
 Treat the environment file as a secret. Do not put SMTP credentials or the cursor
 signing key directly in shell history or source control.
+
+### Optional Deel hour staging
+
+Set `DEEL_TOKEN` and `DEEL_SYNC_START_DATE` to enable administrator-reviewed
+[approved-hour staging](../../docs/deel-hour-staging.md). Keep the token in the
+container's private environment. The separate QuickBooks accounting switch does
+not disable Deel staging; demo mode does. Complete invoices and payments in Deel.

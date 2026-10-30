@@ -1,8 +1,10 @@
+import { createHash, createHmac, randomUUID } from 'node:crypto'
+import { proposeMonthEndPack, executeInvoiceLifecycleCommand, createD1EmailConfigurationStore, createD1EmailLogStore } from '@ezacto/db/d1'
 import { Buffer } from 'node:buffer'
 import http from 'node:http'
 import { resolve } from 'node:path'
 import { URL } from 'node:url'
-import { createD1PasswordAuthService, createD1Database, createAccountDeletionRequestRepository } from '@ezacto/db/d1'
+import { createBankDepositIngestionService, createD1PasswordAuthService, createD1Database, createAccountDeletionRequestRepository, createMoneyResourceRepository } from '@ezacto/db/d1'
 import { build } from 'esbuild'
 import { Miniflare, NoOpLog } from 'miniflare'
 
@@ -16,6 +18,15 @@ if (!Number.isInteger(listenPort) || listenPort < 1 || listenPort > 65535) {
 const cursorSigningKey = 'AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA'
 const fixtureControlPath = '/__ezacto_browser_fixture__/start-end'
 const fixtureControlHeader = 'start-end-round-trip'
+let bankDepositFixture = null
+const clearFixtureTimers = async () => {
+  // Browser tests share one D1 fixture. A preceding timer test can leave a
+  // running row behind, and the database correctly refuses to change the
+  // organization's time-entry mode while any timer is active.
+  await database.prepare('DELETE FROM time_entries WHERE timer_started_at IS NOT NULL').run()
+}
+// Local-only signing material for the real webhook/browser acceptance.
+const feedbackWebhookKey = 'fixture-mailgun-webhook-key-for-tests'
 const fixtureEmail = process.env.EZACTO_BROWSER_FIXTURE_EMAIL
 const fixtureInstant = process.env.EZACTO_BROWSER_FIXTURE_INSTANT
 const fixtureTimeZone = process.env.EZACTO_BROWSER_FIXTURE_TIME_ZONE
@@ -56,7 +67,7 @@ const localDateAt = (instant, timeZone) => {
 
 const repositoryRoot = resolve(import.meta.dirname, '../../..')
 const bundle = await build({
-  entryPoints: [resolve(repositoryRoot, 'entries/worker/src/index.ts')],
+  entryPoints: [resolve(repositoryRoot, 'apps/web/scripts/portal-mail-fixture-entry.mjs')],
   bundle: true,
   conditions: ['development'],
   format: 'esm',
@@ -70,9 +81,70 @@ const bundle = await build({
   write: false,
 })
 
-const miniflare = new Miniflare({
+const calendarFixture = process.env.EZACTO_BROWSER_CALENDAR_FIXTURE === '1'
+const calendarFixtureEventStart = new Date(Math.floor((Date.now()-7200000)/1000)*1000).toISOString()
+const calendarFixtureLocal = instant => new Date(Date.parse(instant)-6*3600000).toISOString().slice(0,19)
+const calendarCalls = { outbound: 0, tokenAttempt: 0, token: 0, events: 0, revoke: 0 }
+const deelStagingFixture = process.env.EZACTO_BROWSER_DEEL_STAGING_FIXTURE === '1'
+const deelStagingPosts = []
+const deelTimesheetStatuses = new Map()
+const workerOptions = {
+  ...(deelStagingFixture ? {outboundService: async request => {
+    const url = new URL(request.url)
+    if (url.origin !== 'https://api.letsdeel.com') throw new Error('Unexpected fixture outbound origin')
+    if (request.method === 'GET' && url.pathname.endsWith('/people')) return globalThis.Response.json({data:[
+      // Optional/null email values occur in real Deel directories. Keep an
+      // unrelated same-name person so preview must still match actual addresses.
+      {id:'unrelated',full_name:'Deel owned 50001',emails:[{value:null},{},{value:'  '}],employments:[{id:'unrelated-contract',contract_status:'in_progress'}]},
+      ...[50001,50002].map(id=>({id:`p${id}`,full_name:`Deel owned ${id}`,emails:[{value:null},{},{value:`deel${id}@example.test`},{value:`DEEL${id}@EXAMPLE.TEST`}],employments:[{id:`contract${id}`,contract_status:'in_progress'}]})),
+    ]})
+    if (request.method === 'POST' && url.pathname.endsWith('/timesheets')) {
+      const body=await request.json(); deelStagingPosts.push(body)
+      return globalThis.Response.json({data:{id:`owned-timesheet-${deelStagingPosts.length}`}})
+    }
+    if (request.method === 'GET' && /\/timesheets\/owned-timesheet-\d+$/.test(url.pathname)) {
+      const id = url.pathname.split('/').at(-1)
+      const submitted = deelStagingPosts[Number(id.split('-').at(-1)) - 1]?.data
+      if (!submitted) return globalThis.Response.json({error:'not found'}, {status:404})
+      return globalThis.Response.json({data:{id,status:deelTimesheetStatuses.get(id) ?? 'approved',contract:{id:submitted.contract_id},quantity:submitted.quantity,total_amount:String(submitted.quantity * 25),currency_code:'USD',date_submitted:submitted.date_submitted}})
+    }
+    throw new Error('Unexpected fixture outbound operation')
+  }} : {}),
+  ...(calendarFixture ? {outboundService: async request => {
+    calendarCalls.outbound++
+    const url = new URL(request.url)
+    if (url.origin === 'https://login.microsoftonline.com' && url.pathname === '/common/oauth2/v2.0/token' && request.method === 'POST') {
+      const body = new globalThis.URLSearchParams(await request.text())
+      if (body.get('grant_type') === 'authorization_code' && !body.get('code_verifier')) throw new Error('Calendar fixture expected PKCE')
+      calendarCalls.token++
+      return globalThis.Response.json({access_token:'local-microsoft-access',refresh_token:'local-microsoft-refresh',token_type:'Bearer',expires_in:3600,scope:'https://graph.microsoft.com/Calendars.Read offline_access'})
+    }
+    if (url.origin === 'https://graph.microsoft.com' && url.pathname === '/v1.0/me/calendarView/delta' && request.method === 'GET') {
+      calendarCalls.events++
+      return globalThis.Response.json({value:[{id:'owned-microsoft-event-428',changeKey:'owned-microsoft-version-1',subject:'Owned Microsoft fixture',isAllDay:false,isOrganizer:true,responseStatus:{response:'organizer'},showAs:'busy',start:{dateTime:new Date(Date.now()-7200000).toISOString(),timeZone:'UTC'},end:{dateTime:new Date(Date.now()-3600000).toISOString(),timeZone:'UTC'}}],'@odata.deltaLink':'https://graph.microsoft.com/v1.0/me/calendarView/delta?$deltatoken=owned'})
+    }
+    if (url.origin === 'https://oauth2.googleapis.com' && url.pathname === '/token' && request.method === 'POST') {
+      calendarCalls.tokenAttempt++
+      const body = new globalThis.URLSearchParams(await request.text())
+      if (body.get('grant_type') === 'authorization_code' && !body.get('code_verifier')) throw new Error('Calendar fixture expected PKCE')
+      calendarCalls.token++
+      return globalThis.Response.json({access_token:'local-calendar-access',refresh_token:'local-calendar-refresh',token_type:'Bearer',expires_in:3600,scope:'https://www.googleapis.com/auth/calendar.readonly'})
+    }
+    if (url.origin === 'https://www.googleapis.com' && url.pathname === '/calendar/v3/calendars/primary/events' && request.method === 'GET') {
+      calendarCalls.events++
+      return globalThis.Response.json({items:[{id:'owned-calendar-event-428',etag:'owned-calendar-version-1',organizer:{self:true},status:'confirmed',summary:'Owned calendar fixture',start:{dateTime:calendarFixtureLocal(calendarFixtureEventStart),timeZone:'America/Costa_Rica'},end:{dateTime:calendarFixtureLocal(new Date(Date.parse(calendarFixtureEventStart)+3600000).toISOString()),timeZone:'America/Costa_Rica'}}],nextSyncToken:'owned-sync-token'})
+    }
+    if (url.origin === 'https://oauth2.googleapis.com' && url.pathname === '/revoke' && request.method === 'POST') { calendarCalls.revoke++; return new globalThis.Response(null,{status:200}) }
+    throw new Error('Unexpected calendar fixture outbound operation')
+  }} : {}),
   bindings: {
+    ...(calendarFixture ? {GOOGLE_CALENDAR_CLIENT_ID:'owned-calendar-client',GOOGLE_CALENDAR_CLIENT_SECRET:'owned-calendar-secret',MICROSOFT_CALENDAR_CLIENT_ID:'owned-microsoft-client',MICROSOFT_CALENDAR_CLIENT_SECRET:'owned-microsoft-secret',APP_BASE_URL:`http://localhost:${listenPort}`} : {}),
+    ...(deelStagingFixture ? {DEEL_TOKEN:'local-deel-staging-fixture',DEEL_SYNC_START_DATE:'2026-08-01'} : {}),
     API_CURSOR_SIGNING_KEY: cursorSigningKey,
+    WEBHOOK_ENCRYPTION_KEY: 'AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAY',
+    MAILGUN_WEBHOOK_SIGNING_KEY: feedbackWebhookKey,
+    // Contact sign-in is opt-in, including the real queued-mail browser fixture.
+    PORTAL_MAGIC_LINK_SIGNING_KEY: 'AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAQ',
     ENVIRONMENT: 'test',
     RELEASE: 'browser-cookie-e2e',
   },
@@ -86,7 +158,9 @@ const miniflare = new Miniflare({
   modules: true,
   port: 0,
   script: bundle.outputFiles[0].text,
-})
+}
+const miniflare = new Miniflare(workerOptions)
+let firstRunRuntime = null
 
 // https, because the Worker now refuses cleartext on a real hostname (#548) and
 // this probe is the one request the harness makes under its own name rather
@@ -154,6 +228,10 @@ const rosterWeek = (() => {
 const run = async (statement, ...bindings) => {
   await database.prepare(statement).bind(...bindings).run()
 }
+
+let rateCardFixture = null
+let scheduledManifestFixture = null
+let calendarProposalFixture = null
 
 const rows = async (statement, ...bindings) =>
   (await database.prepare(statement).bind(...bindings).all()).results
@@ -332,6 +410,208 @@ const restoreTeamRateState = async () => {
   activeTeamRateBaseline = null
 }
 
+/**
+ * Client 360's three-level fixture (issue 65): 9300 Root (USD) > 9301 Child
+ * (EUR) > 9302 Grandchild (USD), every row invented and every id in 9300-9303
+ * so nothing another spec counts moves. The Grandchild is worked for under
+ * the Child and billed to the Root, so the two relations differ. The money, all dated inside the
+ * fixture's own month so the burn window reaches it:
+ *
+ *   open invoices   Root USD 100.00 (overdue), Child EUR 250.00,
+ *                   Grandchild USD 75.00, plus a Grandchild USD draft of
+ *                   999.00 that is owed by nobody
+ *   retainers       Root money 500.00 USD, Child money 300.00 EUR,
+ *                   Child hours 10, Grandchild money 200.00 USD
+ *   cost + expense  Root 1h at cost 40.00 + expense 25.00 USD,
+ *                   Child 0.5h at cost 60.00 (organization currency, USD)
+ *                   + expense 30.00 EUR, Grandchild 0.25h at cost 50.00
+ *                   + expense 15.00 USD
+ *
+ * An invoice can only be sent, and a ledger only appended to, through their
+ * commands, and neither command is a thing a fixture should fake. So the seed
+ * and the clear take the triggers that insist on a pending command (and the
+ * ledger's append-only delete) off for the length of one write and put back
+ * the exact text the migrations wrote, whether or not the write succeeded. The
+ * totals triggers stay on: an invoice's amount still comes from its line.
+ */
+const withoutCommandGuards = async (work, includeLedgerDelete) => {
+  const guards = (
+    await database
+      .prepare(
+        `SELECT name, sql FROM sqlite_master
+         WHERE type = 'trigger' AND (
+           sql LIKE '%requires its pending command%'
+           ${includeLedgerDelete ? "OR name = 'retainer_ledger_append_only_delete'" : ''}
+         )`,
+      )
+      .all()
+  ).results
+  if (guards.length === 0) throw new Error('invoice command guards are missing')
+  for (const guard of guards) {
+    await database.prepare(`DROP TRIGGER "${guard.name}"`).run()
+  }
+  try {
+    await work()
+  } finally {
+    for (const guard of guards) await database.prepare(guard.sql).run()
+  }
+}
+
+const client360Projects = [9300, 9301, 9302]
+const client360Clear = () =>
+  withoutCommandGuards(
+    () =>
+      database.batch([
+        database.prepare('DELETE FROM retainer_ledger WHERE retainer_id BETWEEN 9300 AND 9303'),
+        database.prepare('DELETE FROM retainers WHERE id BETWEEN 9300 AND 9303'),
+        database.prepare('DELETE FROM invoices WHERE id BETWEEN 9300 AND 9303'),
+        database.prepare('DELETE FROM expenses WHERE id BETWEEN 9300 AND 9302'),
+        database.prepare('DELETE FROM time_entries WHERE id BETWEEN 9300 AND 9302'),
+        database.prepare('DELETE FROM task_assignments WHERE id BETWEEN 9300 AND 9302'),
+        database.prepare('DELETE FROM user_assignments WHERE id BETWEEN 9300 AND 9302'),
+        database.prepare('DELETE FROM projects WHERE id BETWEEN 9300 AND 9302'),
+        database.prepare('DELETE FROM clients WHERE id = 9302'),
+        database.prepare('DELETE FROM clients WHERE id = 9301'),
+        database.prepare('DELETE FROM clients WHERE id = 9300'),
+        database.prepare(`DELETE FROM auth_rate_limits WHERE action = 'sign_in'`),
+      ]),
+    true,
+  )
+
+const client360Seed = async () => {
+  await client360Clear()
+  await withoutCommandGuards(() => client360Insert(), false)
+}
+
+const client360Insert = async () => {
+  const at = [timestamp, timestamp]
+  const statements = [
+    database
+      .prepare(
+        `INSERT INTO clients (id, name, parent_client_id, currency, created_at, updated_at)
+         VALUES (9300, 'Browser 360 Root', NULL, 'USD', ?, ?)`,
+      )
+      .bind(...at),
+    database
+      .prepare(
+        `INSERT INTO clients (id, name, parent_client_id, currency, created_at, updated_at)
+         VALUES (9301, 'Browser 360 Child', 9300, 'EUR', ?, ?)`,
+      )
+      .bind(...at),
+    database
+      .prepare(
+        `INSERT INTO clients (
+           id, name, parent_client_id, bill_to_client_id, currency, created_at, updated_at
+         ) VALUES (9302, 'Browser 360 Grandchild', 9301, 9300, 'USD', ?, ?)`,
+      )
+      .bind(...at),
+    ...client360Projects.map((id) =>
+      database
+        .prepare(
+          `INSERT INTO projects (id, client_id, name, code, hourly_rate_cents, created_at, updated_at)
+           VALUES (?, ?, ?, ?, 10000, ?, ?)`,
+        )
+        .bind(id, id, `Browser 360 Project ${id - 9299}`, `B360${id - 9299}`, ...at),
+    ),
+    ...client360Projects.map((id) =>
+      database
+        .prepare(
+          `INSERT INTO user_assignments (id, project_id, user_id, created_at, updated_at)
+           VALUES (?, ?, 1, ?, ?)`,
+        )
+        .bind(id, id, ...at),
+    ),
+    ...client360Projects.map((id) =>
+      database
+        .prepare(
+          `INSERT INTO task_assignments (id, project_id, task_id, billable, created_at, updated_at)
+           VALUES (?, ?, 1, 1, ?, ?)`,
+        )
+        .bind(id, id, ...at),
+    ),
+    ...[
+      [9300, 3600, 4000],
+      [9301, 1800, 6000],
+      [9302, 900, 5000],
+    ].map(([id, seconds, cost]) =>
+      database
+        .prepare(
+          `INSERT INTO time_entries (
+             id, user_id, project_id, task_id, user_assignment_id, task_assignment_id,
+             spent_date, seconds, seconds_without_timer, rounded_seconds, billable,
+             billable_rate_cents, cost_rate_cents, notes, created_at, updated_at
+           ) VALUES (?, 1, ?, 1, ?, ?, ?, ?, ?, ?, 1, 10000, ?, 'Browser 360 fixture', ?, ?)`,
+        )
+        .bind(id, id, id, id, spentDate, seconds, seconds, seconds, cost, ...at),
+    ),
+    ...[
+      [9300, 2500],
+      [9301, 3000],
+      [9302, 1500],
+    ].map(([id, cents]) =>
+      database
+        .prepare(
+          `INSERT INTO expenses (
+             id, user_id, project_id, expense_category_id, spent_date,
+             total_cost_cents, billable, created_at, updated_at
+           ) VALUES (?, 1, ?, 1, ?, ?, 1, ?, ?)`,
+        )
+        .bind(id, id, spentDate, cents, ...at),
+    ),
+    ...[
+      [9300, 9300, 'USD', 'open', '2026-08-01', 10000],
+      [9301, 9301, 'EUR', 'open', '2026-09-30', 25000],
+      [9302, 9302, 'USD', 'open', '2026-09-30', 7500],
+      [9303, 9302, 'USD', 'draft', '2026-09-30', 99900],
+    ].flatMap(([id, clientId, currency, state, dueDate, cents]) => [
+      database
+        .prepare(
+          `INSERT INTO invoices (
+             id, client_id, number, currency, issue_date, due_date, state, created_at, updated_at
+           ) VALUES (?, ?, ?, ?, '2026-07-15', ?, ?, ?, ?)`,
+        )
+        .bind(id, clientId, `B360-${id - 9299}`, currency, dueDate, state, ...at),
+      database
+        .prepare(
+          `INSERT INTO invoice_line_items (
+             invoice_id, position, kind, description, quantity, unit_price_cents,
+             amount_cents, created_at, updated_at
+           ) VALUES (?, 1, 'Service', 'Browser 360 fixture', 1, ?, ?, ?, ?)`,
+        )
+        .bind(id, cents, cents, ...at),
+    ]),
+    ...[
+      [9300, 9300, 'money', 'cents', 50000],
+      [9301, 9301, 'money', 'cents', 30000],
+      [9302, 9301, 'hours', 'seconds', 36000],
+      [9303, 9302, 'money', 'cents', 20000],
+    ].flatMap(([id, clientId, denomination, unit, amount]) => [
+      database
+        .prepare(
+          `INSERT INTO retainers (
+             id, client_id, denomination, amount_cents, seconds, created_at, updated_at
+           ) VALUES (?, ?, ?, ?, ?, ?, ?)`,
+        )
+        .bind(
+          id,
+          clientId,
+          denomination,
+          denomination === 'money' ? amount : null,
+          denomination === 'hours' ? amount : null,
+          ...at,
+        ),
+      database
+        .prepare(
+          `INSERT INTO retainer_ledger (
+             id, retainer_id, kind, unit, amount, occurred_on, notes, created_at
+           ) VALUES (?, ?, 'adjustment', ?, ?, '2026-08-01', 'Browser 360 opening balance', ?)`,
+        )
+        .bind(`browser-360-${id}`, id, unit, amount, timestamp),
+    ]),
+  ]
+  await database.batch(statements)
+}
+
 const fixtureControl = async (request, response) => {
   if (
     request.method !== 'POST' ||
@@ -353,14 +633,234 @@ const fixtureControl = async (request, response) => {
     chunks.push(chunk)
   }
   let action
+  let payload
   try {
-    action = JSON.parse(Buffer.concat(chunks).toString('utf8')).action
+    payload = JSON.parse(Buffer.concat(chunks).toString('utf8'))
+    action = payload.action
   } catch {
     response.statusCode = 400
     response.end()
     return
   }
-  if (action === 'seed') {
+  if (action === 'calendar-oauth-receipt' && calendarFixture) {
+    response.writeHead(200, { 'content-type': 'application/json', 'cache-control': 'no-store' })
+    response.end(JSON.stringify({calls:calendarCalls,eventStart:calendarFixtureEventStart,attempts:await rows("SELECT consumed_at IS NOT NULL AS consumed FROM calendar_oauth_attempts"),proposals:await rows("SELECT status,starts_at FROM calendar_proposals WHERE event_id='owned-calendar-event-428'"),entries:await rows("SELECT count(*) AS count FROM time_entries WHERE calendar_event_ref LIKE '%owned-calendar-event-428%'"),connections:await rows("SELECT status FROM calendar_connections WHERE user_id=1")}))
+    return
+  } else if (action === 'bank-deposit-seed') {
+    const db = createD1Database(database), ingestion = createBankDepositIngestionService(db)
+    const account = await ingestion.ensureAccount({ provider: 'mercury', externalAccountId: 'owned-browser-bank', name: 'Browser bank review' })
+    const now = new Date().toISOString(), invoiceIds = [], deposits = [], observations = {}
+    for (const [index, label] of ['Final', 'Unknown', 'Overpayment', 'Pending'].entries()) {
+      const client = await database.prepare("INSERT INTO clients(name,currency,created_at,updated_at) VALUES(?,'USD',?,?) RETURNING id").bind(`Bank customer ${label}`,now,now).first()
+      const invoice = await database.prepare("INSERT INTO invoices(client_id,number,currency,issue_date,due_date,created_at,updated_at) VALUES(?,?,'USD',?,?,?,?) RETURNING id").bind(client.id,`BANK-${label}`,now.slice(0,10),now.slice(0,10),now,now).first()
+      invoiceIds.push(invoice.id)
+      const amount = (index + 1) * 10000
+      await run("INSERT INTO invoice_line_items(invoice_id,position,kind,description,quantity,unit_price_cents,amount_cents,created_at,updated_at) VALUES(?,0,'Service','Owned bank review',1,?,?,?,?)",invoice.id,amount,amount,now,now)
+      await executeInvoiceLifecycleCommand(db,{invoiceId:invoice.id,commandId:`bank-fixture-send-${invoice.id}`,command:'send',actor:{type:'user',id:1},authorize:async()=>true,expectedVersion:0,occurredAt:now,messageId:2000000+invoice.id,eventId:`bank-fixture-sent-${invoice.id}`})
+      const reference = (await database.prepare('SELECT reference_token FROM invoices WHERE id=?').bind(invoice.id).first()).reference_token
+      const id = `browser-bank-${label}`
+      deposits.push({ provider_transaction_id: id, currency: 'USD', posted_at: now, amount_cents: amount + (label === 'Overpayment' ? 5000 : 0), memo: reference, counterparty: `Bank customer ${label}` })
+      observations[id] = { status: label === 'Unknown' ? 'unknown' : label === 'Pending' ? 'pending' : 'final', classification: 'external_credit' }
+    }
+    await ingestion.ingest({ command_id: 'owned-browser-bank-seed', account_id: account.id, deposits, observations })
+    bankDepositFixture = { invoiceIds }
+    response.writeHead(200,{'content-type':'application/json','cache-control':'no-store'}); response.end(JSON.stringify({ count: deposits.length })); return
+  } else if (action === 'bank-deposit-receipt') {
+    const ids = bankDepositFixture?.invoiceIds ?? []
+    const payments = await rows('SELECT invoice_id,amount_cents,bank_deposit_id FROM invoice_payments WHERE invoice_id IN (SELECT value FROM json_each(?)) ORDER BY invoice_id',JSON.stringify(ids))
+    const deposits = await rows('SELECT d.provider_transaction_id,d.match_state,r.source_status,r.verified_at FROM bank_deposits d JOIN bank_deposit_reviews r ON r.deposit_id=d.id WHERE d.provider_transaction_id LIKE ? ORDER BY d.id','browser-bank-%')
+    response.writeHead(200,{'content-type':'application/json','cache-control':'no-store'}); response.end(JSON.stringify({ payments, deposits })); return
+  } else if (action === 'deel-stage-seed' && deelStagingFixture) {
+    const week = (await database.prepare('SELECT week_start_day FROM organizations WHERE id=1').first()).week_start_day
+    const weekFrom = week === 'sunday' ? '2026-08-09' : week === 'saturday' ? '2026-08-08' : '2026-08-10'
+    const weekTo = week === 'sunday' ? '2026-08-15' : week === 'saturday' ? '2026-08-14' : '2026-08-16'
+    for (const id of [50001,50002]) {
+      await run("INSERT INTO users(id,first_name,last_name,profile,manager_grants,created_at,updated_at) VALUES(?,?,'Fixture','member','[]',?,?)",id,`Deel ${id}`,timestamp,timestamp)
+      // Existing verified login addresses can predate email kinds; the saved
+      // Deel destination is the explicit payroll choice for these people.
+      await run("INSERT INTO user_emails(user_id,address,verified_at,created_at,updated_at) VALUES(?,?,?,?,?)",id,`deel${id}@example.test`,timestamp,timestamp,timestamp)
+      await run("INSERT INTO user_payout_accounts(user_id,provider,external_id,kind,linked_by_user_id,linked_at,created_at,updated_at) VALUES(?,'deel',?,'account',1,?,?,?)",id,`deel${id}@example.test`,timestamp,timestamp,timestamp)
+      await run("INSERT INTO user_assignments(id,project_id,user_id,created_at,updated_at) VALUES(?,1,?,?,?)",id,id,timestamp,timestamp)
+      await run("INSERT INTO staff_payment_provider_events(id,user_id,scope,version,provider,command_json,actor_id,recorded_at,request_id) VALUES(?,?,?,1,'deel',?,1,?,?)",`deel-fixture-${id}`,id,`user:${id}`,JSON.stringify({id:`deel-fixture-${id}`,user_id:id,expected_version:0,provider:'deel',note:'Owned staging fixture'}),timestamp,`deel-fixture-${id}`)
+      await run("INSERT INTO time_entries(id,user_id,project_id,task_id,user_assignment_id,task_assignment_id,spent_date,seconds,seconds_without_timer,rounded_seconds,billable,created_at,updated_at) VALUES(?,?,1,1,?,1,'2026-08-10',3600,3600,3600,0,?,?)",id,id,id,timestamp,timestamp)
+      // Keep one real unsubmitted entry: administrator staging review is its
+      // authorization to sync, and must not change the timesheet approval state.
+      if (id === 50002) {
+        await run("INSERT INTO timesheet_submissions(id,user_id,period_start,period_end,status,submitted_by_user_id,submitted_at,version,created_at,updated_at) VALUES(?,?,?,?,'submitted',?,?,0,?,?)",id,id,weekFrom,weekTo,id,timestamp,timestamp,timestamp)
+        await run("UPDATE time_entries SET approval_status='submitted',timesheet_submission_id=? WHERE id=?",id,id)
+        await run("UPDATE timesheet_submissions SET status='approved',version=1,reviewed_by_user_id=1,reviewed_at=? WHERE id=?",timestamp,id)
+        await run("UPDATE time_entries SET approval_status='approved' WHERE id=?",id)
+      }
+    }
+  } else if ((action === 'deel-status-paid' || action === 'deel-status-processing') && deelStagingFixture) {
+    for (const index of payload.timesheets ?? []) deelTimesheetStatuses.set(`owned-timesheet-${index}`, action === 'deel-status-paid' ? 'paid' : 'processing')
+    await run("UPDATE deel_timesheet_status SET last_attempt_at='2000-01-01T00:00:00.000Z',checked_at=CASE WHEN status IS NULL THEN NULL ELSE '2000-01-01T00:00:00.000Z' END")
+    await run("UPDATE deel_status_refresh_lock SET lease_id=NULL,lease_until=NULL,cooldown_until='1970-01-01T00:00:00.000Z' WHERE id=1")
+  } else if (action === 'deel-stage-receipt' && deelStagingFixture) {
+    response.writeHead(200,{'content-type':'application/json','cache-control':'no-store'})
+    response.end(JSON.stringify({posts:deelStagingPosts,entries:(await database.prepare('SELECT entry_id FROM deel_transfer_log WHERE entry_id IN(50001,50002) ORDER BY entry_id').all()).results,approvals:(await database.prepare('SELECT id,approval_status,timesheet_submission_id FROM time_entries WHERE id IN(50001,50002) ORDER BY id').all()).results,submissions:(await database.prepare('SELECT id,status,version FROM timesheet_submissions WHERE user_id IN(50001,50002) ORDER BY id').all()).results,payments:(await database.prepare("SELECT count(*) count FROM staff_payment_events WHERE kind='payment'").first()).count}))
+    return
+  } else if (action === 'first-run-create') {
+    if (firstRunRuntime !== null || typeof payload.password !== 'string') {
+      response.statusCode = 400
+      response.end()
+      return
+    }
+    // A separate, newly migrated database: no fixture directory rows or time
+    // entries are removed from the suite's normal acceptance workspace.
+    firstRunRuntime = new Miniflare(workerOptions)
+    const probe = await firstRunRuntime.dispatchFetch('https://worker.test/api/v1/whoami')
+    if (probe.status !== 401) throw new Error('first-run fixture did not fail closed')
+    const fresh = await firstRunRuntime.getD1Database('DB')
+    const auth = createD1PasswordAuthService(fresh, { now: () => fixtureInstant })
+    const delivery = await auth.signup({
+      organizationName: 'Fresh Setup Acceptance', firstName: 'Fresh', lastName: 'Owner',
+      email: fixtureEmail, password: payload.password, clientKey: 'first-run-acceptance',
+    })
+    await auth.verifyEmail(delivery.token, 'first-run-acceptance')
+    response.setHeader('set-cookie', 'ezacto_browser_first_run=1; Path=/; HttpOnly; SameSite=Strict')
+  } else if (action === 'first-run-reset') {
+    await firstRunRuntime?.dispose()
+    firstRunRuntime = null
+    response.setHeader('set-cookie', 'ezacto_browser_first_run=; Path=/; Max-Age=0; HttpOnly; SameSite=Strict')
+  } else if (action === 'age-running-timer') {
+    await run(`UPDATE time_entries
+      SET timer_started_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now', '-5 minutes')
+      WHERE user_id = 1 AND timer_started_at IS NOT NULL`)
+    if ((await rows('SELECT id FROM time_entries WHERE user_id=1 AND timer_started_at IS NOT NULL')).length !== 1) {
+      throw new Error('Expected exactly one owner timer to age')
+    }
+  } else if (action === 'rate-card-seed') {
+    if (rateCardFixture !== null) throw new Error('rate card fixture already active')
+    const client = await database.prepare(
+      `INSERT INTO clients(name,currency,created_at,updated_at)
+       VALUES('Browser Rate Card Client','USD',?,?) RETURNING id`,
+    ).bind(timestamp,timestamp).first()
+    const project = await database.prepare(
+      `INSERT INTO projects(client_id,name,bill_by,created_at,updated_at)
+       VALUES(?,'Browser Rate Card Project','people',?,?) RETURNING id`,
+    ).bind(client.id,timestamp,timestamp).first()
+    const userAssignment = await database.prepare(
+      `INSERT INTO user_assignments(project_id,user_id,use_default_rates,created_at,updated_at)
+       VALUES(?,1,1,?,?) RETURNING id`,
+    ).bind(project.id,timestamp,timestamp).first()
+    const taskAssignment = await database.prepare(
+      `INSERT INTO task_assignments(project_id,task_id,billable,created_at,updated_at)
+       VALUES(?,1,1,?,?) RETURNING id`,
+    ).bind(project.id,timestamp,timestamp).first()
+    const entry = await database.prepare(
+      `INSERT INTO time_entries(user_id,project_id,task_id,user_assignment_id,task_assignment_id,
+        spent_date,seconds,seconds_without_timer,rounded_seconds,billable,
+        billable_rate_cents,cost_rate_cents,notes,created_at,updated_at)
+       VALUES(1,?,1,?,?,?,1800,1800,1800,1,10000,5000,'Browser rate card snapshot',?,?)
+       RETURNING id`,
+    ).bind(project.id,userAssignment.id,taskAssignment.id,spentDate,timestamp,timestamp).first()
+    rateCardFixture = { clientId: client.id, projectId: project.id, entryId: entry.id }
+    await run(`DELETE FROM auth_rate_limits WHERE action = 'sign_in'`)
+    response.writeHead(200,{'content-type':'application/json','cache-control':'no-store'})
+    response.end(JSON.stringify(rateCardFixture))
+    return
+  } else if (action === 'rate-card-cleanup') {
+    if (rateCardFixture !== null) {
+      const { clientId, projectId, entryId } = rateCardFixture
+      // Keep the immutable card/version history on its archived client. Only
+      // this fixture's stopped, uninvoiced work can be removed.
+      await run(`DELETE FROM time_entries WHERE id=? AND project_id=? AND invoice_id IS NULL
+        AND timer_started_at IS NULL AND notes='Browser rate card snapshot'`,entryId,projectId)
+      await run(`UPDATE projects SET is_active=0 WHERE id=? AND client_id=?`,projectId,clientId)
+      await run(`UPDATE clients SET is_active=0 WHERE id=? AND name='Browser Rate Card Client'`,clientId)
+      if ((await rows('SELECT id FROM time_entries WHERE id=?',entryId)).length !== 0) {
+        throw new Error('rate card fixture left work behind')
+      }
+      rateCardFixture = null
+    }
+  } else if (action === 'scheduled-manifest-seed') {
+    await run(`DELETE FROM auth_rate_limits WHERE action = 'sign_in'`)
+    // Scheduling and review-link validation use the real runtime clock, not
+    // the fixed time-entry fixture date. Keep the original one-hour decision window valid.
+    const proposedAt = new Date()
+    const now = proposedAt.toISOString(), expires = new Date(proposedAt.getTime()+3600000).toISOString()
+    const clients=[], invoices=[]
+    scheduledManifestFixture={clientIds:clients,projectIds:[],jobId:null}
+    for (const [index,label] of ['A','B'].entries()) {
+      const brand=await database.prepare(`INSERT INTO report_brands(name,created_at,updated_at) VALUES(?,?,?) RETURNING id`).bind(`Browser Month End Brand ${label}`,now,now).first()
+      const client=await database.prepare(`INSERT INTO clients(name,currency,report_brand_id,created_at,updated_at) VALUES(?,'USD',?,?,?) RETURNING id`).bind(`Browser Month End Client ${label}`,brand.id,now,now).first()
+      clients.push(client.id)
+      await run(`INSERT INTO contacts(client_id,first_name,email,invoice_recipient_status,created_at,updated_at) VALUES(?,'Accounts',?,'recipient',?,?)`,client.id,index===0?'month-end-accounts@example.test':'month-end-b@example.test',now,now)
+      const invoice=await database.prepare(`INSERT INTO invoices(client_id,number,currency,issue_date,due_date,created_at,updated_at) VALUES(?,?,'USD','2026-09-15','2026-10-01',?,?) RETURNING id`).bind(client.id,`BROWSER-MONTH-${label}-${randomUUID()}`,now,now).first()
+      invoices.push(invoice.id)
+      await run(`INSERT INTO invoice_line_items(invoice_id,position,kind,description,quantity,unit_price_cents,amount_cents,created_at,updated_at) VALUES(?,0,'Service','Monthly service',1,?,?,?,?)`,invoice.id,12345*(index+1),12345*(index+1),now,now)
+      await executeInvoiceLifecycleCommand(createD1Database(database),{invoiceId:invoice.id,commandId:`browser-month-send-${invoice.id}`,command:'send',actor:{type:'user',id:1},authorize:async()=>true,expectedVersion:0,occurredAt:now,messageId:1000000+invoice.id,eventId:`browser-month-sent-${invoice.id}`})
+      const project=await database.prepare(`INSERT INTO projects(client_id,name,billing_method,created_at,updated_at) VALUES(?,?,'time_materials',?,?) RETURNING id`).bind(client.id,`Month End Work ${label}`,now,now).first()
+      scheduledManifestFixture.projectIds.push(project.id)
+      const user=await database.prepare(`INSERT INTO user_assignments(project_id,user_id,created_at,updated_at) VALUES(?,1,?,?) RETURNING id`).bind(project.id,now,now).first()
+      const task=await database.prepare(`INSERT INTO task_assignments(project_id,task_id,billable,created_at,updated_at) VALUES(?,1,1,?,?) RETURNING id`).bind(project.id,now,now).first()
+      await run(`INSERT INTO time_entries(user_id,project_id,task_id,user_assignment_id,task_assignment_id,spent_date,seconds,seconds_without_timer,rounded_seconds,notes,client_visible,billable,cost_rate_cents,created_at,updated_at)
+        VALUES(1,?,1,?,?,'2026-09-15',5400,5400,5400,?,1,1,5000,?,?)`,project.id,user.id,task.id,index===0?'Reviewed https://reference.example.test/55':'Client approved work',now,now)
+    }
+    const configuration=createD1EmailConfigurationStore(database)
+    const senderId=(await database.prepare(`SELECT coalesce(max(id),0)+1 AS id FROM sender_identities`).first()).id
+    await configuration.createSenderIdentity({id:senderId,email:'billing@example.test',displayName:'Month End Billing',provider:'mailgun',providerIdentity:'billing@example.test',actorUserId:1,commandId:`browser-month-sender-${senderId}`,occurredAt:now})
+    await configuration.recordSenderEvidence({id:senderId,expectedEvidenceVersion:0,evidence:{source:'deployment_config',identityKind:'email_address',verificationStatus:'operator_configured',dkimStatus:'not_applicable',mailFromDomain:null,mailFromStatus:'not_configured',observedAt:now},actorUserId:1,commandId:`browser-month-evidence-${senderId}`,occurredAt:now})
+    await configuration.setDefaultSenderIdentity({id:senderId,expectedVersion:0,actorUserId:1,commandId:`browser-month-default-${senderId}`,occurredAt:now})
+    const job = await database.prepare(`INSERT INTO scheduled_jobs(action,name,scope_json,cadence,created_by_user_id,created_at,updated_at)
+      VALUES('month_end_pack','Browser month-end review',?,'0 9 1 * *',1,?,?) RETURNING id`).bind(JSON.stringify({client_ids:clients}),now,now).first()
+    scheduledManifestFixture.jobId=job.id
+    const bucket=await miniflare.getR2Bucket('ATTACHMENTS')
+    const result = await proposeMonthEndPack(createD1Database(database),{jobId:job.id,occurrenceKey:'2026-09',clientIds:clients,proposedAt:now,expiresAt:expires},{put:async(key,bytes)=>{await bucket.put(key,bytes)}})
+    if (result.outcome.outcome !== 'proposed') throw new Error('Manifest fixture was not proposed')
+    response.writeHead(200,{'content-type':'application/json','cache-control':'no-store'})
+    response.end(JSON.stringify({runId:result.outcome.run.id,invoiceIds:invoices}));return
+  } else if (action === 'scheduled-manifest-cleanup') {
+    if (scheduledManifestFixture) {
+      const now=new Date().toISOString()
+      for(const projectId of scheduledManifestFixture.projectIds) {
+        await run(`DELETE FROM time_entries WHERE project_id=? AND invoice_id IS NULL AND timer_started_at IS NULL`,projectId)
+        await run(`UPDATE projects SET is_active=0,updated_at=? WHERE id=?`,now,projectId)
+      }
+      for(const clientId of scheduledManifestFixture.clientIds)
+        await run(`UPDATE clients SET is_active=0,updated_at=? WHERE id=?`,now,clientId)
+      if(scheduledManifestFixture.jobId!==null)
+        await run(`UPDATE scheduled_jobs SET is_active=0,version=version+1,updated_at=? WHERE id=?`,now,scheduledManifestFixture.jobId)
+      // Keep the immutable manifest, invoices, attachments and delivery history.
+      scheduledManifestFixture=null
+    }
+  } else if (action === 'email-feedback-seed') {
+    await run(`DELETE FROM auth_rate_limits WHERE action = 'sign_in'`)
+    const log = createD1EmailLogStore(database)
+    const identifier = randomUUID()
+    const to = 'feedback-recipient@example.test', cc = 'feedback-copy@example.test'
+    const stamp = String(Math.floor(Date.now()/1000))
+    const events = []
+    for (const [index,sender] of ['feedback-a@example.test','feedback-b@example.test'].entries()) {
+      const mail = await log.createQueued({from:{email:sender},to:[{email:to}],cc:[{email:cc}],template:'feedback_fixture',subject:'Feedback fixture',text:'Local acceptance only.'})
+      const messageId = `browser-feedback-${identifier}-${index}`
+      await log.claimAttempt(mail.id,'mailgun',messageId,60)
+      await log.markSent(mail.id,'mailgun',{messageId},messageId)
+      const token = `feedback-${identifier}-${index}`
+      events.push(JSON.stringify({signature:{timestamp:stamp,token,signature:createHmac('sha256',feedbackWebhookKey).update(stamp+token).digest('hex')},'event-data':{id:token,event:index===0?'failed':'complained',severity:'permanent',recipient:index===0?to:cc,message:{headers:{'message-id':messageId}}}}))
+    }
+    response.writeHead(200,{'content-type':'application/json','cache-control':'no-store'})
+    response.end(JSON.stringify({events,to,cc}));return
+  } else if (action === 'portal-estimate-seed') {
+    const instant = new Date().toISOString()
+    await database.batch([
+      database.prepare("INSERT INTO clients(id,name,currency,created_at,updated_at) VALUES(120001,'Estimate Contact Fixture','USD',?,?)").bind(instant,instant),
+      database.prepare("INSERT INTO contacts(id,client_id,first_name,last_name,email,created_at,updated_at) VALUES(120001,120001,'Jordan','Reviewer','estimate-contact@example.test',?,?)").bind(instant,instant),
+      database.prepare("INSERT INTO estimates(id,client_id,number,currency,issue_date,amount_cents,created_at,updated_at) VALUES(120001,120001,'EST-MAILED-1010','USD','2026-10-01',10000,?,?)").bind(instant,instant),
+      database.prepare("INSERT INTO estimate_line_items(estimate_id,position,kind,description,quantity,unit_price_cents,amount_cents,created_at,updated_at) VALUES(120001,0,'Service','Reviewable scope',1,10000,10000,?,?)").bind(instant,instant),
+    ])
+    const repo = createMoneyResourceRepository(createD1Database(database))
+    const estimate = await repo.getEstimate(120001)
+    await repo.executeEstimateMessage({estimateId:120001,commandId:'browser-contact-estimate-send',actorUserId:1,messageId:120001,expectedVersion:estimate.version,eventType:'send',sentBy:'Browser Owner',sentByEmail:fixtureEmail,sentFrom:null,sentFromEmail:null,recipients:[{name:'Jordan Reviewer',email:'estimate-contact@example.test'}],subject:'Review estimate',body:'Please review.',sendMeACopy:false,occurredAt:instant})
+  } else if (action === 'portal-estimate-result') {
+    const rows = (await database.prepare("SELECT contact_id,content_hash,estimate_version,event_type FROM estimate_messages WHERE estimate_id=120001 AND contact_id IS NOT NULL").all()).results
+    response.writeHead(200,{'content-type':'application/json','cache-control':'no-store'})
+    response.end(JSON.stringify({rows}));return
+  } else if (action === 'portal-estimate-cleanup') {
+    await database.prepare('UPDATE clients SET is_active=0 WHERE id=120001').run()
+  } else if (action === 'seed') {
+    await clearFixtureTimers()
     await database.batch([
       database.prepare(
         `UPDATE organizations
@@ -383,6 +883,7 @@ const fixtureControl = async (request, response) => {
         .bind(timestamp, timestamp),
     ])
   } else if (action === 'reset') {
+    await clearFixtureTimers()
     await database.batch([
       database.prepare('DELETE FROM time_entries WHERE id = 900'),
       database.prepare(
@@ -392,6 +893,7 @@ const fixtureControl = async (request, response) => {
       ),
     ])
   } else if (action === 'approval-seed') {
+    await clearFixtureTimers()
     await database.batch([
       database.prepare('DELETE FROM time_entries WHERE id = 901'),
       database.prepare('DELETE FROM expenses WHERE id = 901'),
@@ -427,6 +929,7 @@ const fixtureControl = async (request, response) => {
         .bind(timestamp, timestamp),
     ])
   } else if (action === 'approval-expense-only-seed') {
+    await clearFixtureTimers()
     await database.batch([
       database.prepare(
         `DELETE FROM time_entries
@@ -677,6 +1180,99 @@ const fixtureControl = async (request, response) => {
       database.prepare(
         `DELETE FROM time_entries
          WHERE invoice_id IS NULL AND notes LIKE 'Browser band fixture%'`,
+      ),
+      database.prepare(`DELETE FROM auth_rate_limits WHERE action = 'sign_in'`),
+    ])
+  } else if (action === 'end-client-invoice-seed') {
+    /**
+     * A parent client with three levels of end-clients beneath it, each with a
+     * project and one entry of its own (issue 33), all 'Browser F7 fixture'
+     * rows in ids 9200-9213 so nothing another spec bills or counts moves:
+     *
+     *   9200 Parent        1h at 100.00 ->  $100.00
+     *   +-- 9201 Alpha     2h           ->  $200.00
+     *   +-- 9202 Bravo     1.5h         ->  $150.00
+     *       +-- 9203 Charlie  0.5h      ->   $50.00
+     */
+    await database.batch([
+      database.prepare(
+        `DELETE FROM time_entries
+         WHERE invoice_id IS NULL AND notes LIKE 'Browser F7 fixture%'`,
+      ),
+      database
+        .prepare(
+          `INSERT OR IGNORE INTO clients (id, name, parent_client_id, currency, payment_terms, created_at, updated_at)
+           VALUES (9200, 'Browser F7 Parent', NULL, 'USD', 'net_30', ?, ?)`,
+        )
+        .bind(timestamp, timestamp),
+      database
+        .prepare(
+          `INSERT OR IGNORE INTO clients (id, name, parent_client_id, currency, payment_terms, created_at, updated_at)
+           VALUES (9201, 'Browser F7 Alpha', 9200, 'USD', 'net_30', ?, ?),
+                  (9202, 'Browser F7 Bravo', 9200, 'USD', 'net_30', ?, ?)`,
+        )
+        .bind(timestamp, timestamp, timestamp, timestamp),
+      database
+        .prepare(
+          `INSERT OR IGNORE INTO clients (id, name, parent_client_id, currency, payment_terms, created_at, updated_at)
+           VALUES (9203, 'Browser F7 Charlie', 9202, 'USD', 'net_30', ?, ?)`,
+        )
+        .bind(timestamp, timestamp),
+      ...[9200, 9201, 9202, 9203].flatMap((id) => [
+        database
+          .prepare(
+            `INSERT OR IGNORE INTO projects (
+               id, client_id, name, code, hourly_rate_cents, created_at, updated_at
+             ) VALUES (?, ?, ?, ?, 10000, ?, ?)`,
+          )
+          .bind(id, id, `Browser F7 Project ${id - 9199}`, `F7${id - 9199}`, timestamp, timestamp),
+        database
+          .prepare(
+            `INSERT OR IGNORE INTO user_assignments (id, project_id, user_id, created_at, updated_at)
+             VALUES (?, ?, 1, ?, ?)`,
+          )
+          .bind(id, id, timestamp, timestamp),
+        database
+          .prepare(
+            `INSERT OR IGNORE INTO task_assignments (
+               id, project_id, task_id, billable, created_at, updated_at
+             ) VALUES (?, ?, 1, 1, ?, ?)`,
+          )
+          .bind(id, id, timestamp, timestamp),
+      ]),
+      ...[
+        [9210, 9200, 3600],
+        [9211, 9201, 7200],
+        [9212, 9202, 5400],
+        [9213, 9203, 1800],
+      ].map(([id, projectId, seconds]) =>
+        database
+          .prepare(
+            `INSERT INTO time_entries (
+               id, user_id, project_id, task_id, user_assignment_id, task_assignment_id,
+               spent_date, seconds, seconds_without_timer, rounded_seconds, billable,
+               billable_rate_cents, cost_rate_cents, notes, created_at, updated_at
+             ) VALUES (?, 1, ?, 1, ?, ?, '2026-07-08', ?, ?, ?, 1, 10000, 5000,
+               'Browser F7 fixture', ?, ?)`,
+          )
+          .bind(id, projectId, projectId, projectId, seconds, seconds, seconds, timestamp, timestamp),
+      ),
+      database.prepare(`DELETE FROM auth_rate_limits WHERE action = 'sign_in'`),
+    ])
+    const seeded = await database
+      .prepare(
+        `SELECT count(*) AS count, sum(rounded_seconds) AS seconds FROM time_entries
+         WHERE invoice_id IS NULL AND notes LIKE 'Browser F7 fixture%'`,
+      )
+      .first()
+    if (seeded?.count !== 4 || seeded.seconds !== 18000) {
+      throw new Error('end-client invoice fixture did not own one exact work set')
+    }
+  } else if (action === 'end-client-invoice-cleanup') {
+    await database.batch([
+      database.prepare(
+        `DELETE FROM time_entries
+         WHERE invoice_id IS NULL AND notes LIKE 'Browser F7 fixture%'`,
       ),
       database.prepare(`DELETE FROM auth_rate_limits WHERE action = 'sign_in'`),
     ])
@@ -979,11 +1575,86 @@ const fixtureControl = async (request, response) => {
       person.last_name !== "account"
     )
       throw new Error("Disposable closure was not durably applied");
+  } else if (action === 'calendar-proposals-seed' || action === 'calendar-proposals-cleanup') {
+    if (calendarProposalFixture !== null) {
+      await clearFixtureTimers()
+      await run(`UPDATE timesheet_lock_windows SET version=version+1,unlocked_by_user_id=1,unlocked_at=?,unlock_reason='Owned fixture cleanup'
+        WHERE lock_reason='browser-1201-lock' AND unlocked_at IS NULL`, new Date().toISOString())
+      const created = await rows(`SELECT time_entry_id AS id FROM calendar_proposals WHERE calendar_id='browser-owned-1201' AND time_entry_id IS NOT NULL`)
+      await run(`DELETE FROM calendar_proposals WHERE calendar_id='browser-owned-1201'`)
+      for (const { id } of created) await run('DELETE FROM time_entries WHERE id=? AND user_id=1 AND invoice_id IS NULL', id)
+      await run('DELETE FROM user_assignments WHERE user_id=120190')
+      await run('DELETE FROM users WHERE id=120190')
+      const old = calendarProposalFixture
+      await run(`UPDATE organizations SET time_entry_mode=?,time_format=?,clock=?,timezone=?,week_start_day=?,modules=? WHERE id=1`,
+        old.organization.time_entry_mode, old.organization.time_format, old.organization.clock,
+        old.organization.timezone, old.organization.week_start_day, old.organization.modules)
+      await run('UPDATE users SET timezone=? WHERE id=1', old.owner.timezone)
+      calendarProposalFixture = null
+    }
+    if (action === 'calendar-proposals-seed') {
+      if ((await rows('SELECT id FROM users WHERE id=120190')).length ||
+          (await rows('SELECT id FROM calendar_proposals WHERE id BETWEEN 120101 AND 120107')).length)
+        throw new Error('Calendar proposal fixture identifiers are already occupied')
+      calendarProposalFixture = {
+        organization: (await rows('SELECT time_entry_mode,time_format,clock,timezone,week_start_day,modules FROM organizations WHERE id=1'))[0],
+        owner: (await rows('SELECT timezone FROM users WHERE id=1'))[0],
+      }
+      await clearFixtureTimers()
+      await run(`UPDATE organizations SET time_entry_mode='duration',time_format='decimal',clock='24h',timezone='America/Costa_Rica',week_start_day='monday',modules=json_set(modules,'$.approval',json('true')) WHERE id=1`)
+      await run("UPDATE users SET timezone='UTC' WHERE id=1")
+      await run(`INSERT INTO users(id,first_name,last_name,profile,manager_grants,timezone,created_at,updated_at)
+        VALUES(120190,'Proposal','Other','member','[]','America/Costa_Rica',?,?)`, timestamp, timestamp)
+      await run(`INSERT INTO user_assignments(id,project_id,user_id,created_at,updated_at) VALUES(120190,1,120190,?,?)`, timestamp, timestamp)
+      const values = [
+        [120101,1,'Owned proposed workshop','2026-08-27T15:00:00.000Z','2026-08-27T16:00:00.000Z'],
+        [120102,1,'Owned proposed discard','2026-08-28T16:00:00.000Z','2026-08-28T16:30:00.000Z'],
+        [120103,1,'Owned overnight proposal','2026-08-28T05:30:00.000Z','2026-08-28T07:00:00.000Z'],
+        [120104,1,'Owned locked proposal','2026-08-26T15:00:00.000Z','2026-08-26T16:00:00.000Z'],
+        [120105,120190,'Other person private calendar','2026-08-27T15:00:00.000Z','2026-08-27T16:00:00.000Z'],
+      ]
+      for (const [id,userId,title,start,end] of values)
+        await run(`INSERT INTO calendar_proposals(id,user_id,provider,calendar_id,event_id,title,starts_at,ends_at,created_at,updated_at)
+          VALUES(?,?,'google','browser-owned-1201',?,?,?, ?,?,?)`, id,userId,`browser-1201:${id}`,title,start,end,timestamp,timestamp)
+      await run("DELETE FROM auth_rate_limits WHERE action='sign_in'")
+    }
+  } else if (action === 'calendar-proposals-start-end') {
+    if (calendarProposalFixture === null) throw new Error('Calendar proposal fixture is not active')
+    await clearFixtureTimers()
+    await run("UPDATE organizations SET time_entry_mode='start_end' WHERE id=1")
+  } else if (action === 'calendar-proposals-dst') {
+    if (calendarProposalFixture === null) throw new Error('Calendar proposal fixture is not active')
+    await run("UPDATE users SET timezone='America/New_York' WHERE id=1")
+    await run(`INSERT INTO calendar_proposals(id,user_id,provider,calendar_id,event_id,title,starts_at,ends_at,created_at,updated_at)
+      VALUES(120106,1,'google','browser-owned-1201','browser-1201:120106','Owned DST clock proposal','2026-11-01T05:45:00.000Z','2026-11-01T06:15:00.000Z',?,?),
+        (120107,1,'google','browser-owned-1201','browser-1201:120107','Owned precise-second proposal','2026-11-01T15:00:15.000Z','2026-11-01T16:00:00.000Z',?,?)`, timestamp,timestamp,timestamp,timestamp)
+  } else if (action === 'calendar-proposals-assert') {
+    const proposals = await rows(`SELECT id,status,time_entry_id FROM calendar_proposals WHERE calendar_id='browser-owned-1201' ORDER BY id`)
+    if (proposals.length !== 7 || proposals[0].status !== 'accepted' || proposals[1].status !== 'discarded' ||
+        proposals.slice(2).some((item) => item.status !== 'proposed')) throw new Error('Proposal decisions were not isolated')
+    const entries = await rows(`SELECT user_id,project_id,task_id,spent_date,seconds,started_time,ended_time,calendar_event_ref FROM time_entries WHERE id=?`, proposals[0].time_entry_id)
+    const entry = entries[0]
+    if (entries.length !== 1 || entry.user_id !== 1 || entry.project_id !== 1 || entry.task_id !== 1 ||
+        entry.spent_date !== '2026-08-27' || entry.seconds !== 3600 || entry.started_time !== null || entry.ended_time !== null ||
+        JSON.parse(entry.calendar_event_ref).event_id !== 'browser-1201:120101') throw new Error('Atomic acceptance changed source timing or assignment')
+  } else if (action === 'planning-business-fingerprint') {
+    // Read-only, disposable-harness evidence: never ship a SQL/debug API.
+    const tables = (await database.prepare("SELECT name FROM sqlite_schema WHERE type='table' AND name NOT LIKE 'auth_%' AND (name='time_entries' OR name LIKE '%rate%' OR name LIKE '%invoice%' OR name LIKE '%payment%' OR name LIKE '%approval%') ORDER BY name").all()).results
+    const records = []
+    for (const { name } of tables) records.push([name, (await database.prepare(`SELECT * FROM "${name.replaceAll('"', '""')}"`).all()).results])
+    response.writeHead(200, { 'content-type': 'application/json', 'cache-control': 'no-store' })
+    response.end(JSON.stringify({ sha256: createHash('sha256').update(JSON.stringify(records)).digest('hex'), tables: tables.map(row => row.name) }))
+    return
   } else if (action === 'payment-run-reset' || action === 'sign-in-rate-reset') {
     // Clearing the sign-in limit is all either does. The second name is for a
     // spec that signs in late in a run, after the rest of the suite has spent
     // the limit, and has nothing to do with payment runs.
+    if (action === 'sign-in-rate-reset') await clearFixtureTimers()
     await database.prepare(`DELETE FROM auth_rate_limits WHERE action = 'sign_in'`).run()
+  } else if (action === 'client-360-seed') {
+    await client360Seed()
+  } else if (action === 'client-360-cleanup') {
+    await client360Clear()
   } else if (action === 'task-admin-cleanup') {
     await database.batch([
       database.prepare(
@@ -1097,7 +1768,8 @@ await run(
 )
 
 const proxyFetch = async (request, response) => {
-  const url = new URL(request.url ?? '/', `http://${listenHost}:${listenPort}`)
+  const proxyHost = request.headers.host === `localhost:${listenPort}` ? `localhost:${listenPort}` : `${listenHost}:${listenPort}`
+  const url = new URL(request.url ?? '/', `http://${proxyHost}`)
   // Test-only delivery handoff: mint a real one-time token without an external
   // mail provider. The production Worker bundle never contains this endpoint.
   if (url.pathname === '/__ezacto_browser_fixture__/password-reset') {
@@ -1117,7 +1789,9 @@ const proxyFetch = async (request, response) => {
   const chunks = []
   for await (const chunk of request) chunks.push(chunk)
   const body = chunks.length === 0 ? undefined : Buffer.concat(chunks)
-  const upstream = await miniflare.dispatchFetch(url, {
+  const runtime = firstRunRuntime !== null && /(?:^|;\s*)ezacto_browser_first_run=1(?:;|$)/u.test(request.headers.cookie ?? '')
+    ? firstRunRuntime : miniflare
+  const upstream = await runtime.dispatchFetch(url, {
     method: request.method,
     headers: request.headers,
     ...(body === undefined ? {} : { body }),
@@ -1161,7 +1835,7 @@ await new Promise((resolveReady, reject) => {
 })
 
 const shutdown = () => {
-  server.close(() => void miniflare.dispose())
+  server.close(() => { void miniflare.dispose(); void firstRunRuntime?.dispose() })
 }
 process.once('SIGINT', shutdown)
 process.once('SIGTERM', shutdown)

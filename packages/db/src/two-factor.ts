@@ -77,7 +77,39 @@ export interface CreateTwoFactorChallengeInput {
   createdAt: string
   /** Expired or already-consumed rows at or before this instant are swept first. */
   cleanupBefore: string
+  /**
+   * Keyed hash of a code mailed with this challenge. Giving one supersedes every
+   * other unspent challenge the user holds, so a resend leaves exactly one live
+   * code and the earlier one stops working.
+   */
+  codeHash?: string
+  /**
+   * Whether this challenge may be mailed a code. Set by a password sign-in and
+   * by nothing else: a magic link already is a credential delivered to the
+   * mailbox, so a code to the same mailbox adds a step and no factor.
+   */
+  emailCodeAllowed?: boolean
 }
+
+/** What a presented challenge token names, without spending it. */
+export interface TwoFactorChallengeState extends TwoFactorChallenge {
+  /** A mailed code is attached to this challenge. */
+  hasCode: boolean
+  emailCodeAllowed: boolean
+}
+
+export type TwoFactorEmailSendClaim =
+  | { status: 'claimed' }
+  /** The wait, in milliseconds, until a send would be allowed. */
+  | { status: 'limited'; retryAfterMs: number }
+
+export type TwoFactorCodeRedemption =
+  | { status: 'accepted'; userId: number }
+  | { status: 'rejected' }
+  /** The challenge's guesses are spent; even the right code is refused now. */
+  | { status: 'exhausted' }
+  /** Unknown, carries no code, already spent, or expired. */
+  | { status: 'unknown' }
 
 export interface TwoFactorStore {
   enrolment(userId: number): Promise<TotpEnrolment | null>
@@ -122,8 +154,41 @@ export interface TwoFactorStore {
    * sessions. Null when the token is unknown, already spent, or expired.
    */
   consumeChallenge(tokenHash: string, now: string): Promise<TwoFactorChallenge | null>
+  /**
+   * Redeems a mailed code: verify, count and consume in one batch, so one
+   * challenge cannot become two sessions and a wrong code burns exactly one of
+   * `maxAttempts` guesses. Once they are gone the right code is refused too.
+   */
+  redeemChallengeCode(
+    tokenHash: string,
+    codeHash: string,
+    now: string,
+    maxAttempts: number,
+  ): Promise<TwoFactorCodeRedemption>
   /** The challenge's user without spending it, for the code check that precedes the spend. */
   challengeHolder(tokenHash: string, now: string): Promise<TwoFactorChallenge | null>
+  /** Like `challengeHolder`, with what the challenge may be mailed. */
+  challengeState(tokenHash: string, now: string): Promise<TwoFactorChallengeState | null>
+  emailFactorEnabled(userId: number): Promise<boolean>
+  /** False when it was already on, so a repeat changes nothing and is not re-audited. */
+  enableEmailFactor(userId: number, now: string): Promise<boolean>
+  /**
+   * Turns the factor off and ends every unspent challenge carrying a mailed
+   * code, so a code already in flight stops working with it. False when it was
+   * not on.
+   */
+  disableEmailFactor(userId: number): Promise<boolean>
+  /**
+   * Records one mail in the resend ledger, or says how long to wait. The count
+   * and the comparison are one INSERT, so two requests in the same moment
+   * cannot both read "none yet" and both send.
+   */
+  claimEmailCodeSend(
+    userId: number,
+    now: string,
+    minIntervalMs: number,
+    perHour: number,
+  ): Promise<TwoFactorEmailSendClaim>
 }
 
 /**
@@ -162,6 +227,13 @@ interface EnrolmentRow {
 interface ChallengeRow {
   userId: number
 }
+
+interface ChallengeStateRow extends ChallengeRow {
+  hasCode: number
+  emailCodeAllowed: number
+}
+
+const HOUR_MS = 60 * 60 * 1_000
 
 interface RecoveryCodeRow {
   id: number
@@ -433,7 +505,15 @@ const createTwoFactorStore = (database: PortableDatabase): TwoFactorStore => ({
     ])
   },
 
-  createChallenge: async ({ userId, tokenHash, expiresAt, createdAt, cleanupBefore }) => {
+  createChallenge: async ({
+    userId,
+    tokenHash,
+    expiresAt,
+    createdAt,
+    cleanupBefore,
+    codeHash,
+    emailCodeAllowed,
+  }) => {
     const created = assertCanonicalTimestamp(createdAt)
     const expires = assertCanonicalTimestamp(expiresAt)
     const sweep = assertCanonicalTimestamp(cleanupBefore)
@@ -448,16 +528,38 @@ const createTwoFactorStore = (database: PortableDatabase): TwoFactorStore => ({
           RETURNING id`,
         bindings: [created, sweep],
       },
+      // A mailed code is the only thing a resend replaces. Deleting the user's
+      // other unspent challenges here, in the same batch as the insert, is what
+      // makes the older code stop working the moment the newer one exists.
+      ...(codeHash === undefined
+        ? []
+        : [
+            {
+              query: `DELETE FROM two_factor_challenges
+                WHERE user_id = ? AND consumed_at IS NULL AND token_hash <> ?
+                RETURNING id`,
+              bindings: [userId, tokenHash],
+            },
+          ]),
       {
         query: `INSERT INTO two_factor_challenges
-            (user_id, token_hash, expires_at, consumed_at, created_at, updated_at)
-          VALUES (?, ?, ?, NULL, ?, ?)
+            (user_id, token_hash, code_hash, email_code_allowed, expires_at, consumed_at,
+             created_at, updated_at)
+          VALUES (?, ?, ?, ?, ?, NULL, ?, ?)
           ON CONFLICT(token_hash) DO NOTHING
           RETURNING id`,
-        bindings: [userId, tokenHash, expires, created, created],
+        bindings: [
+          userId,
+          tokenHash,
+          codeHash ?? null,
+          codeHash !== undefined || emailCodeAllowed === true ? 1 : 0,
+          expires,
+          created,
+          created,
+        ],
       },
     ])
-    return rows[1]?.length === 1 ? 'created' : 'collision'
+    return rows[rows.length - 1]?.length === 1 ? 'created' : 'collision'
   },
 
   consumeChallenge: async (tokenHash, now) => {
@@ -474,6 +576,43 @@ const createTwoFactorStore = (database: PortableDatabase): TwoFactorStore => ({
     return challenge(rows[0]?.[0] as unknown as ChallengeRow | undefined)
   },
 
+  redeemChallengeCode: async (tokenHash, codeHash, now, maxAttempts) => {
+    const timestamp = assertCanonicalTimestamp(now)
+    const ceiling = assertCeiling(maxAttempts)
+    const live = `token_hash = ? AND consumed_at IS NULL AND code_hash IS NOT NULL
+      AND julianday(expires_at) > julianday(?) AND code_attempts < ?`
+    const rows = await database.atomic([
+      // Consumed only when the code matches and guesses remain.
+      {
+        query: `UPDATE two_factor_challenges SET consumed_at = ?, updated_at = ?
+          WHERE ${live} AND code_hash = ?
+          RETURNING user_id AS userId`,
+        bindings: [timestamp, timestamp, tokenHash, timestamp, ceiling, codeHash],
+      },
+      // A wrong code (nothing consumed above) burns one guess. A consumed row
+      // no longer matches, so a success never increments.
+      {
+        query: `UPDATE two_factor_challenges SET code_attempts = code_attempts + 1,
+            updated_at = ?
+          WHERE ${live}
+          RETURNING id`,
+        bindings: [timestamp, tokenHash, timestamp, ceiling],
+      },
+      // What is left, to tell a spent budget from a challenge that is gone.
+      {
+        query: `SELECT code_attempts AS attempts FROM two_factor_challenges
+          WHERE token_hash = ? AND consumed_at IS NULL AND code_hash IS NOT NULL
+            AND julianday(expires_at) > julianday(?)`,
+        bindings: [tokenHash, timestamp],
+      },
+    ])
+    const accepted = challenge(rows[0]?.[0] as unknown as ChallengeRow | undefined)
+    if (accepted !== null) return { status: 'accepted', userId: accepted.userId }
+    const remaining = rows[2]?.[0] as { attempts: number } | undefined
+    if (remaining === undefined) return { status: 'unknown' }
+    return remaining.attempts >= ceiling ? { status: 'exhausted' } : { status: 'rejected' }
+  },
+
   challengeHolder: async (tokenHash, now) =>
     challenge(
       (await database.first<ChallengeRow>(
@@ -483,6 +622,101 @@ const createTwoFactorStore = (database: PortableDatabase): TwoFactorStore => ({
         [tokenHash, assertCanonicalTimestamp(now)],
       )) ?? undefined,
     ),
+
+  challengeState: async (tokenHash, now) => {
+    const row = await database.first<ChallengeStateRow>(
+      `SELECT user_id AS userId, code_hash IS NOT NULL AS hasCode,
+          email_code_allowed AS emailCodeAllowed
+        FROM two_factor_challenges
+        WHERE token_hash = ? AND consumed_at IS NULL
+          AND julianday(expires_at) > julianday(?)`,
+      [tokenHash, assertCanonicalTimestamp(now)],
+    )
+    const holder = challenge(row ?? undefined)
+    if (holder === null || row === null) return null
+    return {
+      ...holder,
+      hasCode: row.hasCode === 1,
+      emailCodeAllowed: row.emailCodeAllowed === 1,
+    }
+  },
+
+  emailFactorEnabled: async (userId) =>
+    (await database.first<{ userId: number }>(
+      `SELECT user_id AS userId FROM user_email_second_factors WHERE user_id = ?`,
+      [userId],
+    )) !== null,
+
+  enableEmailFactor: async (userId, now) => {
+    const rows = await database.atomic([
+      {
+        query: `INSERT INTO user_email_second_factors (user_id, enabled_at) VALUES (?, ?)
+          ON CONFLICT(user_id) DO NOTHING
+          RETURNING user_id AS userId`,
+        bindings: [userId, assertCanonicalTimestamp(now)],
+      },
+    ])
+    return rows[0]?.length === 1
+  },
+
+  disableEmailFactor: async (userId) => {
+    const rows = await database.atomic([
+      {
+        query: `DELETE FROM user_email_second_factors WHERE user_id = ?
+          RETURNING user_id AS userId`,
+        bindings: [userId],
+      },
+      {
+        query: `DELETE FROM two_factor_challenges
+          WHERE user_id = ? AND consumed_at IS NULL AND code_hash IS NOT NULL
+          RETURNING id`,
+        bindings: [userId],
+      },
+    ])
+    return rows[0]?.length === 1
+  },
+
+  claimEmailCodeSend: async (userId, now, minIntervalMs, perHour) => {
+    const timestamp = assertCanonicalTimestamp(now)
+    const interval = assertDuration(minIntervalMs)
+    const ceiling = assertCeiling(perHour)
+    const epoch = Date.parse(timestamp)
+    // Canonical timestamps are fixed-width UTC, so comparing them as strings is
+    // comparing them as instants -- and avoids a float round trip at the edge
+    // of a window.
+    const hourAgo = new Date(epoch - HOUR_MS).toISOString()
+    const intervalAgo = new Date(epoch - interval).toISOString()
+    const rows = await database.atomic([
+      // Anything older than the window is no longer evidence of anything.
+      {
+        query: `DELETE FROM two_factor_email_code_sends WHERE user_id = ? AND sent_at <= ?
+          RETURNING id`,
+        bindings: [userId, hourAgo],
+      },
+      {
+        query: `INSERT INTO two_factor_email_code_sends (user_id, sent_at)
+          SELECT ?, ?
+          WHERE NOT EXISTS (
+              SELECT 1 FROM two_factor_email_code_sends WHERE user_id = ? AND sent_at > ?
+            )
+            AND (SELECT count(*) FROM two_factor_email_code_sends WHERE user_id = ?) < ?
+          RETURNING id`,
+        bindings: [userId, timestamp, userId, intervalAgo, userId, ceiling],
+      },
+      {
+        query: `SELECT sent_at AS sentAt FROM two_factor_email_code_sends
+          WHERE user_id = ? ORDER BY sent_at`,
+        bindings: [userId],
+      },
+    ])
+    if (rows[1]?.length === 1) return { status: 'claimed' }
+    const sent = (rows[2] ?? []).map((row) => Date.parse((row as { sentAt: string }).sentAt))
+    const waits: number[] = []
+    const last = sent[sent.length - 1]
+    if (last !== undefined && last + interval > epoch) waits.push(last + interval - epoch)
+    if (sent.length >= ceiling) waits.push(sent[sent.length - ceiling]! + HOUR_MS - epoch)
+    return { status: 'limited', retryAfterMs: Math.max(1, ...waits) }
+  },
 })
 
 export const createContainerTwoFactorStore = (

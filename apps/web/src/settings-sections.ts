@@ -20,10 +20,16 @@ export const COMPANY_SETTINGS_SECTIONS: readonly SettingsSection[] = [
   { id: 'sign-in', label: 'Ways in' },
   { id: 'erasure', label: 'Erasure and retention' },
   { id: 'time', label: 'Time' },
+  { id: 'approval', label: 'Approval' },
   { id: 'email', label: 'Email' },
+  { id: 'webhooks', label: 'Webhooks' },
+  { id: 'work-items', label: 'Work items' },
   { id: 'invoices', label: 'Invoices' },
   { id: 'reminders', label: 'Reminders' },
+  { id: 'notifications', label: 'Notifications' },
   { id: 'payouts', label: 'Payouts' },
+  { id: 'import-export', label: 'Import and export' },
+  { id: 'bulk-actions', label: 'Bulk actions' },
   { id: 'backup', label: 'Backups' },
   { id: 'brand', label: 'Brand' },
   { id: 'appearance', label: 'Appearance' },
@@ -83,3 +89,18 @@ export const applySettingsSection = <Section extends SettingsSectionElement>(
     else link.removeAttribute('aria-current')
   }
 }
+
+/**
+ * The personal settings page, one part at a time. The same hash rule as the
+ * company page, with panes of their own: the controllers that show and hide
+ * their sections are left alone, so a part a controller reveals stays hidden
+ * until its tab is open.
+ */
+export const USER_SETTINGS_SECTIONS: readonly SettingsSection[] = [
+  { id: 'reminders', label: 'Reminders' },
+  { id: 'calendars', label: 'Calendars' },
+  { id: 'payouts', label: 'Where you are paid' },
+  { id: 'two-factor', label: 'Two-step sign-in' },
+  { id: 'tokens', label: 'Access tokens' },
+  { id: 'appearance', label: 'Appearance' },
+]

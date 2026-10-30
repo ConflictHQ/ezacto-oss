@@ -10,13 +10,36 @@ Email carries sign-in links, password recovery and application messages. Verify 
 4. Set GitHub environment variables `SES_REGION`, `SES_FROM` and, if used, `SES_CONFIGURATION_SET`. The first four required values are the access key, secret key, region and sender; a partial SES configuration is rejected.
 5. Deploy through CI. Confirm queue/scheduler bindings and an approved organization sender, then send one controlled message to an operator-owned inbox. Check actual inbox receipt and provider delivery/bounce evidence as well as application queue state.
 
-The Worker also supports Mailgun: `MAILGUN_API_KEY` is a secret, with `MAILGUN_DOMAIN`, `MAILGUN_REGION` and `MAIL_FROM` as deployment variables. Configure exactly one Worker transport. The secret renderer rejects simultaneous SES and Mailgun configuration; it does not select a provider silently.
+The Worker also supports Mailgun: `MAILGUN_API_KEY` is a secret, with `MAILGUN_DOMAIN`, `MAILGUN_REGION` and `MAIL_FROM` as deployment variables. Configure exactly one Worker transport.
+
+**Bounce and complaint feedback (Mailgun).** Set `MAILGUN_WEBHOOK_SIGNING_KEY` to the HTTP webhook signing key from Mailgun's Webhooks page (not the API key), then add `<APP_BASE_URL>/webhooks/mailgun` for the `delivered`, `permanent_fail` and `complained` events. Without the key the route is not mounted and answers 404. Each post is checked against its HMAC signature, must carry a timestamp within 15 minutes, and its token can be used once. A permanent failure moves a sent message to `bounced`, a complaint to `complained`, and both show in the per-identity rates on `/email-health`; an event for a message we did not send, or for an address it was not addressed to, is recorded and ignored. Every verified event is kept in `email_feedback_events`. Mailgun retries a 401 or 503 for about eight hours, so a key fixed within that window loses nothing. The secret renderer rejects simultaneous SES and Mailgun configuration; it does not select a provider silently.
 
 ## Container: SMTP
 
 Set `SMTP_URL` and `SMTP_FROM` in the private container environment. Use your provider's authenticated SMTP endpoint, credentials and TLS requirements; see [container setup](self-host-container.md). If SES provides the SMTP endpoint, use its SMTP credentials rather than treating the Worker AWS API credentials as interchangeable with an SMTP password.
 
 Restart/redeploy the container after configuration changes. Verify its scheduler is running so queued messages are processed. Test inbox delivery with an operator-owned recipient and confirm the configured sender is the one the organization intends to use.
+
+## Mail the instance sends its own people
+
+Three kinds of mail go from the instance to the people who work in it, on the
+same deployment sender and queue as the sign-in mail. Each one is recorded in
+the email log (Settings, Deliveries) and, on the public demo, held to the
+domains the demo may email.
+
+| Mail | Who gets it | When |
+| --- | --- | --- |
+| Budget alert | The project's managers; administrators too when Company settings, Notifications says so, or when the project has no manager with an address | Once each time a project with "Notify when over budget" crosses its threshold. Checked every minute. |
+| Daily time reminder | People who switched it on (Settings, You), by email | On their chosen days at their chosen time on their own clock, only if they have tracked less than a usual day (weekly capacity over the chosen days; a running timer counts) |
+| End-of-week submission reminder, and the manager digest | Everyone not opted out; people who approve timesheets and asked for it | Only while the Approval module is on and an administrator has set a day and time under Company settings, Notifications. About last week on a Monday to Thursday, about the week now ending after that. |
+
+Every decision is written to `notification_deliveries` before anything is
+queued, keyed by (kind, person, scope, period), so a retried event or a sweep
+that runs twice mails nobody twice. A reminder that is more than two hours
+late is skipped, not sent. A message the queue never picked up is queued again
+from its record. The Worker does this on the minute cron; the container on its
+outbox tick, at most once a minute. A deployment with no sender (`MAIL_FROM` on
+the Worker) records budget alerts in the activity log and sends nothing.
 
 ## Authentication and sender checks
 
@@ -35,3 +58,36 @@ Where organization sender approval/attestation applies, changing the deployment'
 For a transport change, review queued mail, prepare and verify the new sender, then switch the complete configuration through CI. Preserve message/audit history and account for retries before sending manual replacements. Removing a transport will affect login recovery and queued messages; it is an operational change, not just a UI preference.
 
 Implementation reference: `scripts/render-deploy-secrets.mjs`, `entries/worker/src/runtime.ts`, `entries/container/src/config.ts`, `packages/mailer/`.
+
+## Recipient suppression and review
+
+Email settings shows per-sender accepted, bounced, complained and failed counts.
+Refresh reloads both sender health and the local suppressed-recipient list.
+The UI flags recorded bounce rates at 2% or complaint rates at 0.1%, with
+an earlier watch signal at half those values. These local review thresholds
+use all recorded history and do not predict a provider’s sending limits.
+Verified permanent failures and complaints for an actual To/Cc recipient create
+immutable local suppression evidence, including feedback processed before this
+upgrade. Duplicate webhook delivery does not create new evidence.
+
+Both Worker and container queues check local suppression before sending. A
+suppressed To or Cc address refuses the whole queued message, with a
+`recipient_suppressed:BOUNCE` or `recipient_suppressed:COMPLAINT` reason in the
+email log. No attachment bytes or provider call are needed for that refusal.
+An unavailable suppression database leaves the job retryable. A send already
+in flight cannot be recalled.
+
+An administrator signed in to the web app can choose **Allow future email**,
+record a reason, and confirm the address for a complaint. Review acknowledges
+only the evidence displayed: later feedback suppresses the address again.
+The immutable `email_suppression_lifts` receipt records the administrator,
+reason, reviewed evidence and time. API tokens cannot perform these actions.
+The API list is cursor-paginated at `/api/v1/email-suppressions`; a lift is
+`POST /api/v1/email-suppressions/:id/lift`.
+
+A local lift does not remove a provider's own suppression or send anything.
+Check recipient consent and the provider's own list before sending a fresh
+message. Refused jobs remain refused; they are not automatically requeued.
+Mailgun feedback ingress is configured on the Worker. The container SMTP
+runtime does not expose a Mailgun webhook route; it honors local suppression
+evidence already in its database, including after an instance migration.

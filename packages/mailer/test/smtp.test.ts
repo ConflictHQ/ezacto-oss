@@ -31,6 +31,7 @@ const smtpCapture = async (
     let buffer = ''
     let data = false
     let message = ''
+    let accepted = 0
     socket.on('data', (chunk: string) => {
       buffer += chunk
       while (buffer.includes('\r\n')) {
@@ -55,12 +56,16 @@ const smtpCapture = async (
         } else if (/^RCPT TO:/iu.test(line)) {
           const address = /<([^>]*)>/u.exec(line)?.[1] ?? ''
           recipients.push(address)
-          socket.write(
-            rejectRecipient(address)
-              ? '550 recipient rejected\r\n'
-              : '250 recipient accepted\r\n',
-          )
+          const refused = rejectRecipient(address)
+          if (!refused) accepted += 1
+          socket.write(refused ? '550 recipient rejected\r\n' : '250 recipient accepted\r\n')
         } else if (line === 'DATA') {
+          // RFC 5321: DATA needs at least one accepted recipient. A server that
+          // took the body anyway would queue mail that nobody was willing to get.
+          if (accepted === 0) {
+            socket.write('554 no valid recipients\r\n')
+            continue
+          }
           data = true
           socket.write('354 end with dot\r\n')
         } else if (line === 'QUIT') {

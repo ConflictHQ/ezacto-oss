@@ -88,9 +88,16 @@ Three things matter:
 | **Verifier token** | Revealed by the toggle. Intuit signs every delivery with it (HMAC-SHA256, `intuit-signature` header), and the endpoint **must** verify that signature — the URL is public, and anything that reaches it is otherwise unauthenticated. |
 | **Subscribed events** | Every entity is checked by default. Narrow it to **Invoice** and **Payment**; everything else is delivery volume for events that will be ignored. |
 
-Leave *"Enable cloud event payload format"* off unless the endpoint has been
-written for it — the warning on that toggle is accurate, and the two formats are
-not interchangeable.
+Enable **CloudEvents payload format** for this endpoint. Intuit's
+[mandatory migration deadline was July 31, 2026](https://medium.com/intuitdev/upcoming-change-to-webhooks-payload-structure-2a87dab642d0).
+The handler accepts the current CloudEvents v1.0 array as well as legacy
+`eventNotifications` batches, with the same raw-body signature verification.
+`intuitaccountid` selects the connected company, `intuitentityid` names the
+changed record, and `type`/`time` supply the operation and change timestamp.
+The CloudEvent `id` identifies the notification; it is not a payment ID.
+Both formats use the existing delivery claims. Receipt deduplication remains
+keyed to the QuickBooks payment reference even when event timestamps differ.
+Test the format in the owned sandbox before changing the production subscription.
 
 Configure the endpoint **after** it is deployed. Intuit begins delivering as soon
 as it is saved, and deliveries to a URL that 404s are retried and then dropped.
@@ -109,6 +116,78 @@ invoice. Two kinds are not:
   by hand. It is logged as `[payments] provider payment not recorded`, and the
   reason stays on the delivery in `quickbooks_webhook_deliveries.skipped_reason`
   for a person to settle.
+
+### Comparing the books (reconciliation report)
+
+Edits, voids and deletions made in QuickBooks are not copied back, so the two
+books can drift. **Settings → Accounting → Compare with QuickBooks** (or
+`GET /api/v1/integrations/quickbooks/reconciliation`, for administrators and
+accounting) reads every invoice in the company and every open or paid invoice
+here, and lists the differences. It only reads: nothing is corrected on either
+side, and no invoice, payment or QuickBooks document is written.
+
+The rule for which side is right is the one the mirror already follows: ezacto
+for the invoice (number, total, currency), QuickBooks for money received there.
+Tax is not compared separately; the check is that the totals agree to the cent.
+
+| Difference | Meaning |
+| --- | --- |
+| amount differs | The invoice total here and in QuickBooks disagree. |
+| currency differs | QuickBooks states a currency and it is not this invoice's. A single-currency company states none and is not compared. |
+| payments differ | Money received (total less balance in QuickBooks, the sum of receipts here) disagrees. A payment made in QuickBooks and not yet recorded here, a partly paid invoice, and a receipt here QuickBooks does not hold all show up this way. |
+| voided in QuickBooks | The document was zeroed with the note "Voided". |
+| missing in QuickBooks | No QuickBooks invoice by link or by number (including one deleted since it was mirrored). |
+| missing here | A QuickBooks invoice no invoice here is linked to or numbered after. |
+
+An invoice not yet linked by the mirror is paired with QuickBooks by number and
+shown as not linked. A company with more than 20,000 invoices is refused rather
+than reported on partially.
+
+The same report lists **payments voided or deleted in QuickBooks** that a
+receipt here came from, next to the invoice differences, with the receipts and
+their invoices. The receipt stays on the invoice and nothing is corrected: it is
+a fact for the bookkeeper to settle, by hand, on whichever side is wrong. A
+void or delete of a QuickBooks payment no receipt here came from is not listed.
+It is learned from the webhook (`Void` and `Delete`), from the catch-up below,
+or from a payment read that finds the payment gone.
+
+### Catching up on missed webhooks
+
+A webhook Intuit never delivered, or one delivered while ezacto was down, leaves
+no trace. Once an hour the Worker asks Intuit's change data capture for the
+payments changed since a stored cursor (`quickbooks_sync_cursors`, one row per
+company) and applies them exactly as the webhook would, through the same claim,
+so a change the webhook already processed is skipped and a payment is never
+recorded twice.
+
+- The first run only places the cursor at that moment. History before it is not
+  replayed into the books unasked; the reconciliation report compares it.
+- The cursor moves only after a whole window of changes has been applied. A
+  failed run leaves it where it was, records `failed`, and is retried.
+- Each run reads from five minutes before the cursor, because re-applying is
+  free and a gap is not.
+- Intuit throttles with 429. Catch-up records the failure and a durable retry
+  time from `Retry-After` (delta seconds or an HTTP date), or 60 seconds when the
+  header is absent or invalid. It never sleeps inside a request. Scheduled runs
+  before that time make no provider call; a restart preserves the cooldown.
+- A CDC response at the 1,000-object ceiling is incomplete evidence. Catch-up
+  applies none of it, preserves the previous cursor, and records
+  `full_reconcile_needed`. CDC has no continuation cursor, and deleted objects
+  follow active ones: advancing to the newest visible timestamp could lose an
+  omitted change. Compare the books; this does not automatically reset recovery.
+- Intuit replays 30 days at most. A cursor older than 29 days is not read; the
+  run records `full_reconcile_needed`, the report says so, and the report is
+  the way to compare the books. After an old gap, disconnecting and reconnecting
+  allows the next run to start a fresh cursor. A recent capped window is not
+  automatically discarded by reconnecting.
+
+The report shows how the last run ended. See the dated
+[reconciliation boundary audit](quickbooks-reconciliation-boundary.md) for
+implemented behavior, provider limitations, and remaining acceptance.
+The self-hosted container has no cron
+and does not run catch-up. Only payments are caught up: an
+invoice's webhook has no effect here either, so nothing is lost by not reading
+invoices.
 
 ## 5. Keys
 
@@ -157,6 +236,7 @@ reads them from its environment.
 | `QUICKBOOKS_CLIENT_SECRET` | its secret |
 | `QUICKBOOKS_WEBHOOK_VERIFIER_TOKEN` | the verifier token of that environment's webhook |
 | `QUICKBOOKS_ENVIRONMENT` | `sandbox` for a development key; anything else, including unset, is live books |
+| `ACCOUNTING_ENABLED` | `false` turns accounting off even where the keys are set: its routes answer 403 `module_disabled`, and the app hides the Accounting section and the invoice QuickBooks line. Unset or `true` leaves it on; any other value stops start-up |
 
 How they reach a deployment, and how to prove they did, is in
 [Integrations: where the keys go](integrations.md). Once they are in place,
@@ -248,7 +328,7 @@ client an invoice just to prove configuration.
 | Invoice does not mirror | Outbox/scheduler, company mapping, provider response and stored sync outcome |
 | Webhook signature fails | Environment-specific verifier token and the raw request body |
 | Payment is accepted but skipped | Delivery reason, invoice mapping, already-recorded amount and remaining balance |
-| CloudEvents delivery is ignored | This handler expects the implemented legacy notification shape; use the matching subscription format |
+| CloudEvents delivery is ignored | Deployed release supports CloudEvents v1.0; exact connected `intuitaccountid`, subscribed Invoice/Payment entity, operation and RFC 3339 `time`; check the delivery reason |
 
 Use the integration's Disconnect action (the administrator API is
 `DELETE /api/v1/integrations/quickbooks`) to revoke/forget the connection rather

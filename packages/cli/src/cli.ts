@@ -1,5 +1,10 @@
 #!/usr/bin/env node
+import { calendarCleanupCommand } from './calendar-cleanup.js'
+import { webhookCommand } from './webhooks.js'
+import { invoiceEditInput, invoiceTimeSelection } from './invoice-input.js'
+import { beginInvoiceSudo, createSudoClients, endInvoiceSudo, readTerminalSecret } from './sudo.js'
 import { realpathSync } from 'node:fs'
+import { decryptBackupBundle } from './backup-decrypt.js'
 import { fileURLToPath } from 'node:url'
 import { parseArgs } from 'node:util'
 import { EzactoApiError, EzactoClient, type Whoami } from '@conflict-hq/ezacto-client'
@@ -22,6 +27,9 @@ import {
 import {
   confidentialityFilteredFetch,
   exportExpenses,
+  editInvoice,
+  prepareInvoiceEdit,
+  resolveInvoice,
   exportTimeEntries,
   generateInvoice,
   listInvoices,
@@ -31,9 +39,11 @@ import {
   runReport,
   sendInvoice,
   uninvoiced,
+  unlinkTime,
   validReportDefinitions,
   requiredReportScope,
   type MoneyCommandResult,
+  type InvoiceEditInput,
 } from './money.js'
 import {
   logTime,
@@ -44,6 +54,8 @@ import {
   type TimeCommandResult,
 } from './time.js'
 import { createBackup, restoreBackup, verifyBackup } from './backup.js'
+import { createS3Client, parseS3Destination, s3ConfigFromEnvironment } from './s3.js'
+import { syncBundle } from './sync.js'
 
 const USAGE = `ez <command> [options]
 
@@ -56,11 +68,21 @@ Commands:
   timer        Start, stop, or inspect the one running timer
   week         Show the Monday–Sunday time grid
   uninvoiced   Show uninvoiced amounts (requires reports:read)
-  invoice      Generate, send, or list invoices
+  invoice      Generate, send, list, or edit invoices; edits and unlink-time require sudo
+  sudo         Reauthenticate for one draft edit: ez sudo invoice edit <number> [options]
   report       List or run reports; report list shows each required scope
   export       Export time entries or expenses as CSV (or --verify a backup bundle)
-  backup       Create a full backup bundle from a local database
+  calendar-cleanup  Inspect retained calendar custody or record administrator cleanup evidence
+  webhooks     Show delivery logs or replay a delivery using a session piped on stdin
+  backup       Create a full backup bundle from a local database (--sync-to copies it to S3)
+  backup-decrypt  Decrypt and verify a downloaded encrypted Worker logical bundle
   restore      Restore a backup bundle into a fresh database
+
+Availability:
+  Help and report list are offline inventories, not the connected instance's capabilities.
+  Remote commands require the instance module to be enabled and your token to have access.
+  A module_disabled response is an operator policy refusal; signing in again cannot enable it.
+  Local backup, restore, verification and decryption do not use the server backup module.
 
 Options:
   --org <name>              Organization config name (default: active or "default")
@@ -96,9 +118,24 @@ Options:
   --columns <a,b,c>         Export columns, in order (default: every exportable one)
   --time-summary <type>     Time summary type for invoice generate
   --expense-summary <type>  Expense summary type for invoice generate
+  --subject <text>          Invoice edit: new subject
+  --notes-file <path>       Invoice edit: replace the notes with the contents of a file
+  --issue-date <yyyy-mm-dd> Invoice edit: new issue date
+  --due-date <yyyy-mm-dd>   Invoice edit: new due date
+  --reauth-stdin           Sudo: read JSON email/password and optional authenticator/recovery code from stdin
+  --terms <terms>           Invoice edit: upon_receipt, net_15, net_30, net_45, net_60, or custom
+  --line <n>                Invoice edit: line to change, counted from 1 in invoice order
+  --quantity <n>            Invoice edit: new quantity for --line
+  --rate <dollars>          Invoice edit: new unit price for --line, such as 150 or 150.50
+  --description <text>      Invoice edit: new description for --line
+  --entries <id,id,...>     Invoice unlink-time: time entry IDs to mark uninvoiced
   --database <path>         SQLite database path (or set EZACTO_DATA_DIR)
-  --output <path>           Output directory for ez backup (default: current directory)
+  --output <path>           Output directory for backup or backup-decrypt
   --attachments <path>      Attachment directory for backup/restore
+  --sync-to <s3://bucket/prefix>  Copy the bundle to an S3-compatible bucket after ez backup
+                            (credentials: AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY; optional
+                            AWS_SESSION_TOKEN, EZACTO_S3_ENDPOINT, EZACTO_S3_REGION, EZACTO_S3_ADDRESSING)
+  --bundle <path>           With --sync-to, sync an existing bundle instead of creating one (resumes)
   --verify                  Verify checksums for ez export --verify
   --json                    Emit machine-readable JSON
   --help                    Show this help
@@ -109,10 +146,12 @@ export interface CliRuntime {
   stdout(line: string): void
   stderr(line: string): void
   readStdin(): Promise<string>
+  readSecret?(prompt: string): Promise<string>
 }
 
 const processRuntime = (): CliRuntime => ({
   environment: process.env,
+  readSecret: readTerminalSecret,
   stdout: (line) => process.stdout.write(`${line}\n`),
   stderr: (line) => process.stderr.write(`${line}\n`),
   readStdin: async () => {
@@ -354,11 +393,38 @@ const logout = async (
   return 0
 }
 
-export const runCli = async (
+interface InvoiceElevationContext {
+  credential: string
+  invoiceId: number
+  version: number
+  organizationName: string
+  organization: OrganizationConfig
+  client: EzactoClient
+  edit?: InvoiceEditInput
+}
+const invoiceClient = (
+  selected: { name: string; organization: OrganizationConfig; client: EzactoClient },
+  elevation: InvoiceElevationContext | undefined,
+): EzactoClient => {
+  if (elevation === undefined) return selected.client
+  if (
+    selected.name !== elevation.organizationName ||
+    selected.organization.base_url !== elevation.organization.base_url ||
+    selected.organization.token !== elevation.organization.token ||
+    selected.organization.user_id !== elevation.organization.user_id
+  )
+    throw new Error(
+      'The stored organization changed during reauthentication. Review the configuration before retrying.',
+    )
+  return elevation.client
+}
+const executeCli = async (
   argv: readonly string[],
-  runtime: CliRuntime = processRuntime(),
+  runtime: CliRuntime,
+  elevation?: InvoiceElevationContext,
 ): Promise<number> => {
-  const { positionals, values } = parseArgs({
+  const { positionals, values, tokens } = parseArgs({
+    tokens: true,
     args: [...argv],
     allowPositionals: true,
     strict: true,
@@ -367,6 +433,7 @@ export const runCli = async (
       'base-url': { type: 'string' },
       token: { type: 'string' },
       'token-stdin': { type: 'boolean', default: false },
+      'reauth-stdin': { type: 'boolean', default: false },
       config: { type: 'string' },
       message: { type: 'string', short: 'm' },
       date: { type: 'string' },
@@ -396,9 +463,21 @@ export const runCli = async (
       columns: { type: 'string' },
       'time-summary': { type: 'string' },
       'expense-summary': { type: 'string' },
+      subject: { type: 'string' },
+      'notes-file': { type: 'string' },
+      'issue-date': { type: 'string' },
+      'due-date': { type: 'string' },
+      terms: { type: 'string' },
+      line: { type: 'string' },
+      quantity: { type: 'string' },
+      rate: { type: 'string' },
+      description: { type: 'string' },
+      entries: { type: 'string' },
       database: { type: 'string' },
       output: { type: 'string' },
       attachments: { type: 'string' },
+      'sync-to': { type: 'string' },
+      bundle: { type: 'string' },
       verify: { type: 'boolean', default: false },
       json: { type: 'boolean', default: false },
       help: { type: 'boolean', default: false },
@@ -434,9 +513,103 @@ export const runCli = async (
   if (values['base-url'] !== undefined || values.token !== undefined || values['token-stdin']) {
     throw new Error('--base-url and token options are valid only with ez login')
   }
+  if (command === 'calendar-cleanup') return calendarCleanupCommand(commandArguments, runtime)
+  if (command === 'webhooks') return webhookCommand(commandArguments, runtime)
+
   if (values.columns !== undefined && command !== 'export') {
     throw new Error('--columns is valid only with ez export')
   }
+if (values['reauth-stdin'] && command !== 'sudo')
+  throw new Error('--reauth-stdin is valid only with ez sudo')
+if (command === 'sudo') {
+  if (
+    commandArguments.length !== 3 ||
+    commandArguments[0] !== 'invoice' ||
+    !['edit', 'unlink-time'].includes(commandArguments[1]!)
+  )
+    throw new Error('usage: ez sudo invoice <edit|unlink-time> <number> [options]')
+  const allowed = new Set([
+    'org',
+    'config',
+    'reauth-stdin',
+    'json',
+    'csv',
+    'subject',
+    'notes-file',
+    'issue-date',
+    'due-date',
+    'terms',
+    'line',
+    'quantity',
+    'rate',
+    'description',
+    'entries',
+  ])
+  for (const token of tokens)
+    if (token.kind === 'option' && !allowed.has(token.name))
+      throw new Error(`--${token.name} is not valid with ez sudo invoice`)
+  const action = commandArguments[1]!,
+    number = commandArguments[2]!
+  const edit = invoiceEditInput(number, action === 'edit' ? values : {})
+  if (action === 'edit') {
+    if (values.entries !== undefined) throw new Error('--entries is valid only with unlink-time')
+    prepareInvoiceEdit(edit)
+  } else {
+    if (
+      [
+        'subject',
+        'notes-file',
+        'issue-date',
+        'due-date',
+        'terms',
+        'line',
+        'quantity',
+        'rate',
+        'description',
+      ].some((key) => values[key as keyof typeof values] !== undefined)
+    )
+      throw new Error('Invoice content options are valid only with edit')
+    invoiceTimeSelection(values.entries)
+  }
+  const selected = await selectedClient(configPath, values.org)
+  for (const scope of [
+    'invoices:read',
+    'invoices:write',
+    ...(action === 'unlink-time' ? ['time_entries:write'] : []),
+  ])
+    requireStoredScope(selected.organization, scope)
+  const clients = createSudoClients(selected.organization)
+  const invoice = await resolveInvoice(clients.business, number)
+  if (invoice.state !== 'draft')
+    throw new Error(`invoice #${invoice.number} is ${invoice.state}; ez sudo edits drafts only`)
+  if (
+    action === 'edit' &&
+    edit.line !== undefined &&
+    !invoice.line_items.sort((a, b) => a.position - b.position)[edit.line - 1]
+  )
+    throw new Error(`invoice #${invoice.number} has no line ${edit.line}`)
+  const grant = await beginInvoiceSudo(clients.issuer, invoice.id, runtime, values['reauth-stdin'])
+  const omit = new Set(
+    tokens
+      .filter((token) => token.kind === 'option' && token.name === 'reauth-stdin')
+      .map((token) => token.index),
+  )
+  omit.add(tokens.find((token) => token.kind === 'positional')!.index)
+  const child = argv.filter((_arg, index) => !omit.has(index))
+  try {
+    return await executeCli(child, runtime, {
+      credential: grant.credential,
+      invoiceId: invoice.id,
+      version: invoice.version,
+      organizationName: selected.name,
+      organization: selected.organization,
+      client: clients.business,
+      ...(action === 'edit' ? { edit } : {}),
+    })
+  } finally {
+    await endInvoiceSudo(clients.issuer, grant, runtime)
+  }
+}
   if (command === 'log') {
     if (commandArguments.length !== 3) {
       throw new Error('usage: ez log <duration> <project> <task> [-m note] [--date yyyy-mm-dd]')
@@ -570,6 +743,50 @@ export const runCli = async (
       throw new Error('time options are not valid with ez invoice')
     }
     const action = commandArguments[0]
+    const editOptions =
+      values.subject !== undefined || values['notes-file'] !== undefined ||
+      values['issue-date'] !== undefined || values['due-date'] !== undefined || values.terms !== undefined ||
+      values.line !== undefined || values.quantity !== undefined ||
+      values.rate !== undefined || values.description !== undefined
+    if (editOptions && action !== 'edit') {
+      throw new Error('--subject, --notes-file, --issue-date, --due-date, --terms, --line, --quantity, --rate, and --description are valid only with ez invoice edit')
+    }
+    if (values.entries !== undefined && action !== 'unlink-time') {
+      throw new Error('--entries is valid only with ez invoice unlink-time')
+    }
+
+    if (action === 'edit') {
+      if (commandArguments.length !== 2) {
+        throw new Error('usage: ez invoice edit <number> [--subject s] [--notes-file path] [--issue-date d] [--terms t] [--line n --quantity q --rate r --description d]')
+      }
+      const edit = elevation?.edit ?? invoiceEditInput(commandArguments[1]!, values)
+      const selected = await selectedClient(configPath, values.org)
+      requireStoredScope(selected.organization, 'invoices:write')
+      return printMoneyResult(
+        await editInvoice(invoiceClient(selected, elevation), {
+          ...edit,
+          ...(elevation === undefined ? {} : {elevationCredential:elevation.credential,expectedVersion:elevation.version,expectedInvoiceId:elevation.invoiceId}),
+        }),
+        values.json,
+        values.csv,
+        runtime,
+      )
+    }
+
+    if (action === 'unlink-time') {
+      if (commandArguments.length !== 2) throw new Error('usage: ez invoice unlink-time <number> --entries <id,id,...>')
+      const entryIds = invoiceTimeSelection(values.entries)
+      const selected = await selectedClient(configPath, values.org)
+      for (const scope of ['invoices:read', 'time_entries:write', 'invoices:write']) {
+        requireStoredScope(selected.organization, scope)
+      }
+      return printMoneyResult(
+        await unlinkTime(invoiceClient(selected, elevation), {number:commandArguments[1]!,entryIds,...(elevation===undefined?{}:{elevationCredential:elevation.credential,expectedVersion:elevation.version,expectedInvoiceId:elevation.invoiceId})}),
+        values.json,
+        values.csv,
+        runtime,
+      )
+    }
 
     if (action === 'generate') {
       if (commandArguments.length !== 1) throw new Error('ez invoice generate accepts no additional positional arguments')
@@ -615,7 +832,7 @@ export const runCli = async (
         throw new Error('ez invoice list accepts no additional positional arguments')
       }
       if (action === undefined && commandArguments.length !== 0) {
-        throw new Error('usage: ez invoice <generate|send|list>')
+        throw new Error('usage: ez invoice <generate|send|list|edit|unlink-time>')
       }
       const selected = await selectedClient(configPath, values.org)
       return printMoneyResult(
@@ -626,7 +843,7 @@ export const runCli = async (
       )
     }
 
-    throw new Error('usage: ez invoice <generate|send|list>')
+    throw new Error('usage: ez invoice <generate|send|list|edit|unlink-time>')
   }
 
   if (command === 'report') {
@@ -840,9 +1057,56 @@ export const runCli = async (
     return undefined
   }
 
+  if ((values['sync-to'] !== undefined || values.bundle !== undefined) && command !== 'backup') {
+    throw new Error('--sync-to and --bundle are valid only with ez backup')
+  }
+
+  if (command === 'backup-decrypt') {
+    if (commandArguments.length !== 1 || values.output === undefined)
+      throw new Error('usage: ez backup-decrypt <encrypted-run-directory> --output <new-directory>; set EZACTO_BACKUP_ENCRYPTION_KEY in the environment')
+    const result = await decryptBackupBundle({inputDirectory:commandArguments[0]!,outputDirectory:values.output,
+      encodedKey:runtime.environment.EZACTO_BACKUP_ENCRYPTION_KEY??''})
+    runtime.stdout(values.json?json(result):`Decrypted and verified ${result.tableCount} tables: ${result.outputDirectory}. This is a Worker logical bundle; see RESTORE.md for recovery limits.`)
+    return 0
+  }
+
+
   if (command === 'backup') {
     if (commandArguments.length !== 0) throw new Error('ez backup accepts no positional arguments')
     if (values.verify) throw new Error('--verify is valid only with ez export')
+    if (values.bundle !== undefined && values['sync-to'] === undefined) {
+      throw new Error('--bundle needs --sync-to: it names an existing bundle to copy off-platform')
+    }
+    const syncTo = async (bundleDirectory: string) => {
+      const { bucket, prefix } = parseS3Destination(values['sync-to']!)
+      runtime.stderr(
+        'warning: the bundle is sent as is, not encrypted; it carries password hashes and authenticator seeds, so use a private bucket with server-side encryption',
+      )
+      const synced = await syncBundle(bundleDirectory, {
+        client: createS3Client(s3ConfigFromEnvironment(runtime.environment)),
+        bucket,
+        prefix,
+      })
+      const destination = `s3://${bucket}/${[prefix, synced.bundleName].filter((part) => part !== '').join('/')}`
+      return {
+        json: {
+          destination,
+          objects: synced.objects.length,
+          uploaded: synced.uploaded,
+          already_present: synced.skipped,
+          bytes_uploaded: synced.uploadedBytes,
+        },
+        lines: [
+          `synced to ${destination}`,
+          `objects: ${synced.objects.length}, uploaded: ${synced.uploaded}, already present: ${synced.skipped}, bytes uploaded: ${synced.uploadedBytes}`,
+        ],
+      }
+    }
+    if (values.bundle !== undefined) {
+      const synced = await syncTo(values.bundle)
+      runtime.stdout(values.json ? json({ bundle: values.bundle, sync: synced.json }) : synced.lines.join('\n'))
+      return 0
+    }
     const databasePath = resolveDatabase()
     const attachmentDirectory = resolveAttachments()
     const outputDirectory = values.output ?? process.cwd()
@@ -851,6 +1115,9 @@ export const runCli = async (
       attachmentDirectory,
       outputDirectory,
     })
+    // Sync before reporting success: a backup that was asked to leave the
+    // machine and did not is a failed command, and the thrown error says why.
+    const synced = values['sync-to'] === undefined ? undefined : await syncTo(result.bundleDirectory)
     const tableCount = result.manifest.tables.length
     const totalRows = result.manifest.tables.reduce((sum, table) => sum + table.row_count, 0)
     const attachmentCount = result.manifest.attachments.length
@@ -863,11 +1130,13 @@ export const runCli = async (
             rows: totalRows,
             attachments: attachmentCount,
             database_sha256: result.manifest.database_sha256,
+            ...(synced === undefined ? {} : { sync: synced.json }),
           })
         : [
             `backup created: ${result.bundleDirectory}`,
             `tables: ${tableCount}, rows: ${totalRows}, attachments: ${attachmentCount}`,
             `database sha256: ${result.manifest.database_sha256}`,
+            ...(synced === undefined ? [] : synced.lines),
           ].join('\n'),
     )
     return 0
@@ -890,12 +1159,14 @@ export const runCli = async (
       values.json
         ? json({
             restored: true,
+            ...(result.quarantined ? { quarantined: true } : {}),
             tables: result.tablesRestored,
             rows: result.totalRows,
             attachments: result.attachmentsRestored,
           })
         : [
             `restore complete: ${targetDatabasePath}`,
+            ...(result.quarantined ? ['QUARANTINED: keep this database offline. Replay current privacy evidence and record reviewed release before starting service.'] : []),
             `tables: ${result.tablesRestored}, rows: ${result.totalRows}, attachments: ${result.attachmentsRestored}`,
           ].join('\n'),
     )
@@ -957,10 +1228,22 @@ const errorDetails = (error: unknown): CliErrorDetails => {
     const detail = body !== null && typeof body === 'object' ? body : {}
     const code: unknown = Reflect.get(detail, 'code')
     const message: unknown = Reflect.get(detail, 'message')
+    const fields: unknown = Reflect.get(detail, 'fields')
+    const fieldMessages = Array.isArray(fields)
+      ? fields.flatMap((field: unknown) => {
+          const text: unknown = field !== null && typeof field === 'object'
+            ? Reflect.get(field, 'message') : undefined
+          return typeof text === 'string' && text.trim() !== '' ? [text.trim()] : []
+        })
+      : []
     return {
       message: error.status === 401
         ? 'authentication failed: the API token is invalid or revoked'
-        : typeof message === 'string' && message.trim() !== '' ? message : 'ezacto API request failed',
+        : code === 'invoice_version_conflict'
+          ? 'the invoice changed since it was read; run the command again'
+          : fieldMessages.length > 0
+            ? fieldMessages.join(' ')
+            : typeof message === 'string' && message.trim() !== '' ? message : 'ezacto API request failed',
       ...(typeof code === 'string' ? { code } : {}),
       status: error.status,
       ...(typeof error.requestId === 'string' ? { request_id: error.requestId } : {}),
@@ -976,6 +1259,8 @@ const errorMessage = (error: unknown): string => {
     .filter((part) => part !== undefined).join(', ')
   return `${details.message} (${context})`
 }
+
+export const runCli = (argv:readonly string[],runtime:CliRuntime=processRuntime()):Promise<number>=>executeCli([...argv],runtime)
 
 const isMain = ((): boolean => {
   const entry = process.argv[1]
@@ -1003,4 +1288,4 @@ if (isMain) {
     })
 }
 
-export { USAGE }
+export { USAGE, errorMessage }

@@ -4,6 +4,8 @@ import {
   isCommercialTermField,
   GeneralResourceError,
   maximumTimeEntryNoteLength,
+  timeRoundingIncrements,
+  timeRoundingModes,
   TeamError,
   type GeneralMutationInput,
   type GeneralResourceFilters,
@@ -26,8 +28,15 @@ import {
   type FieldError,
 } from "./errors.js";
 import { cursorPage } from "./pagination.js";
+import { installProjectMissingRatesRoutes } from "./project-missing-rates.js";
 
 export interface GeneralResourceRouteOptions {
+  missingRates?: {
+    recover(input: { projectId: number; actorUserId: number; fingerprint?: string; occurredAt: string }): Promise<{
+      project_id: number; hourly_rate_cents: number; currency: string; entry_count: number; seconds: number;
+      earliest_date: string | null; latest_date: string | null; fingerprint: string; applied_entries: number;
+    }>;
+  };
   repository: GeneralResourceRepository;
   cursorSigningKey: Uint8Array;
   clock?: () => string;
@@ -52,10 +61,13 @@ type FieldType =
   | "string-array"
   | "positive-int-array"
   | "enum"
+  | "nullable-enum"
+  | "nullable-integer-in"
   | "nullable-date";
 interface FieldSpec {
   type: FieldType;
   values?: readonly string[];
+  integers?: readonly number[];
   maximum?: number;
 }
 interface ResourceRouteDefinition {
@@ -108,6 +120,16 @@ const valueEnum = (...values: string[]): FieldSpec => ({
   type: "enum",
   values,
 });
+// A project's own rounding, or null for the organization's (issue 949). The two
+// fields are one rule, so they travel together: see `parseMutation`.
+const nullableRoundingMode: FieldSpec = {
+  type: "nullable-enum",
+  values: timeRoundingModes,
+};
+const nullableRoundingMinutes: FieldSpec = {
+  type: "nullable-integer-in",
+  integers: timeRoundingIncrements,
+};
 
 const routeDefinitions: Readonly<
   Record<GeneralResourceKind, ResourceRouteDefinition>
@@ -198,6 +220,8 @@ const routeDefinitions: Readonly<
       notes: nullableString,
       billing_currency: nullableCurrencyCode,
       time_entry_notes_minimum_length: nullableTimeEntryNoteMinimumLength,
+      time_rounding_mode: nullableRoundingMode,
+      time_rounding_minutes: nullableRoundingMinutes,
     },
     required: new Set(["client_id", "name"]),
     filters: {
@@ -376,18 +400,24 @@ const hiddenGeneralField = (
   return false;
 };
 
-const serializeGeneral = (
+/** The record with every field this viewer may not read removed. */
+export const visibleGeneralRecord = (
   kind: GeneralResourceKind,
   record: Readonly<GeneralResourceRecord>,
   viewer: Readonly<UserPrincipal>,
-): Record<string, GeneralValue> => {
-  const visible = Object.fromEntries(
+): GeneralResourceRecord =>
+  Object.fromEntries(
     Object.entries(record).filter(
       ([field]) => !hiddenGeneralField(kind, field, viewer),
     ),
   ) as GeneralResourceRecord;
-  return serializeRaw(visible);
-};
+
+const serializeGeneral = (
+  kind: GeneralResourceKind,
+  record: Readonly<GeneralResourceRecord>,
+  viewer: Readonly<UserPrincipal>,
+): Record<string, GeneralValue> =>
+  serializeRaw(visibleGeneralRecord(kind, record, viewer));
 
 const objectBody = async <Bindings extends object>(
   context: Context<ApiContext<Bindings>>,
@@ -493,6 +523,18 @@ const parseField = (
     return typeof value === "string" && spec.values?.includes(value)
       ? value
       : invalid("invalid_enum", `${field} is not an accepted value`);
+  if (spec.type === "nullable-enum")
+    return value === null || (typeof value === "string" && spec.values?.includes(value))
+      ? (value as string | null)
+      : invalid("invalid_enum", `${field} is not an accepted value`);
+  if (spec.type === "nullable-integer-in")
+    return value === null ||
+      (typeof value === "number" && spec.integers?.includes(value))
+      ? (value as number | null)
+      : invalid(
+          "invalid_integer",
+          `${field} must be one of ${spec.integers?.join(", ")} or null`,
+        );
   if (spec.type === "nullable-date")
     return value === null || (typeof value === "string" && canonicalDate(value))
       ? (value as string | null)
@@ -532,7 +574,9 @@ const parseMutation = async <Bindings extends object>(
   const errors: FieldError[] = [];
   const output: Record<string, GeneralValue> = {};
   for (const field of Object.keys(body)) {
-    const spec = definition.fields[field];
+    const spec = Object.hasOwn(definition.fields, field)
+      ? definition.fields[field]
+      : undefined;
     if (spec === undefined) {
       errors.push({
         field,
@@ -544,6 +588,21 @@ const parseMutation = async <Bindings extends object>(
     const value = parseField(field, body[field], spec, errors);
     if (value !== undefined) output[camel(field)] = value;
   }
+  // A project's rounding rule is a direction and an increment, both set or
+  // both null: half of one would be a rule nobody chose.
+  if (
+    (Object.hasOwn(body, "time_rounding_mode") ||
+      Object.hasOwn(body, "time_rounding_minutes")) &&
+    (!Object.hasOwn(body, "time_rounding_mode") ||
+      !Object.hasOwn(body, "time_rounding_minutes") ||
+      (body["time_rounding_mode"] === null) !== (body["time_rounding_minutes"] === null))
+  )
+    errors.push({
+      field: "time_rounding_mode",
+      code: "incomplete_rule",
+      message:
+        "time_rounding_mode and time_rounding_minutes are set together, or both null for the organization's rule",
+    });
   if (create)
     for (const field of definition.required)
       if (!Object.hasOwn(body, field))
@@ -681,7 +740,7 @@ const translate = (error: unknown): never => {
 
 const requireResourceModule = async (
   kind: GeneralResourceKind,
-  options: Required<GeneralResourceRouteOptions>,
+  options: Required<Omit<GeneralResourceRouteOptions, "missingRates">>,
 ): Promise<void> => {
   if (kind === "expense-categories" && !(await options.isExpensesModuleEnabled())) {
     throw new ApiError({
@@ -742,7 +801,7 @@ const resourceScopes: Readonly<
   "task-assignments": { read: "projects:read", write: "projects:write" },
 };
 
-const requireResourceRead = <Bindings extends object>(
+export const requireResourceRead = <Bindings extends object>(
   context: Context<ApiContext<Bindings>>,
   kind: GeneralResourceKind,
 ): UserPrincipal => {
@@ -870,14 +929,14 @@ const requireRateWrite = <Bindings extends object>(
   return principal;
 };
 
-const teamViewer = (principal: Readonly<UserPrincipal>): TeamViewer => ({
+export const teamViewer = (principal: Readonly<UserPrincipal>): TeamViewer => ({
   userId: principal.userId,
   profile: principal.profile,
   managerGrants: principal.managerGrants,
 });
 
 const ensureTeamTarget = async (
-  options: Readonly<Required<GeneralResourceRouteOptions>>,
+  options: Readonly<Required<Omit<GeneralResourceRouteOptions, "missingRates">>>,
   principal: Readonly<UserPrincipal>,
   userId: number,
 ): Promise<void> => {
@@ -928,7 +987,7 @@ const envelope = (
 const installResource = <Bindings extends object>(
   api: Hono<ApiContext<Bindings>>,
   kind: GeneralResourceKind,
-  options: Required<GeneralResourceRouteOptions>,
+  options: Required<Omit<GeneralResourceRouteOptions, "missingRates">>,
 ): void => {
   const definition = routeDefinitions[kind];
   api.get(`/${kind}`, async (context) => {
@@ -1029,7 +1088,7 @@ const installResource = <Bindings extends object>(
 const installRates = <Bindings extends object>(
   api: Hono<ApiContext<Bindings>>,
   kind: UserRateKind,
-  options: Required<GeneralResourceRouteOptions>,
+  options: Required<Omit<GeneralResourceRouteOptions, "missingRates">>,
 ): void => {
   const segment = `${kind}-rates`;
   api.get(`/users/:userId/${segment}`, async (context) => {
@@ -1209,7 +1268,9 @@ export const installGeneralResourceRoutes = <Bindings extends object>(
   api: Hono<ApiContext<Bindings>>,
   supplied: GeneralResourceRouteOptions,
 ): void => {
-  const options: Required<GeneralResourceRouteOptions> = {
+  installProjectMissingRatesRoutes(api, supplied.missingRates, supplied.clock);
+
+  const options: Required<Omit<GeneralResourceRouteOptions, "missingRates">> = {
     ...supplied,
     clock: supplied.clock ?? (() => new Date().toISOString()),
     isTeamModuleEnabled: supplied.isTeamModuleEnabled ?? (async () => true),

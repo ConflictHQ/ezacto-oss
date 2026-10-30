@@ -1,3 +1,5 @@
+export { createCalendarSyncService, type CalendarSyncService } from './calendar-sync.js'
+export { createDeelPaymentStatusRuntime, type DeelPaymentStatusRuntime, type DeelPaymentStatusStore, type DeelPaymentStatusClaim, type DeelPaymentStatusResult } from './deel/payment-status.js'
 export {
   createStripeRuntime,
   type StripeConfig,
@@ -39,12 +41,22 @@ export {
 export {
   createBillMirrorSubscriber,
   createBillRuntime,
+  billConfigured,
   type BillConfig,
   type BillConnectionStatus,
   type BillMirrorSource,
   type BillRuntime,
   type BillRuntimeOptions,
 } from './bill/runtime.js'
+export {
+  createManagedBillRuntime,
+  type ManagedBillOpenedCredentials,
+  type ManagedBillRuntime,
+  type ManagedBillRuntimeOptions,
+  type ManagedBillRuntimeStore,
+  type ManagedBillState,
+  type ManagedBillStatus,
+} from './bill/managed.js'
 export {
   createScheduledReconciliation as createScheduledBillReconciliation,
   type ScheduledReconciliationOptions as ScheduledBillReconciliationOptions,
@@ -107,6 +119,8 @@ export {
   type DeelPerson,
   type DeelTimesheetInput,
   type DeelTimesheetReceipt,
+  type DeelTimesheetStatus,
+  type DeelTimesheetStatusReceipt,
   type DeelTimesheetSink,
 } from './deel/client.js'
 export {
@@ -124,6 +138,34 @@ export {
   type UnsyncableEntry,
   type UnsyncableReason,
 } from './deel/time-sync.js'
+export {
+  reconcileTransferLog,
+  type EditedTransfer,
+  type DeelReconciliationReport,
+  type LoggedTransfer,
+} from './deel/reconcile.js'
+export {
+  createDeelSyncRuntime,
+  type DeelSyncClient,
+  deelConfigurationProblem,
+  type DeelSyncConfig,
+  type DeelSyncPreview,
+  type DeelSyncPreviewResult,
+  type DeelSyncRunRequest,
+  type DeelSyncRunResult,
+  type DeelTransferIntents,
+  type DeelSyncRuntime,
+  type DeelSyncRuntimeOptions,
+  type DeelSyncSettingsSource,
+  type DeelSyncSource,
+  type DeelSyncSummary,
+  type DeelSyncWindow,
+} from './deel/runtime.js'
+export {
+  createManagedDeelSyncRuntime,
+  type ManagedDeelCredentialSource,
+  type ManagedDeelSyncRuntimeOptions,
+} from './deel/managed-runtime.js'
 export {
   QUICKBOOKS_ACCOUNTING_SCOPE,
   QUICKBOOKS_DEFAULT_ENDPOINTS,
@@ -147,17 +189,22 @@ export {
   type TokenRevokeInput,
 } from './quickbooks/oauth.js'
 export {
+  QUICKBOOKS_CDC_PAGE_SIZE,
+  QUICKBOOKS_MAXIMUM_LISTED_INVOICES,
   QUICKBOOKS_MINOR_VERSION,
+  QUICKBOOKS_QUERY_PAGE_SIZE,
   QUICKBOOKS_PRODUCTION_BASE_URL,
   QUICKBOOKS_SANDBOX_BASE_URL,
   QuickBooksApiError,
   QuickBooksClient,
   QuickBooksResponseError,
+  type QuickBooksCapturedPayment,
   type QuickBooksClientOptions,
   type QuickBooksCustomer,
   type QuickBooksInvoice,
   type QuickBooksInvoiceLine,
   type QuickBooksPayment,
+  type QuickBooksPaymentChanges,
   type QuickBooksRef,
 } from './quickbooks/client.js'
 export {
@@ -188,6 +235,7 @@ export {
 } from './quickbooks/webhook.js'
 export {
   inboundPayments,
+  isVoidedPayment,
   mirrorInvoice,
   mirrorPayment,
   paymentPayload,
@@ -207,20 +255,35 @@ export {
   type MirrorQuickBooks,
 } from './quickbooks/mirror.js'
 export {
+  reconcileInvoices,
+  type ReconcileIssue,
+  type ReconcileLocalInvoice,
+  type ReconcileStatus,
+  type ReconciliationReport,
+  type ReconciliationRow,
+} from './quickbooks/reconcile.js'
+export {
   createQuickBooksMirrorSubscriber,
   createQuickBooksRuntime,
+  quickBooksConfigured,
+  type QuickBooksCatchUp,
   type QuickBooksConfig,
   type QuickBooksConnectionStatus,
   type QuickBooksConnectionStore,
   type QuickBooksInvoiceSyncState,
   type QuickBooksMirrorOutcomeKind,
   type QuickBooksMirrorSource,
+  type QuickBooksPaymentDivergence,
   type QuickBooksPaymentRecording,
+  type QuickBooksReconciliation,
+  type QuickBooksReconciliationSource,
   type QuickBooksRuntime,
   type QuickBooksRuntimeOptions,
   type QuickBooksService,
   type QuickBooksSourceInvoice,
   type QuickBooksSourcePayment,
+  type QuickBooksSyncCursor,
+  type QuickBooksSyncOutcome,
   type QuickBooksSyncResult,
 } from './quickbooks/runtime.js'
 export {
@@ -233,9 +296,45 @@ export {
   type ProposedTimeEntry,
 } from './calendar/proposals.js'
 
-
 export * from './wise/runtime.js'
 export * from './wise/webhook.js'
 export * from './wise/client.js'
 
 export { createWisePaymentProvider } from './wise/payments.js'
+
+export type {
+  PostedWorkItemTimeNote,
+  WorkItemProvider,
+  WorkItemSnapshot,
+  WorkItemTimeNote,
+  WorkItemWebhookRequest,
+  WorkItemWebhookVerdict,
+} from './work-items/provider.js'
+
+export * from './work-items/github-read.js'
+
+export { createWorkerWebhookTransport } from './outbound-webhooks.js'
+
+export * from './deel/staging.js'
+export { wiseConfigured, parseWiseMode } from './wise/runtime.js'
+
+export {
+  createMercuryBankFeed,
+  type MercuryBankFeedOptions,
+  type ObservedBankFeed,
+  type ObservedBankFeedPage,
+} from './bank-feed/mercury.js'
+export { createWiseBankFeed, type WiseBankFeedOptions } from './bank-feed/wise.js'
+export { BankFeedError, type FeedObservation, type FeedObservations } from './bank-feed/shared.js'
+export { createBankFeedRuntime, bankFeedConfiguration, type BankFeedConfiguration, type BankFeedEnvironment, type BankFeedRuntimeStore, type BankFeedStatus } from './bank-feed/runtime.js'
+export { createConfiguredBankFeedRuntime } from './bank-feed/runtime.js'
+export { createGoogleCalendarSource, createMicrosoftCalendarSource, type CalendarSourceOptions } from './calendar/sources.js'
+export * from './calendar/oauth.js'
+export * from './calendar/runtime.js'
+export * from './work-items/github-client.js'
+export * from './work-items/github-runtime.js'
+export * from './work-items/github-reader-errors.js'
+export { createGithubCommentSurface, type GithubCommentOptions } from './work-items/github-comments.js'
+export { GithubPublicationError, type GithubPublicationAuthority, type GithubPublicationPort, type GithubPublicationPreview, type GithubPublicationRow } from './work-items/github-publication-model.js'
+
+export * from './work-items/publication.js'

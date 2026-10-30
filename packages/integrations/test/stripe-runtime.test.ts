@@ -306,3 +306,52 @@ describe('receiving a payment', () => {
     expect(harness.source.recordPayment).not.toHaveBeenCalled()
   })
 })
+
+
+describe('delayed checkout and Payment Link mapping (#1131)', () => {
+  it('[money] records a signed asynchronous success once the session is paid', async () => {
+    const harness = runtime()
+    const session = JSON.parse(paidSession())
+    session.type = 'checkout.session.async_payment_succeeded'
+    const payload = JSON.stringify(session)
+    expect(
+      await harness.runtime.receiveWebhook({ payload, signature: await sign(payload) }),
+    ).toEqual({ kind: 'recorded', invoiceId: 1315 })
+    expect(harness.source.recordPayment).toHaveBeenCalledWith({
+      invoiceId: 1315,
+      paymentIntentId: 'pi_example',
+      amountCents: 250000,
+    })
+  })
+
+  it('[money] does not record unpaid delayed success or an asynchronous failure labelled paid', async () => {
+    for (const [event, status] of [
+      ['checkout.session.async_payment_succeeded', 'unpaid'],
+      ['checkout.session.async_payment_failed', 'paid'],
+    ]) {
+      const harness = runtime()
+      const session = JSON.parse(paidSession())
+      session.type = event
+      session.data.object.payment_status = status
+      const payload = JSON.stringify(session)
+      expect(
+        await harness.runtime.receiveWebhook({ payload, signature: await sign(payload) }),
+      ).toMatchObject({ kind: 'ignored' })
+      expect(harness.source.recordPayment).not.toHaveBeenCalled()
+    }
+  })
+
+  it('[money] maps absent metadata through the session Payment Link, never its payment intent', async () => {
+    const src = source({
+      invoiceForLink: vi.fn(async (id) => (id === 'plink_known' ? 1315 : null)),
+    })
+    const harness = runtime({ source: src })
+    const session = JSON.parse(paidSession({}))
+    session.data.object.payment_link = 'plink_known'
+    const payload = JSON.stringify(session)
+    expect(
+      await harness.runtime.receiveWebhook({ payload, signature: await sign(payload) }),
+    ).toEqual({ kind: 'recorded', invoiceId: 1315 })
+    expect(src.invoiceForLink).toHaveBeenCalledWith('plink_known')
+  })
+})

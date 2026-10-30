@@ -342,6 +342,32 @@ for (const [runtime, createHarness] of factories) {
     }, 20_000);
     afterEach(async () => harness.close());
 
+    it('[#1163] exposes a true example marker read-only and preserves ordinary response shape', async () => {
+      const client = await data(await harness.request('/clients', json({name: 'Example client'})));
+      const project = await data(await harness.request('/projects', json({client_id: client.id, name: 'Example project'})));
+      expect(project).not.toHaveProperty('is_example');
+      await harness.run('UPDATE projects SET is_example=1 WHERE id=?', project.id);
+      const example = await data(await harness.request(`/projects/${project.id}`));
+      expect(example.is_example).toBe(true);
+      const refused = await harness.request(`/projects/${project.id}`, json({is_example: false}, 'PATCH'));
+      expect(refused.status).toBe(422);
+      await data(await harness.request(`/projects/${project.id}`, json({name: 'Renamed'}, 'PATCH')));
+      expect((await data(await harness.request(`/projects/${project.id}`))).is_example).toBe(true);
+    });
+
+
+    it('[issue 740] refuses inherited property names as fields with 422', async () => {
+      for (const field of ['constructor', 'toString', '__proto__']) {
+        const body = `{"name":"Kestrel","${field}":"x"}`;
+        const refused = await harness.request('/clients', {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body,
+        });
+        expect(refused.status, field).toBe(422);
+      }
+    });
+
     it('[money #522] refuses a currency that is not a currency code', async () => {
       // The generator matches billable time with
       // `upper(coalesce(project.billing_currency, client.currency))` against
@@ -447,6 +473,60 @@ for (const [runtime, createHarness] of factories) {
       // Operational manager edits still work without knowing or resetting terms.
       expect((await harness.request(`/projects/${project.id}`, asProfile('project_manager', json({ name: 'Renamed work' }, 'PATCH')))).status).toBe(200);
       expect(await data(await harness.request(`/projects/${project.id}`))).toMatchObject(projectTerms);
+    }, 30_000);
+
+    it('[949] a project rounding rule is a commercial term, set as a direction with an increment', async () => {
+      const client = await data(await harness.request('/clients', json({ name: 'Rounding client' })));
+      const create = (terms: Record<string, unknown>) =>
+        harness.request('/projects', json({ client_id: client.id, name: 'Rounded', ...terms }));
+
+      // Both or neither, and each from the vocabulary.
+      for (const bad of [
+        { time_rounding_mode: 'up' },
+        { time_rounding_minutes: 15 },
+        { time_rounding_mode: 'up', time_rounding_minutes: null },
+        { time_rounding_mode: null, time_rounding_minutes: 15 },
+        { time_rounding_mode: 'up', time_rounding_minutes: 7 },
+        { time_rounding_mode: 'sideways', time_rounding_minutes: 15 },
+        { time_rounding_mode: 'up', time_rounding_minutes: '15' },
+      ]) {
+        const refused = await create(bad);
+        expect(refused.status, JSON.stringify(bad)).toBe(422);
+      }
+      const rounded = await data(await create({ time_rounding_mode: 'up', time_rounding_minutes: 15 }));
+      expect(rounded).toMatchObject({ time_rounding_mode: 'up', time_rounding_minutes: 15 });
+      expect(await data(await create({}))).toMatchObject({ time_rounding_mode: null, time_rounding_minutes: null });
+
+      // Changing one half alone is as incomplete on an update as on a create.
+      expect((await harness.request(`/projects/${rounded.id}`, json({ time_rounding_minutes: 30 }, 'PATCH'))).status).toBe(422);
+      expect(
+        await data(
+          await harness.request(`/projects/${rounded.id}`, json({ time_rounding_mode: 'nearest', time_rounding_minutes: 30 }, 'PATCH')),
+        ),
+      ).toMatchObject({ time_rounding_mode: 'nearest', time_rounding_minutes: 30 });
+      // Back to the organization's rule.
+      expect(
+        await data(
+          await harness.request(`/projects/${rounded.id}`, json({ time_rounding_mode: null, time_rounding_minutes: null }, 'PATCH')),
+        ),
+      ).toMatchObject({ time_rounding_mode: null, time_rounding_minutes: null });
+      await harness.request(`/projects/${rounded.id}`, json({ time_rounding_mode: 'down', time_rounding_minutes: 10 }, 'PATCH'));
+
+      // Commercial authority, as billing method has it: unseen and unwritable without it.
+      await assignActingUser(harness, rounded.id as number);
+      for (const profile of ['member', 'people_admin', 'project_manager'] as const) {
+        const read = await data(await harness.request(`/projects/${rounded.id}`, asProfile(profile)));
+        expect(read, profile).not.toHaveProperty('time_rounding_mode');
+        expect(read, profile).not.toHaveProperty('time_rounding_minutes');
+        const write = await harness.request(
+          `/projects/${rounded.id}`,
+          asProfile(profile, json({ time_rounding_mode: 'exact', time_rounding_minutes: 15 }, 'PATCH')),
+        );
+        expect(write.status, profile).toBe(403);
+      }
+      expect(
+        await data(await harness.request(`/projects/${rounded.id}`, asProfile('administrator'))),
+      ).toMatchObject({ time_rounding_mode: 'down', time_rounding_minutes: 10 });
     }, 30_000);
 
     it('[security #491] narrows the directories to a member\'s own work instead of refusing them', async () => {
@@ -620,6 +700,21 @@ for (const [runtime, createHarness] of factories) {
         expect(await names('/tasks', init)).toEqual(['Delivery', 'Retired work']);
       }
     }, 30_000);
+
+    it('[1164] defaults apply to new projects while existing projects need an explicit assignment', async () => {
+      const client = await data(await harness.request('/clients', json({ name: 'Default-task client' })));
+      const existing = await data(await harness.request('/projects', json({ client_id: client.id, name: 'Existing project' })));
+      const task = await data(await harness.request('/tasks', json({ name: 'Default delivery', is_default: true, billable_by_default: false })));
+      expect((await page(await harness.request(`/task-assignments?project_id=${existing.id}&task_id=${task.id}`))).data).toEqual([]);
+      const future = await data(await harness.request('/projects', json({ client_id: client.id, name: 'Future project' })));
+      expect((await page(await harness.request(`/task-assignments?project_id=${future.id}&task_id=${task.id}`))).data).toEqual([
+        expect.objectContaining({ project_id: future.id, task_id: task.id, billable: false }),
+      ]);
+      await data(await harness.request('/task-assignments', json({ project_id: existing.id, task_id: task.id })));
+      expect((await page(await harness.request(`/task-assignments?project_id=${existing.id}&task_id=${task.id}`))).data).toEqual([
+        expect.objectContaining({ project_id: existing.id, task_id: task.id, billable: false }),
+      ]);
+    });
 
     it("[api] provides CRUD and every combinable general-resource list filter", async () => {
       const parent = await data(

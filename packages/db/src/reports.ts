@@ -14,7 +14,7 @@ import { monthEndManifest, type MonthEndManifest } from './month-end-manifest.js
 import { createReportDefinition, listMetrics, listReportFields, type MetricDefinition, type ReportDefinition, type ReportFieldDefinition, type UpdateReportDefinitionInput } from './report-definitions.js'
 import { runReportDefinition, type ReportRunnerResult } from './report-runner.js'
 import { executeReportTimeAction, type ReportTimeActionInput, type ReportTimeActionResult } from './report-time-actions.js'
-import { createSavedReportStore, type SavedReportPresentation, type SavedReportRecord, type SavedReportView } from './saved-reports.js'
+import { createSavedReportStore, type SavedReportAddress, type SavedReportProfile, type SavedReportPresentation, type SavedReportRecord, type SavedReportView } from './saved-reports.js'
 // The same anchoring the engine issues by, so a short month answers once (#709).
 import { anchoredDate } from './recurring-invoice-engine.js'
 
@@ -118,9 +118,17 @@ export interface PaymentsReceivedReportRecord extends ReportDateRange {
   rows: readonly PaymentReceivedReportRow[]
 }
 
+export type ReceivablesDueState = 'not_due' | 'past_due'
+
 export interface ReceivablesReportFilter {
   asOf: string
   clientId?: number
+  /**
+   * Keeps only invoices not yet due (due on or after `asOf`) or past due,
+   * decided per invoice before any row or total is built, so the aging columns
+   * and the totals cover only the invoices kept.
+   */
+  dueState?: ReceivablesDueState
 }
 
 export interface ReceivablesReportRow {
@@ -509,6 +517,12 @@ export interface DetailedTimeFilter extends ReportDateRange {
    * opposite reason: it answers what can still be billed.
    */
   activeProjectsOnly?: boolean
+  /**
+   * Entries whose note contains this text, case-insensitively. Under the
+   * `client` audience only a note a client may read is searched, so a search
+   * cannot confirm the content of a note the report withholds.
+   */
+  notes?: string
 }
 
 /**
@@ -588,6 +602,24 @@ export interface DetailedTimeCurrencyRecord {
   entriesWithoutBillableRate: number
 }
 
+/** What a detailed time picker can offer: a named id the report can narrow to. */
+export interface DetailedTimeFacet {
+  id: number
+  name: string
+}
+
+/**
+ * The values each picker can narrow the report to. Each list is computed with
+ * every filter but its own applied, so choosing a person does not empty the
+ * person picker.
+ */
+export interface DetailedTimeFacets {
+  people: readonly DetailedTimeFacet[]
+  tasks: readonly DetailedTimeFacet[]
+  roles: readonly DetailedTimeFacet[]
+  tags: readonly DetailedTimeFacet[]
+}
+
 export interface DetailedTimeReportRecord extends ReportDateRange {
   clientId: number | null
   projectId: number | null
@@ -613,6 +645,7 @@ export interface DetailedTimeReportRecord extends ReportDateRange {
   unclaimedSeconds: number
   timeEntryCount: number
   currencies: readonly DetailedTimeCurrencyRecord[]
+  facets: DetailedTimeFacets
   rows: readonly DetailedTimeRowRecord[]
 }
 
@@ -771,10 +804,12 @@ export interface ReportRepository {
   listSavedReports(input: { viewerUserId: number; view?: SavedReportView; query?: string; customOnly?: boolean }): Promise<readonly SavedReportRecord[]>
   readSavedReport(reportId: string, viewerUserId: number): Promise<SavedReportRecord | null>
   createSavedReport(input: { id: string; name: string; fields: ReportDefinition['fields']; metrics: ReportDefinition['metrics']; filters: ReportDefinition['filters']; groupBy: ReportDefinition['groupBy']; ownerUserId: number; presentation: SavedReportPresentation; createdAt: string }): Promise<SavedReportRecord>
-  updateSavedReport(input: { reportId: string; ownerUserId: number; expectedVersion: number; changes: UpdateReportDefinitionInput; presentation?: SavedReportPresentation }): Promise<'not_found' | 'version_conflict' | SavedReportRecord>
+  createReportView(input: { id: string; name: string; view: SavedReportAddress; ownerUserId: number; createdAt: string }): Promise<SavedReportRecord>
+  updateSavedReport(input: { reportId: string; ownerUserId: number; expectedVersion: number; changes: UpdateReportDefinitionInput; view?: SavedReportAddress; presentation?: SavedReportPresentation }): Promise<'not_found' | 'version_conflict' | SavedReportRecord>
   shareSavedReport(reportId: string, ownerUserId: number, userId: number, shared: boolean, at: string): Promise<boolean>
+  shareSavedReportWithProfile(reportId: string, ownerUserId: number, profile: SavedReportProfile, shared: boolean, at: string): Promise<boolean>
   pinSavedReport(reportId: string, viewerUserId: number, pinned: boolean, at: string): Promise<boolean>
-  deleteSavedReport(reportId: string, ownerUserId: number): Promise<boolean>
+  deleteSavedReport(reportId: string, actorUserId: number): Promise<boolean>
   runSavedReport(reportId: string, viewerUserId: number, authority: { billableMoney: boolean; costMoney: boolean }): Promise<ReportRunnerResult | null>
   previewReport(definition: ReportDefinition, presentation: SavedReportPresentation, authority: { billableMoney: boolean; costMoney: boolean }): Promise<ReportRunnerResult>
   executeTimeAction(input: ReportTimeActionInput): Promise<ReportTimeActionResult | 'command_conflict' | 'invoice_unavailable'>
@@ -1044,6 +1079,7 @@ const receivablesReport = async (
   const grouped = new Map<string, ReceivablesReportRow>()
   const currencyTotals = new Map<string, ReceivablesReportRow>()
   for (const row of rows) {
+    if (filter.dueState !== undefined && (row.dueDate < filter.asOf) !== (filter.dueState === 'past_due')) continue
     const key = `${row.clientId}\u0000${row.currency}`
     const client = grouped.get(key) ?? emptyReceivable(row)
     addReceivable(client, row, filter.asOf)
@@ -1074,6 +1110,8 @@ const receivablesReport = async (
 }
 
 export interface UninvoicedTimeCandidateRow {
+  projectBillBy?: string
+  projectHourlyRateCents?: number | null
   id: number
   clientId: number
   clientName: string
@@ -1186,9 +1224,12 @@ export const readUninvoicedCandidates = async (
     filter.from === null
       ? sql`expense.spent_date <= ${filter.to}`
       : sql`expense.spent_date BETWEEN ${filter.from} AND ${filter.to}`
+  // Invoice generation also reads historical migration ledgers. Its active-project
+  // guard already excludes archived examples, so it must not require later report views.
   const timeEntries = await database.all<UninvoicedTimeCandidateRow>(sql`
     SELECT entry.id AS "id", project.client_id AS "clientId", client.name AS "clientName",
       project.id AS "projectId", project.name AS "projectName", project.code AS "projectCode",
+      project.bill_by AS "projectBillBy", project.hourly_rate_cents AS "projectHourlyRateCents",
       task.id AS "taskId", task.name AS "taskName", user.id AS "userId",
       trim(user.first_name || ' ' || coalesce(user.last_name, '')) AS "userName",
       entry.spent_date AS "spentDate", entry.notes AS "notes",
@@ -1302,6 +1343,25 @@ interface ClientNodeRow {
   depth: number
   budgetCents: number | null
 }
+
+/**
+ * Whether a time entry counts toward its project's budget (issue 1028). One
+ * predicate for the budget report, the project list, the rollup and the budget
+ * alerts, so they cannot read different figures.
+ *
+ * Time carried over from Harvest keeps Harvest's own `budgeted` flag. Time
+ * tracked natively (no `harvest_id`) follows the project's budget setting: a
+ * fee budget (`task_fees`) counts billable time only, every other budget counts
+ * all time. Reading the rule rather than storing it means existing native
+ * entries are covered with no data rewrite, and an entry that moves project or
+ * changes billable status, or a project whose budget changes, needs no repair.
+ * An entry flagged `budgeted` explicitly always counts.
+ */
+export const countsTowardBudget = (entry: string, project: string) =>
+  sql.raw(
+    `(${entry}.budgeted = 1 OR (${entry}.harvest_id IS NULL AND ` +
+      `(${project}.budget_by <> 'task_fees' OR ${entry}.billable = 1)))`,
+  )
 
 interface RollupTimeRow {
   id: number
@@ -1478,12 +1538,13 @@ const clientRollupReport = async (
         project.is_active AS "projectActive",
         upper(coalesce(project.billing_currency, client.currency)) AS "currency",
         entry.rounded_seconds AS "roundedSeconds", entry.billable AS "billable",
-        entry.budgeted AS "budgeted", entry.invoice_id AS "invoiceId",
+        CASE WHEN ${countsTowardBudget('entry', 'project')} THEN 1 ELSE 0 END AS "budgeted",
+        entry.invoice_id AS "invoiceId",
         entry.timer_started_at AS "timerStartedAt", entry.started_time AS "startedTime",
         entry.ended_time AS "endedTime", entry.billable_rate_cents AS "billableRateCents",
         entry.cost_rate_cents AS "costRateCents"
-      FROM time_entries entry
-      JOIN projects project ON project.id = entry.project_id
+      FROM report_time_entries entry
+      JOIN report_projects project ON project.id = entry.project_id
       JOIN clients client ON client.id = project.client_id
       WHERE entry.spent_date BETWEEN ${range.from} AND ${range.to} AND ${subtree}
       ORDER BY entry.id
@@ -1494,8 +1555,8 @@ const clientRollupReport = async (
         upper(coalesce(project.billing_currency, client.currency)) AS "currency",
         expense.total_cost_cents AS "totalCostCents", expense.billable AS "billable",
         expense.invoice_id AS "invoiceId"
-      FROM expenses expense
-      JOIN projects project ON project.id = expense.project_id
+      FROM report_expenses expense
+      JOIN report_projects project ON project.id = expense.project_id
       JOIN clients client ON client.id = project.client_id
       WHERE expense.spent_date BETWEEN ${range.from} AND ${range.to} AND ${subtree}
       ORDER BY expense.id
@@ -1505,7 +1566,7 @@ const clientRollupReport = async (
         upper(coalesce(project.billing_currency, client.currency)) AS "currency",
         project.budget_by AS "budgetBy", project.budget_seconds AS "budgetSeconds",
         project.cost_budget_cents AS "costBudgetCents"
-      FROM projects project JOIN clients client ON client.id = project.client_id
+      FROM report_projects project JOIN clients client ON client.id = project.client_id
       WHERE ${subtree} ORDER BY project.id
     `),
     database.all<{ currency: string }>(sql`
@@ -1524,7 +1585,7 @@ const clientRollupReport = async (
         CASE WHEN project.budget_by = 'task' THEN assignment.budget_seconds
           WHEN project.budget_by = 'task_fees' THEN assignment.budget_cents ELSE NULL END AS "amount"
       FROM task_assignments assignment
-      JOIN projects project ON project.id = assignment.project_id
+      JOIN report_projects project ON project.id = assignment.project_id
       WHERE ${subtree}
       ORDER BY assignment.id
     `),
@@ -1532,7 +1593,7 @@ const clientRollupReport = async (
       SELECT assignment.project_id AS "projectId", assignment.id AS "sourceId",
         assignment.budget_seconds AS "amount"
       FROM user_assignments assignment
-      JOIN projects project ON project.id = assignment.project_id
+      JOIN report_projects project ON project.id = assignment.project_id
       WHERE project.budget_by = 'person' AND ${subtree}
       ORDER BY assignment.id
     `),
@@ -1689,7 +1750,7 @@ const projectBudgetSummaryReport = async (
       project.cost_budget_cents AS "costBudgetCents",
       project.cost_budget_include_expenses AS "costBudgetIncludeExpenses",
       upper(coalesce(project.billing_currency, client.currency)) AS "currency"
-    FROM projects project
+    FROM report_projects project
     JOIN clients client ON client.id = project.client_id
     WHERE (
       ${accountWide ? 1 : 0} = 1 OR EXISTS (
@@ -1712,15 +1773,17 @@ const projectBudgetSummaryReport = async (
     billableRateCents: number | null
     costRateCents: number | null
   }>(sql`
-    SELECT project_id AS "projectId", rounded_seconds AS "roundedSeconds",
-      billable_rate_cents AS "billableRateCents", cost_rate_cents AS "costRateCents"
-    FROM time_entries
-    WHERE budgeted = 1 AND spent_date BETWEEN ${range.from} AND ${range.to}
-    ORDER BY id
+    SELECT entry.project_id AS "projectId", entry.rounded_seconds AS "roundedSeconds",
+      entry.billable_rate_cents AS "billableRateCents", entry.cost_rate_cents AS "costRateCents"
+    FROM report_time_entries entry
+    JOIN report_projects project ON project.id = entry.project_id
+    WHERE ${countsTowardBudget('entry', 'project')}
+      AND entry.spent_date BETWEEN ${range.from} AND ${range.to}
+    ORDER BY entry.id
   `)
   const expenses = await database.all<{ projectId: number; cents: number }>(sql`
     SELECT project_id AS "projectId", total_cost_cents AS "cents"
-    FROM expenses WHERE spent_date BETWEEN ${range.from} AND ${range.to}
+    FROM report_expenses WHERE spent_date BETWEEN ${range.from} AND ${range.to}
     ORDER BY id
   `)
 
@@ -1820,7 +1883,7 @@ const projectBudgetReport = async (
     SELECT id AS "id", budget_by AS "budgetBy", budget_seconds AS "budgetSeconds",
       cost_budget_cents AS "costBudgetCents",
       cost_budget_include_expenses AS "costBudgetIncludeExpenses"
-    FROM projects project WHERE id = ${projectId} AND (
+    FROM report_projects project WHERE id = ${projectId} AND (
       ${accountWide ? 1 : 0} = 1 OR EXISTS (
         SELECT 1 FROM user_assignments assignment
         WHERE assignment.project_id = project.id
@@ -1836,13 +1899,14 @@ const projectBudgetReport = async (
   const project = projects[0]
   if (project === undefined) return null
   const entries = await database.all<BudgetEntryRow>(sql`
-    SELECT task_assignment_id AS "taskAssignmentId",
-      user_assignment_id AS "userAssignmentId", rounded_seconds AS "roundedSeconds",
-      billable_rate_cents AS "billableRateCents", cost_rate_cents AS "costRateCents"
-    FROM time_entries
-    WHERE project_id = ${projectId} AND budgeted = 1
-      AND spent_date BETWEEN ${range.from} AND ${range.to}
-    ORDER BY id
+    SELECT entry.task_assignment_id AS "taskAssignmentId",
+      entry.user_assignment_id AS "userAssignmentId", entry.rounded_seconds AS "roundedSeconds",
+      entry.billable_rate_cents AS "billableRateCents", entry.cost_rate_cents AS "costRateCents"
+    FROM report_time_entries entry
+    JOIN report_projects project ON project.id = entry.project_id
+    WHERE entry.project_id = ${projectId} AND ${countsTowardBudget('entry', 'project')}
+      AND entry.spent_date BETWEEN ${range.from} AND ${range.to}
+    ORDER BY entry.id
   `)
   const grains: ProjectBudgetGrainRecord[] = []
   if (project.budgetBy === 'project') {
@@ -1875,7 +1939,7 @@ const projectBudgetReport = async (
     }
     if (project.costBudgetIncludeExpenses === 1) {
       const expenseRows = await database.all<{ cents: number }>(sql`
-        SELECT total_cost_cents AS "cents" FROM expenses
+        SELECT total_cost_cents AS "cents" FROM report_expenses
         WHERE project_id = ${projectId}
           AND spent_date BETWEEN ${range.from} AND ${range.to}
         ORDER BY id
@@ -2008,8 +2072,8 @@ const memberHoursReport = async (
       project.code AS "projectCode", client.id AS "clientId",
       client.name AS "clientName", entry.seconds AS "seconds",
       entry.rounded_seconds AS "roundedSeconds", entry.billable AS "billable"
-    FROM time_entries entry
-    JOIN projects project ON project.id = entry.project_id
+    FROM report_time_entries entry
+    JOIN report_projects project ON project.id = entry.project_id
     JOIN clients client ON client.id = project.client_id
     WHERE entry.user_id = ${filter.userId}
       AND entry.spent_date BETWEEN ${filter.from} AND ${filter.to}
@@ -2092,7 +2156,7 @@ const contractorCostReport = async (
       entry.cost_rate_cents AS "costRateCents",
       coalesce(person.weekly_capacity, organization.weekly_capacity_default)
         AS "weeklyCapacity"
-    FROM time_entries entry
+    FROM report_time_entries entry
     JOIN users person ON person.id = entry.user_id
     CROSS JOIN organizations organization
     WHERE entry.spent_date BETWEEN ${range.from} AND ${range.to}
@@ -2352,8 +2416,8 @@ const profitabilityPopulation = async (
       entry.billable_rate_cents AS "billableRateCents",
       entry.cost_rate_cents AS "costRateCents",
       0 AS "feeCents", 'none' AS "feeTreatment"
-    FROM time_entries entry
-    JOIN projects project ON project.id = entry.project_id
+    FROM report_time_entries entry
+    JOIN report_projects project ON project.id = entry.project_id
     JOIN clients client ON client.id = project.client_id
     JOIN tasks task ON task.id = entry.task_id
     JOIN users person ON person.id = entry.user_id
@@ -2382,7 +2446,7 @@ const profitabilityPopulation = async (
       0 AS "costRateCents", fee.fee_cents AS "feeCents",
       fee.treatment AS "feeTreatment"
     FROM revenue_fees fee
-    JOIN projects project ON project.id = fee.project_id
+    JOIN report_projects project ON project.id = fee.project_id
     JOIN clients client ON client.id = project.client_id
     WHERE fee.recognized_on BETWEEN ${range.from} AND ${range.to}
       AND (${projectStatus} = 'all'
@@ -2789,8 +2853,8 @@ const detailedExpenseReport = async (
       upper(coalesce(project.billing_currency, client.currency, ${organizationCurrency}))
         AS "currency",
       expense.total_cost_cents AS "totalCostCents"
-    FROM expenses expense
-    JOIN projects project ON project.id = expense.project_id
+    FROM report_expenses expense
+    JOIN report_projects project ON project.id = expense.project_id
     JOIN clients client ON client.id = project.client_id
     JOIN expense_categories category ON category.id = expense.expense_category_id
     JOIN users person ON person.id = expense.user_id
@@ -2922,7 +2986,7 @@ const reportFilterNames = async (
     SELECT
       (SELECT name FROM organizations ORDER BY id LIMIT 1) AS "organizationName",
       (SELECT name FROM clients WHERE id = ${id(ids.clientId)}) AS "clientName",
-      (SELECT name FROM projects WHERE id = ${id(ids.projectId)}) AS "projectName",
+      (SELECT name FROM report_projects WHERE id = ${id(ids.projectId)}) AS "projectName",
       (SELECT name FROM tasks WHERE id = ${id(ids.taskId)}) AS "taskName",
       ${person(ids.userId)} AS "userName",
       (SELECT name FROM roles WHERE id = ${id(ids.roleId)}) AS "roleName",
@@ -2934,6 +2998,104 @@ const reportFilterNames = async (
     throw new Error('organization must exist before reports are read')
   }
   return { ...names, organizationName: names.organizationName }
+}
+
+/** The pickers a facet query leaves unapplied: each list ignores its own filter. */
+interface DetailedTimeOmit {
+  user?: boolean
+  task?: boolean
+  role?: boolean
+  tag?: boolean
+}
+
+/**
+ * The report's row conditions over `time_entries entry`, `project`, `client`,
+ * `task`, `person`, as one fragment. The report reads it whole; each facet
+ * reads it with its own picker left out.
+ */
+const detailedTimeConditions = (
+  f: Readonly<DetailedTimeFilter>,
+  omit: DetailedTimeOmit,
+  audience: ReportAudience,
+) => sql`
+      entry.spent_date BETWEEN ${f.from} AND ${f.to}
+      AND ${detailedTimeHoursFilter(f.hours ?? 'all')}
+      AND ${f.includeFixedFee === false ? sql`project.billing_method <> 'fixed_fee'` : sql`1`}
+      AND ${f.currency === undefined ? sql`1` : sql`upper(coalesce(project.billing_currency, client.currency)) = ${f.currency.toUpperCase()}`}
+      AND ${f.contractorsOnly === true ? sql`person.is_contractor = 1` : sql`1`}
+      AND ${f.projectStatus === 'active' ? sql`project.is_active = 1` : f.projectStatus === 'archived' ? sql`project.is_active = 0` : sql`1`}
+      AND ${f.billingMethod === undefined ? sql`1` : sql`project.billing_method = ${f.billingMethod}`}
+      AND ${f.managerId === undefined ? sql`1` : sql`EXISTS (
+        SELECT 1 FROM user_assignments manager
+        WHERE manager.project_id = project.id AND manager.user_id = ${f.managerId}
+          AND manager.is_project_manager = 1
+      )`}
+      AND ${f.directClientOnly === true && f.clientId !== undefined ? sql`project.client_id = ${f.clientId}` : sql`1`}
+      AND ${(f.activeProjectsOnly ?? false) ? sql`project.is_active = 1` : sql`1`}
+      AND ${f.projectId === undefined ? sql`1` : sql`project.id = ${f.projectId}`}
+      AND ${omit.task || f.taskId === undefined ? sql`1` : sql`task.id = ${f.taskId}`}
+      AND ${omit.user || f.userId === undefined ? sql`1` : sql`person.id = ${f.userId}`}
+      AND ${(f.invoiceState ?? 'all') === 'all'
+        ? sql`1`
+        : (f.invoiceState ?? 'all') === 'invoiced'
+          ? sql`entry.invoice_id IS NOT NULL`
+          : sql`entry.invoice_id IS NULL`}
+      AND ${omit.role || f.roleId === undefined ? sql`1` : sql`EXISTS (
+        SELECT 1 FROM user_roles role_filter
+        WHERE role_filter.user_id = person.id AND role_filter.role_id = ${f.roleId}
+      )`}
+      AND ${omit.tag || f.tagId === undefined ? sql`1` : sql`EXISTS (
+        SELECT 1 FROM project_tag_assignments tag_filter
+        WHERE tag_filter.project_id = project.id
+          AND tag_filter.project_tag_id = ${f.tagId}
+      )`}
+      AND ${clientFilter(f.clientId)}
+      AND ${f.notes === undefined || f.notes === ''
+        ? sql`1`
+        : sql`instr(lower(coalesce(entry.notes, '')), lower(${f.notes})) > 0`}
+      AND ${f.notes === undefined || f.notes === '' || audience === 'internal'
+        ? sql`1`
+        : sql`(entry.client_visible = 1 OR (entry.client_visible IS NULL AND coalesce(
+            (SELECT report_notes_client_visible_default FROM organizations ORDER BY id LIMIT 1), 1) <> 0))`}
+`
+
+const detailedTimeFacets = async (
+  database: Database,
+  filter: Readonly<DetailedTimeFilter>,
+  audience: ReportAudience,
+): Promise<DetailedTimeFacets> => {
+  const from = sql`
+    FROM report_time_entries entry
+    JOIN report_projects project ON project.id = entry.project_id
+    JOIN clients client ON client.id = project.client_id
+    JOIN tasks task ON task.id = entry.task_id
+    JOIN users person ON person.id = entry.user_id`
+  const people = await database.all<DetailedTimeFacet>(sql`
+    SELECT DISTINCT person.id AS "id",
+      trim(person.first_name || ' ' || person.last_name) AS "name"
+    ${from}
+    WHERE ${detailedTimeConditions(filter, { user: true }, audience)}
+    ORDER BY 2, 1`)
+  const tasks = await database.all<DetailedTimeFacet>(sql`
+    SELECT DISTINCT task.id AS "id", task.name AS "name"
+    ${from}
+    WHERE ${detailedTimeConditions(filter, { task: true }, audience)}
+    ORDER BY 2, 1`)
+  const roles = await database.all<DetailedTimeFacet>(sql`
+    SELECT DISTINCT role.id AS "id", role.name AS "name"
+    ${from}
+    JOIN user_roles membership ON membership.user_id = person.id
+    JOIN roles role ON role.id = membership.role_id
+    WHERE ${detailedTimeConditions(filter, { role: true }, audience)}
+    ORDER BY 2, 1`)
+  const tags = await database.all<DetailedTimeFacet>(sql`
+    SELECT DISTINCT tag.id AS "id", tag.name AS "name"
+    ${from}
+    JOIN project_tag_assignments tagging ON tagging.project_id = project.id
+    JOIN project_tags tag ON tag.id = tagging.project_tag_id
+    WHERE ${detailedTimeConditions(filter, { tag: true }, audience)}
+    ORDER BY 2, 1`)
+  return { people, tasks, roles, tags }
 }
 
 /**
@@ -2985,44 +3147,13 @@ const detailedTimeReport = async (
       claim.number AS "invoiceNumber",
       project.is_active AS "projectActive",
       entry.billable_rate_cents AS "billableRateCents"
-    FROM time_entries entry
-    JOIN projects project ON project.id = entry.project_id
+    FROM report_time_entries entry
+    JOIN report_projects project ON project.id = entry.project_id
     JOIN clients client ON client.id = project.client_id
     JOIN tasks task ON task.id = entry.task_id
     JOIN users person ON person.id = entry.user_id
     LEFT JOIN invoices claim ON claim.id = entry.invoice_id
-    WHERE entry.spent_date BETWEEN ${filter.from} AND ${filter.to}
-      AND ${detailedTimeHoursFilter(hours)}
-      AND ${filter.includeFixedFee === false ? sql`project.billing_method <> 'fixed_fee'` : sql`1`}
-      AND ${filter.currency === undefined ? sql`1` : sql`upper(coalesce(project.billing_currency, client.currency)) = ${filter.currency.toUpperCase()}`}
-      AND ${filter.contractorsOnly === true ? sql`person.is_contractor = 1` : sql`1`}
-      AND ${filter.projectStatus === 'active' ? sql`project.is_active = 1` : filter.projectStatus === 'archived' ? sql`project.is_active = 0` : sql`1`}
-      AND ${filter.billingMethod === undefined ? sql`1` : sql`project.billing_method = ${filter.billingMethod}`}
-      AND ${filter.managerId === undefined ? sql`1` : sql`EXISTS (
-        SELECT 1 FROM user_assignments manager
-        WHERE manager.project_id = project.id AND manager.user_id = ${filter.managerId}
-          AND manager.is_project_manager = 1
-      )`}
-      AND ${filter.directClientOnly === true && filter.clientId !== undefined ? sql`project.client_id = ${filter.clientId}` : sql`1`}
-      AND ${activeProjectsOnly ? sql`project.is_active = 1` : sql`1`}
-      AND ${filter.projectId === undefined ? sql`1` : sql`project.id = ${filter.projectId}`}
-      AND ${filter.taskId === undefined ? sql`1` : sql`task.id = ${filter.taskId}`}
-      AND ${filter.userId === undefined ? sql`1` : sql`person.id = ${filter.userId}`}
-      AND ${invoiceState === 'all'
-        ? sql`1`
-        : invoiceState === 'invoiced'
-          ? sql`entry.invoice_id IS NOT NULL`
-          : sql`entry.invoice_id IS NULL`}
-      AND ${filter.roleId === undefined ? sql`1` : sql`EXISTS (
-        SELECT 1 FROM user_roles role_filter
-        WHERE role_filter.user_id = person.id AND role_filter.role_id = ${filter.roleId}
-      )`}
-      AND ${filter.tagId === undefined ? sql`1` : sql`EXISTS (
-        SELECT 1 FROM project_tag_assignments tag_filter
-        WHERE tag_filter.project_id = project.id
-          AND tag_filter.project_tag_id = ${filter.tagId}
-      )`}
-      AND ${clientFilter(filter.clientId)}
+    WHERE ${detailedTimeConditions(filter, {}, audience)}
     ORDER BY entry.spent_date, client.name, client.id, project.name, project.id,
       task.name, task.id, person.first_name, person.last_name, person.id, entry.id
     LIMIT ${DETAILED_TIME_ENTRY_LIMIT + 1}
@@ -3054,6 +3185,9 @@ const detailedTimeReport = async (
   let uninvoicedBillableSeconds = 0
   let claimedSeconds = 0
   let unclaimedSeconds = 0
+  // Daily lines fold several entries, so they carry every note the reader may see,
+  // joined: the line says what was done without splitting the figures (issue 1160).
+  const dayNotes = new Map<string, Set<string>>()
   for (const row of rows) {
     const key =
       grain === 'entry'
@@ -3165,7 +3299,28 @@ const detailedTimeReport = async (
         }
       }
     }
+    if (grain !== 'entry') {
+      const note = row.notes?.trim() ?? ''
+      const visible =
+        note !== '' &&
+        (audience === 'internal' ||
+          reportNoteIsClientVisible(
+            { clientVisible: row.clientVisible === null ? null : row.clientVisible === 1 },
+            row.visibleDefault !== 0,
+          ))
+      if (visible) {
+        const set = dayNotes.get(key) ?? new Set<string>()
+        set.add(note)
+        dayNotes.set(key, set)
+      }
+    }
     lines.set(key, line)
+  }
+  if (grain !== 'entry') {
+    for (const [key, line] of lines) {
+      const set = dayNotes.get(key)
+      line.notes = set === undefined ? null : [...set].join(' · ')
+    }
   }
   return {
     kind: 'report',
@@ -3192,6 +3347,7 @@ const detailedTimeReport = async (
       currencies: [...currencies.values()].sort((left, right) =>
         left.currency.localeCompare(right.currency),
       ),
+      facets: await detailedTimeFacets(database, filter, audience),
       rows: [...lines.values()],
     },
   }
@@ -3359,8 +3515,8 @@ const timeReport = async (
       trim(person.first_name || ' ' || person.last_name) AS "userName",
       person.is_contractor AS "isContractor",
       person.weekly_capacity AS "weeklyCapacity"
-    FROM time_entries entry
-    JOIN projects project ON project.id = entry.project_id
+    FROM report_time_entries entry
+    JOIN report_projects project ON project.id = entry.project_id
     JOIN clients client ON client.id = project.client_id
     JOIN tasks task ON task.id = entry.task_id
     JOIN users person ON person.id = entry.user_id
@@ -3702,8 +3858,8 @@ const bandedMonthReport = async (
       entry.billable_rate_cents AS "billableRateCents",
       entry.cost_rate_cents AS "costRateCents",
       entry.invoice_id AS "invoiceId"
-    FROM time_entries entry
-    JOIN projects project ON project.id = entry.project_id
+    FROM report_time_entries entry
+    JOIN report_projects project ON project.id = entry.project_id
     JOIN clients client ON client.id = project.client_id
     WHERE entry.spent_date BETWEEN ${range.from} AND ${range.to}
       AND entry.billable = 1
@@ -3725,7 +3881,7 @@ const bandedMonthReport = async (
       foregone_billable_cents AS "foregoneCents"
     FROM invoices
     WHERE id IN (
-      SELECT DISTINCT invoice_id FROM time_entries
+      SELECT DISTINCT invoice_id FROM report_time_entries
       WHERE invoice_id IS NOT NULL AND spent_date BETWEEN ${range.from} AND ${range.to}
     )`)
   const invoiceById = new Map(invoices.map((invoice) => [invoice.id, invoice]))
@@ -3832,12 +3988,31 @@ export const createReportRepository = (database: Database): ReportRepository => 
       ownerUserId: input.ownerUserId,
       presentation: input.presentation,
     }),
+    // A view is the address of a report, not a definition: the stored fields and
+    // metrics only satisfy the definition's own validation and are never run.
+    createReportView: (input) => saved.create({
+      definition: createReportDefinition({
+        id: input.id,
+        name: input.name,
+        fields: [{ id: 'client_name', label: 'Client', visible: true }],
+        metrics: ['hours'],
+        filters: [],
+        groupBy: null,
+        createdAt: input.createdAt,
+      }),
+      ownerUserId: input.ownerUserId,
+      isCustom: false,
+      view: input.view,
+      presentation: { result: 'summary', grouped: false, includeZeroValues: false },
+    }),
     updateSavedReport: (input) => saved.update(input),
     shareSavedReport: (reportId, ownerUserId, userId, shared, at) => saved.setShared(reportId, ownerUserId, userId, shared, at),
+    shareSavedReportWithProfile: (reportId, ownerUserId, profile, shared, at) => saved.setSharedWithProfile(reportId, ownerUserId, profile, shared, at),
     pinSavedReport: (reportId, viewerUserId, pinned, at) => saved.setPinned(reportId, viewerUserId, pinned, at),
-    deleteSavedReport: (reportId, ownerUserId) => saved.delete(reportId, ownerUserId),
+    deleteSavedReport: (reportId, actorUserId) => saved.delete(reportId, actorUserId),
     runSavedReport: async (reportId, viewerUserId, authority) => {
       const report = await saved.read(reportId, viewerUserId)
+      if (report !== null && report.view !== null) throw new RangeError('a saved view opens at its address; it is not run as a definition')
       return report === null ? null : runReportDefinition(database, report.definition, report.presentation, authority)
     },
     previewReport: (definition, presentation, authority) => runReportDefinition(database, definition, presentation, authority),

@@ -14,6 +14,7 @@ import {
   readJsonBody,
   validationError,
   type FieldError,
+  type JsonBodyOptions,
 } from '../errors.js'
 
 export const isJsonObject = (
@@ -23,8 +24,9 @@ export const isJsonObject = (
 
 export const readObjectBody = async <Bindings extends object>(
   context: Context<ApiContext<Bindings>>,
+  options?: JsonBodyOptions,
 ): Promise<Record<string, unknown>> => {
-  const body = await readJsonBody<unknown>(context)
+  const body = await readJsonBody<unknown>(context, options)
   if (!isJsonObject(body)) {
     throw validationError([
       {

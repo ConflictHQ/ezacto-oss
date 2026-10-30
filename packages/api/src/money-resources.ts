@@ -1,6 +1,11 @@
+import { requireInvoiceTokenElevation, type InvoiceElevationStore } from './invoice-elevations.js';
 import {
   calculateInvoiceLineAmountCents,
-  compareInvoiceListPositions,
+  compareInvoiceListPositionsBy,
+  defaultInvoiceListSort,
+  invoiceListSortFields,
+  parseInvoiceListSort,
+  type InvoiceListSort,
   composeInvoiceEmail,
   EmailTemplateVariableError,
   invoiceEmailCopies,
@@ -55,6 +60,9 @@ interface InvoiceResource extends IdentifiedResource {
   currency: string;
   number: string;
   issue_date: string;
+  due_date: string;
+  amount_cents: number;
+  due_amount_cents: number;
   created_at: string;
 }
 
@@ -84,6 +92,10 @@ export interface InvoiceDeliveryContext {
   notes: string | null;
   paymentTerms: InvoicePaymentTerms;
   dueAmountCents: number;
+  /** Null on a free-form invoice, which bills no period (issue 925). */
+  periodStart: string | null;
+  periodEnd: string | null;
+  organizationTimeZone: string;
 }
 
 /**
@@ -129,6 +141,13 @@ interface EstimateMessageCommandInput {
   subject: string | null;
   body: string | null;
   sendMeACopy: boolean;
+  occurredAt: string;
+}
+
+interface EstimateExpiryCommandInput {
+  estimateId: number;
+  expectedVersion: number;
+  expiresOn: string | null;
   occurredAt: string;
 }
 
@@ -372,6 +391,7 @@ type InvoiceEdit =
   | { type: "line_delete"; lineId: number; expectedLineUpdatedAt: string };
 
 interface CommonCommand {
+  elevation?: Readonly<{ id: string; tokenId: number }>;
   invoiceId: number;
   commandId: string;
   actor: InvoiceCommandActor;
@@ -390,6 +410,8 @@ export interface InvoiceListWindow extends KeysetWindow<InvoiceListPosition> {
   states?: readonly InvoiceState[];
   clientIds?: readonly number[];
   number?: string;
+  /** Absent is newest first. */
+  sort?: InvoiceListSort;
 }
 
 export interface RetainerCursorWindow extends CursorWindow {
@@ -514,6 +536,9 @@ interface MoneyResourceService {
     estimate: EstimateResource;
     message: EstimateMessageResource;
   }>;
+  setEstimateExpiry(
+    input: EstimateExpiryCommandInput,
+  ): Promise<EstimateResource>;
   convertEstimate(input: EstimateConversionInput): Promise<{
     invoice: InvoiceResource;
     event: EstimateMessageResource;
@@ -530,6 +555,8 @@ interface MoneyResourceService {
       messageId: number;
       eventId: string;
       message?: LifecycleMessage;
+      /** The hash of this send's hosted-page token; the token is never passed. */
+      viewLink?: { tokenHash: string; expiresAt: string };
       delivery?: {
         templateVersion: number;
         senderIdentityId: number;
@@ -759,6 +786,7 @@ export interface BandClaimBackfillPort {
 }
 
 export interface MoneyResourceRouteOptions {
+  invoiceElevations?: InvoiceElevationStore;
   service: MoneyResourceService;
   cursorSigningKey: Uint8Array;
   clock?: () => string;
@@ -791,6 +819,17 @@ export interface MoneyResourceRouteOptions {
    * invoice does not go out.
    */
   invoicePaymentUrl?: (invoiceId: number) => Promise<string | null>;
+  /**
+   * The hosted invoice page link (issue 936). Absent where the deployment has
+   * no origin to link to; present, it is asked per send whether the company
+   * turned view receipts on, and if so the email carries a link of its own.
+   */
+  invoiceViewLinks?: {
+    enabled(): Promise<boolean>;
+    /** What a preview shows in a link's place: it opens nothing. */
+    previewUrl: string;
+    mint(sentAt: string): Promise<{ url: string; tokenHash: string; expiresAt: string }>;
+  };
 }
 
 type ResolvedMoneyResourceRouteOptions = Omit<
@@ -1315,6 +1354,10 @@ const translateMoneyError = (error: unknown): never => {
       },
     ]);
   }
+  if (code === "missing_billable_rate") {
+    const projectId = isJsonObject(error) && Number.isSafeInteger(error.projectId) ? Number(error.projectId) : null;
+    throw validationError([{ field: projectId === null ? "project_ids" : `project_ids.${projectId}`, code, message: databaseMessage }]);
+  }
   if (code === "invalid_command_input") {
     throw validationError([
       {
@@ -1827,20 +1870,37 @@ const canonicalDatePattern = /^\d{4}-\d{2}-\d{2}$/;
 
 /**
  * The invoice list's order, as the keyset chassis needs it: where a row sits,
- * how two places compare, and how a place travels in a cursor -- issue date,
- * number and id, which is the whole sort key and names exactly one row.
+ * how two places compare, and how a place travels in a cursor. The default is
+ * issue date, number and id, newest first; a `sort` ranks its own column first
+ * and then the number and id in the same direction, which is the whole sort key
+ * and names exactly one row.
+ *
+ * The cursor is signed over the request's address, `sort` included, so a cursor
+ * from one sort is refused under another: it names a place in a different list.
  */
-const invoiceListOrder: KeysetOrder<InvoiceResource, InvoiceListPosition> = {
+const invoiceListOrder = (
+  sort: InvoiceListSort,
+): KeysetOrder<InvoiceResource, InvoiceListPosition> => ({
   positionOf: (invoice) => ({
     issueDate: invoice.issue_date,
     number: invoice.number,
     id: invoice.id,
+    dueDate: invoice.due_date,
+    amountCents: invoice.amount_cents,
+    balanceCents: invoice.due_amount_cents,
   }),
-  compare: compareInvoiceListPositions,
-  encode: (position) => [position.issueDate, position.number, position.id],
+  compare: compareInvoiceListPositionsBy(sort),
+  encode: (position) => {
+    const base = [position.issueDate, position.number, position.id];
+    if (sort.field === "due_date") return [...base, position.dueDate];
+    if (sort.field === "amount") return [...base, position.amountCents];
+    if (sort.field === "balance") return [...base, position.balanceCents];
+    return base;
+  },
   decode: (value) => {
-    if (!Array.isArray(value) || value.length !== 3) return null;
-    const [issueDate, number, id] = value as unknown[];
+    const extra = ["due_date", "amount", "balance"].includes(sort.field) ? 1 : 0;
+    if (!Array.isArray(value) || value.length !== 3 + extra) return null;
+    const [issueDate, number, id, key] = value as unknown[];
     if (
       typeof issueDate !== "string" ||
       !canonicalDatePattern.test(issueDate) ||
@@ -1852,8 +1912,38 @@ const invoiceListOrder: KeysetOrder<InvoiceResource, InvoiceListPosition> = {
     ) {
       return null;
     }
+    if (sort.field === "due_date") {
+      if (typeof key !== "string" || !canonicalDatePattern.test(key)) return null;
+      return { issueDate, number, id, dueDate: key };
+    }
+    if (sort.field === "amount" || sort.field === "balance") {
+      if (typeof key !== "number" || !Number.isSafeInteger(key)) return null;
+      return sort.field === "amount"
+        ? { issueDate, number, id, amountCents: key }
+        : { issueDate, number, id, balanceCents: key };
+    }
     return { issueDate, number, id };
   },
+});
+
+/**
+ * The `sort` query parameter: one of the list's sortable columns, `-` in front
+ * for descending. Absent is `-issue_date`, newest first.
+ */
+const invoiceSortParameter = (requestUrl: URL): InvoiceListSort => {
+  const raw = requestUrl.searchParams.getAll("sort");
+  if (raw.length === 0) return defaultInvoiceListSort;
+  const parsed = raw.length === 1 ? parseInvoiceListSort(raw[0]!) : null;
+  if (parsed === null) {
+    throw validationError([
+      {
+        field: "sort",
+        code: "invalid",
+        message: `sort must be one of ${invoiceListSortFields.join(", ")}, with - in front for descending`,
+      },
+    ]);
+  }
+  return parsed;
 };
 
 const installInvoiceReads = <Bindings extends object>(
@@ -1866,6 +1956,7 @@ const installInvoiceReads = <Bindings extends object>(
     const states = invoiceStateFilter(requestUrl);
     const clientIds = clientIdFilter(requestUrl);
     const number = invoiceNumberFilter(requestUrl);
+    const sort = invoiceSortParameter(requestUrl);
     return context.json(
       await keysetCursorPage({
         requestUrl,
@@ -1874,7 +1965,7 @@ const installInvoiceReads = <Bindings extends object>(
         serializer: (invoice: Readonly<InvoiceResource>) => ({ ...invoice }),
         // Newest first. By id, ascending, a new invoice sat behind every page
         // of an imported book, whose ids run newest first.
-        order: invoiceListOrder,
+        order: invoiceListOrder(sort),
         source: {
           // The snapshot stays the whole collection's. It bounds the
           // traversal against later inserts; it is not a count of what
@@ -1887,6 +1978,7 @@ const installInvoiceReads = <Bindings extends object>(
               ...(states === undefined ? {} : { states }),
               ...(clientIds === undefined ? {} : { clientIds }),
               ...(number === undefined ? {} : { number }),
+              sort,
             }),
         },
       }),
@@ -2041,6 +2133,36 @@ const installEstimates = <Bindings extends object>(
         },
         201,
       );
+    } catch (error) {
+      return translateMoneyError(error);
+    }
+  });
+
+  api.patch("/estimates/:id/expiry", async (context) => {
+    requireWrite(context);
+    const estimateId = resourceId(context.req.param("id"), "estimate");
+    const body = await readObjectBody(context);
+    const errors = unknownFieldErrors(
+      body,
+      new Set(["expected_version", "expires_on"]),
+    );
+    const version = expectedVersion(body, errors);
+    const expiresOn = dateValue(body, "expires_on", errors, {
+      required: true,
+      nullable: true,
+    });
+    assertFields(errors);
+    try {
+      const estimate = await options.service.setEstimateExpiry({
+        estimateId,
+        expectedVersion: version!,
+        expiresOn: expiresOn ?? null,
+        occurredAt: options.clock(),
+      });
+      return context.json({
+        data: estimate,
+        links: { self: `/api/v1/estimates/${estimateId}` },
+      });
     } catch (error) {
       return translateMoneyError(error);
     }
@@ -2368,11 +2490,15 @@ const installInvoiceEdits = <Bindings extends object>(
   api.patch("/invoices/:id", async (context) => {
     const principal = requireWrite(context);
     const invoiceId = resourceId(context.req.param("id"), "invoice");
+    const elevation = await requireInvoiceTokenElevation(
+      context, invoiceId, options.invoiceElevations, options.clock(),
+    );
     const commandId = idempotencyKey(context);
     const parsed = parseInvoiceEdit(await readObjectBody(context));
     try {
       const result = await options.service.executeEdit({
         ...commonCommand(principal, invoiceId, commandId, options.clock()),
+        ...(elevation === undefined ? {} : { elevation: { id: elevation.id, tokenId: elevation.tokenId } }),
         expectedVersion: parsed.expectedVersion,
         eventIds: await eventIds(invoiceId, commandId),
         edit: parsed.edit,
@@ -2489,12 +2615,16 @@ const installInvoiceEdits = <Bindings extends object>(
   api.post("/invoices/:id/line-items", async (context) => {
     const principal = requireWrite(context);
     const invoiceId = resourceId(context.req.param("id")!, "invoice");
+    const elevation = await requireInvoiceTokenElevation(
+      context, invoiceId, options.invoiceElevations, options.clock(),
+    );
     const commandId = idempotencyKey(context);
     const lineId = await stableId("invoice-line", invoiceId, commandId);
     const parsed = parseLine(await readObjectBody(context), false, lineId);
     try {
       const result = await options.service.executeEdit({
         ...commonCommand(principal, invoiceId, commandId, options.clock()),
+        ...(elevation === undefined ? {} : { elevation: { id: elevation.id, tokenId: elevation.tokenId } }),
         expectedVersion: parsed.expectedVersion,
         eventIds: await eventIds(invoiceId, commandId),
         edit: parsed.edit,
@@ -2511,12 +2641,16 @@ const installInvoiceEdits = <Bindings extends object>(
   api.patch("/invoices/:id/line-items/:lineId", async (context) => {
     const principal = requireWrite(context);
     const invoiceId = resourceId(context.req.param("id")!, "invoice");
+    const elevation = await requireInvoiceTokenElevation(
+      context, invoiceId, options.invoiceElevations, options.clock(),
+    );
     const lineId = resourceId(context.req.param("lineId"), "invoice line");
     const commandId = idempotencyKey(context);
     const parsed = parseLine(await readObjectBody(context), true, lineId);
     try {
       const result = await options.service.executeEdit({
         ...commonCommand(principal, invoiceId, commandId, options.clock()),
+        ...(elevation === undefined ? {} : { elevation: { id: elevation.id, tokenId: elevation.tokenId } }),
         expectedVersion: parsed.expectedVersion,
         eventIds: await eventIds(invoiceId, commandId),
         edit: parsed.edit,
@@ -2532,6 +2666,9 @@ const installInvoiceEdits = <Bindings extends object>(
   api.delete("/invoices/:id/line-items/:lineId", async (context) => {
     const principal = requireWrite(context);
     const invoiceId = resourceId(context.req.param("id"), "invoice");
+    const elevation = await requireInvoiceTokenElevation(
+      context, invoiceId, options.invoiceElevations, options.clock(),
+    );
     const lineId = resourceId(context.req.param("lineId"), "invoice line");
     const commandId = idempotencyKey(context);
     const body = await readObjectBody(context);
@@ -2547,6 +2684,7 @@ const installInvoiceEdits = <Bindings extends object>(
     try {
       const result = await options.service.executeEdit({
         ...commonCommand(principal, invoiceId, commandId, options.clock()),
+        ...(elevation === undefined ? {} : { elevation: { id: elevation.id, tokenId: elevation.tokenId } }),
         expectedVersion: version!,
         eventIds: await eventIds(invoiceId, commandId),
         edit: {
@@ -2874,6 +3012,8 @@ interface ComposedDelivery {
   readonly subject: string;
   readonly text: string;
   readonly pdfAttached: boolean;
+  /** The hosted-page link this send carries, when the company asked for one. */
+  readonly viewLink: { readonly tokenHash: string; readonly expiresAt: string } | null;
 }
 
 /** The refusal for a deployment that composes no organization mail at all. */
@@ -2964,6 +3104,7 @@ const composeDelivery = async (
   invoiceId: number,
   request: DeliveryRequest,
   pdfAttached: (invoiceId: number) => Promise<boolean>,
+  purpose: "send" | "preview" = "send",
 ): Promise<ComposedDelivery> => {
   if (options.invoiceDelivery === undefined) throw deliveryUnavailable();
   const delivery = options.invoiceDelivery;
@@ -3030,6 +3171,17 @@ const composeDelivery = async (
       ? null
       : await options.invoicePaymentUrl(invoiceId).catch(() => null);
   const attached = await pdfAttached(invoiceId);
+  // A link only where the company turned view receipts on; off, the email is
+  // composed exactly as it was before. A preview shows where the link would
+  // be and mints nothing.
+  const links = options.invoiceViewLinks;
+  const sentAt = options.clock();
+  const minted =
+    links !== undefined && (await links.enabled())
+      ? purpose === "send"
+        ? await links.mint(sentAt)
+        : { url: links.previewUrl, tokenHash: null, expiresAt: null }
+      : null;
   let composed: { subject: string; text: string };
   try {
     composed = composeInvoiceEmail({
@@ -3037,7 +3189,11 @@ const composeDelivery = async (
       subjectTemplate: request.subject ?? template.subjectTemplate,
       messageTemplate: request.message ?? template.textTemplate,
       paymentUrl,
+      ...(minted === null ? {} : { viewUrl: minted.url }),
       pdfAttached: attached,
+      // The send and its preview both read the weekday at the moment they are
+      // composed, which for the send is the moment it is recorded.
+      sentAt,
     });
   } catch (error) {
     if (error instanceof EmailTemplateVariableError) {
@@ -3078,6 +3234,10 @@ const composeDelivery = async (
     subject: composed.subject,
     text: composed.text,
     pdfAttached: attached,
+    viewLink:
+      minted === null || minted.tokenHash === null
+        ? null
+        : { tokenHash: minted.tokenHash, expiresAt: minted.expiresAt },
   };
 };
 
@@ -3123,6 +3283,7 @@ const installInvoiceDelivery = <Bindings extends object>(
         expectedVersion: request.version!,
         messageId: await stableId("invoice-message", invoiceId, commandId),
         eventId,
+        ...(composed.viewLink === null ? {} : { viewLink: composed.viewLink }),
         message: {
           sentBy: composed.author.name,
           sentByEmail: composed.author.email,
@@ -3182,8 +3343,13 @@ const installInvoiceDelivery = <Bindings extends object>(
     const port = documents();
     const attachments =
       port === undefined ? [] : await port.preview({ invoiceId, choices });
-    const composed = await composeDelivery(options, principal, invoiceId, request, async () =>
-      attachments.some(({ kind }) => kind === "invoice"),
+    const composed = await composeDelivery(
+      options,
+      principal,
+      invoiceId,
+      request,
+      async () => attachments.some(({ kind }) => kind === "invoice"),
+      "preview",
     );
     return context.json(
       {
@@ -3295,8 +3461,13 @@ const installInvoiceDelivery = <Bindings extends object>(
     }
     const port = documents();
     const manifest = port === undefined ? [] : await port.preview({ invoiceId, choices });
-    const composed = await composeDelivery(options, principal, invoiceId, request, async () =>
-      manifest.some(({ kind }) => kind === "invoice"),
+    const composed = await composeDelivery(
+      options,
+      principal,
+      invoiceId,
+      request,
+      async () => manifest.some(({ kind }) => kind === "invoice"),
+      "preview",
     );
     const stamped = invoiceEmailPreview({
       subject: composed.subject,

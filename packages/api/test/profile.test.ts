@@ -31,6 +31,7 @@ const createHarness = (
     requestDeletion?: ProfileRepositoryPort['requestDeletion']
     deletionMailer?: AccountDeletionMailer
     readIdentity?: ProfileRepositoryPort['readIdentity']
+    readEffectiveTimezone?: ProfileRepositoryPort['readEffectiveTimezone']
   } = {},
 ) => {
   const store: SessionStorePort = {
@@ -65,6 +66,9 @@ const createHarness = (
           readTimezone,
           updateTimezone,
           ...(deletion.readIdentity === undefined ? {} : { readIdentity: deletion.readIdentity }),
+          ...(deletion.readEffectiveTimezone === undefined
+            ? {}
+            : { readEffectiveTimezone: deletion.readEffectiveTimezone }),
           ...(deletion.requestDeletion === undefined
             ? {}
             : { requestDeletion: deletion.requestDeletion }),
@@ -131,6 +135,34 @@ describe('self-service profile timezone', () => {
 })
 
 describe('reading your own profile', () => {
+  it('[api #1201] exposes the authoritative filing zone without changing the stored preference', async () => {
+    const readEffectiveTimezone = vi.fn(async () => 'America/Costa_Rica')
+    const { app, cookie } = createHarness('UTC', { readEffectiveTimezone })
+    const response = await app.request('/api/v1/profile', { headers: { cookie } })
+    expect(response.status).toBe(200)
+    expect(await response.json()).toMatchObject({
+      data: { user_id: 7, timezone: 'UTC', effective_timezone: 'America/Costa_Rica' },
+    })
+    expect(readEffectiveTimezone).toHaveBeenCalledWith(7)
+  })
+
+  it('[security #1201] keeps the effective zone server-derived and requires authentication', async () => {
+    const readEffectiveTimezone = vi.fn(async () => 'America/Costa_Rica')
+    const { app, cookie, updateTimezone } = createHarness(null, { readEffectiveTimezone })
+    expect((await app.request('/api/v1/profile')).status).toBe(401)
+    expect(readEffectiveTimezone).not.toHaveBeenCalled()
+    const response = await patch(app, { effective_timezone: 'Europe/Paris' }, cookie)
+    expect(response.status).toBe(422)
+    expect(updateTimezone).not.toHaveBeenCalled()
+    expect(readEffectiveTimezone).not.toHaveBeenCalled()
+  })
+
+  it('[api #1201] leaves the effective zone absent when a custom composition cannot resolve it', async () => {
+    const { app, cookie } = createHarness('UTC')
+    const response = await app.request('/api/v1/profile', { headers: { cookie } })
+    expect((await response.json() as { data: object }).data).not.toHaveProperty('effective_timezone')
+  })
+
   it('[unit] answers with the stored timezone', async () => {
     const { app, cookie } = createHarness('America/Costa_Rica')
     const response = await app.request('/api/v1/profile', { headers: { cookie } })

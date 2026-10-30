@@ -1,0 +1,24 @@
+{
+  "user": {
+    "id": 4026,
+    "createdAt": "2024-02-03T10:20:30Z",
+    "updatedAt": "2024-02-03T10:20:30Z",
+    "firstName": "Sample users first_name 4026",
+    "lastName": "Sample users last_name 4026",
+    "email": "sample@example.test",
+    "telephone": "",
+    "timezone": "America/Costa_Rica",
+    "hasAccessToAllFutureProjects": false,
+    "isContractor": true,
+    "isActive": false,
+    "weeklyCapacity": 2,
+    "profile": "member",
+    "managerGrants": [],
+    "avatarUrl": "https://example.test/avatars/4026.png"
+  },
+  "context": {
+    "roleNames": [],
+    "defaultHourlyRateCents": 200,
+    "costRateCents": 200
+  }
+}

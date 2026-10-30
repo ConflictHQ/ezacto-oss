@@ -1,7 +1,17 @@
+import {
+  describeTimeRounding,
+  timeRoundingIncrementLabel,
+  timeRoundingIncrements,
+  timeRoundingModes,
+  timeRoundingModeLabels,
+  type TimeRoundingMinutes,
+  type TimeRoundingMode,
+} from '@ezacto/core'
 import { EzactoApiError, type Attachment, type GeneralResource, type Whoami } from '@conflict-hq/ezacto-client'
 
-import { renderDataTable, type CellContent } from '../components/data-table.js'
+import { renderDataTable, type CellContent, type DataSortValue } from '../components/data-table.js'
 import { isDemoDeployment } from '../demo.js'
+import { attachmentsAvailable, ATTACHMENTS_UNAVAILABLE } from '../attachments-availability.js'
 import { moneyText } from '../money-display.js'
 import { sessionPresenter, type SessionPresenter } from '../session.js'
 import { localDate } from '../shell/model.js'
@@ -215,6 +225,21 @@ const centsValue = (resource: GeneralResource | null, field: string): string => 
 const hoursValue = (resource: GeneralResource | null, field: string): string => {
   const value = resource === null ? null : projectNumber(resource, field)
   return value === null ? '' : String(value / 3_600)
+}
+
+/**
+ * A project's own rounding rule, or none. A rule is a direction and an
+ * increment together (issue 949), so the two fields are read as one.
+ */
+const projectRoundingRule = (
+  project: Readonly<GeneralResource>,
+): { mode: TimeRoundingMode; minutes: TimeRoundingMinutes } | null => {
+  const mode = project['time_rounding_mode']
+  const minutes = project['time_rounding_minutes']
+  return (timeRoundingModes as readonly unknown[]).includes(mode) &&
+    (timeRoundingIncrements as readonly unknown[]).includes(minutes)
+    ? { mode: mode as TimeRoundingMode, minutes: minutes as TimeRoundingMinutes }
+    : null
 }
 
 const valueFor = (resource: GeneralResource | null, field: string): string => {
@@ -557,8 +582,48 @@ export const createProjectDirectoryController = (
       return '—'
     }
 
+    // What each money column sorts by. Hours and money are different things, and
+    // two currencies are not one amount, so a value leads with its unit or
+    // currency and a list sorts by that before it compares sizes. A project the
+    // column says nothing about has no value and sorts last either way.
+    const budgetValue = (project: Readonly<GeneralResource>): DataSortValue => {
+      const by = projectText(project, 'budget_by')
+      if (by === 'project' || by === 'task' || by === 'person') {
+        return ['hours', projectNumber(project, 'budget_seconds') ?? 0]
+      }
+      if (by === 'project_cost') {
+        return [currencyFor(project), projectNumber(project, 'cost_budget_cents') ?? 0]
+      }
+      if (by === 'task_fees') return [currencyFor(project), projectNumber(project, 'fee_cents') ?? 0]
+      return null
+    }
+    const spentValue = (project: Readonly<GeneralResource>): DataSortValue => {
+      const summary = budgets.get(project.id)
+      if (summary?.unit === 'seconds') return ['hours', summary.spent_seconds ?? 0]
+      if (summary?.unit === 'cents' && summary.spent_cents !== undefined) {
+        return [currencyFor(project), summary.spent_cents]
+      }
+      return null
+    }
+    const remainingValue = (project: Readonly<GeneralResource>): DataSortValue => {
+      const summary = budgets.get(project.id)
+      if (summary?.unit === 'seconds') {
+        return summary.remaining_seconds == null ? null : ['hours', summary.remaining_seconds]
+      }
+      return summary === undefined || summary.remaining_cents == null
+        ? null
+        : [currencyFor(project), summary.remaining_cents]
+    }
+    const costValue = (project: Readonly<GeneralResource>): DataSortValue => {
+      const cents = budgets.get(project.id)?.cost_cents
+      return cents === undefined ? null : [currencyFor(project), cents]
+    }
+
     const table = renderDataTable<Readonly<GeneralResource>>({
       caption: 'Projects',
+      table: 'projects',
+      // Client bands, and inside each of them the project's name.
+      defaultSort: { column: 'name', direction: 'ascending' },
       rows: visible,
       rowKey: (project) => String(project.id),
       // The client is the band, so it stops repeating on every row. Grouped on
@@ -579,6 +644,7 @@ export const createProjectDirectoryController = (
         {
           key: 'name',
           label: 'Project',
+          sortValue: projectDisplayName,
           render: (project) => {
             const link = document.createElement('a')
             link.href = `/projects/${project.id}`
@@ -588,22 +654,34 @@ export const createProjectDirectoryController = (
         },
         ...(currentSession()?.capabilities.canManageCommercialTerms ? [{
           key: 'billing',
+          fit: true,
           label: 'Billing',
+          sortValue: (project: GeneralResource) => projectEnumLabel(projectText(project, 'billing_method')),
           render: (project: GeneralResource) => projectEnumLabel(projectText(project, 'billing_method')),
         }] : []),
-        { key: 'budget', label: 'Budget', numeric: true, render: budgetLabel },
-        { key: 'spent', label: 'Spent', numeric: true, render: spentLabel },
-        { key: 'remaining', label: 'Remaining', numeric: true, render: remainingLabel },
+        { key: 'budget', label: 'Budget', numeric: true, sortValue: budgetValue, render: budgetLabel },
+        { key: 'spent', label: 'Spent', numeric: true, sortValue: spentValue, render: spentLabel },
+        {
+          key: 'remaining',
+          label: 'Remaining',
+          numeric: true,
+          sortValue: remainingValue,
+          render: remainingLabel,
+        },
         // A viewer whose profile cannot see cost gets no cost_cents at all, on
         // any row. Rendering the column anyway put an em dash in every cell of
         // it, which reads as "no cost recorded" rather than "not yours to see"
         // -- and it costs a column of width on a table that wants it.
         ...(costVisible
-          ? [{ key: 'costs', label: 'Costs', numeric: true, render: costLabel } as const]
+          ? [
+              { key: 'costs', label: 'Costs', numeric: true, sortValue: costValue, render: costLabel } as const,
+            ]
           : []),
         {
           key: 'status',
+          fit: true,
           label: 'Status',
+          sortValue: (project) => (projectIsActive(project) ? 'Active' : 'Archived'),
           render: (project) => {
             if (projectIsActive(project)) return 'Active'
             const pill = document.createElement('span')
@@ -662,12 +740,19 @@ export const createProjectDirectoryController = (
     const currency = projectCurrency(currentProject, clients)
     const rows = [
       fact('Status', projectIsActive(currentProject) ? 'Active' : 'Archived'),
+      ...(projectBoolean(currentProject, 'is_example')
+        ? [fact('Example project', 'For practice only. Create a separate project for real work. Archive this example to hide its practice time and expenses from reports.')]
+        : []),
       clientFact(currentProject),
       fact('Code', projectText(currentProject, 'code') ?? 'None'),
       ...(active.capabilities.canManageCommercialTerms ? [
         fact('Billing method', projectEnumLabel(projectText(currentProject, 'billing_method'))),
         fact('Bill by', projectEnumLabel(projectText(currentProject, 'bill_by'))),
         fact('Billing currency', projectText(currentProject, 'billing_currency') ?? 'Organization default'),
+        fact('Time rounding', (() => {
+          const rule = projectRoundingRule(currentProject)
+          return rule === null ? 'Organization default' : describeTimeRounding(rule)
+        })()),
       ] : []),
       ...(active.capabilities.canViewBillableMoney
         ? [
@@ -691,6 +776,9 @@ export const createProjectDirectoryController = (
           ? `${projectNumber(currentProject, 'over_budget_pct') ?? 0}%`
           : 'Off',
       ),
+      // Set when the budget last crossed the threshold above and the project's
+      // managers were told (issue 934): the date, in the organization's day.
+      fact('Last over-budget alert', projectText(currentProject, 'over_budget_notified_on') ?? 'None'),
       fact('Budget visible to everyone', projectBoolean(currentProject, 'show_budget_to_all') ? 'Yes' : 'No'),
       fact('Report visibility', projectEnumLabel(projectText(currentProject, 'report_visibility'))),
       fact('Starts on', projectText(currentProject, 'starts_on') ?? 'Not set'),
@@ -706,6 +794,71 @@ export const createProjectDirectoryController = (
         : []),
     ]
     facts.replaceChildren(...rows)
+    if (
+      active.identity.profile === 'administrator' &&
+      api.recoverProjectMissingRates !== undefined &&
+      projectText(currentProject, 'billing_method') === 'time_materials' &&
+      projectText(currentProject, 'bill_by') === 'project'
+    ) {
+      const controls = document.createElement('div')
+      const explanation = document.createElement('p')
+      explanation.textContent =
+        'Rate changes apply to new time only. Preview a repair to price up to 1,000 existing unpriced entries at the current project rate. Captured rates, costs, invoices, running time and locked time stay unchanged.'
+      const result = document.createElement('p')
+      result.setAttribute('role', 'status')
+      const button = document.createElement('button')
+      button.type = 'button'
+      button.dataset.projectMissingRates = ''
+      button.textContent = 'Preview missing rates'
+      button.disabled = projectNumber(currentProject, 'hourly_rate_cents') === null
+      if (button.disabled) result.textContent = 'Edit this project and set its hourly rate first.'
+      let fingerprint: string | undefined
+      const projectId = currentProject.id
+      button.addEventListener('click', () => {
+        if (currentSession() !== active) return
+        const confirming = fingerprint !== undefined
+        button.disabled = true
+        void api.recoverProjectMissingRates!(projectId, fingerprint, active.signal)
+          .then((report) => {
+            if (currentSession() !== active) return
+            if (confirming) {
+              result.textContent = `${report.applied_entries} ${report.applied_entries === 1 ? 'entry' : 'entries'} repaired. Return to the invoice dialog to create the draft.${report.applied_entries < report.entry_count ? ' Some entries changed during confirmation; preview again for the remainder.' : ''}`
+              fingerprint = undefined
+              button.textContent = 'Preview missing rates'
+            } else {
+              fingerprint = report.entry_count > 0 ? report.fingerprint : undefined
+              if (report.entry_count === 0) {
+                result.textContent = 'No eligible unpriced time. Approved, pending, locked, invoiced and running entries are excluded.'
+              } else {
+                result.replaceChildren(
+                  `${report.entry_count} ${report.entry_count === 1 ? 'entry' : 'entries'} (${(report.seconds / 3600).toFixed(2)} hours), ${report.earliest_date} to ${report.latest_date}, will be priced at `,
+                  moneyText(projectMoney(report.hourly_rate_cents, report.currency)),
+                  '/hour. Confirm to record an audited repair.',
+                )
+              }
+              button.textContent =
+                fingerprint === undefined
+                  ? 'Preview missing rates'
+                  : `Confirm repair of ${report.entry_count} ${report.entry_count === 1 ? 'entry' : 'entries'}`
+            }
+          })
+          .catch((error: unknown) => {
+            active.presentFailure(error, () => {
+              result.textContent = messageFor(error)
+              fingerprint = undefined
+              button.textContent = 'Preview missing rates'
+            })
+          })
+          .finally(() => {
+            if (currentSession() === active) button.disabled = false
+          })
+      })
+      const actions = document.createElement('div')
+      actions.className = 'project-confirm-actions'
+      actions.append(button)
+      controls.append(explanation, actions, result)
+      facts.append(fact('Repair missing rates', controls))
+    }
   }
 
   const renderAssignments = (): void => {
@@ -894,6 +1047,11 @@ export const createProjectDirectoryController = (
       // The switch is offered above the amount it governs, because the amount
       // is only consulted when the switch is off and a form that asked for the
       // number first would invite one that is never read.
+      const rateHint = document.createElement('p')
+      rateHint.textContent = projectText(currentProject!, 'bill_by') === 'people'
+        ? 'Person rates apply to new time on this project. Existing time keeps its captured rate.'
+        : 'This rate is used only when the project bills by person. This project currently uses another rate source; change Bill by on the project to use person rates.'
+      staffingFormBody.append(rateHint)
       staffingFormBody.append(
         checkbox('use_default_rates', "Bill at the person's default rate"),
         label('Project hourly rate', input('hourly_rate_cents', { type: 'number', min: '0', step: '0.01' })),
@@ -1043,6 +1201,25 @@ export const createProjectDirectoryController = (
     billingCurrency.minLength = 3
     billingCurrency.maxLength = 3
     billingCurrency.pattern = '[A-Za-z]{3}'
+    const roundingMode = select('time_rounding_mode', [
+      ['', 'Organization default'],
+      ...timeRoundingModes.map((mode): [string, string] => [mode, timeRoundingModeLabels[mode]]),
+    ])
+    const roundingMinutes = select(
+      'time_rounding_minutes',
+      timeRoundingIncrements.map((minutes): [string, string] => [
+        String(minutes),
+        timeRoundingIncrementLabel(minutes),
+      ]),
+    )
+    // The increment is half of a rule; with no rule of its own there is nothing
+    // for it to be the increment of.
+    const syncRoundingMinutes = (): void => {
+      roundingMinutes.disabled = roundingMode.value === ''
+    }
+    roundingMode.addEventListener('change', syncRoundingMinutes)
+    roundingMinutes.value = '15'
+    syncRoundingMinutes()
     const budgetHours = input('budget_seconds', { type: 'number', min: '0', step: '0.01' })
     const overBudget = input('over_budget_pct', { type: 'number', min: '0', step: '0.01' })
     const starts = input('starts_on', { type: 'date' })
@@ -1076,7 +1253,12 @@ export const createProjectDirectoryController = (
             label('Cost budget', input('cost_budget_cents', { type: 'number', min: '0', step: '0.01' })),
           ]
         : []),
-      ...(active.capabilities.canManageCommercialTerms ? [label('Billing currency', billingCurrency)] : []),
+      ...(active.capabilities.canManageCommercialTerms
+        ? [
+            label('Billing currency', billingCurrency),
+            pair(label('Time rounding', roundingMode), label('Round to', roundingMinutes)),
+          ]
+        : []),
       label('Report visibility', reportVisibility),
       pair(label('Starts on', starts), label('Ends on', ends)),
       label('Minimum time-entry note length', noteMinimum),
@@ -1094,6 +1276,26 @@ export const createProjectDirectoryController = (
       notes.rows = 5
       notes.maxLength = 10_000
       body.push(label('Administrator notes', notes))
+    }
+    if (active.capabilities.canViewBillableMoney) {
+      const hint = document.createElement('p')
+      hint.dataset.projectRateHint = ''
+      const rate = body.flatMap((element) => [
+        ...element.querySelectorAll<HTMLInputElement>('[name="hourly_rate_cents"]'),
+      ])[0]
+      const syncHint = (): void => {
+        hint.textContent =
+          billingMethod.value === 'time_materials' &&
+          billBy.value === 'project' &&
+          (rate?.value ?? '') === ''
+            ? 'This project bills at the project hourly rate. Without a rate, logged time cannot be invoiced. Person and task rates are ignored. Set a rate, or change Bill by. Rate changes affect new time only; use Repair missing rates on the project for existing unpriced entries.'
+            : 'Bill by selects which rates apply: project, task or person. Changing a rate affects new time only; existing snapshots are preserved.'
+      }
+      body.push(hint)
+      billingMethod.addEventListener('change', syncHint)
+      billBy.addEventListener('change', syncHint)
+      rate?.addEventListener('input', syncHint)
+      queueMicrotask(syncHint)
     }
     projectFormBody.replaceChildren(...body)
     if (project === null) {
@@ -1118,6 +1320,12 @@ export const createProjectDirectoryController = (
       formField(projectForm, fieldName).value = valueFor(project, fieldName)
     }
     formField(projectForm, 'budget_seconds').value = hoursValue(project, 'budget_seconds')
+    if (active.capabilities.canManageCommercialTerms) {
+      const rule = projectRoundingRule(project)
+      roundingMode.value = rule?.mode ?? ''
+      roundingMinutes.value = String(rule?.minutes ?? 15)
+      syncRoundingMinutes()
+    }
     if (active.capabilities.canViewBillableMoney) {
       formField(projectForm, 'hourly_rate_cents').value = centsValue(project, 'hourly_rate_cents')
       formField(projectForm, 'fee_cents').value = centsValue(project, 'fee_cents')
@@ -1261,6 +1469,12 @@ export const createProjectDirectoryController = (
       payload.billing_method = String(data.get('billing_method'))
       payload.bill_by = String(data.get('bill_by'))
       payload.billing_currency = optionalText(data, 'billing_currency')?.toLocaleUpperCase('en-US') ?? null
+      // Both or neither: a disabled field is not in the form data, so the
+      // increment is read from the control, not from FormData.
+      const roundingChoice = String(data.get('time_rounding_mode') ?? '')
+      payload.time_rounding_mode = roundingChoice === '' ? null : roundingChoice
+      payload.time_rounding_minutes =
+        roundingChoice === '' ? null : Number(formField(projectForm, 'time_rounding_minutes').value)
     }
     if (active.capabilities.canViewBillableMoney) {
       payload.hourly_rate_cents = moneyCents(data, 'hourly_rate_cents')
@@ -1333,8 +1547,8 @@ export const createProjectDirectoryController = (
   }
 
   const loadAttachmentData = async (active: ActiveSession, projectId: number): Promise<void> => {
-    if (api.listDirectoryProjectAttachments === undefined) {
-      attachmentStatus.textContent = 'Attachment storage is unavailable in this build.'
+    if (!attachmentsAvailable() || api.listDirectoryProjectAttachments === undefined) {
+      attachmentStatus.textContent = ATTACHMENTS_UNAVAILABLE
       return
     }
     try {
@@ -1390,8 +1604,8 @@ export const createProjectDirectoryController = (
       renderFacts()
       renderStaffing()
       renderAssignments()
-      attachmentForm.hidden = demo || !active.capabilities.canWrite
-      attachmentDemo.hidden = !demo || !active.capabilities.canWrite
+      attachmentForm.hidden = !attachmentsAvailable() || demo || !active.capabilities.canWrite
+      attachmentDemo.hidden = !attachmentsAvailable() || !demo || !active.capabilities.canWrite
       await loadAttachmentData(active, projectId)
     } catch (error) {
       active.presentFailure(error, () => {
@@ -1723,6 +1937,7 @@ export const createProjectDirectoryController = (
       active === null ||
       !active.capabilities.canWrite ||
       currentProject === null ||
+      !attachmentsAvailable() ||
       mutationPending ||
       api.uploadDirectoryProjectAttachment === undefined
     ) return

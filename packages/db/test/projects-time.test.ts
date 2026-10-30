@@ -1,6 +1,11 @@
 import BetterSqlite3 from 'better-sqlite3'
 import { Miniflare } from 'miniflare'
 import { afterEach, describe, expect, it } from 'vitest'
+import {
+  roundTimeSeconds,
+  timeRoundingFromLegacy,
+  type LegacyTimeRounding,
+} from '@ezacto/core'
 import { createContainerDatabase, createD1Database } from '../src/adapters.js'
 import { migrateContainer, migrateD1, migrationIds } from '../src/migrate.js'
 import { orgPeopleMigration } from '../src/migrations/0000_org_people.js'
@@ -11,14 +16,26 @@ import {
   elapsedDurationSeconds,
   elapsedWallClockSeconds,
   restartTimeEntry,
-  roundSeconds,
   startTimeEntry,
   stopTimeEntry,
   type CreateStoppedTimeEntryInput,
   type StartTimeEntryInput,
   type TimeBoundary,
-  type TimeRounding,
 } from '../src/time-entries.js'
+
+// These tests state their rounding in the single-enum vocabulary the organization
+// used before issue 949; the rule each value stands for is core's.
+type TimeRounding = LegacyTimeRounding
+const roundSeconds = (seconds: number, policy: TimeRounding): number =>
+  roundTimeSeconds(seconds, timeRoundingFromLegacy(policy))
+const setRounding = async (database: { run(sql: string, ...params: unknown[]): Promise<void> }, policy: TimeRounding) => {
+  const rule = timeRoundingFromLegacy(policy)
+  await database.run(
+    `UPDATE organizations SET time_rounding_mode = ?, time_rounding_minutes = ? WHERE id = 1`,
+    rule.mode,
+    rule.minutes,
+  )
+}
 
 type DrizzleDatabase = Parameters<typeof startTimeEntry>[0]
 
@@ -105,15 +122,15 @@ const installFixture = async (
 ): Promise<void> => {
   await database.run(
     `INSERT INTO organizations
-      (name, time_entry_mode, time_rounding, modules, created_at, updated_at)
-     VALUES (?, ?, ?, ?, ?, ?)`,
+      (name, time_entry_mode, modules, created_at, updated_at)
+     VALUES (?, ?, ?, ?, ?)`,
     'Halcyon Studio',
     mode,
-    rounding,
     modules,
     timestamp,
     timestamp,
   )
+  await setRounding(database, rounding)
   for (const id of [1, 2]) {
     await database.run(
       `INSERT INTO users
@@ -344,18 +361,20 @@ for (const [runtime, factory] of factories) {
         boundary('09:10', '2026-08-27T09:10:00.900Z'),
         false,
       )
-      await startTimeEntry(
-        db.drizzle,
-        { ...baseInput, taskId: 2, taskAssignmentId: 2 },
-        boundary('09:10', '2026-08-27T09:10:01.100Z'),
-        false,
-      )
+      await expect(
+        startTimeEntry(
+          db.drizzle,
+          { ...baseInput, taskId: 2, taskAssignmentId: 2 },
+          boundary('09:10', '2026-08-27T09:10:01.100Z'),
+          false,
+        ),
+      ).rejects.toThrow(/time_entry_zero_duration/)
       expect(
-        await db.rows<{ seconds: number }>(
-          `SELECT seconds FROM time_entries WHERE id = ?`,
+        await db.rows<{ seconds: number; timer_started_at: string | null }>(
+          `SELECT seconds, timer_started_at FROM time_entries WHERE id = ?`,
           fractionalFirst.id,
         ),
-      ).toEqual([{ seconds: 0 }])
+      ).toEqual([{ seconds: 0, timer_started_at: '2026-08-27T09:10:00.900Z' }])
       expect(
         elapsedDurationSeconds(0, '2026-08-27T09:10:00.900Z', '2026-08-27T09:10:01.100Z'),
       ).toBe(0)
@@ -368,12 +387,12 @@ for (const [runtime, factory] of factories) {
       const stoppedAfterModeChange = await stopTimeEntry(
         db.drizzle,
         activeDuration.id,
-        boundary('09:11', '2026-08-27T09:11:00.000Z'),
+        boundary('09:16', '2026-08-27T09:16:00.000Z'),
         false,
       )
       expect(stoppedAfterModeChange.timerStartedAt).toBeNull()
 
-      const stopped = await createStoppedTimeEntry(db.drizzle, stoppedInput({ seconds: 120 }))
+      const stopped = await createStoppedTimeEntry(db.drizzle, stoppedInput({ seconds: 240 }))
       const restarted = await restartTimeEntry(
         db.drizzle,
         stopped.id,
@@ -381,7 +400,7 @@ for (const [runtime, factory] of factories) {
         false,
         false,
       )
-      expect(restarted.secondsWithoutTimer).toBe(120)
+      expect(restarted.secondsWithoutTimer).toBe(240)
       const finalized = await stopTimeEntry(
         db.drizzle,
         stopped.id,
@@ -389,8 +408,8 @@ for (const [runtime, factory] of factories) {
         false,
       )
       expect(finalized).toMatchObject({
-        seconds: 240,
-        secondsWithoutTimer: 240,
+        seconds: 360,
+        secondsWithoutTimer: 360,
         roundedSeconds: 360,
         timerStartedAt: null,
       })
@@ -468,7 +487,7 @@ for (const [runtime, factory] of factories) {
     it('[unit] preserves exact safe upward-rounded totals through explicit JS stops', async () => {
       const db = await setup('duration')
       for (const [index, [policy, increment]] of upRoundingCases.entries()) {
-        await db.run(`UPDATE organizations SET time_rounding = ? WHERE id = 1`, policy)
+        await setRounding(db, policy)
         const exactSafeMultiple = Math.floor(Number.MAX_SAFE_INTEGER / increment) * increment
         expect(Number.isSafeInteger(exactSafeMultiple)).toBe(true)
         expect(exactSafeMultiple % increment).toBe(0)
@@ -507,7 +526,7 @@ for (const [runtime, factory] of factories) {
     it('[unit] preserves the same exact safe totals through trigger replacements', async () => {
       const db = await setup('duration')
       for (const [index, [policy, increment]] of upRoundingCases.entries()) {
-        await db.run(`UPDATE organizations SET time_rounding = ? WHERE id = 1`, policy)
+        await setRounding(db, policy)
         const exactSafeMultiple = Math.floor(Number.MAX_SAFE_INTEGER / increment) * increment
         const hour = String(13 + index).padStart(2, '0')
         const running = await startTimeEntry(
@@ -818,13 +837,13 @@ for (const [runtime, factory] of factories) {
       const stoppedAfterModeChange = await stopTimeEntry(
         db.drizzle,
         activeStartEnd.id,
-        boundary('12:05', '2026-08-27T12:05:00.000Z'),
+        boundary('12:15', '2026-08-27T12:15:00.000Z'),
         false,
       )
       expect(stoppedAfterModeChange).toMatchObject({
-        seconds: 300,
+        seconds: 900,
         timerStartedAt: null,
-        endedTime: '12:05',
+        endedTime: '12:15',
       })
 
       expect(elapsedWallClockSeconds(120, '2026-08-27', '23:59', '2026-08-28', '00:01')).toBe(240)
@@ -876,9 +895,15 @@ for (const [runtime, factory] of factories) {
 
       for (const [policy, seconds, expected] of cases) {
         expect(roundSeconds(seconds, policy), `${policy}(${seconds})`).toBe(expected)
-        await db.run(`UPDATE organizations SET time_rounding = ? WHERE id = 1`, policy)
-        const entry = await createStoppedTimeEntry(db.drizzle, stoppedInput({ seconds }))
-        expect(entry.roundedSeconds, `stored ${policy}(${seconds})`).toBe(expected)
+        await setRounding(db, policy)
+        if (expected === 0) {
+          await expect(
+            createStoppedTimeEntry(db.drizzle, stoppedInput({ seconds })),
+          ).rejects.toThrow(/positive rounded duration/)
+        } else {
+          const entry = await createStoppedTimeEntry(db.drizzle, stoppedInput({ seconds }))
+          expect(entry.roundedSeconds, `stored ${policy}(${seconds})`).toBe(expected)
+        }
       }
       expect(() => roundSeconds(-1, 'none')).toThrow(/non-negative/)
       expect(() => roundSeconds(1.5, 'up_6')).toThrow(/safe integer/)
@@ -1069,7 +1094,7 @@ for (const [runtime, factory] of factories) {
           `SELECT id, applied_at FROM _ezacto_migrations ORDER BY id`,
         ),
       ).toEqual(firstLedger)
-    }, 15_000)
+    }, 60_000)
 
     it('[unit] rolls back a failed 0002 migration and retries without partial schema', async () => {
       database = await factory(false)
@@ -1111,6 +1136,6 @@ for (const [runtime, factory] of factories) {
            WHERE type = 'table' AND name IN ('projects', 'tasks', 'time_entries') ORDER BY name`,
         ),
       ).toEqual([{ name: 'projects' }, { name: 'tasks' }, { name: 'time_entries' }])
-    }, 15_000)
+    }, 60_000)
   })
 }

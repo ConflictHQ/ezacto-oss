@@ -471,6 +471,101 @@ for (const [runtime, factory] of factories) {
       expect(pending).toHaveLength(1)
     })
 
+    it('[integration] resumes a fixed reminder set past failures without consuming new overdue follow-ups', async () => {
+      database = await factory()
+      await installFixture(database)
+      await sendInvoice(database)
+      for (const [id, state] of [[2, 'open'], [3, 'draft']] as const) {
+        await database.run(`INSERT INTO invoices
+          (id, client_id, number, currency, issue_date, due_date, state, created_at, updated_at)
+          VALUES (?, 1, ?, 'USD', '2026-09-01', '2026-09-10', ?, ?, ?)`,
+          id, `REM-${id}`, state, sentAt, sentAt)
+      }
+      for (const [id, date] of [[1, '2026-09-18'], [2, '2026-09-01'], [3, '2026-09-02']] as const) {
+        await database.run(`INSERT INTO scheduled_reminders
+          (id, invoice_id, scheduled_at, interval_days, status, template, causation_event_id, created_at, updated_at)
+          VALUES (?, ?, ?, 7, 'pending', 'reminder', ?, ?, ?)`, id, id, `${date}T00:00:00.000Z`, `bounded-${id}`, drainAt, drainAt)
+      }
+      const scheduler = database.reminder()
+      const attempted: number[] = []
+      const send = async (row: ScheduledReminderRecord) => {
+        attempted.push(row.id)
+        if (row.id === 1) throw new Error('injected unavailable sender')
+      }
+      const first = await scheduler.processReminders({ now: '2026-09-20T00:00:00.000Z', limit: 1,
+        selection: { afterId: 0, throughId: 3 }, send })
+      expect(first).toEqual({ examined: 1, sent: 0, scheduled: 0, lastExaminedId: 1 })
+      const second = await scheduler.processReminders({ now: '2026-09-20T00:00:00.000Z', limit: 1,
+        selection: { afterId: first.lastExaminedId!, throughId: 3 }, send })
+      expect(second).toEqual({ examined: 1, sent: 1, scheduled: 1, lastExaminedId: 2 })
+      const third = await scheduler.processReminders({ now: '2026-09-20T00:00:00.000Z', limit: 1,
+        selection: { afterId: second.lastExaminedId!, throughId: 3 }, send })
+      expect(third).toEqual({ examined: 1, sent: 0, scheduled: 0, lastExaminedId: 3 })
+      expect(await scheduler.processReminders({ now: '2026-09-20T00:00:00.000Z', limit: 1,
+        selection: { afterId: third.lastExaminedId!, throughId: 3 }, send }))
+        .toEqual({ examined: 0, sent: 0, scheduled: 0, lastExaminedId: 3 })
+      expect(attempted).toEqual([1, 2])
+      expect(await database.rows('SELECT id, status FROM scheduled_reminders ORDER BY id')).toEqual([
+        { id: 1, status: 'pending' }, { id: 2, status: 'sent' }, { id: 3, status: 'cancelled' }, { id: 4, status: 'pending' },
+      ])
+      // A later pass may explicitly include the old failure and new follow-up.
+      const next = await scheduler.processReminders({ now: '2026-09-21T00:00:00.000Z', limit: 2,
+        selection: { afterId: 0, throughId: 4 }, send: async row => { attempted.push(row.id) } })
+      expect(next).toEqual({ examined: 2, sent: 2, scheduled: 2, lastExaminedId: 4 })
+      expect(attempted).toEqual([1, 2, 1, 4])
+    })
+
+    it('[integration] holds the due cutoff while updating a newly booked overdue row at processing time', async () => {
+      database = await factory()
+      await installFixture(database)
+      const created = '2026-09-20T04:00:00.000Z'
+      const processing = '2026-09-20T04:05:00.000Z'
+      const cutoff = '2026-09-20T03:00:00.000Z'
+      for (const id of [2, 3]) {
+        await database.run(`INSERT INTO invoices
+          (id, client_id, number, currency, issue_date, due_date, state, created_at, updated_at)
+          VALUES (?, 1, ?, 'USD', '2026-09-01', '2026-09-10', 'draft', ?, ?)`,
+        id, `REM-${id}`, created, created)
+      }
+      for (const [id, invoiceId, due] of [[1, 2, '2026-09-20T02:00:00.000Z'],
+        [2, 3, '2026-09-20T03:30:00.000Z']] as const) {
+        await database.run(`INSERT INTO scheduled_reminders
+          (id, invoice_id, scheduled_at, interval_days, status, template, causation_event_id, created_at, updated_at)
+          VALUES (?, ?, ?, 7, 'pending', 'reminder', ?, ?, ?)`,
+        id, invoiceId, due, `cutoff-${id}`, created, created)
+      }
+      const send = vi.fn(async () => undefined)
+      const scheduler = database.reminder()
+      expect(await scheduler.processReminders({ now: processing, limit: 3,
+        selection: { afterId: 0, throughId: 2, dueThrough: cutoff }, send }))
+        .toEqual({ examined: 1, sent: 0, scheduled: 0, lastExaminedId: 1 })
+      expect(send).not.toHaveBeenCalled()
+      expect(await database.rows('SELECT id, status, updated_at FROM scheduled_reminders ORDER BY id')).toEqual([
+        { id: 1, status: 'cancelled', updated_at: processing },
+        { id: 2, status: 'pending', updated_at: created },
+      ])
+    })
+
+    it('[unit] validates selection bounds before attempting delivery and preserves the default summary', async () => {
+      database = await factory()
+      await installFixture(database)
+      const scheduler = database.reminder()
+      const send = vi.fn(async () => undefined)
+      for (const selection of [
+        { afterId: -1, throughId: 2 }, { afterId: 2, throughId: 1 }, { afterId: 0.5, throughId: 2 },
+        { afterId: 0, throughId: Number.MAX_SAFE_INTEGER + 1 }, { afterId: NaN, throughId: 2 },
+        { afterId: 0, throughId: Infinity },
+      ]) await expect(scheduler.processReminders({ now: drainAt, selection, send })).rejects.toThrow('reminder selection')
+      for (const dueThrough of ['invalid', '2026-09-21T00:00:00.000Z']) {
+        await expect(scheduler.processReminders({ now: drainAt,
+          selection: { afterId: 0, throughId: 2, dueThrough }, send })).rejects.toThrow('reminder due cutoff')
+      }
+      expect(send).not.toHaveBeenCalled()
+      expect(await scheduler.processReminders({ now: drainAt, send })).toEqual({ examined: 0, sent: 0, scheduled: 0 })
+      expect(await scheduler.processReminders({ now: drainAt, selection: { afterId: 0, throughId: 0 }, send }))
+        .toEqual({ examined: 0, sent: 0, scheduled: 0, lastExaminedId: 0 })
+    })
+
     it('[unit] processReminders respects the limit parameter', async () => {
       database = await factory()
       await installFixture(database)

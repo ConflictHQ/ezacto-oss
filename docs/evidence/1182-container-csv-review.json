@@ -1,0 +1,40 @@
+{
+  "issue": 1182,
+  "scope": "Container administrator CSV mapping and preview; apply disabled",
+  "runtime": "actual Container runtime and private staging worker on disposable loopback fixture",
+  "browser": {
+    "engine": "Chromium",
+    "viewport": {
+      "width": 390,
+      "height": 844
+    },
+    "duration_seconds": 9.1
+  },
+  "checks": [
+    "Current administrator session, not owner-only",
+    "Byte upload and immutable server preview",
+    "Explicit inactive-person names without creating the person",
+    "Rejected duration excluded by physical line and fresh preview",
+    "Destination identity, unpriced duration and all tallies visible",
+    "Mapped source text rendered safely without HTML",
+    "All visible controls at least44px, no horizontal overflow",
+    "Reload recovers same private preview",
+    "Apply remains disabled",
+    "Signout clears source labels, inputs and URL locator",
+    "Owner reload and explicit purge remove staged input",
+    "Business and financial rows unchanged; zero time entries throughout",
+    "External provider network blocked"
+  ],
+  "screenshot": "apps/web/test-results/csv-container/csv-import.container.ts-ow-72e83-s-without-importing-records/csv-review-phone.png",
+  "tests": {
+    "csvUIReviewAndCatalog": 16,
+    "apiContract": 14,
+    "nativeContainerProcess": 1,
+    "companySettingsRegressions": 70
+  },
+  "limitations": [
+    "No public or hidden apply calls",
+    "Durable apply and confirmations are #1183",
+    "No live provider or production data used"
+  ]
+}

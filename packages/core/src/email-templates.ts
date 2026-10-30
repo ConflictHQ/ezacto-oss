@@ -153,6 +153,29 @@ export const emailTemplateVariables = [
     compatibility: "native",
   },
   {
+    // Issue 925: so a template can open the way a person would ("Happy
+    // %send_weekday%!") without an edit on every send. The organization's
+    // zone, not the server's: a Friday afternoon in the Americas is already
+    // Saturday in UTC, and the greeting would be a day late.
+    name: "send_weekday",
+    token: "%send_weekday%",
+    description: "Weekday the email is sent, in the organization's time zone, e.g. Friday",
+    kinds: ["invoice"],
+    compatibility: "native",
+  },
+  {
+    // The period the invoice bills, which is not the month it was issued in: a
+    // September invoice goes out in October, and %invoice_issue_month_name%
+    // says October. Empty for an invoice with no period, which a free-form one
+    // is.
+    name: "invoice_period",
+    token: "%invoice_period%",
+    description:
+      "Billing period, e.g. September 2026 or August – September 2026; empty when the invoice has none",
+    kinds: ["invoice"],
+    compatibility: "native",
+  },
+  {
     /**
      * A block, not a scalar: it carries its own plain-text and HTML renderings
      * so the lines survive an HTML template as a table instead of arriving as

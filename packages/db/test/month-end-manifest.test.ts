@@ -98,6 +98,8 @@ describe('what a month-end pack would do (#58)', () => {
         amountCents: 100_000,
         currency: 'USD',
         target: 'ap@kestrel.example.test',
+        quantitySeconds: null,
+        clientName: 'Kestrel Environmental',
         brandName: null,
         costCents: null,
         marginCents: null,
@@ -109,6 +111,8 @@ describe('what a month-end pack would do (#58)', () => {
         amountCents: 412_000,
         currency: 'USD',
         target: 'billing@northpeak.example.test',
+        quantitySeconds: null,
+        clientName: 'Northpeak',
         brandName: null,
         costCents: null,
         marginCents: null,
@@ -178,6 +182,36 @@ describe('what a month-end pack would do (#58)', () => {
       ),
     ).toEqual([1315])
     expect((await monthEndManifest(database, august)).items).toHaveLength(2)
+  })
+
+  it('[unit] carries the hours the invoice billed, rounded as invoiced, and the client name', async () => {
+    const database = await fixture()
+    sqlite!.exec(`
+      INSERT INTO projects (id, client_id, name, created_at, updated_at)
+        VALUES (1, 1, 'Project', '${at}', '${at}');
+      INSERT INTO tasks (id, name, created_at, updated_at) VALUES (1, 'Task', '${at}', '${at}');
+      INSERT INTO user_assignments (id, project_id, user_id, created_at, updated_at)
+        VALUES (1, 1, 1, '${at}', '${at}');
+      INSERT INTO task_assignments (id, project_id, task_id, billable, created_at, updated_at)
+        VALUES (1, 1, 1, 1, '${at}', '${at}');
+      INSERT INTO time_entries (id, user_id, project_id, task_id, user_assignment_id,
+          task_assignment_id, spent_date, seconds, seconds_without_timer, rounded_seconds,
+          billable, created_at, updated_at)
+        VALUES (1, 1, 1, 1, 1, 1, '2026-08-10', 3500, 3500, 3600, 1, '${at}', '${at}'),
+               (2, 1, 1, 1, 1, 1, '2026-08-11', 1700, 1700, 1800, 1, '${at}', '${at}')`)
+    draft(1315, 1)
+    sqlite!.exec('UPDATE time_entries SET invoice_id = 1315')
+    await sendInvoice(database, 1315)
+    draft(1316, 2)
+    await sendInvoice(database, 1316)
+    const manifest = await monthEndManifest(database, august)
+    expect(
+      manifest.items.map((item) => [item.subjectId, item.quantitySeconds, item.clientName]),
+    ).toEqual([
+      [1315, 5400, 'Kestrel Environmental'],
+      // No entries claimed: unknown, not zero.
+      [1316, null, 'Northpeak'],
+    ])
   })
 
   it('[money] does not reach outside the period', async () => {

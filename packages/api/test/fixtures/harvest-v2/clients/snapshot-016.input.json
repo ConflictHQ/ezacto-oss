@@ -1,0 +1,9 @@
+{
+  "id": 1016,
+  "createdAt": "2024-02-03T10:20:30Z",
+  "updatedAt": "2024-02-03T10:20:30Z",
+  "name": "Sample clients name 1016",
+  "isActive": false,
+  "address": "Sample clients address 1016",
+  "currency": "USD"
+}

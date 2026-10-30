@@ -118,12 +118,16 @@ const harness = (user: { userId: number } | null = { userId: 7 }) => {
   return { app, magicLinks, appCodes, mailed, sessions, users }
 }
 
-const request = (app: ReturnType<typeof harness>['app'], body: unknown) =>
-  app.request('https://ezacto.io/auth/magic-link', {
+const requesterCookies = new WeakMap<object, string>()
+const request = async (app: ReturnType<typeof harness>['app'], body: unknown) => {
+  const result = await app.request('https://ezacto.io/auth/magic-link', {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify(body),
   })
+  requesterCookies.set(app, result.headers.get('set-cookie')?.split(';')[0] ?? '')
+  return result
+}
 
 describe('staff magic-link request', () => {
   it('emails a link and a code for a known user (app flow marks the link)', async () => {
@@ -175,15 +179,78 @@ describe('staff magic-link request', () => {
   })
 })
 
+const verifyUrl = 'https://ezacto.io/auth/magic-link/verify'
+
+const redeem = (
+  app: ReturnType<typeof harness>['app'],
+  token: string,
+  headers: { [name: string]: string } = { origin: 'https://ezacto.io' }
+) =>
+  app.request(verifyUrl, {
+    method: 'POST',
+    headers: { 'content-type': 'application/x-www-form-urlencoded', ...headers },
+    body: new URLSearchParams({ token }).toString(),
+  })
+
 describe('staff magic-link verify (link)', () => {
-  it('app flow redirects to the app scheme with a one-time code; web issues a session', async () => {
+  it('GET shows a confirm page and does not consume the link (scanner safe)', async () => {
+    const h = harness()
+    await request(h.app, { email: 'owner@example.test', flow: 'web' })
+    const token = new URL(h.mailed[0]!.link).searchParams.get('token')!
+    for (let i = 0; i < 2; i += 1) {
+      const res = await h.app.request(`${verifyUrl}?token=${token}`)
+      expect(res.status).toBe(200)
+      expect(res.headers.get('content-type')).toContain('text/html')
+      expect(res.headers.get('cache-control')).toBe('no-store')
+      expect(res.headers.get('set-cookie')).toBeNull()
+      const html = await res.text()
+      expect(html).toContain('<form method="post" action="/auth/magic-link/verify">')
+      expect(html).toContain(`name="token" value="${token}"`)
+      expect(html).toContain('href="/assets/ezacto.css"')
+      expect(html).toContain('<button class="primary-action" type="submit">Continue</button>')
+    }
+    expect(h.sessions.issue).not.toHaveBeenCalled()
+    expect((await redeem(h.app, token)).status).toBe(303)
+  })
+
+  it.each([
+    { cookie: undefined, scheme: 'system', meta: 'light dark' },
+    { cookie: 'ezacto_scheme=light', scheme: 'light', meta: 'light' },
+    { cookie: 'ezacto_scheme=dim', scheme: 'dim', meta: 'dark' },
+    { cookie: 'ezacto_scheme=dark', scheme: 'dark', meta: 'dark' },
+    { cookie: 'ezacto_scheme=system', scheme: 'system', meta: 'light dark' },
+    { cookie: 'ezacto_scheme=unknown', scheme: 'system', meta: 'light dark' },
+    { cookie: 'ezacto_scheme=%64ark', scheme: 'system', meta: 'light dark' },
+    { cookie: 'ezacto_scheme=%', scheme: 'system', meta: 'light dark' },
+    { cookie: 'ezacto_scheme=light%22%20UNTRUSTED_SENTINEL', scheme: 'system', meta: 'light dark' },
+    { cookie: 'ezacto_scheme=dim; ezacto_scheme=dark', scheme: 'dim', meta: 'dark' },
+  ])('GET safely renders the closed display preference: $cookie', async ({ cookie, scheme, meta }) => {
+    const h = harness()
+    const res = await h.app.request(`${verifyUrl}?token=${'A'.repeat(43)}`, cookie===undefined ? {} : {headers:{cookie}})
+    expect(res.status).toBe(200)
+    expect(res.headers.get('cache-control')).toBe('no-store')
+    expect(res.headers.get('referrer-policy')).toBe('no-referrer')
+    expect(res.headers.get('set-cookie')).toBeNull()
+    const html = await res.text()
+    expect(html).toContain(`data-ez-theme="precision" data-ez-scheme="${scheme}"`)
+    expect(html).toContain(`<meta name="color-scheme" content="${meta}">`)
+    expect(html).not.toContain('UNTRUSTED_SENTINEL')
+    expect(h.sessions.issue).not.toHaveBeenCalled()
+    expect(h.mailed).toHaveLength(0)
+  })
+
+  it('GET still answers 400 for a missing or malformed token', async () => {
+    const h = harness()
+    expect((await h.app.request(verifyUrl)).status).toBe(400)
+    expect((await h.app.request(`${verifyUrl}?token=short`)).status).toBe(400)
+  })
+
+  it('POST: app flow redirects to the app scheme with a one-time code; web issues a session', async () => {
     for (const flow of ['app', 'web'] as const) {
       const h = harness()
       await request(h.app, { email: 'owner@example.test', flow })
       const token = new URL(h.mailed[0]!.link).searchParams.get('token')!
-      const res = await h.app.request(
-        `https://ezacto.io/auth/magic-link/verify?token=${token}`
-      )
+      const res = await redeem(h.app, token)
       expect(res.status).toBe(303)
       if (flow === 'app') {
         const location = new URL(res.headers.get('location')!)
@@ -197,18 +264,28 @@ describe('staff magic-link verify (link)', () => {
     }
   })
 
-  it('refuses a reused or unknown token', async () => {
+  it('POST refuses a reused or unknown token', async () => {
     const h = harness()
     await request(h.app, { email: 'owner@example.test', flow: 'web' })
     const token = new URL(h.mailed[0]!.link).searchParams.get('token')!
+    expect((await redeem(h.app, token)).status).toBe(303)
+    expect((await redeem(h.app, token)).status).toBe(401)
+  })
+
+  it('POST refuses a cross-origin or originless request without spending the link', async () => {
+    const h = harness()
+    await request(h.app, { email: 'owner@example.test', flow: 'web' })
+    const token = new URL(h.mailed[0]!.link).searchParams.get('token')!
+    expect((await redeem(h.app, token, {})).status).toBe(403)
     expect(
-      (await h.app.request(`https://ezacto.io/auth/magic-link/verify?token=${token}`))
-        .status
-    ).toBe(303)
-    const replay = await h.app.request(
-      `https://ezacto.io/auth/magic-link/verify?token=${token}`
-    )
-    expect(replay.status).toBe(401)
+      (await redeem(h.app, token, { origin: 'https://evil.example' })).status
+    ).toBe(403)
+    expect((await redeem(h.app, token)).status).toBe(303)
+  })
+
+  it('POST refuses a malformed token', async () => {
+    const h = harness()
+    expect((await redeem(h.app, 'short')).status).toBe(400)
   })
 })
 
@@ -216,7 +293,7 @@ describe('staff magic-link exchange (code)', () => {
   const exchange = (app: ReturnType<typeof harness>['app'], body: unknown) =>
     app.request('https://ezacto.io/auth/magic-link/exchange', {
       method: 'POST',
-      headers: { 'content-type': 'application/json' },
+      headers: { 'content-type': 'application/json', cookie: requesterCookies.get(app) ?? '' },
       body: JSON.stringify(body),
     })
 

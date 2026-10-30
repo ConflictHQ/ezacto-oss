@@ -1,8 +1,19 @@
+import type { GithubPublicationUiApi } from './github-publication-model.js'
+import type { PayoutProviderSwitchesApi } from './payout-provider-switches.js'
+import type { ImportApi } from '../csv-import/contract.js'
+import type { GithubReaderUiApi } from './github-reader.js'
+import type { EzactoClient } from '@conflict-hq/ezacto-client'
+export type WebhookApi = Pick<EzactoClient, 'listWebhookSubscriptions' | 'createWebhookSubscription' | 'setWebhookSubscriptionActive' | 'rotateWebhookSecret' | 'deleteWebhookSubscription' | 'listWebhookDeliveries' | 'replayWebhookDelivery'>
+import type { ReportWorkspaceApi } from '../reports/model.js'
 import {
   EzactoApiError,
   type BackupRun,
+  type BackupDownloadLinkEnvelope,
   type BackupStatusEnvelope,
   type EmailHealth,
+  type EmailSuppressionsPage,
+  type EmailSuppressionLiftInput,
+  type EmailSuppressionLift,
   type InvoiceRecipient,
   type OrganizationInvoiceDocumentsEnvelope,
   type OrganizationInvoiceDocumentsInput,
@@ -13,7 +24,13 @@ import {
   type SsoDomainCheck,
   type TimeEntryNoteSettings,
   type TimeEntryNoteSettingsPatch,
+  type TimeRounding,
+  type TimeRoundingPatch,
+  type TimeRoundingRecalculationApplied,
+  type TimeRoundingRecalculationPreview,
+  type TimeRoundingRecalculationRequest,
 } from '@conflict-hq/ezacto-client'
+import type { LogPageResult } from '../components/paged-log.js'
 import type { TimeEntrySettings } from '../components/time-entry-editor.js'
 import { assertInvoiceAddressCount, parseInvoiceAddressLines } from '../invoice-addresses.js'
 
@@ -24,8 +41,18 @@ import { assertInvoiceAddressCount, parseInvoiceAddressLines } from '../invoice-
  */
 /** The envelope's payload, named so the port does not spell the shape twice. */
 export type BackupStatus = BackupStatusEnvelope['data']
+/** A freshly minted download link; the url is a bearer secret and is shown once. */
+export type BackupDownloadLink = BackupDownloadLinkEnvelope['data']
 
 export type { BackupRun }
+
+/** A page of the backup history, narrowed by what the operator is looking for. */
+export interface BackupRunQuery {
+  readonly per_page: number
+  readonly cursor?: string
+  readonly status?: BackupRun['status']
+  readonly trigger?: BackupRun['trigger']
+}
 
 export interface QuickBooksConnectionView {
   configured: boolean
@@ -36,6 +63,27 @@ export interface QuickBooksConnectionView {
     allow_online_payment: boolean
     connected_at: string
   } | null
+}
+
+/** The QuickBooks reconciliation report (issue 1013), as the API states it. */
+export interface QuickBooksReconciliationView {
+  generated_at: string
+  counts: Readonly<Record<string, number>>
+  rows: readonly {
+    status: string
+    number: string
+    detail: string
+    ezacto_amount_cents: number | null
+    quickbooks_amount_cents: number | null
+  }[]
+  /** Payments voided or deleted in QuickBooks that a receipt here came from. */
+  payment_divergences: readonly {
+    quickbooks_payment_id: string
+    kind: 'voided' | 'deleted'
+    receipts: readonly { invoice_number: string; amount_cents: number }[]
+  }[]
+  /** How the missed-webhook catch-up last went; null before its first run. */
+  recovery: { last_outcome: 'caught_up' | 'failed' | 'full_reconcile_needed' } | null
 }
 
 /** The palette as `/api/v1/settings/theme` reports it; null is the built-in theme. */
@@ -61,6 +109,24 @@ export interface WisePayoutConnection {
     readonly payableRecipients: number
     readonly webhooksVerifiable: boolean
   } | null
+}
+
+/** Company settings for the mail the instance sends its own people (issue 934). */
+export type NotificationSettingsState = {
+  readonly budget_alerts_include_admins: boolean
+  readonly submission_reminder: {
+    readonly day: 'monday' | 'tuesday' | 'wednesday' | 'thursday' | 'friday' | 'saturday' | 'sunday'
+    readonly time: string
+  } | null
+}
+
+/** The optional automatic approval of submitted timesheets (issue 1009). */
+export type TimesheetAutoApprovalState = {
+  readonly enabled: boolean
+  readonly window_days: number | null
+  readonly clock_starts_at: 'submitted_at'
+  readonly effective_from: string | null
+  readonly approval_module_enabled: boolean
 }
 
 /** The organisation default payment reminder policy, or null for off (issue 801). */
@@ -89,6 +155,10 @@ export interface InvoiceDefaultsSetting {
   readonly company_address: string | null
   readonly notes: string | null
   readonly subject: string | null
+  /** Days an estimate stays answerable after it is first sent; null means no default expiry. */
+  readonly estimate_validity_days: number | null
+  /** Link the invoice online in the email, and record when it is first opened. */
+  readonly view_receipts: boolean
 }
 
 /**
@@ -180,7 +250,25 @@ export const invoiceAlwaysCcChange = (
   return unchanged ? null : chosen
 }
 
-export interface CompanySettingsApi {
+export interface TimeRoundingApi {
+  updateTimeEntryRoundingSettings(patch: TimeRoundingPatch, signal?: AbortSignal): Promise<TimeRounding>
+  previewTimeRoundingRecalculation(
+    scope: { from?: string; to?: string },
+    signal?: AbortSignal,
+  ): Promise<TimeRoundingRecalculationPreview>
+  applyTimeRoundingRecalculation(
+    request: TimeRoundingRecalculationRequest,
+    signal?: AbortSignal,
+  ): Promise<TimeRoundingRecalculationApplied>
+}
+
+export interface CompanySettingsApi extends PayoutProviderSwitchesApi {
+  csvImports?: ImportApi
+  githubReader?: GithubReaderUiApi
+  githubPublication?: GithubPublicationUiApi
+  webhooks?: WebhookApi
+  downloadDetailedTimeReport?: ReportWorkspaceApi['downloadDetailedTimeReport']
+  getDetailedExpenseReport?: ReportWorkspaceApi['getDetailedExpenseReport']
   /** Optional: a build without the route hides nothing it cannot save. */
   getInvoiceDefaults?(signal?: AbortSignal): Promise<InvoiceDefaultsSetting>
   /** The attachment defaults, under Sending in the same section. Optional the same way. */
@@ -206,6 +294,13 @@ export interface CompanySettingsApi {
     signal?: AbortSignal,
   ): Promise<TimeEntryNoteSettings>
   /**
+   * Time rounding (issue 949), under the same heading. Optional: a client of
+   * an older build has no such routes, and the controls then stay hidden.
+   */
+  updateTimeEntryRoundingSettings?: TimeRoundingApi['updateTimeEntryRoundingSettings']
+  previewTimeRoundingRecalculation?: TimeRoundingApi['previewTimeRoundingRecalculation']
+  applyTimeRoundingRecalculation?: TimeRoundingApi['applyTimeRoundingRecalculation']
+  /**
    * The organisation's default payment reminder policy (issue 801). `null` is
    * reminders off. Optional because only a build with the reminder routes
    * serves it, and a section that cannot be saved says so rather than failing.
@@ -216,13 +311,41 @@ export interface CompanySettingsApi {
     policy: ReminderPolicySetting,
     signal?: AbortSignal,
   ): Promise<{ readonly policy: ReminderPolicySetting; readonly applied: number }>
+  /**
+   * Company settings for the mail the instance sends its own people (issues
+   * 934, 935). Optional like the reminder settings: only a build with the route
+   * serves them, and a section that cannot be saved says so.
+   */
+  getNotificationSettings?(signal?: AbortSignal): Promise<NotificationSettingsState>
+  updateNotificationSettings?(
+    patch: Partial<NotificationSettingsState>,
+    signal?: AbortSignal,
+  ): Promise<NotificationSettingsState>
+  /** Optional like the settings above: only a build with the route serves it. */
+  getTimesheetAutoApproval?(signal?: AbortSignal): Promise<TimesheetAutoApprovalState>
+  updateTimesheetAutoApproval?(
+    patch: { readonly enabled?: boolean; readonly window_days?: number },
+    signal?: AbortSignal,
+  ): Promise<TimesheetAutoApprovalState>
   getEmailHealth(signal?: AbortSignal): Promise<EmailHealth>
+  listEmailSuppressions?(cursor?: string, signal?: AbortSignal): Promise<EmailSuppressionsPage>
+  liftEmailSuppression?(id: number, input: EmailSuppressionLiftInput, signal?: AbortSignal): Promise<EmailSuppressionLift>
   /**
    * Backup runs. Optional because only a deployment that composes a reader
    * serves them -- the Worker exports itself to R2 nightly, and the container's
    * backups are the operator's filesystem, where `RESTORE.md` is the contract.
    */
   getBackupStatus?(signal?: AbortSignal): Promise<BackupStatus>
+  checkOffsiteBackupDestination?(signal?: AbortSignal): Promise<{verified:boolean;checked_at:string}>
+  /** Mints a single-use download link for the latest completed run (issue 39). */
+  createBackupDownloadLink?(
+    input: { readonly code?: string },
+    signal?: AbortSignal,
+  ): Promise<BackupDownloadLink>
+  /** The organization's timezone, which is how the backup history says when a run started. */
+  getTimesheetLockPolicy?(signal?: AbortSignal): Promise<{ readonly timezone: string }>
+  /** The whole history behind the status, a page at a time (issue 929). */
+  listBackupRuns?(query: BackupRunQuery, signal?: AbortSignal): Promise<LogPageResult<BackupRun>>
   /**
    * The payout connection, as an operator meets it.
    *
@@ -243,6 +366,8 @@ export interface CompanySettingsApi {
     signal?: AbortSignal,
   ): Promise<unknown>
   disconnectQuickBooks?(signal?: AbortSignal): Promise<void>
+  /** Reads QuickBooks and lists differences; changes nothing on either side. */
+  getQuickBooksReconciliation?(signal?: AbortSignal): Promise<QuickBooksReconciliationView>
 
   /**
    * The instance palette (#591). Optional for the same reason the two above
@@ -563,3 +688,14 @@ export const themeSlotGroups: readonly ThemeSlotCopy['group'][] = [
   'Status',
   'Surfaces',
 ]
+
+/** Local review signals over recorded history, not provider sending limits. */
+export const emailReputationWarning = (
+  rates: Pick<EmailHealth['reputation'], 'bounce_rate_ppm' | 'complaint_rate_ppm'>,
+): string => {
+  if (rates.bounce_rate_ppm >= 20_000 || rates.complaint_rate_ppm >= 1_000)
+    return 'Review sender reputation: bounce rate at least 2% or complaint rate at least 0.1%.'
+  if (rates.bounce_rate_ppm >= 10_000 || rates.complaint_rate_ppm >= 500)
+    return 'Watch sender reputation: bounce rate at least 1% or complaint rate at least 0.05%.'
+  return ''
+}

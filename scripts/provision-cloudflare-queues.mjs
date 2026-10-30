@@ -121,6 +121,7 @@ export const parseJsonc = (source) => {
 export const readQueueContract = async (
   environment,
   configUrl = new URL("../entries/worker/wrangler.jsonc", import.meta.url),
+  binding = "EMAIL_QUEUE",
 ) => {
   if (!environments.has(environment)) {
     throw new TypeError("environment must be dev or prod");
@@ -151,23 +152,48 @@ export const readQueueContract = async (
     environmentConfig.queues,
     `config.env.${environment}.queues`,
   );
-  if (!Array.isArray(queues.producers) || queues.producers.length !== 1) {
+  if (
+    !Array.isArray(queues.producers) ||
+    queues.producers.length !== 2 ||
+    !Array.isArray(queues.consumers) ||
+    queues.consumers.length !== 2
+  ) {
     throw new TypeError(
-      `${environment} must declare exactly one queue producer`,
+      `${environment} must declare email and migration producers and consumers`,
     );
   }
-  if (!Array.isArray(queues.consumers) || queues.consumers.length !== 1) {
+  const bindings = queues.producers
+    .map((producer) => record(producer, "queue producer").binding)
+    .sort();
+  if (
+    JSON.stringify(bindings) !==
+    JSON.stringify(["EMAIL_QUEUE", "MIGRATION_QUEUE"])
+  ) {
     throw new TypeError(
-      `${environment} must declare exactly one queue consumer`,
+      `${environment} queue bindings must be EMAIL_QUEUE and MIGRATION_QUEUE`,
     );
   }
-  const producer = record(queues.producers[0], `${environment} queue producer`);
-  const consumer = record(queues.consumers[0], `${environment} queue consumer`);
-  if (producer.binding !== "EMAIL_QUEUE") {
+  if (!bindings.includes(binding))
+    throw new TypeError("queue binding is invalid");
+  const producer = record(
+    queues.producers.find((producer) => producer.binding === binding),
+    `${environment} queue producer`,
+  );
+  const matching = queues.consumers.filter(
+    (consumer) => consumer.queue === producer.queue,
+  );
+  if (matching.length !== 1)
     throw new TypeError(
-      `${environment} queue producer binding must be EMAIL_QUEUE`,
+      `${environment} producer and consumer queues must match uniquely`,
     );
-  }
+  const consumer = record(matching[0], `${environment} queue consumer`);
+  if (
+    binding === "MIGRATION_QUEUE" &&
+    environmentConfig.vars?.MIGRATION_QUEUE_NAME !== producer.queue
+  )
+    throw new TypeError(
+      `${environment} migration queue name must match its binding`,
+    );
   const queueName = nonEmptyString(producer.queue, `${environment} queue name`);
   if (consumer.queue !== queueName) {
     throw new TypeError(
@@ -376,12 +402,18 @@ if (
     if (apiToken === "" || accountId === "") {
       throw new TypeError("Cloudflare credentials are not configured");
     }
-    const contract = await readQueueContract(environment);
-    const result = await convergeQueues(contract, mode, {
-      fetch,
-      apiToken,
-      accountId,
-    });
+    const results = [];
+    for (const binding of ["EMAIL_QUEUE", "MIGRATION_QUEUE"]) {
+      const contract = await readQueueContract(environment, undefined, binding);
+      results.push(
+        await convergeQueues(contract, mode, { fetch, apiToken, accountId }),
+      );
+    }
+    const result = {
+      environment,
+      mode,
+      resources: results.flatMap((result) => result.resources),
+    };
     process.stdout.write(`${JSON.stringify(result)}\n`);
   } catch (error) {
     process.stderr.write(

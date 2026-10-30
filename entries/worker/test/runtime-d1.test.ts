@@ -1,5 +1,6 @@
 import {
   createApiTokenStore,
+  createInvoiceElevationStore,
   createD1Database,
   migrationIds,
 } from "@ezacto/db/d1";
@@ -14,12 +15,14 @@ import {
 import { build } from "esbuild";
 import { Miniflare } from "miniflare";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { createD1SessionStore } from "../../../packages/db/src/sessions.js";
 import { parseCursorSigningKey } from "../src/runtime.js";
 
 const timestamp = "2026-08-28T08:00:00.000Z";
 const cursorSecret = encodeBase64Url(new Uint8Array(32).fill(0x41));
 
 let miniflare: Miniflare;
+let bundledWorker: string;
 let database: D1Database;
 let bootstrapResponse: Response;
 let bearer: string;
@@ -57,6 +60,7 @@ beforeAll(async () => {
     target: "es2022",
     write: false,
   });
+  bundledWorker = bundled.outputFiles[0]!.text;
   miniflare = new Miniflare({
     bindings: {
       API_CURSOR_SIGNING_KEY: cursorSecret,
@@ -225,6 +229,86 @@ beforeAll(async () => {
 afterAll(async () => miniflare.dispose());
 
 describe("Worker D1 runtime composition", () => {
+  it('[#1167] serves expenses without attachment storage and bootstraps the same capability into pages', async () => {
+    const runtime = new Miniflare({
+      bindings: { API_CURSOR_SIGNING_KEY: cursorSecret, ENVIRONMENT: 'test', RELEASE: 'no-storage-test' },
+      compatibilityDate: '2026-08-06', compatibilityFlags: ['nodejs_als'],
+      d1Databases: ['DB'], modules: true, script: bundledWorker,
+    });
+    try {
+      const first = await runtime.dispatchFetch('https://worker.test/api/v1/expenses');
+      expect(first.status).toBe(401);
+      const db = await runtime.getD1Database('DB');
+      await db.prepare("INSERT INTO organizations (id, name, modules, created_at, updated_at) VALUES (1, 'Fixture', ?, ?, ?)")
+        .bind(JSON.stringify({expenses: true}), timestamp, timestamp).run();
+      await db.prepare("INSERT INTO users (id, first_name, last_name, profile, manager_grants, created_at, updated_at) VALUES (1, 'Fixture', 'Owner', 'administrator', '[]', ?, ?)")
+        .bind(timestamp, timestamp).run();
+      const store = createApiTokenStore(createD1Database(db as unknown as D1Database));
+      const token = (await store.issue({userId: 1, name: 'No storage', scopes: ['expenses:read', 'projects:read']})).token;
+      const headers = { authorization: `Bearer ${token}` };
+      const expenses = await runtime.dispatchFetch('https://worker.test/api/v1/expenses', {headers});
+      expect(expenses.status).toBe(200);
+      expect(await expenses.json()).toMatchObject({data: []});
+      const projects = await runtime.dispatchFetch('https://worker.test/api/v1/projects', {headers});
+      expect(projects.status).toBe(200);
+      const attachments = await runtime.dispatchFetch('https://worker.test/api/v1/projects/1/attachments', {headers});
+      expect(attachments.status).toBe(403);
+      expect(await attachments.json()).toMatchObject({error: {code: 'feature_unavailable'}});
+      for (const path of ['/projects/1', '/expenses', '/expenses/1']) {
+        const page = await runtime.dispatchFetch(`https://worker.test${path}`);
+        expect(page.status).toBe(200);
+        expect(await page.text()).toContain('data-attachments-unavailable');
+      }
+    } finally { await runtime.dispose(); }
+  });
+
+  it('[#1216] answers 403 module_disabled on every backup route when BACKUPS_ENABLED is false, and serves them otherwise', async () => {
+    const run = async (extra: Record<string, string>) => {
+      const runtime = new Miniflare({
+        bindings: { API_CURSOR_SIGNING_KEY: cursorSecret, ENVIRONMENT: 'test', RELEASE: 'backups-flag-test', ...extra },
+        compatibilityDate: '2026-08-06', compatibilityFlags: ['nodejs_als'],
+        d1Databases: ['DB'], modules: true, script: bundledWorker,
+      });
+      try {
+        await runtime.dispatchFetch('https://worker.test/api/v1');
+        const db = await runtime.getD1Database('DB');
+        await db.prepare("INSERT INTO organizations (id, name, modules, created_at, updated_at) VALUES (1, 'Fixture', '{}', ?, ?)")
+          .bind(timestamp, timestamp).run();
+        await db.prepare("INSERT INTO users (id, first_name, last_name, profile, manager_grants, created_at, updated_at) VALUES (1, 'Fixture', 'Owner', 'administrator', '[]', ?, ?)")
+          .bind(timestamp, timestamp).run();
+        const session = await createD1SessionStore(db).issue(1);
+        const headers = { cookie: `__Host-ezacto_session=${session.token}`, origin: 'https://worker.test' };
+        const status = async (path: string, init: { method?: string; body?: string } = {}) =>
+          (await runtime.dispatchFetch(`https://worker.test${path}`, { headers, ...init })).status;
+        return {
+          status: await status('/api/v1/backup/status'),
+          runs: await status('/api/v1/backup/runs'),
+          check: await status('/api/v1/backup/offsite/check', { method: 'POST' }),
+          mint: await status('/api/v1/backup/download-links', { method: 'POST', body: '{}' }),
+          redeem: await status('/backup-download/not-a-token'),
+          page: await (await runtime.dispatchFetch('https://worker.test/settings/company')).text(),
+        };
+      } finally { await runtime.dispose(); }
+    };
+    const on = await run({});
+    expect(on.status).toBe(200);
+    expect(on.runs).toBe(200);
+    expect(on.page).not.toContain('data-backups-unavailable');
+    const off = await run({ BACKUPS_ENABLED: 'false' });
+    expect(off).toMatchObject({ status: 403, runs: 403, check: 403, mint: 403, redeem: 403 });
+    expect(off.page).toContain('data-backups-unavailable');
+    // An unrecognised value is refused at start-up, not read as on or off.
+    const invalid = new Miniflare({
+      bindings: { API_CURSOR_SIGNING_KEY: cursorSecret, ENVIRONMENT: 'test', RELEASE: 'backups-flag-test', BACKUPS_ENABLED: 'off' },
+      compatibilityDate: '2026-08-06', compatibilityFlags: ['nodejs_als'],
+      d1Databases: ['DB'], modules: true, script: bundledWorker,
+    });
+    try {
+      expect((await invalid.dispatchFetch('https://worker.test/api/v1/backup/status')).status).toBe(503);
+      expect((await invalid.dispatchFetch('https://worker.test/settings/company')).status).not.toBe(200);
+    } finally { await invalid.dispose(); }
+  });
+
   it("[api] migrates the real D1 binding before its first DB-backed fetch", async () => {
     expect(bootstrapResponse.status).toBe(401);
     expect(bootstrapResponse.headers.get("www-authenticate")).toBe(
@@ -452,14 +536,39 @@ describe("Worker D1 runtime composition", () => {
     }
   });
 
-  it("[api] executes and replays a generated-client money command through the real D1 binding", async () => {
+  it("[api] executes and replays an elevated generated-client money command through the real D1 binding", async () => {
     const client = new EzactoClient({
       baseUrl: "https://worker.test",
       token: moneyBearer,
       fetch: workerFetch,
     });
+    const native = createD1Database(database);
+    const principal = await createApiTokenStore(native).authenticate(moneyBearer);
+    if (principal === null)
+      throw new Error("Native administrator token fixture is unavailable");
+    // Full password/MFA reauthentication is exercised by invoice-sudo.browser.ts.
+    // This composition test seeds a capability through the real authority store.
+    await run(
+      `INSERT INTO user_passwords(user_id,credential_version,algorithm,iterations,salt,password_hash,created_at,updated_at)
+        VALUES(1,1,'pbkdf2-sha256',600000,?,?,?,?)`,
+      "A".repeat(22),
+      "A".repeat(43),
+      timestamp,
+      timestamp,
+    );
+    const elevations = createInvoiceElevationStore(native);
+    const grant = await elevations.mint(
+      {
+        userId: 1,
+        tokenId: principal.tokenId,
+        invoiceId: 1,
+        credentialVersion: 1,
+      },
+      new Date().toISOString(),
+    );
     const command = {
       id: 1,
+      headers: { "X-Ezacto-Invoice-Elevation": grant.credential },
       "Idempotency-Key": "runtime-money-line-1",
       body: {
         expected_version: 0,
@@ -471,8 +580,20 @@ describe("Worker D1 runtime composition", () => {
       },
     } as const;
 
+    await expect(
+      client.createInvoiceLine({ ...command, headers: {} }),
+    ).rejects.toMatchObject({ status: 403 });
     const created = await client.createInvoiceLine(command);
     const replayed = await client.createInvoiceLine(command);
+    await elevations.revoke(
+      grant.elevation.id,
+      { userId: 1, tokenId: principal.tokenId },
+      new Date().toISOString(),
+    );
+    // Revocation also fences a previously successful HTTP-cache replay.
+    await expect(client.createInvoiceLine(command)).rejects.toMatchObject({
+      status: 403,
+    });
 
     expect(created.data.invoice).toMatchObject({
       id: 1,
@@ -487,7 +608,7 @@ describe("Worker D1 runtime composition", () => {
       await database
         .prepare(
           `SELECT COUNT(*) AS lineCount, SUM(amount_cents) AS amountCents
-           FROM invoice_line_items WHERE invoice_id = ?`,
+             FROM invoice_line_items WHERE invoice_id = ?`,
         )
         .bind(1)
         .first(),
@@ -496,7 +617,7 @@ describe("Worker D1 runtime composition", () => {
       await database
         .prepare(
           `SELECT COUNT(*) AS eventCount
-           FROM event_outbox WHERE aggregate_type = 'invoice' AND aggregate_id = ?`,
+             FROM event_outbox WHERE aggregate_type = 'invoice' AND aggregate_id = ?`,
         )
         .bind(1)
         .first(),
@@ -556,6 +677,7 @@ describe("Worker D1 runtime composition", () => {
       project_id: project.data.id,
       task_id: task.data.id,
       minimum_note_length: 3,
+      time_rounding: { mode: "exact", minutes: 15, source: "organization" },
     });
     const entry = await client.createTimeEntry({
       body: {
@@ -841,6 +963,19 @@ describe("Worker D1 runtime composition", () => {
     const empty = await download("/api/v1/invoices/9041/hours-report?format=pdf");
     expect(empty.status).toBe(409);
     expect(await empty.json()).toMatchObject({ error: { code: "no_billed_time" } });
+
+    // Issue 924: the reconciliation reads the same entries at the same rounded
+    // seconds, so its linked figure is the report's 1.50 h.
+    const reconciliation = await download("/api/v1/invoices/9040/hours-reconciliation");
+    expect(reconciliation.status).toBe(200);
+    expect(await reconciliation.json()).toMatchObject({
+      data: { invoice_id: 9040, linked_seconds: 5400 },
+    });
+    const none = await download("/api/v1/invoices/9041/hours-reconciliation");
+    expect(none.status).toBe(200);
+    expect(await none.json()).toMatchObject({ data: { linked_seconds: 0, projects: [] } });
+    expect((await download("/api/v1/invoices/999999/hours-reconciliation")).status).toBe(404);
+    expect((await download("/api/v1/invoices/9040/hours-reconciliation", bearer)).status).toBe(403);
   });
 
   it("[api] uploads and downloads an owner-scoped attachment through real D1 and R2 bindings", async () => {
@@ -893,7 +1028,13 @@ describe("Worker D1 runtime composition", () => {
         body: changedRetry,
       },
     );
-    expect(changedRetryResponse.status).toBe(409);
+    // The entry answers a key reused for a different request before the route
+    // sees it (#952), as the hosted router does. The upload route's own 409 for
+    // a changed command stays for callers that reach it directly.
+    expect(changedRetryResponse.status).toBe(422);
+    expect(await changedRetryResponse.json()).toMatchObject({
+      error: { code: "idempotency_key_reused" },
+    });
 
     const bytes = await client.downloadInvoiceAttachment({
       invoiceId: 1,
@@ -1290,6 +1431,142 @@ describe("cursor signing binding", () => {
       /canonical base64url/,
     );
     expect(() => parseCursorSigningKey("")).toThrow(/canonical base64url/);
+  });
+});
+
+describe("Idempotency-Key through the deployed Worker entry (#952)", () => {
+  const logTime = (key: string | null, notes: string): Promise<Response> =>
+    request("/api/v1/time-entries", {
+      method: "POST",
+      headers: {
+        authorization: `Bearer ${bearer}`,
+        "content-type": "application/json",
+        ...(key === null ? {} : { "idempotency-key": key }),
+      },
+      body: JSON.stringify({
+        project_id: 1,
+        task_id: 1,
+        spent_date: "2026-08-29",
+        seconds: 1800,
+        notes,
+      }),
+    });
+
+  const entriesNoted = async (notes: string): Promise<number> =>
+    (await database
+      .prepare("SELECT count(*) AS n FROM time_entries WHERE notes = ?")
+      .bind(notes)
+      .first<{ n: number }>())!.n;
+
+  it("[api] creates a keyed time entry once and replays its exact answer to the retry", async () => {
+    const first = await logTime("e2e-952-once", "e2e 952 once");
+    expect(first.status).toBe(201);
+    expect(first.headers.get("idempotency-key-lifetime")).toBe("86400");
+    expect(first.headers.get("idempotent-replayed")).toBeNull();
+    const created = await first.text();
+
+    const retry = await logTime("e2e-952-once", "e2e 952 once");
+    expect(retry.status).toBe(201);
+    expect(retry.headers.get("idempotent-replayed")).toBe("true");
+    expect(retry.headers.get("x-request-id")).toBe(first.headers.get("x-request-id"));
+    expect(await retry.text()).toBe(created);
+    expect(await entriesNoted("e2e 952 once")).toBe(1);
+  });
+
+  it("[api] lands concurrent copies of one keyed write exactly once", async () => {
+    const answers = await Promise.all(
+      Array.from({ length: 3 }, () => logTime("e2e-952-race", "e2e 952 race")),
+    );
+    for (const answer of answers) expect([201, 503]).toContain(answer.status);
+    expect(await entriesNoted("e2e 952 race")).toBe(1);
+    const settled = await logTime("e2e-952-race", "e2e 952 race");
+    expect(settled.status).toBe(201);
+    expect(settled.headers.get("idempotent-replayed")).toBe("true");
+    expect(await entriesNoted("e2e 952 race")).toBe(1);
+  });
+
+  it("[security] holds a key to the request it first carried", async () => {
+    expect((await logTime("e2e-952-bound", "e2e 952 bound")).status).toBe(201);
+    const reused = await logTime("e2e-952-bound", "e2e 952 something else");
+    expect(reused.status).toBe(422);
+    expect(await reused.json()).toMatchObject({
+      error: { code: "idempotency_key_reused" },
+    });
+    expect(await entriesNoted("e2e 952 something else")).toBe(0);
+  });
+
+  it("[api] runs a write refused before it changed anything again under the token signed in afresh", async () => {
+    // A token without the write scope: authentication records its last use,
+    // and the route refuses. That write is authentication's, not the
+    // request's, so it must not claim the key and turn the refusal into
+    // "already done" for the retry.
+    const tokens = createApiTokenStore(createD1Database(database), {
+      now: () => timestamp,
+    });
+    const readOnly = (
+      await tokens.issue({ userId: 2, name: "Read-only #952", scopes: ["time_entries:read"] })
+    ).token;
+    const writer = (
+      await tokens.issue({
+        userId: 2,
+        name: "Writer #952",
+        scopes: ["time_entries:read", "time_entries:write"],
+      })
+    ).token;
+    const send = (token: string) =>
+      request("/api/v1/time-entries", {
+        method: "POST",
+        headers: {
+          authorization: `Bearer ${token}`,
+          "content-type": "application/json",
+          "idempotency-key": "e2e-952-reauthenticated",
+        },
+        body: JSON.stringify({
+          project_id: 1,
+          task_id: 1,
+          spent_date: "2026-08-29",
+          seconds: 1800,
+          notes: "e2e 952 reauthenticated",
+        }),
+      });
+    expect((await send(readOnly)).status).toBe(403);
+    const retried = await send(writer);
+    expect(retried.status).toBe(201);
+    expect(retried.headers.get("idempotent-replayed")).toBeNull();
+    expect(await entriesNoted("e2e 952 reauthenticated")).toBe(1);
+    const replayed = await send(writer);
+    expect(replayed.headers.get("idempotent-replayed")).toBe("true");
+    // The first token's holder never sees the answer: it is told the write
+    // was done, not handed it.
+    const other = await send(readOnly);
+    expect(other.status).toBe(409);
+    expect(await entriesNoted("e2e 952 reauthenticated")).toBe(1);
+  });
+
+  it("[security] refuses an invalid key without creating anything", async () => {
+    const refused = await logTime("not a key", "e2e 952 invalid");
+    expect(refused.status).toBe(400);
+    expect(await refused.json()).toMatchObject({
+      error: { code: "invalid_idempotency_key" },
+    });
+    expect(await entriesNoted("e2e 952 invalid")).toBe(0);
+  });
+
+  it("[api] runs an unkeyed write every time, as before", async () => {
+    expect((await logTime(null, "e2e 952 unkeyed")).status).toBe(201);
+    expect((await logTime(null, "e2e 952 unkeyed")).status).toBe(201);
+    expect(await entriesNoted("e2e 952 unkeyed")).toBe(2);
+  });
+
+  it("[api] tells every data answer, refusals included, that keys are honoured here", async () => {
+    const read = await request("/api/v1/time-entries?per_page=1", {
+      headers: { authorization: `Bearer ${bearer}` },
+    });
+    expect(read.status).toBe(200);
+    expect(read.headers.get("idempotency-key-lifetime")).toBe("86400");
+    const refused = await request("/api/v1/time-entries");
+    expect(refused.status).toBe(401);
+    expect(refused.headers.get("idempotency-key-lifetime")).toBe("86400");
   });
 });
 

@@ -1,3 +1,4 @@
+import ts from 'typescript'
 import { readFile } from 'node:fs/promises'
 import { resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -19,40 +20,23 @@ const root = resolve(fileURLToPath(new URL('..', import.meta.url)))
  * a unit test cannot catch and a source guard can.
  */
 const interfaceMethods = (source: string, name: string): string[] => {
-  const start = source.indexOf(`export interface ${name} {`)
-  if (start === -1) throw new Error(`${name} is not declared`)
-  let depth = 0
-  let index = source.indexOf('{', start)
-  const open = index
-  do {
-    if (source[index] === '{') depth += 1
-    if (source[index] === '}') depth -= 1
-    index += 1
-  } while (depth > 0 && index < source.length)
-  const body = source.slice(open + 1, index - 1)
-  // Members at the top level of the interface only: a method named inside a
-  // nested object type is part of that type, not of this one.
-  const methods = new Set<string>()
-  let nesting = 0
-  for (const line of body.split('\n')) {
-    const text = line.trim()
-    if (nesting === 0) {
-      const match = /^([A-Za-z][A-Za-z0-9]*)\??\s*\(/u.exec(text)
-      if (match !== null) methods.add(match[1]!)
-    }
-    nesting += (line.match(/\{/gu) ?? []).length - (line.match(/\}/gu) ?? []).length
-  }
-  return [...methods]
+  const file = ts.createSourceFile('api.ts', source, ts.ScriptTarget.Latest, true)
+  const declaration = file.statements.find(
+    (statement): statement is ts.InterfaceDeclaration =>
+      ts.isInterfaceDeclaration(statement) && statement.name.text === name,
+  )
+  if (!declaration) throw new Error(`${name} is not declared`)
+  return declaration.members.flatMap((member) =>
+    ts.isMethodSignature(member) && ts.isIdentifier(member.name) ? [member.name.text] : [],
+  )
 }
 
 describe('every screen method the real client should supply', () => {
   it('[security] is bound in createShellApi, or the control silently does nothing', async () => {
     const shell = await readFile(resolve(root, 'src', 'shell', 'model.ts'), 'utf8')
-    const settings = await readFile(
-      resolve(root, 'src', 'module-settings', 'model.ts'),
-      'utf8',
-    )
+    const settings = await readFile(resolve(root, 'src', 'module-settings', 'model.ts'), 'utf8')
     const clients = await readFile(resolve(root, 'src', 'clients', 'model.ts'), 'utf8')
+    const rateCards = await readFile(resolve(root, 'src', 'clients', 'rate-card-model.ts'), 'utf8')
     // The invoice pages: an unbound lookup there is a page addressed by its
     // number that says it is unavailable in this build.
     const invoices = await readFile(resolve(root, 'src', 'invoices', 'model.ts'), 'utf8')
@@ -63,15 +47,14 @@ describe('every screen method the real client should supply', () => {
     const declared = [
       ...interfaceMethods(settings, 'CompanySettingsApi'),
       ...interfaceMethods(clients, 'ClientDirectoryApi'),
+      ...interfaceMethods(rateCards, 'ClientRateCardApi'),
       ...interfaceMethods(invoices, 'InvoicePaymentApi'),
       ...interfaceMethods(recurring, 'RecurringWorkspaceApi'),
     ]
     expect(declared.length).toBeGreaterThan(10)
 
     const factory = shell.slice(shell.indexOf('export const createShellApi'))
-    const unbound = declared.filter(
-      (method) => !new RegExp(`\\n  ${method}:`, 'u').test(factory),
-    )
+    const unbound = declared.filter((method) => !new RegExp(`\\n  ${method}:`, 'u').test(factory))
 
     /**
      * Methods a screen declares that the shell deliberately does not bind.
@@ -85,13 +68,19 @@ describe('every screen method the real client should supply', () => {
     expect(unbound).toEqual(deliberatelyUnbound)
   })
 
+  it('[unit] extracts inherited interface declarations without treating nested methods as screen bindings', () => {
+    expect(
+      interfaceMethods(
+        'export interface Child extends Parent { load?(): Promise<void>; nested: { hidden(): void } }',
+        'Child',
+      ),
+    ).toEqual(['load'])
+  })
+
   it('[unit] the extraction finds real methods, so an empty list cannot pass vacuously', async () => {
     // Without this the guard above would pass on a parser that returned nothing
     // -- which is how a source-scanning test quietly stops testing.
-    const settings = await readFile(
-      resolve(root, 'src', 'module-settings', 'model.ts'),
-      'utf8',
-    )
+    const settings = await readFile(resolve(root, 'src', 'module-settings', 'model.ts'), 'utf8')
     const methods = interfaceMethods(settings, 'CompanySettingsApi')
     expect(methods).toContain('getTimeEntrySettings')
     expect(methods).toContain('getQuickBooksConnection')

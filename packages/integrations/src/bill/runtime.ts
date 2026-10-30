@@ -156,22 +156,27 @@ const findInvoiceByNumber = async (
   return null
 }
 
-export const createBillRuntime = (
-  options: Readonly<BillRuntimeOptions>,
-): BillRuntime => {
-  const { config, links, source } = options
+/** The same local configuration predicate used by SSR; it performs no provider request. */
+const billCredentials = (config: Readonly<BillConfig>): BillCredentials | null => {
   const devKey = trimmed(config.devKey)
   const companyId = trimmed(config.companyId)
   const username = trimmed(config.username)
   const password = trimmed(config.password)
+  return devKey === null || companyId === null || username === null || password === null
+    ? null : { devKey, companyId, username, password }
+}
+export const billConfigured = (config: Readonly<BillConfig>): boolean => billCredentials(config) !== null
+
+export const createBillRuntime = (
+  options: Readonly<BillRuntimeOptions>,
+): BillRuntime => {
+  const { config, links, source } = options
+  const companyId = trimmed(config.companyId)
   const replyToUserId = trimmed(config.replyToUserId)
   const sandbox = config.environment?.trim().toLowerCase() === 'sandbox'
   const baseUrl = sandbox ? BILL_SANDBOX_BASE_URL : BILL_PRODUCTION_BASE_URL
 
-  const credentials: BillCredentials | null =
-    devKey === null || companyId === null || username === null || password === null
-      ? null
-      : { devKey, companyId, username, password }
+  const credentials = billCredentials(config)
 
   // A single session, reused. BILL expires on idle rather than age, so a
   // deployment that mirrors regularly signs in once and a quiet one signs in
@@ -363,8 +368,8 @@ export const createBillRuntime = (
  * Failures do throw. The outbox retries, and the mirror is safe to retry: that
  * is what the adopt path and the link table are for.
  */
-export const createBillMirrorSubscriber = (
-  runtime: Readonly<BillRuntime>,
+export const createBillMirrorSubscriber = <Runtime extends Pick<BillRuntime, 'mirror'>>(
+  runtime: Readonly<Runtime>,
 ): {
   readonly id: 'bill_mirror'
   deliver(

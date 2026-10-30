@@ -328,6 +328,15 @@ export const mirrorPayment = async (
   return { kind: 'created', quickBooksId: created.Id }
 }
 
+/**
+ * QuickBooks voids a payment as it voids an invoice: the document stays, its
+ * total goes to zero and its private note becomes "Voided". The note is what
+ * separates a void from a payment entered at nothing. The shape is the
+ * documented one, not yet seen on an owned sandbox (issue 1013).
+ */
+export const isVoidedPayment = (payment: Readonly<QuickBooksPayment>): boolean =>
+  payment.TotalAmt === 0 && /^voided\b/iu.test((payment.PrivateNote ?? '').trim())
+
 export interface InboundPayment {
   /** Our invoice, resolved from the QuickBooks invoice the payment is against. */
   readonly ezactoInvoiceId: number

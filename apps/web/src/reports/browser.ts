@@ -1,3 +1,5 @@
+import { moduleAvailable } from '../module-availability.js'
+import { setRequestBusy } from '../request-feedback.js'
 import {
   EzactoApiError,
   type ClientRollupMetrics,
@@ -30,9 +32,22 @@ import {
   type Whoami,
 } from '@conflict-hq/ezacto-client'
 import { canManageTeammateTime } from '@ezacto/core'
+import { renderFilterBar, type FilterValue } from '../components/filter-bar.js'
+import { sortReportTable, type ReportSortColumn } from '../components/report-table-sort.js'
+import { sortToken, type SortValue, type TableSort } from '../components/table-sort.js'
 import { createPeriodControl } from '../components/period.js'
+import { renderDefinitionResultTable } from './definition-results.js'
+import { reportKindLabel } from './render.js'
+import {
+  renderQuickLinks,
+  renderSavedViewsTable,
+  savedReportHref,
+  sharingSummary,
+  type SavedScreenActions,
+} from './saved-screen.js'
 import { invoiceIdentityCanWrite, invoicePagePath } from '../invoices/model.js'
-import { moneyText } from '../money-display.js'
+import { markMoney, moneyText } from '../money-display.js'
+import { personLabel } from '../projects/model.js'
 // The team roster's own formatter. Utilization is one figure with one meaning,
 // and a second renderer for it here is how the same person comes to read 17%
 // on one screen and 17.4% on another.
@@ -45,6 +60,7 @@ import {
   canReadFinancialReports,
   contractorCostCsv,
   profitabilityDelta,
+  shareableReportRoles,
   decimalHours,
   detailedExpenseCsv,
   detailedExpenseOptionsFromUrl,
@@ -56,6 +72,7 @@ import {
   groupDetailedTimeRows,
   isReportKind,
   invoicedReportOptionsFromUrl,
+  reportSortFromUrl,
   profitabilityOptionsFromUrl,
   reportFiltersFromUrl,
   reportFiltersUrl,
@@ -109,13 +126,65 @@ const canReadKind = (
     ? canReadCostReports(identity)
     : openToEveryProfile.has(kind) || canReadFinancialReports(identity.profile)
 
+/**
+ * The sort the report's address asks for, and what to do when a header changes
+ * it (issue 852). Set by the controller before it draws; the render functions
+ * below are plain functions of the report, so the sort reaches them here.
+ */
+let reportSortAddress: TableSort | null = null
+let reportSortChanged: (sort: TableSort) => void = () => undefined
+let reportSortKind: ReportKind | null = null
+
+/** A sortable column: its key, and the value of each row in the order drawn. */
+const sortBy = (key: string, values: readonly SortValue[]): ReportSortColumn => ({
+  key,
+  value: (index) => values[index] ?? null,
+})
+
+/** Money sorts by currency and then amount; two currencies are never added. */
+const sortMoney = (currency: string, cents: number | null | undefined): SortValue =>
+  cents === null || cents === undefined ? null : [currency, cents]
+
+/** The report's address with the sort it is showing, where it has been chosen. */
+const withSort = (address: string): string => {
+  if (reportSortAddress === null) return address
+  const url = new URL(address, 'https://ezacto.invalid')
+  url.searchParams.set('sort', sortToken(reportSortAddress))
+  return `${url.pathname}${url.search}`
+}
+
+const sortReport = (
+  table: HTMLTableElement,
+  name: string,
+  columns: Readonly<Record<string, ReportSortColumn>>,
+  defaultSort: TableSort | null,
+  unit?: (index: number) => string | number,
+): void => {
+  sortReportTable(table, {
+    table: name,
+    columns,
+    defaultSort,
+    address: reportSortAddress,
+    onSort: (sort) => reportSortChanged(sort),
+    ...(unit === undefined ? {} : { unit }),
+  })
+}
+
 const required = <ElementType extends Element>(selector: string): ElementType => {
   const element = document.querySelector<ElementType>(selector)
   if (element === null) throw new Error(`reports element missing: ${selector}`)
   return element
 }
 
+const isModuleDisabled = (error: unknown): boolean => {
+  if (!(error instanceof EzactoApiError) || error.status !== 403) return false
+  if (typeof error.body !== 'object' || error.body === null) return false
+  const detail: unknown = Reflect.get(error.body, 'error')
+  return typeof detail === 'object' && detail !== null && Reflect.get(detail, 'code') === 'module_disabled'
+}
+
 const messageFor = (error: unknown): string => {
+  if (isModuleDisabled(error)) return 'The requested module is switched off.'
   if (error instanceof EzactoApiError) {
     if (error.status === 403) return 'Your profile does not have access to this report.'
     if (error.status === 404) return 'This report is unavailable or outside your project access.'
@@ -370,10 +439,26 @@ const renderMyHours = (report: Readonly<MyHoursReport>): DocumentFragment => {
   )
   foot.append(totalRow)
   table.append(head, body, foot)
+  sortReport(
+    table,
+    'my-hours',
+    {
+      Client: sortBy('client', report.projects.map((project) => project.client_name)),
+      Project: sortBy('project', report.projects.map((project) => project.project_name)),
+      Tracked: sortBy('tracked', report.projects.map((project) => project.seconds)),
+      Rounded: sortBy('rounded', report.projects.map((project) => project.rounded_seconds)),
+      Billable: sortBy('billable', report.projects.map((project) => project.billable_seconds)),
+      Entries: sortBy('entries', report.projects.map((project) => project.time_entry_count)),
+    },
+    null,
+  )
   wrapper.append(table)
   fragment.append(facts, wrapper)
   return fragment
 }
+
+const invoiceReference = (invoice: { id: number; number: string | null }, label: string): HTMLElement =>
+  moduleAvailable('invoices') ? linkElement(invoicePagePath(invoice), label) : textElement('span', label)
 
 const invoiceHref = (
   report: Readonly<UninvoicedReport>,
@@ -415,8 +500,11 @@ const renderUninvoicedProjects = (
     }
     head.append(header)
     const body = element('tbody')
+    // One row per project and currency, in the order drawn, for the sort.
+    const lines: { project: (typeof projects)[number]; total: (typeof projects)[number]['totals'][number] }[] = []
     for (const project of projects) {
       for (const [index, total] of project.totals.entries()) {
+        lines.push({ project, total })
         const row = element('tr')
         row.dataset.projectId = String(project.project_id)
         const projectCell = textElement(
@@ -445,6 +533,23 @@ const renderUninvoicedProjects = (
       }
     }
     table.append(head, body)
+    const projectName = (line: (typeof lines)[number]): string =>
+      `${line.project.project_name}${line.project.project_code === '' ? '' : ` (${line.project.project_code})`}`
+    sortReport(
+      table,
+      'uninvoiced',
+      {
+        Project: sortBy('project', lines.map(projectName)),
+        Currency: sortBy('currency', lines.map((line) => line.total.currency)),
+        Time: sortBy('time', lines.map((line) => sortMoney(line.total.currency, line.total.time_cents))),
+        Expenses: sortBy('expenses', lines.map((line) => sortMoney(line.total.currency, line.total.expense_cents))),
+        Total: sortBy('total', lines.map((line) => sortMoney(line.total.currency, line.total.total_cents))),
+      },
+      null,
+      // A project's second currency sits under a name printed once, so a
+      // project's rows move together.
+      (index) => lines[index]!.project.project_id,
+    )
     wrapper.append(table)
     section.append(wrapper)
     clients.append(section)
@@ -781,6 +886,16 @@ const renderActivityLog = (
     body.append(row)
   }
   table.append(head, body)
+  sortReport(
+    table,
+    'activity',
+    {
+      When: sortBy('when', ordered.map((entry) => entry.occurred_at)),
+      Event: sortBy('event', ordered.map((entry) => activityEventLabel(entry.event_type))),
+      Subject: sortBy('subject', ordered.map((entry) => activitySubjectLabel(entry.aggregate))),
+    },
+    { column: 'when', direction: 'descending' },
+  )
   wrapper.append(table)
   fragment.append(wrapper)
   return fragment
@@ -799,7 +914,40 @@ const deltaLabel = (fraction: number | null): string => {
 const invoiceStateLabel = (state: InvoicedReport['rows'][number]['state']): string =>
   state === 'open' ? 'Sent' : state[0]!.toLocaleUpperCase('en-US') + state.slice(1)
 
-const renderInvoiced = (report: Readonly<InvoicedReport>): DocumentFragment => {
+const invoicedStatuses: readonly InvoicedReportStatus[] = ['draft', 'open', 'paid', 'closed']
+
+/**
+ * A footer row per currency, from the server's totals: they follow the same
+ * filters as the rows, and two currencies are never added together. A viewer
+ * who cannot see money gets no footer rather than an empty one.
+ */
+const totalsFooter = (
+  leading: number,
+  totals: readonly {
+    readonly currency: string
+    readonly values: readonly (number | undefined)[]
+  }[],
+): HTMLTableSectionElement | null => {
+  const visible = totals.filter((total) => total.values.every((value) => value !== undefined))
+  if (visible.length === 0) return null
+  const foot = element('tfoot')
+  for (const total of visible) {
+    const line = element('tr')
+    const label = textElement('th', `Total (${total.currency})`)
+    label.scope = 'row'
+    label.colSpan = leading
+    line.append(label)
+    for (const value of total.values) line.append(moneyCell(value, total.currency))
+    foot.append(line)
+  }
+  return foot
+}
+
+const renderInvoiced = (
+  report: Readonly<InvoicedReport>,
+  options: Readonly<InvoicedReportOptions>,
+  onOptions: (next: InvoicedReportOptions) => void,
+): DocumentFragment => {
   const fragment = document.createDocumentFragment()
   fragment.append(
     reportHeading(
@@ -807,8 +955,36 @@ const renderInvoiced = (report: Readonly<InvoicedReport>): DocumentFragment => {
       `${report.from} through ${report.to} · ${report.rows.length} ${report.rows.length === 1 ? 'invoice' : 'invoices'}`,
     ),
   )
+  fragment.append(
+    renderFilterBar({
+      label: 'Invoiced filters',
+      controls: [
+        {
+          kind: 'select',
+          id: 'ez-invoiced-status',
+          label: 'Status',
+          value: options.status ?? '',
+          neutral: '',
+          dataAttribute: 'data-report-invoice-status',
+          options: [
+            ['', 'All statuses'],
+            ...invoicedStatuses.map((status): [string, string] => [status, invoiceStateLabel(status)]),
+          ],
+        },
+      ],
+      onChange: (_id, value: FilterValue) =>
+        onOptions({ ...options, status: invoicedStatuses.find((status) => status === value) ?? null }),
+      onClear: () => onOptions({ ...options, status: null }),
+    }),
+  )
   if (report.rows.length === 0) {
-    fragment.append(textElement('p', 'No invoices were issued in this period.', 'report-empty'))
+    fragment.append(
+      textElement(
+        'p',
+        options.status === null ? 'No invoices were issued in this period.' : 'No invoices match these filters.',
+        'report-empty',
+      ),
+    )
     return fragment
   }
   const wrapper = element('div', 'report-table-wrap')
@@ -829,7 +1005,7 @@ const renderInvoiced = (report: Readonly<InvoicedReport>): DocumentFragment => {
     const invoice = element('th')
     invoice.scope = 'row'
     invoice.append(
-      linkElement(invoicePagePath({ id: row.invoice_id, number: row.number }), row.number),
+      invoiceReference({ id: row.invoice_id, number: row.number }, row.number),
     )
     line.append(invoice)
     const client = element('td')
@@ -846,6 +1022,29 @@ const renderInvoiced = (report: Readonly<InvoicedReport>): DocumentFragment => {
     body.append(line)
   }
   table.append(head, body)
+  sortReport(
+    table,
+    'invoiced',
+    {
+      Status: sortBy('status', report.rows.map((row) => invoiceStateLabel(row.state))),
+      'Issue date': sortBy('issued', report.rows.map((row) => row.issue_date)),
+      'Due date': sortBy('due', report.rows.map((row) => row.due_date)),
+      Invoice: sortBy('invoice', report.rows.map((row) => row.number)),
+      Client: sortBy('client', report.rows.map((row) => row.client_name)),
+      Invoiced: sortBy('invoiced', report.rows.map((row) => sortMoney(row.currency, row.invoiced_cents))),
+      Paid: sortBy('paid', report.rows.map((row) => sortMoney(row.currency, row.paid_cents))),
+      Balance: sortBy('balance', report.rows.map((row) => sortMoney(row.currency, row.balance_cents))),
+    },
+    { column: 'issued', direction: 'descending' },
+  )
+  const invoicedFoot = totalsFooter(
+    5,
+    report.totals.map((total) => ({
+      currency: total.currency,
+      values: [total.invoiced_cents, total.paid_cents, total.balance_cents],
+    })),
+  )
+  if (invoicedFoot !== null) table.append(invoicedFoot)
   wrapper.append(table)
   fragment.append(wrapper)
   return fragment
@@ -882,10 +1081,7 @@ const renderPaymentsReceived = (
     const invoice = element('th')
     invoice.scope = 'row'
     invoice.append(
-      linkElement(
-        invoicePagePath({ id: row.invoice_id, number: row.invoice_number }),
-        row.invoice_number,
-      ),
+      invoiceReference({ id: row.invoice_id, number: row.invoice_number }, row.invoice_number),
     )
     const client = element('td')
     client.append(linkElement(`/clients/${row.client_id}`, row.client_name))
@@ -897,16 +1093,65 @@ const renderPaymentsReceived = (
     body.append(line)
   }
   table.append(head, body)
+  sortReport(
+    table,
+    'payments-received',
+    {
+      'Payment date': sortBy('paid', report.rows.map((row) => row.payment_date)),
+      Invoice: sortBy('invoice', report.rows.map((row) => row.invoice_number)),
+      Client: sortBy('client', report.rows.map((row) => row.client_name)),
+      Provider: sortBy('provider', report.rows.map((row) => row.provider)),
+      'Invoice total': sortBy('invoice-total', report.rows.map((row) => sortMoney(row.currency, row.invoice_total_cents))),
+      Payment: sortBy('payment', report.rows.map((row) => sortMoney(row.currency, row.payment_cents))),
+    },
+    { column: 'paid', direction: 'descending' },
+  )
   wrapper.append(table)
   fragment.append(wrapper)
   return fragment
 }
 
-const renderReceivables = (report: Readonly<ReceivablesReport>): DocumentFragment => {
+const renderReceivables = (
+  report: Readonly<ReceivablesReport>,
+  options: Readonly<InvoicedReportOptions>,
+  onOptions: (next: InvoicedReportOptions) => void,
+): DocumentFragment => {
   const fragment = document.createDocumentFragment()
   fragment.append(reportHeading('Receivables', `Outstanding balances as of ${report.as_of}`))
+  const dueState = options.dueState ?? null
+  fragment.append(
+    renderFilterBar({
+      label: 'Receivables filters',
+      controls: [
+        {
+          kind: 'select',
+          id: 'ez-receivables-due-state',
+          label: 'Due state',
+          value: dueState ?? '',
+          neutral: '',
+          dataAttribute: 'data-report-due-state',
+          options: [
+            ['', 'All outstanding'],
+            ['not_due', 'Not yet due'],
+            ['past_due', 'Past due'],
+          ],
+        },
+      ],
+      onChange: (_id, value: FilterValue) =>
+        onOptions({ ...options, dueState: value === 'not_due' || value === 'past_due' ? value : null }),
+      onClear: () => onOptions({ ...options, dueState: null }),
+    }),
+  )
   if (report.rows.length === 0) {
-    fragment.append(textElement('p', 'No outstanding receivables as of this date.', 'report-empty'))
+    fragment.append(
+      textElement(
+        'p',
+        dueState === null
+          ? 'No outstanding receivables as of this date.'
+          : 'No outstanding receivables match these filters.',
+        'report-empty',
+      ),
+    )
     return fragment
   }
   const wrapper = element('div', 'report-table-wrap')
@@ -938,6 +1183,42 @@ const renderReceivables = (report: Readonly<ReceivablesReport>): DocumentFragmen
     body.append(line)
   }
   table.append(head, body)
+  sortReport(
+    table,
+    'receivables',
+    {
+      Client: sortBy('client', report.rows.map((row) => row.client_name)),
+      Currency: sortBy('currency', report.rows.map((row) => row.currency)),
+      Invoices: sortBy('invoices', report.rows.map((row) => row.invoice_count)),
+      Total: sortBy('total', report.rows.map((row) => sortMoney(row.currency, row.invoiced_cents))),
+      Outstanding: sortBy('outstanding', report.rows.map((row) => sortMoney(row.currency, row.outstanding_cents))),
+      'Not due': sortBy('not-due', report.rows.map((row) => sortMoney(row.currency, row.not_due_cents))),
+      '1–30 days': sortBy('days-1-30', report.rows.map((row) => sortMoney(row.currency, row.days_1_to_30_cents))),
+      '31–60 days': sortBy('days-31-60', report.rows.map((row) => sortMoney(row.currency, row.days_31_to_60_cents))),
+      '61–90 days': sortBy('days-61-90', report.rows.map((row) => sortMoney(row.currency, row.days_61_to_90_cents))),
+      '90+ days': sortBy('days-90-plus', report.rows.map((row) => sortMoney(row.currency, row.days_90_plus_cents))),
+    },
+    { column: 'client', direction: 'ascending' },
+  )
+  const receivablesFoot = element('tfoot')
+  for (const total of report.totals) {
+    if (total.outstanding_cents === undefined) continue
+    const line = element('tr')
+    const label = textElement('th', `Total (${total.currency})`)
+    label.scope = 'row'
+    line.append(label, textElement('td', total.currency), textElement('td', String(total.invoice_count)))
+    line.append(
+      moneyCell(total.invoiced_cents, total.currency),
+      moneyCell(total.outstanding_cents, total.currency),
+      moneyCell(total.not_due_cents, total.currency),
+      moneyCell(total.days_1_to_30_cents, total.currency),
+      moneyCell(total.days_31_to_60_cents, total.currency),
+      moneyCell(total.days_61_to_90_cents, total.currency),
+      moneyCell(total.days_90_plus_cents, total.currency),
+    )
+    receivablesFoot.append(line)
+  }
+  if (receivablesFoot.childElementCount > 0) table.append(receivablesFoot)
   wrapper.append(table)
   fragment.append(wrapper)
   return fragment
@@ -1165,6 +1446,22 @@ const renderProfitability = (
     body.append(line)
   }
   table.append(head, body)
+  sortReport(
+    table,
+    'profitability',
+    {
+      [dimensionLabel]: sortBy('name', ordered.map((row) => row.dimension_name)),
+      Hours: sortBy('hours', ordered.map((row) => row.rounded_seconds)),
+      Revenue: sortBy('revenue', ordered.map((row) => sortMoney(row.currency, row.revenue_cents))),
+      Cost: sortBy('cost', ordered.map((row) => sortMoney(currency, row.cost_cents))),
+      'Revenue fees': sortBy('fees', ordered.map((row) => sortMoney(row.currency, row.revenue_fee_cents))),
+      Profit: sortBy('profit', ordered.map((row) => sortMoney(currency, row.profit_cents))),
+      'Return on cost': sortBy('return', ordered.map((row) => row.return_on_cost_ppm)),
+    },
+    // Worst margin first, as the rows arrive: the report is opened to find what
+    // is losing money. A blank margin sorts last either way.
+    { column: 'profit', direction: 'ascending' },
+  )
   wrapper.append(table)
   fragment.append(wrapper)
   return fragment
@@ -1297,6 +1594,20 @@ const renderDetailedExpense = (
     body.append(line)
   }
   table.append(head, body)
+  sortReport(
+    table,
+    'detailed-expense',
+    {
+      Date: sortBy('date', report.rows.map((row) => row.spent_date)),
+      Client: sortBy('client', report.rows.map((row) => row.client_name)),
+      Project: sortBy('project', report.rows.map((row) => row.project_name)),
+      Category: sortBy('category', report.rows.map((row) => row.category_name)),
+      Person: sortBy('person', report.rows.map((row) => row.user_name)),
+      Notes: sortBy('notes', report.rows.map((row) => row.notes?.trim() || null)),
+      Amount: sortBy('amount', report.rows.map((row) => sortMoney(row.currency, row.total_cost_cents))),
+    },
+    null,
+  )
   wrapper.append(table)
   fragment.append(wrapper)
   return fragment
@@ -1464,6 +1775,20 @@ const renderContractorCost = (
     )
     foot.append(totalRow)
     table.append(head, body, foot)
+    sortReport(
+      table,
+      'contractor-cost',
+      {
+        Person: sortBy('person', rows.map((row) => row.name)),
+        'Payroll email': sortBy('email', rows.map((row) => row.payroll_email)),
+        Hours: sortBy('hours', rows.map((row) => row.rounded_seconds)),
+        Utilization: sortBy('utilization', rows.map((row) => row.utilization_ppm)),
+        Rate: sortBy('rate', rows.map((row) => (row.cost_rate_is_mixed ? null : row.cost_rate_cents))),
+        Entries: sortBy('entries', rows.map((row) => row.entry_count)),
+        Cost: sortBy('cost', rows.map((row) => row.cost_cents)),
+      },
+      null,
+    )
     wrapper.append(table)
     section.append(wrapper)
     if (entriesWithoutRate > 0) {
@@ -1628,28 +1953,6 @@ const selectControl = (
   return field
 }
 
-const idControl = (
-  id: string,
-  label: string,
-  value: number | null,
-  onChange: (next: number | null) => void,
-): HTMLElement => {
-  const field = element('div', 'report-filter-field')
-  const caption = textElement('label', label)
-  caption.htmlFor = id
-  const input = element('input')
-  input.id = id
-  input.inputMode = 'numeric'
-  input.pattern = '[1-9][0-9]*'
-  input.value = value === null ? '' : String(value)
-  input.addEventListener('change', () => {
-    const parsed = Number(input.value)
-    onChange(Number.isSafeInteger(parsed) && parsed > 0 ? parsed : null)
-  })
-  field.append(caption, input)
-  return field
-}
-
 /**
  * The filter recap Harvest puts opposite the totals. It is worth carrying over:
  * a row of collapsed dropdowns hides what a report actually covers, and this
@@ -1691,6 +1994,13 @@ const detailedEntryScope = (report: Readonly<DetailedTimeReport>, options: Reado
   group: options.grouping,
 })
 
+/** A figure that is money, marked so the header's hide-money control masks it. */
+const moneyElement = (tag: 'span' | 'strong', text: string): HTMLElement => {
+  const node = textElement(tag, text)
+  markMoney(node)
+  return node
+}
+
 const detailedTimeCells = (
   row: Readonly<DetailedTimeRow>,
   grain: DetailedTimeGrain,
@@ -1713,6 +2023,9 @@ const detailedTimeCells = (
     textElement('td', row.roles.join(', ')),
     textElement('td', row.user_name),
   ]
+  // The daily line carries every note its entries have (the server joins them);
+  // the entry line carries its own, further down, with the claim.
+  if (grain !== 'entry') cells.push(textElement('td', row.notes ?? ''))
   if (grain === 'entry') {
     // What the drill-through is for: at the folded grain two entries share a
     // line and have two notes between them, so the column can only exist here.
@@ -1728,10 +2041,7 @@ const detailedTimeCells = (
       // and nobody can find an invoice by that.
       const number = row.invoice_number ?? null
       claim.append(
-        linkElement(
-          invoicePagePath({ id: row.invoice_id, number }),
-          number ?? `Invoice ${row.invoice_id}`,
-        ),
+        invoiceReference({ id: row.invoice_id, number }, number ?? `Invoice ${row.invoice_id}`),
       )
     }
     cells.push(claim)
@@ -1783,7 +2093,7 @@ const renderDetailedTime = (
     totals.append(
       fact(
         `Billable amount (${currency.currency})`,
-        formatReportMoney(currency.billable_amount_cents, currency.currency),
+        moneyText(formatReportMoney(currency.billable_amount_cents, currency.currency)),
       ),
     )
   }
@@ -1803,20 +2113,6 @@ const renderDetailedTime = (
   const controls = element('div', 'report-detailed-controls')
   controls.append(
     selectControl(
-      'ez-detailed-hours',
-      'Show',
-      [
-        ['all', 'All hours'],
-        ['billable', 'Billable hours'],
-        ['non_billable', 'Non-billable hours'],
-        ['uninvoiced', 'Uninvoiced billable hours'],
-        ['claimed', 'Claimed by an invoice'],
-        ['unclaimed', 'Not claimed yet'],
-      ],
-      options.hours,
-      (next) => handlers.onOptions({ ...options, hours: next as DetailedTimeHours }),
-    ),
-    selectControl(
       'ez-detailed-grain',
       'Rows',
       [
@@ -1826,28 +2122,6 @@ const renderDetailedTime = (
       options.grain,
       (next) => handlers.onOptions({ ...options, grain: next === 'entry' ? 'entry' : 'day' }),
     ),
-    selectControl(
-      'ez-detailed-invoice-state',
-      'Invoice state',
-      [
-        ['all', 'All entries'],
-        ['invoiced', 'Invoiced'],
-        ['uninvoiced', 'Uninvoiced'],
-      ],
-      options.invoiceState,
-      (next) => handlers.onOptions({
-        ...options,
-        invoiceState: next === 'invoiced' || next === 'uninvoiced' ? next : 'all',
-      }),
-    ),
-    idControl('ez-detailed-task', 'Task ID', options.taskId, (taskId) =>
-      handlers.onOptions({ ...options, taskId })),
-    ...(options.scope?.self ? [] : [idControl('ez-detailed-person', 'Person ID', options.userId, (userId) =>
-      handlers.onOptions({ ...options, userId }))]),
-    idControl('ez-detailed-role', 'Role ID', options.roleId, (roleId) =>
-      handlers.onOptions({ ...options, roleId })),
-    idControl('ez-detailed-tag', 'Tag ID', options.tagId, (tagId) =>
-      handlers.onOptions({ ...options, tagId })),
     selectControl(
       'ez-detailed-group',
       'Group by',
@@ -1865,17 +2139,117 @@ const renderDetailedTime = (
         handlers.onOptions({ ...options, grouping: next as DetailedTimeGrouping }),
     ),
   )
-  const activeField = element('div', 'report-filter-field report-detailed-active')
-  const activeInput = element('input')
-  activeInput.type = 'checkbox'
-  activeInput.id = 'ez-detailed-active'
-  activeInput.checked = options.activeProjectsOnly
-  activeInput.addEventListener('change', () =>
-    handlers.onOptions({ ...options, activeProjectsOnly: activeInput.checked }),
-  )
-  const activeLabel = textElement('label', 'Active projects only')
-  activeLabel.htmlFor = 'ez-detailed-active'
-  activeField.append(activeInput, activeLabel)
+  const named = (
+    facet: readonly { readonly id: number; readonly name: string }[],
+    selected: number | null,
+    fallback: string,
+  ): [string, string][] => {
+    const items: [string, string][] = facet.map((item) => [String(item.id), item.name])
+    // A filter the address names stays visible even when the other filters
+    // leave nothing for it, so it can be seen and taken off.
+    if (selected !== null && !items.some(([value]) => value === String(selected))) {
+      items.push([String(selected), `${fallback} #${selected}`])
+    }
+    return items
+  }
+  const idOf = (value: FilterValue): number | null => {
+    const parsed = Number(value)
+    return typeof value === 'string' && Number.isSafeInteger(parsed) && parsed > 0 ? parsed : null
+  }
+  const filterBar = renderFilterBar({
+    label: 'Detailed time filters',
+    controls: [
+      {
+        kind: 'select',
+        id: 'ez-detailed-hours',
+        label: 'Show',
+        value: options.hours,
+        neutral: 'all',
+        options: [
+          ['all', 'All hours'],
+          ['billable', 'Billable hours'],
+          ['non_billable', 'Non-billable hours'],
+          ['uninvoiced', 'Uninvoiced billable hours'],
+          ['claimed', 'Claimed by an invoice'],
+          ['unclaimed', 'Not claimed yet'],
+        ],
+      },
+      {
+        kind: 'select',
+        id: 'ez-detailed-invoice-state',
+        label: 'Invoice state',
+        value: options.invoiceState,
+        neutral: 'all',
+        options: [
+          ['all', 'All entries'],
+          ['invoiced', 'Invoiced'],
+          ['uninvoiced', 'Uninvoiced'],
+        ],
+      },
+      ...(options.scope?.self
+        ? []
+        : [{
+            kind: 'select' as const,
+            id: 'ez-detailed-person',
+            label: 'Person',
+            value: options.userId === null ? '' : String(options.userId),
+            neutral: '',
+            options: [['', 'All people'] as [string, string], ...named(report.facets.people, options.userId, 'Person')],
+          }]),
+      {
+        kind: 'select',
+        id: 'ez-detailed-task',
+        label: 'Task',
+        value: options.taskId === null ? '' : String(options.taskId),
+        neutral: '',
+        options: [['', 'All tasks'], ...named(report.facets.tasks, options.taskId, 'Task')],
+      },
+      {
+        kind: 'select',
+        id: 'ez-detailed-role',
+        label: 'Role',
+        value: options.roleId === null ? '' : String(options.roleId),
+        neutral: '',
+        options: [['', 'All roles'], ...named(report.facets.roles, options.roleId, 'Role')],
+      },
+      {
+        kind: 'select',
+        id: 'ez-detailed-tag',
+        label: 'Tag',
+        value: options.tagId === null ? '' : String(options.tagId),
+        neutral: '',
+        options: [['', 'All tags'], ...named(report.facets.tags, options.tagId, 'Tag')],
+      },
+      { kind: 'search', id: 'ez-detailed-notes', label: 'Notes contain', value: options.notes ?? '' },
+      { kind: 'toggle', id: 'ez-detailed-active', label: 'Active projects only', checked: options.activeProjectsOnly },
+    ],
+    onChange: (id, value) => {
+      if (id === 'ez-detailed-hours') handlers.onOptions({ ...options, hours: value as DetailedTimeHours })
+      else if (id === 'ez-detailed-invoice-state') {
+        handlers.onOptions({
+          ...options,
+          invoiceState: value === 'invoiced' || value === 'uninvoiced' ? value : 'all',
+        })
+      } else if (id === 'ez-detailed-person') handlers.onOptions({ ...options, userId: idOf(value) })
+      else if (id === 'ez-detailed-task') handlers.onOptions({ ...options, taskId: idOf(value) })
+      else if (id === 'ez-detailed-role') handlers.onOptions({ ...options, roleId: idOf(value) })
+      else if (id === 'ez-detailed-tag') handlers.onOptions({ ...options, tagId: idOf(value) })
+      else if (id === 'ez-detailed-notes') handlers.onOptions({ ...options, notes: String(value).slice(0, 200) })
+      else if (id === 'ez-detailed-active') handlers.onOptions({ ...options, activeProjectsOnly: value === true })
+    },
+    onClear: () =>
+      handlers.onOptions({
+        ...options,
+        hours: 'all',
+        invoiceState: 'all',
+        userId: options.scope?.self ? options.userId : null,
+        taskId: null,
+        roleId: null,
+        tagId: null,
+        notes: '',
+        activeProjectsOnly: false,
+      }),
+  })
   const actions = element('div', 'report-detailed-actions')
   const exportMenu = handlers.onExport === undefined ? null : detailedExportMenu(handlers.onExport)
   const printButton = textElement('button', 'Print')
@@ -1901,6 +2275,7 @@ const renderDetailedTime = (
       ['mark_uninvoiced', 'Mark uninvoiced'],
       ['move', 'Move hours'],
     ] as const) {
+      if (action !== 'move' && !moduleAvailable('invoices')) continue
       const button = textElement('button', label)
       button.type = 'button'
       button.disabled = true
@@ -1910,8 +2285,8 @@ const renderDetailedTime = (
       actions.append(button)
     }
   }
-  controls.append(activeField, actions)
-  fragment.append(controls)
+  controls.append(actions)
+  fragment.append(controls, filterBar)
 
   if (report.rows.length === 0) {
     if (exportMenu !== null) exportMenu.toggle.disabled = true
@@ -1929,10 +2304,13 @@ const renderDetailedTime = (
   const entryActions =
     report.grain === 'entry' &&
     (handlers.onEditEntry !== undefined || handlers.onDeleteEntry !== undefined)
+  // Grouped by date, the band already says the date. Grouped by anything
+  // else it does not, and rows could not be ordered by date without a column.
+  const dated = options.grouping !== 'date'
   const headers =
     options.grain === 'entry'
-      ? [...(selectable ? ['Select'] : []), 'Client', 'Project', 'Task', 'Roles', 'Person', 'Notes', 'Claimed by', 'Hours']
-      : ['Client', 'Project', 'Task', 'Roles', 'Person', 'Hours']
+      ? [...(selectable ? ['Select'] : []), ...(dated ? ['Date'] : []), 'Client', 'Project', 'Task', 'Roles', 'Person', 'Notes', 'Claimed by', 'Hours']
+      : [...(dated ? ['Date'] : []), 'Client', 'Project', 'Task', 'Roles', 'Person', 'Notes', 'Hours']
   if (showRounded) headers.push('Rounded hours')
   // Last, after the figures, so the band and total rows keep their hours under
   // the hours column and only gain an empty cell at the end.
@@ -1947,7 +2325,8 @@ const renderDetailedTime = (
   }
   head.append(headerRow)
   const body = element('tbody')
-  for (const band of groupDetailedTimeRows(report.rows, options.grouping)) {
+  const bands = groupDetailedTimeRows(report.rows, options.grouping)
+  for (const band of bands) {
     const bandRow = element('tr', 'report-band-row')
     const bandLabel = textElement('th', band.label)
     bandLabel.colSpan = headers.length - figureColumns
@@ -1978,6 +2357,7 @@ const renderDetailedTime = (
         const cell = element('td')
         const checkbox = element('input')
         checkbox.type = 'checkbox'
+        checkbox.dataset.detailedSelect = ''
         checkbox.disabled = row.time_entry_id === undefined
         checkbox.setAttribute('aria-label', `Select time entry ${row.time_entry_id ?? ''}`.trim())
         checkbox.addEventListener('change', () => {
@@ -1995,6 +2375,7 @@ const renderDetailedTime = (
           ...scope, project_id: row.project_id, task_id: row.task_id, user_id: row.user_id,
           invoice_state: row.claimed ? 'invoiced' : 'uninvoiced',
         })
+      if (dated) line.append(textElement('td', row.spent_date))
       line.append(...detailedTimeCells(row, options.grain, href, showRounded))
       if (entryActions) line.append(entryActionsCell(row, handlers))
       body.append(line)
@@ -2010,6 +2391,26 @@ const renderDetailedTime = (
   if (entryActions) totalRow.append(element('td', 'report-entry-actions'))
   foot.append(totalRow)
   table.append(head, body, foot)
+  // Rows sort inside their bands, and a row is the same element after the sort,
+  // so a ticked row stays ticked.
+  const drawn = bands.flatMap((band) => band.rows)
+  sortReport(
+    table,
+    'detailed-time',
+    {
+      Date: sortBy('date', drawn.map((row) => row.spent_date)),
+      Client: sortBy('client', drawn.map((row) => row.client_name)),
+      Project: sortBy('project', drawn.map((row) => detailedTimeProjectLabel(row))),
+      Task: sortBy('task', drawn.map((row) => row.task_name)),
+      Roles: sortBy('roles', drawn.map((row) => row.roles.join(', ') || null)),
+      Person: sortBy('person', drawn.map((row) => row.user_name)),
+      Notes: sortBy('notes', drawn.map((row) => row.notes?.trim() || null)),
+      'Claimed by': sortBy('claimed-by', drawn.map((row) => row.invoice_number ?? null)),
+      Hours: sortBy('hours', drawn.map((row) => row.seconds)),
+      'Rounded hours': sortBy('rounded-hours', drawn.map((row) => row.rounded_seconds)),
+    },
+    dated ? { column: 'date', direction: 'ascending' } : null,
+  )
   wrapper.append(table)
   fragment.append(wrapper)
 
@@ -2060,7 +2461,7 @@ const timeSummary = (totals: Readonly<TimeReportTotals>, url: (hours?: DetailedT
       else {
         for (const amount of totals.amounts!) {
           wrapper.append(
-            textElement('strong', formatReportMoney(pick(amount), amount.currency)),
+            moneyElement('strong', formatReportMoney(pick(amount), amount.currency)),
           )
         }
       }
@@ -2162,7 +2563,7 @@ const amountCell = (
     return cell
   }
   for (const amount of amounts) {
-    cell.append(textElement('span', formatReportMoney(pick(amount), amount.currency)))
+    cell.append(moneyElement('span', formatReportMoney(pick(amount), amount.currency)))
   }
   return cell
 }
@@ -2176,6 +2577,8 @@ const amountCell = (
  */
 interface TimeTableColumn<Row> {
   readonly label: string
+  /** The column's key and the value it sorts by (issue 852). */
+  readonly sort: { readonly key: string; readonly value: (row: Row) => SortValue }
   readonly cell: (row: Row) => HTMLTableCellElement
   /** The total row's cell, where the column has one. */
   readonly total?: HTMLTableCellElement
@@ -2263,6 +2666,33 @@ const timeTable = <Row extends TimeRowFigures>(
   for (const column of trailing) totalRow.append(column.total ?? element('td'))
   foot.append(totalRow)
   table.append(head, body, foot)
+  // Rows sort inside their groups -- employees and contractors stay apart.
+  const shown = groups.filter((group) => group.rows.length > 0).flatMap((group) => group.rows)
+  const named = (column: TimeTableColumn<Row>): [string, ReportSortColumn] => [
+    column.label,
+    sortBy(column.sort.key, shown.map((row) => column.sort.value(row))),
+  ]
+  sortReport(
+    table,
+    'time',
+    {
+      ...Object.fromEntries([...leading, ...trailing].map(named)),
+      Hours: sortBy('hours', shown.map((row) => row.rounded_seconds)),
+      'Billable hours': sortBy('billable-hours', shown.map((row) => row.billable_seconds)),
+      ...(showMoney
+        ? {
+            'Billable amount': sortBy(
+              'billable-amount',
+              shown.map((row) => {
+                const amount = row.amounts?.[0]
+                return amount === undefined ? null : sortMoney(amount.currency, amount.billable_cents)
+              }),
+            ),
+          }
+        : {}),
+    },
+    null,
+  )
   wrapper.append(table)
   return wrapper
 }
@@ -2326,6 +2756,7 @@ const renderTimeReport = (
         [
           {
             label: 'Name',
+            sort: { key: 'name', value: (row) => row.client_name },
             cell: (row) => nameCell(`/clients/${row.client_id}`, row.client_name),
           },
         ],
@@ -2342,10 +2773,12 @@ const renderTimeReport = (
         [
           {
             label: 'Name',
+            sort: { key: 'name', value: (row) => projectLabel(row) },
             cell: (row) => nameCell(`/projects/${row.project_id}`, projectLabel(row)),
           },
           {
             label: 'Clients',
+            sort: { key: 'clients', value: (row) => row.client_name },
             cell: (row) => {
               const cell = element('td')
               cell.append(linkElement(`/clients/${row.client_id}`, row.client_name))
@@ -2366,6 +2799,7 @@ const renderTimeReport = (
         [
           {
             label: 'Name',
+            sort: { key: 'name', value: (row) => row.task_name },
             cell: (row) => {
               const cell = element('th')
               cell.scope = 'row'
@@ -2389,6 +2823,7 @@ const renderTimeReport = (
         [
           {
             label: 'Name',
+            sort: { key: 'name', value: (row) => row.user_name },
             // Plain text where the viewer cannot read Team, which is what the
             // Tasks tab already does for the same reason: a dead link is worse
             // than no link, because it looks like a way in.
@@ -2401,6 +2836,7 @@ const renderTimeReport = (
         [
           {
             label: 'Utilization',
+            sort: { key: 'utilization', value: (row) => row.utilization_ppm },
             cell: (row) => {
               const cell = element('td')
               cell.textContent = teamUtilization(row.utilization_ppm)
@@ -2477,6 +2913,26 @@ export const createReportsController = (
     kindTabs.set(tabKind, anchor)
   }
   const kindStrip = [...kindTabs.values()][0]?.parentElement ?? null
+  // The Saved tab is not a kind: it is its own address, kept in the strip for
+  // the profiles that can save a report at all.
+  const savedTab = [...document.querySelectorAll<HTMLAnchorElement>('.tabstrip a')].find(
+    (anchor) => new URL(anchor.getAttribute('href') ?? '', globalThis.location.origin).pathname === '/reports/saved',
+  ) ?? null
+  // The Activity log is a module: once the API says it is off, its kind leaves
+  // the strip the way a kind a profile cannot read does.
+  let activityLogOff = false
+  let expensesOff = false
+  let expenseDiscoverySignal: AbortSignal | null = null
+  const hideActivityLogKind = (): void => {
+    activityLogOff = true
+    kindTabs.get('activity-log')?.remove()
+  }
+  const hideExpenseKind = (): void => {
+    expensesOff = true
+    kindTabs.get('detailed-expense')?.remove()
+    builderTemplate.querySelector('option[value="detailed-expense"]')?.remove()
+    form.hidden = true
+  }
   /**
    * The two From/To fields the card used to carry, as the shared control. An
    * arrow reloads immediately because stepping is navigation, not filtering:
@@ -2507,8 +2963,6 @@ export const createReportsController = (
   const projectInput = required<HTMLSelectElement>('[data-report-project]')
   const fixedFeeField = required<HTMLElement>('[data-report-fixed-fee-field]')
   const fixedFeeInput = required<HTMLInputElement>('[data-report-fixed-fee]')
-  const invoiceStatusField = required<HTMLElement>('[data-report-invoice-status-field]')
-  const invoiceStatusInput = required<HTMLSelectElement>('[data-report-invoice-status]')
   const profitStatusField = required<HTMLElement>('[data-report-profit-status-field]')
   const profitStatusInput = required<HTMLSelectElement>('[data-report-profit-status]')
   const profitBillingField = required<HTMLElement>('[data-report-profit-billing-field]')
@@ -2540,11 +2994,41 @@ export const createReportsController = (
   const savedCustomOnly = required<HTMLInputElement>('[data-saved-custom-only]')
   const savedStatus = required<HTMLElement>('[data-saved-status]')
   const savedList = required<HTMLElement>('[data-saved-list]')
+  const shareDialog = required<HTMLDialogElement>('[data-saved-share-dialog]')
+  const shareTitle = required<HTMLElement>('[data-saved-share-title]')
+  const shareRoles = required<HTMLElement>('[data-saved-share-roles]')
+  const sharePeople = required<HTMLElement>('[data-saved-share-people]')
+  const sharePerson = required<HTMLSelectElement>('[data-saved-share-person]')
+  const shareAdd = required<HTMLButtonElement>('[data-saved-share-add]')
+  const shareResult = required<HTMLElement>('[data-saved-share-result]')
+  const shareClose = required<HTMLButtonElement>('[data-saved-share-close]')
+  const deleteDialog = required<HTMLDialogElement>('[data-saved-delete-dialog]')
+  const deleteTitle = required<HTMLElement>('[data-saved-delete-title]')
+  const deleteConfirm = required<HTMLButtonElement>('[data-saved-delete-confirm]')
+  const saveOpen = required<HTMLButtonElement>('[data-saved-save-open]')
+  const quickLinks = required<HTMLElement>('[data-saved-quick-links]')
+  const openBanner = required<HTMLElement>('[data-saved-open]')
+  const openBannerName = required<HTMLElement>('[data-saved-open-name]')
+  const openBannerSave = required<HTMLButtonElement>('[data-saved-open-save]')
+  const openBannerResult = required<HTMLElement>('[data-saved-open-result]')
+  const savedScreen = required<HTMLElement>('[data-saved-screen]')
+  const savedScreenSearch = required<HTMLInputElement>('[data-saved-screen-search]')
+  const savedScreenStatus = required<HTMLElement>('[data-saved-screen-status]')
+  const savedScreenTable = required<HTMLElement>('[data-saved-screen-table]')
+  const nameDialog = required<HTMLDialogElement>('[data-saved-name-dialog]')
+  const nameForm = required<HTMLFormElement>('[data-saved-name-form]')
+  const nameEyebrow = required<HTMLElement>('[data-saved-name-eyebrow]')
+  const nameTitle = required<HTMLElement>('[data-saved-name-title]')
+  const nameHint = required<HTMLElement>('[data-saved-name-hint]')
+  const nameInput = required<HTMLInputElement>('[data-saved-name-input]')
+  const nameResult = required<HTMLElement>('[data-saved-name-result]')
+  const nameSubmit = required<HTMLButtonElement>('[data-saved-name-submit]')
   const builderOpen = required<HTMLButtonElement>('[data-report-builder-open]')
   const builder = required<HTMLDialogElement>('[data-report-builder]')
   const builderClose = required<HTMLButtonElement>('[data-report-builder-close]')
   const builderForm = required<HTMLFormElement>('[data-report-builder-form]')
   const builderTemplate = required<HTMLSelectElement>('[data-builder-template]')
+  const expenseTemplateOption = builderTemplate.querySelector('option[value="detailed-expense"]')
   const builderName = required<HTMLInputElement>('[data-builder-name]')
   const builderFields = required<HTMLSelectElement>('[data-builder-fields]')
   const builderMetrics = required<HTMLSelectElement>('[data-builder-metrics]')
@@ -2570,6 +3054,19 @@ export const createReportsController = (
   page.hidden = !reportsPage
 
   let session: ActiveSession | null = null
+  let shareGeneration = 0
+  let sharePending = false
+  let restoreShareControls = () => {}
+  let builderGeneration = 0
+  let builderPending = false
+  let restoreBuilderControls = () => {}
+  let exportPending = false
+  let timeActionPending = false
+  let libraryRequest = 0
+  let savedScreenRequest = 0
+  let savedRunRequest = 0
+  let bannerGeneration = 0
+  const savedMutations = new Set<string>()
   /**
    * `reports:read` and `team:read` are different sets -- accounting is in the
    * first and not the second -- so whether a teammate name is a link is a
@@ -2649,6 +3146,15 @@ export const createReportsController = (
   let savedView: 'all' | 'yours' | 'shared' = 'all'
   let builderRegistry: ReportDefinitionRegistry | null = null
   let editingSaved: SavedReport | null = null
+  let deleting: SavedReport | null = null
+  // The Saved tab is showing in place of a report (#933).
+  let savedScreenActive = false
+  let screenView: 'all' | 'yours' | 'shared' = 'all'
+  // The saved report this page was opened from, so it can be saved back to.
+  let openSaved: SavedReport | null = null
+  // What the name dialog is for: saving the report on screen, or renaming one.
+  let naming: { readonly rename: SavedReport | null } | null = null
+  let directoryPeople: readonly GeneralResource[] | null = null
 
   const currentSession = (): ActiveSession | null =>
     session === null || session.signal.aborted ? null : session
@@ -2671,12 +3177,14 @@ export const createReportsController = (
       `${row.task_name} on ${row.spent_date} will be removed from their timesheet. ` +
       'This cannot be undone.'
     entryDeleteResult.textContent = ''
+    setRequestBusy(entryDeleteResult, false)
     entryDeleteSubmit.disabled = false
     entryDeleteDialog.showModal()
   }
 
   const closeEntryDeletion = (): void => {
     entryDeletion = null
+    setRequestBusy(entryDeleteResult, false)
     if (entryDeleteDialog.open) entryDeleteDialog.close()
   }
 
@@ -2685,21 +3193,25 @@ export const createReportsController = (
     const active = currentSession()
     const deletion = entryDeletion
     const entryId = deletion?.row.time_entry_id
-    if (active === null || deletion === null || entryId === undefined) return
+    if (active === null || deletion === null || entryId === undefined || entryDeleteSubmit.disabled) return
     if (api.deleteTimeEntry === undefined) return
     entryDeleteSubmit.disabled = true
     entryDeleteResult.textContent = 'Deleting entry…'
+    setRequestBusy(entryDeleteResult, true)
     void api
       .deleteTimeEntry(entryId, active.signal)
       .then(() => {
-        if (currentSession() !== active) return
+        if (currentSession() !== active || entryDeletion !== deletion) return
         closeEntryDeletion()
         deletion.reload()
       })
       .catch((error: unknown) => {
-        if (currentSession() !== active || active.onSessionFailure(error)) return
+        if (currentSession() !== active || entryDeletion !== deletion || active.onSessionFailure(error)) return
         entryDeleteSubmit.disabled = false
         entryDeleteResult.textContent = entryActionFailure(error, 'deleted')
+      })
+      .finally(() => {
+        if (currentSession() === active && entryDeletion === deletion) setRequestBusy(entryDeleteResult, false)
       })
   })
   for (const cancel of document.querySelectorAll<HTMLButtonElement>(
@@ -2751,47 +3263,174 @@ export const createReportsController = (
     } else if (report.state === 'too_many_rows') {
       fragment.append(textElement('p', 'This definition matches more than 10,000 rows. Narrow its filters.', 'report-empty'))
     } else {
-      const table = element('table', 'report-table')
-      const body = element('tbody')
-      for (const raw of report.rows) {
-        const row = raw as { label?: unknown; metrics?: unknown; drillThrough?: unknown }
-        const line = element('tr')
-        const heading = element('th')
-        heading.scope = 'row'
-        const label = typeof row.label === 'string' ? row.label : 'Result'
-        heading.append(typeof row.drillThrough === 'string' ? linkElement(row.drillThrough, label) : document.createTextNode(label))
-        line.append(heading, textElement('td', JSON.stringify(row.metrics ?? {})))
-        body.append(line)
-      }
-      table.append(body)
-      fragment.append(table)
+      fragment.append(renderDefinitionResultTable(report, {
+        ...(reportSortAddress === null ? {} : { sort: reportSortAddress }),
+        onSort: sort => reportSortChanged(sort),
+      }))
     }
     results.replaceChildren(fragment)
   }
 
+  const openShare = async (report: SavedReport): Promise<void> => {
+    const active = currentSession()
+    if (active === null || savedMutations.has(report.id)) return
+    restoreShareControls()
+    sharePending = false
+    const own = ++shareGeneration
+    const current = () => currentSession() === active && own === shareGeneration && shareDialog.open
+    const signal = active.signal
+    const people = [...report.shared_with.users]
+    const roles = new Set<string>(report.shared_with.profiles)
+    shareTitle.textContent = `Share ${report.name}`
+    shareResult.textContent = ''
+    setRequestBusy(shareResult, false)
+    const mutate = async (phase: string, work: () => Promise<() => void>, rollback?: () => void) => {
+      if (!current() || sharePending) return
+      sharePending = true
+      shareResult.textContent = phase
+      setRequestBusy(shareResult, true)
+      const controls = [...shareDialog.querySelectorAll<HTMLInputElement>('input,select,button')].filter(control => control !== shareClose)
+      const disabled = controls.map(control => control.disabled)
+      restoreShareControls = () => { controls.forEach((control, index) => { control.disabled = disabled[index] ?? false }); restoreShareControls = () => {} }
+      controls.forEach(control => { control.disabled = true })
+      try {
+        const commit = await work()
+        if (current()) commit()
+      } catch (error) {
+        if (current()) { rollback?.(); shareResult.textContent = messageFor(error) }
+      } finally {
+        if (current()) {
+          sharePending = false
+          restoreShareControls()
+          shareAdd.disabled = sharePerson.options.length === 0
+          setRequestBusy(shareResult, false)
+        }
+      }
+    }
+    const renderPeople = (): void => {
+      sharePeople.replaceChildren(...people.map((person) => {
+        const item = element('li')
+        const remove = textElement('button', 'Remove')
+        remove.type = 'button'
+        remove.setAttribute('aria-label', `Stop sharing with ${person.name}`)
+        remove.addEventListener('click', () => {
+          if (api.unshareSavedReport === undefined) return
+          void mutate(`Removing ${person.name}…`, async () => {
+            await api.unshareSavedReport!(report.id, person.user_id, signal)
+            return () => {
+              const index = people.findIndex(candidate => candidate.user_id === person.user_id)
+              if (index >= 0) people.splice(index, 1)
+              renderPeople()
+              shareResult.textContent = `No longer shared with ${person.name}.`
+            }
+          })
+        })
+        item.append(textElement('span', `${person.name} `), remove)
+        return item
+      }))
+      const taken = new Set(people.map((person) => person.user_id))
+      const choices = (directoryPeople ?? []).filter((person) =>
+        person.id !== report.owner.user_id && !taken.has(person.id))
+      sharePerson.replaceChildren(...choices.map((person) => {
+        const option = element('option')
+        option.value = String(person.id)
+        option.textContent = personLabel(person.id, directoryPeople ?? [])
+        return option
+      }))
+      shareAdd.disabled = choices.length === 0
+    }
+    shareRoles.replaceChildren(...shareableReportRoles.map((role) => {
+      const label = element('label', 'report-check-field')
+      const box = element('input')
+      box.type = 'checkbox'
+      box.checked = roles.has(role.profile)
+      box.addEventListener('change', () => {
+        if (sharePending || !current()) { box.checked = roles.has(role.profile); return }
+        const action = box.checked ? api.shareSavedReportWithRole : api.unshareSavedReportWithRole
+        if (action === undefined) { box.checked = !box.checked; return }
+        const selected = box.checked
+        void mutate(`Updating sharing with ${role.label}…`, async () => {
+          await action(report.id, role.profile, signal)
+          return () => {
+            if (selected) roles.add(role.profile)
+            else roles.delete(role.profile)
+            shareResult.textContent = selected ? `Shared with ${role.label}.` : `No longer shared with ${role.label}.`
+          }
+        }, () => { box.checked = roles.has(role.profile) })
+      })
+      label.append(box, document.createTextNode(` ${role.label}`))
+      return label
+    }))
+    renderPeople()
+    shareDialog.showModal()
+    const listDirectoryUsers = api.listDirectoryUsers
+    if (directoryPeople === null && listDirectoryUsers !== undefined) {
+      await mutate('Loading people…', async () => {
+        const loaded: GeneralResource[] = []
+        let cursor: string | undefined
+        do {
+          const page = await listDirectoryUsers(cursor, signal)
+          if (!current()) return () => {}
+          loaded.push(...page.data.filter((person) => person['is_active'] !== false))
+          cursor = page.page.next_cursor ?? undefined
+        } while (cursor !== undefined)
+        return () => { directoryPeople = loaded; renderPeople(); shareResult.textContent = '' }
+      })
+    }
+    if (!current()) return
+    shareAdd.onclick = () => {
+      const userId = Number(sharePerson.value)
+      if (api.shareSavedReport === undefined || !Number.isSafeInteger(userId) || userId < 1) return
+      void mutate('Sharing report…', async () => {
+        await api.shareSavedReport!(report.id, userId, signal)
+        return () => {
+          const name = personLabel(userId, directoryPeople ?? [])
+          people.push({ user_id: userId, name })
+          renderPeople()
+          shareResult.textContent = `Shared with ${name}.`
+        }
+      })
+    }
+  }
+
   const loadSavedReports = async (): Promise<void> => {
+    if (savedScreenActive) return loadSavedScreen()
     const active = currentSession()
     if (active === null || api.listSavedReports === undefined) return
+    const own = ++libraryRequest
     savedStatus.textContent = 'Loading saved reports…'
+    setRequestBusy(savedStatus, true)
     try {
       const reports = await api.listSavedReports({
         view: savedView,
         ...(savedSearch.value.trim() === '' ? {} : { q: savedSearch.value.trim() }),
         ...(savedCustomOnly.checked ? { custom_only: true } : {}),
       }, active.signal)
-      if (currentSession() !== active) return
+      if (currentSession() !== active || own !== libraryRequest) return
       savedList.replaceChildren(...reports.map((report: SavedReport) => {
         const card = element('article', 'report-saved-card')
+        card.dataset.savedReportId = report.id
         const open = textElement('button', report.name)
         open.type = 'button'
         open.addEventListener('click', () => {
+          // A saved view is a report's address: it opens there, and runs through
+          // that report's own API rather than as a definition.
+          const address = savedReportHref(report)
+          if (address !== null) { globalThis.location.assign(address); return }
           if (api.runSavedReport === undefined) return
+          const own = ++savedRunRequest
           savedStatus.textContent = `Running ${report.name}…`
+          setRequestBusy(savedStatus, true)
           void api.runSavedReport(report.id, active.signal).then((result) => {
+            if (currentSession() !== active || own !== savedRunRequest) return
             savedLibrary.hidden = true
             renderRunnerResult(result, report.name)
             status.textContent = `Saved report version ${report.version} loaded with ${report.filters.length} active filters.`
-          }).catch((error: unknown) => { savedStatus.textContent = messageFor(error) })
+          }).catch((error: unknown) => {
+            if (currentSession() === active && own === savedRunRequest) savedStatus.textContent = messageFor(error)
+          }).finally(() => {
+            if (currentSession() === active && own === savedRunRequest) setRequestBusy(savedStatus, false)
+          })
         })
         const metadata = textElement(
           'p',
@@ -2799,19 +3438,11 @@ export const createReportsController = (
         )
         const pin = textElement('button', report.pinned ? 'Unpin' : 'Pin')
         pin.type = 'button'
-        pin.addEventListener('click', () => {
-          const action = report.pinned ? api.unpinSavedReport : api.pinSavedReport
-          if (action === undefined) return
-          void action(report.id, active.signal).then(loadSavedReports)
-        })
+        pin.addEventListener('click', () => { togglePin(report) })
         const duplicate = textElement('button', 'Duplicate')
         duplicate.type = 'button'
-        duplicate.addEventListener('click', () => {
-          if (api.duplicateSavedReport === undefined) return
-          void api.duplicateSavedReport(report.id, active.signal).then(loadSavedReports)
-        })
-        const ownerId = typeof report.owner.user_id === 'number' ? report.owner.user_id : null
-        const owned = ownerId === active.identity.user_id
+        duplicate.addEventListener('click', () => { duplicateReport(report) })
+        const owned = report.owned_by_viewer
         const edit = textElement('button', 'Edit')
         edit.type = 'button'
         edit.hidden = !owned
@@ -2832,41 +3463,198 @@ export const createReportsController = (
         const share = textElement('button', 'Share')
         share.type = 'button'
         share.hidden = !owned
-        share.addEventListener('click', () => {
-          if (api.shareSavedReport === undefined) return
-          const answer = globalThis.prompt('Share with user ID')
-          const userId = Number(answer)
-          if (!Number.isSafeInteger(userId) || userId < 1) return
-          savedStatus.textContent = `Sharing ${report.name}…`
-          void api.shareSavedReport(report.id, userId, active.signal)
-            .then(() => { savedStatus.textContent = `${report.name} shared.` })
-            .catch((error: unknown) => { savedStatus.textContent = messageFor(error) })
-        })
+        share.addEventListener('click', () => { void openShare(report) })
         const remove = textElement('button', 'Delete')
         remove.type = 'button'
-        remove.hidden = !owned
-        remove.addEventListener('click', () => {
-          if (api.deleteSavedReport === undefined || !globalThis.confirm(`Delete ${report.name}?`)) return
-          void api.deleteSavedReport(report.id, active.signal).then(loadSavedReports)
-        })
-        card.append(open, metadata, pin, duplicate, edit, share, remove)
+        remove.hidden = !report.can_delete
+        remove.addEventListener('click', () => { requestDelete(report) })
+        const audience = textElement('span', sharingSummary(report), 'report-saved-audience')
+        card.append(open, metadata, audience, pin, duplicate, edit, share, remove)
         return card
       }))
+      syncSavedMutationControls()
       savedStatus.textContent = reports.length === 0 ? 'No saved reports match.' : `${reports.length} saved reports.`
     } catch (error) {
-      savedStatus.textContent = messageFor(error)
+      if (currentSession() === active && own === libraryRequest) savedStatus.textContent = messageFor(error)
+    } finally {
+      if (currentSession() === active && own === libraryRequest) setRequestBusy(savedStatus, savedMutations.size > 0)
     }
+  }
+
+  /** Both lists say what happened; only the one on screen is read. */
+  const announceSaved = (message: string): void => {
+    savedStatus.textContent = message
+    savedScreenStatus.textContent = message
+  }
+
+  const syncSavedMutationControls = (): void => {
+    const rows = [
+      ...savedList.querySelectorAll<HTMLElement>('[data-saved-report-id]'),
+      ...savedScreenTable.querySelectorAll<HTMLElement>('[data-row-key]'),
+    ]
+    for (const row of rows) {
+      const id = row.dataset.savedReportId ?? row.dataset.rowKey
+      for (const button of row.querySelectorAll<HTMLButtonElement>('button')) {
+        button.disabled = id !== undefined && savedMutations.has(id)
+      }
+    }
+  }
+
+  const savedAction = async (id: string, phase: string, work: (active: ActiveSession, current: () => boolean) => Promise<string>, refreshLinks = false) => {
+    const active = currentSession()
+    if (active === null || savedMutations.has(id)) return
+    const current = () => currentSession() === active
+    savedMutations.add(id)
+    syncSavedMutationControls()
+    announceSaved(phase)
+    setRequestBusy(savedStatus, true)
+    setRequestBusy(savedScreenStatus, true)
+    try {
+      const note = await work(active, current)
+      if (!current()) return
+      await Promise.all([...(refreshLinks ? [loadQuickLinks()] : []), loadSavedReports()])
+      if (current()) announceSaved(note)
+    } catch (error) {
+      if (current()) announceSaved(messageFor(error))
+    } finally {
+      if (current()) {
+        savedMutations.delete(id)
+        syncSavedMutationControls()
+        setRequestBusy(savedStatus, savedMutations.size > 0)
+        setRequestBusy(savedScreenStatus, savedMutations.size > 0)
+      }
+    }
+  }
+
+  const togglePin = (report: SavedReport): void => {
+    const active = currentSession()
+    const action = report.pinned ? api.unpinSavedReport : api.pinSavedReport
+    if (active === null || action === undefined) return
+    void savedAction(report.id, report.pinned ? 'Unpinning report…' : 'Pinning report…', async () => {
+      await action(report.id, active.signal)
+      return report.pinned ? 'Report unpinned.' : 'Report pinned.'
+    }, true)
+  }
+
+  const duplicateReport = (report: SavedReport): void => {
+    const active = currentSession()
+    if (active === null || api.duplicateSavedReport === undefined) return
+    void savedAction(report.id, 'Duplicating report…', async () => {
+      await api.duplicateSavedReport!(report.id, active.signal)
+      return 'Report duplicated.'
+    })
+  }
+
+  const requestDelete = (report: SavedReport): void => {
+    if (api.deleteSavedReport === undefined || savedMutations.has(report.id)) return
+    deleting = report
+    deleteTitle.textContent = `Delete ${report.name}?`
+    deleteDialog.showModal()
+  }
+
+  /** The viewer's pinned views, above whichever report is open. */
+  const loadQuickLinks = async (): Promise<void> => {
+    const active = currentSession()
+    if (savedScreenActive || active === null || api.listSavedReports === undefined || !canReadFinancialReports(active.identity.profile)) return
+    try {
+      const reports = await api.listSavedReports({ view: 'all' }, active.signal)
+      if (currentSession() === active) renderQuickLinks(quickLinks, reports)
+    } catch {
+      // A convenience: the report itself says what failed.
+    }
+  }
+
+  const screenActions: SavedScreenActions = {
+    open: (report) => {
+      const address = savedReportHref(report)
+      if (address !== null) globalThis.location.assign(address)
+    },
+    rename: (report) => { openNameDialog(report) },
+    pin: togglePin,
+    share: (report) => { void openShare(report) },
+    duplicate: duplicateReport,
+    remove: requestDelete,
+  }
+
+  /** The Saved tab: saved views, whichever of them the viewer can see. */
+  const loadSavedScreen = async (): Promise<void> => {
+    const active = currentSession()
+    if (active === null || api.listSavedReports === undefined) return
+    const own = ++savedScreenRequest
+    savedScreenStatus.textContent = 'Loading saved reports…'
+    setRequestBusy(savedScreenStatus, true)
+    try {
+      const query = savedScreenSearch.value.trim()
+      const listed = await api.listSavedReports({ view: screenView, ...(query === '' ? {} : { q: query }) }, active.signal)
+      if (currentSession() !== active || own !== savedScreenRequest) return
+      // Builder definitions open in the Saved reports library, not here.
+      const views = listed.filter((report) => report.view !== null)
+      savedScreenTable.replaceChildren(renderSavedViewsTable(views, screenActions))
+      syncSavedMutationControls()
+      savedScreenStatus.textContent = views.length === 0
+        ? 'No saved reports match.'
+        : `${views.length} saved ${views.length === 1 ? 'report' : 'reports'}.`
+    } catch (error) {
+      if (currentSession() === active && own === savedScreenRequest) savedScreenStatus.textContent = messageFor(error)
+    } finally {
+      if (currentSession() === active && own === savedScreenRequest) setRequestBusy(savedScreenStatus, savedMutations.size > 0)
+    }
+  }
+
+  const showOpenSaved = (): void => {
+    bannerGeneration++
+    openBannerSave.disabled = false
+    setRequestBusy(openBannerResult, false)
+    openBanner.hidden = openSaved === null
+    openBannerResult.textContent = ''
+    if (openSaved === null) return
+    openBannerName.textContent = `Saved report: ${openSaved.name}`
+    openBannerSave.hidden = !openSaved.owned_by_viewer
+  }
+
+  /** The report on screen as an address, the way the page would push it. */
+  const currentReportAddress = (): { report: string; query: string } => {
+    const next = withSort(reportFiltersUrl(
+      filtersFromForm(),
+      detailedOptions,
+      timeOptions,
+      invoicedOptions,
+      profitabilityOptions,
+      expenseOptions,
+    ))
+    const url = new URL(
+      kind === 'contractor-cost' && contractorOnly ? `${next}&contractor_only=true` : next,
+      'https://ezacto.invalid',
+    )
+    const report = url.searchParams.get('report') ?? kind
+    url.searchParams.delete('report')
+    return { report, query: url.searchParams.toString() }
+  }
+
+  const openNameDialog = (rename: SavedReport | null): void => {
+    naming = { rename }
+    nameEyebrow.textContent = rename === null ? 'Save report' : 'Rename report'
+    nameTitle.textContent = rename === null ? 'Name this report' : `Rename ${rename.name}`
+    nameHint.hidden = rename !== null
+    nameSubmit.textContent = rename === null ? 'Save' : 'Rename'
+    nameInput.value = rename === null ? reportKindLabel(kind) : rename.name
+    nameResult.textContent = ''
+    setRequestBusy(nameResult, false)
+    nameSubmit.disabled = false
+    nameDialog.showModal()
+    nameInput.focus()
+    nameInput.select()
   }
 
   const setPending = (value: boolean): void => {
     pending = value
+    setRequestBusy(status, value || exportPending || timeActionPending)
     run.disabled = value
     period.setDisabled(value)
     catalogInput.disabled = value
     clientInput.disabled = value
     projectInput.disabled = value
     fixedFeeInput.disabled = value
-    invoiceStatusInput.disabled = value
     profitStatusInput.disabled = value
     profitBillingInput.disabled = value
     profitManagerInput.disabled = value
@@ -2997,7 +3785,6 @@ export const createReportsController = (
     // absent one: the first person to move it waits for something to happen.
     catalogField.hidden = clientField.hidden && projectField.hidden
     fixedFeeField.hidden = kind !== 'time'
-    invoiceStatusField.hidden = kind !== 'invoiced'
     profitStatusField.hidden = kind !== 'profitability'
     profitBillingField.hidden = kind !== 'profitability'
     profitManagerField.hidden = kind !== 'profitability'
@@ -3068,10 +3855,16 @@ export const createReportsController = (
     const active = currentSession()
     const download = api.downloadDetailedTimeReport
     const request = detailedRequest
-    if (active === null || download === undefined || request === null) return
+    if (active === null || download === undefined || request === null || exportPending) return
+    exportPending = true
     status.textContent = 'Preparing the export…'
+    setRequestBusy(status, true)
+    const controls = [...results.querySelectorAll<HTMLButtonElement>('[data-detailed-export] button')]
+    controls.forEach(control => { control.disabled = true })
     void download(request, format, audience, active.signal)
       .then(({ blob, filename }) => {
+        // The download still belongs to its captured request if the user
+        // refreshes the report while it is being rendered.
         if (currentSession() !== active) return
         const href = URL.createObjectURL(blob)
         const link = document.createElement('a')
@@ -3088,6 +3881,12 @@ export const createReportsController = (
         if (active.onSessionFailure(error)) return
         if (active.signal.aborted) return
         status.textContent = messageFor(error)
+      })
+      .finally(() => {
+        if (currentSession() !== active) return
+        exportPending = false
+        controls.forEach(control => { control.disabled = false })
+        setRequestBusy(status, pending || exportPending || timeActionPending)
       })
   }
 
@@ -3158,7 +3957,8 @@ export const createReportsController = (
               next.userId === detailedOptions.userId &&
               next.roleId === detailedOptions.roleId &&
               next.tagId === detailedOptions.tagId &&
-              next.invoiceState === detailedOptions.invoiceState
+              next.invoiceState === detailedOptions.invoiceState &&
+              (next.notes ?? '') === (detailedOptions.notes ?? '')
             detailedOptions = next
             // Grouping is a re-fold of rows already here, so it re-renders
             // without a request; Show, Active projects only and Detail change
@@ -3167,7 +3967,7 @@ export const createReportsController = (
               globalThis.history.pushState(
                 null,
                 '',
-                reportFiltersUrl({ ...filters, kind: 'detailed-time' }, detailedOptions),
+                withSort(reportFiltersUrl({ ...filters, kind: 'detailed-time' }, detailedOptions)),
               )
               renderDetailed(report)
               return
@@ -3180,6 +3980,8 @@ export const createReportsController = (
             ['administrator', 'accounting', 'executive_manager'].includes(active.identity.profile)
             ? {
                 onAction: (action: 'mark_invoiced' | 'mark_uninvoiced' | 'move', entryIds: readonly number[]) => {
+                  if (timeActionPending || currentSession() !== active) return
+                  if (action !== 'move' && !moduleAvailable('invoices')) return
                   const invoiceId = action === 'mark_invoiced' ? Number(globalThis.prompt('Draft invoice ID')) : undefined
                   const projectId = action === 'move' ? Number(globalThis.prompt('Destination project ID')) : undefined
                   const taskId = action === 'move' ? Number(globalThis.prompt('Destination task ID')) : undefined
@@ -3187,7 +3989,12 @@ export const createReportsController = (
                   if (projectId !== undefined && (!Number.isSafeInteger(projectId) || projectId < 1)) return
                   if (taskId !== undefined && (!Number.isSafeInteger(taskId) || taskId < 1)) return
                   if (!globalThis.confirm(`${action.replaceAll('_', ' ')} ${entryIds.length} selected time entries?`)) return
+                  timeActionPending = true
                   status.textContent = 'Applying confirmed time action…'
+                  setRequestBusy(status, true)
+                  const controls = [...results.querySelectorAll<HTMLInputElement>('[data-detailed-action], [data-detailed-select]')]
+                  const disabled = controls.map(control => control.disabled)
+                  controls.forEach(control => { control.disabled = true })
                   void api.executeDetailedTimeAction?.({
                     command_id: globalThis.crypto.randomUUID(),
                     action,
@@ -3197,9 +4004,17 @@ export const createReportsController = (
                     ...(projectId === undefined ? {} : { project_id: projectId }),
                     ...(taskId === undefined ? {} : { task_id: taskId }),
                   }, active.signal).then((outcome) => {
+                    if (currentSession() !== active || detailedReport !== report) return
                     status.textContent = `${outcome.changed_entry_ids.length} entries changed; ${outcome.ineligible_entry_ids.length} were ineligible.`
                     void loadReport({ ...filters, kind: 'detailed-time' }, false)
-                  }).catch((error: unknown) => { status.textContent = messageFor(error) })
+                  }).catch((error: unknown) => {
+                    if (currentSession() === active && detailedReport === report) status.textContent = messageFor(error)
+                  }).finally(() => {
+                    if (currentSession() !== active) return
+                    timeActionPending = false
+                    controls.forEach((control, index) => { control.disabled = disabled[index] ?? false })
+                    setRequestBusy(status, pending || exportPending || timeActionPending)
+                  })
                 },
               }
             : {}),
@@ -3238,7 +4053,7 @@ export const createReportsController = (
     timeTab = tab
     const filters = filtersFromForm()
     syncKindHrefs(filters)
-    globalThis.history.pushState(null, '', reportFiltersUrl(filters, detailedOptions, timeOptions))
+    globalThis.history.pushState(null, '', withSort(reportFiltersUrl(filters, detailedOptions, timeOptions)))
     if (lastTimeReport === null) return
     results.replaceChildren(
       renderTimeReport(lastTimeReport, filters, showTimeTab, timeOptions, canOpenTeam()),
@@ -3276,15 +4091,25 @@ export const createReportsController = (
       results.replaceChildren(
         renderUninvoiced(
           report as UninvoicedReport,
-          session !== null && invoiceIdentityCanWrite(session.identity),
+          moduleAvailable('invoices') && session !== null && invoiceIdentityCanWrite(session.identity),
         ),
       )
     } else if (filters.kind === 'invoiced') {
-      results.replaceChildren(renderInvoiced(report as InvoicedReport))
+      results.replaceChildren(
+        renderInvoiced(report as InvoicedReport, invoicedOptions, (next) => {
+          invoicedOptions = next
+          void loadReport(filtersFromForm(), true)
+        }),
+      )
     } else if (filters.kind === 'payments-received') {
       results.replaceChildren(renderPaymentsReceived(report as PaymentsReceivedReport))
     } else if (filters.kind === 'receivables') {
-      results.replaceChildren(renderReceivables(report as ReceivablesReport))
+      results.replaceChildren(
+        renderReceivables(report as ReceivablesReport, invoicedOptions, (next) => {
+          invoicedOptions = next
+          void loadReport(filtersFromForm(), true)
+        }),
+      )
     } else if (filters.kind === 'activity-log') {
       results.replaceChildren(
         renderActivityLog(report as readonly ActivityLogEntry[], filters),
@@ -3298,13 +4123,15 @@ export const createReportsController = (
           globalThis.history.pushState(
             null,
             '',
-            reportFiltersUrl(
-              filtersFromForm(),
-              detailedOptions,
-              timeOptions,
-              invoicedOptions,
-              profitabilityOptions,
-              expenseOptions,
+            withSort(
+              reportFiltersUrl(
+                filtersFromForm(),
+                detailedOptions,
+                timeOptions,
+                invoicedOptions,
+                profitabilityOptions,
+                expenseOptions,
+              ),
             ),
           )
           if (lastProfitabilityReport !== null) {
@@ -3372,6 +4199,16 @@ export const createReportsController = (
       if (!updateUrl) queuedLocationFilters = filters
       return
     }
+    // Organization modules are discovered through their native refusal. Once
+    // refused, bookmarks/popstate must not repeatedly call the withdrawn report.
+    if (expensesOff && filters.kind === 'detailed-expense') {
+      clearReportPresentation()
+      form.hidden = true
+      status.textContent = 'The Expenses module is switched off.'
+      retry.hidden = true
+      return
+    }
+    form.hidden = false
     const validation = validateReportFilters(filters)
     if (validation !== null) {
       clearReportPresentation()
@@ -3416,14 +4253,20 @@ export const createReportsController = (
     }
     syncKindHrefs(filters)
     if (updateUrl) {
-      const nextUrl = reportFiltersUrl(
+      // A sort belongs to the report it was chosen on: another kind has other
+      // columns, and carrying the word over would only be ignored.
+      if (filters.kind !== reportSortKind) {
+        reportSortAddress = null
+        reportSortKind = filters.kind
+      }
+      const nextUrl = withSort(reportFiltersUrl(
         filters,
         detailedOptions,
         timeOptions,
         invoicedOptions,
         profitabilityOptions,
         expenseOptions,
-      )
+      ))
       globalThis.history.pushState(
         null,
         '',
@@ -3460,6 +4303,7 @@ export const createReportsController = (
             ...(detailedOptions.tagId === null ? {} : { tag_id: detailedOptions.tagId }),
             invoice_state: detailedOptions.invoiceState,
             active_projects_only: detailedOptions.activeProjectsOnly,
+            ...(detailedOptions.notes === undefined || detailedOptions.notes === '' ? {} : { notes: detailedOptions.notes }),
           }
         : null
     try {
@@ -3495,6 +4339,7 @@ export const createReportsController = (
               {
                 as_of: filters.to,
                 ...(filters.clientId === null ? {} : { client_id: filters.clientId }),
+                ...(invoicedOptions.dueState == null ? {} : { due_state: invoicedOptions.dueState }),
               },
               active.signal,
             )
@@ -3571,6 +4416,18 @@ export const createReportsController = (
       if (active.signal.aborted) return
       if (queuedLocationFilters !== null) return
       status.textContent = messageFor(error)
+      if (isModuleDisabled(error)) {
+        // A decision, not a failure: retrying would only be refused again.
+        if (filters.kind === 'activity-log') {
+          hideActivityLogKind()
+          status.textContent = 'The Activity log module is switched off.'
+        }
+        if (filters.kind === 'detailed-expense') {
+          hideExpenseKind()
+          status.textContent = 'The Expenses module is switched off.'
+        }
+        return
+      }
       retry.hidden = false
       retryAction = () => void loadReport(filters, false)
     } finally {
@@ -3585,7 +4442,7 @@ export const createReportsController = (
 
   const applyLocation = (): void => {
     const active = currentSession()
-    if (active === null) return
+    if (active === null || savedScreenActive) return
     const location = new URL(globalThis.location.href)
     const filters = reportFiltersFromUrl(
       location,
@@ -3593,13 +4450,14 @@ export const createReportsController = (
       canReadFinancialReports(active.identity.profile),
     )
     detailedOptions = detailedTimeOptionsFromUrl(location)
+    reportSortAddress = reportSortFromUrl(location)
+    reportSortKind = filters.kind
     timeOptions = timeReportOptionsFromUrl(location)
     invoicedOptions = invoicedReportOptionsFromUrl(location)
     profitabilityOptions = profitabilityOptionsFromUrl(location)
     expenseOptions = detailedExpenseOptionsFromUrl(location)
     contractorOnly = location.searchParams.get('contractor_only') === 'true'
     fixedFeeInput.checked = timeOptions.includeFixedFee
-    invoiceStatusInput.value = invoicedOptions.status ?? ''
     showProfitabilityOptions()
     showExpenseOptions()
     setKind(presentedKind(filters.kind, active.identity))
@@ -3615,6 +4473,8 @@ export const createReportsController = (
       // A modified click still belongs to the browser: it opens the tab's own
       // address, which syncKindHrefs keeps pointed at the visible range.
       if (event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return
+      // From the Saved tab a kind is a page to go to, not a report to swap in.
+      if (savedScreenActive) return
       event.preventDefault()
       // A run in flight disabled the dropdown this replaced. A link cannot be
       // disabled, so it declines the click instead.
@@ -3633,14 +4493,6 @@ export const createReportsController = (
   form.addEventListener('submit', (event) => {
     event.preventDefault()
     timeOptions = { includeFixedFee: fixedFeeInput.checked }
-    const selectedStatus = invoiceStatusInput.value
-    invoicedOptions = {
-      status:
-        selectedStatus === 'draft' || selectedStatus === 'open' ||
-        selectedStatus === 'paid' || selectedStatus === 'closed'
-          ? selectedStatus as InvoicedReportStatus
-          : null,
-    }
     const selectedProjectStatus = profitStatusInput.value
     const selectedBillingMethod = profitBillingInput.value
     profitabilityOptions = {
@@ -3685,6 +4537,35 @@ export const createReportsController = (
     void loadSavedReports()
   })
   savedClose.addEventListener('click', () => { savedLibrary.hidden = true })
+  shareClose.addEventListener('click', () => shareDialog.close())
+  // Sharing changes are saved as they are made, so the library only needs to
+  // read them back once the dialog is done.
+  shareDialog.addEventListener('close', () => {
+    shareGeneration++
+    sharePending = false
+    restoreShareControls()
+    setRequestBusy(shareResult, false)
+    void loadSavedReports()
+  })
+  for (const cancel of deleteDialog.querySelectorAll<HTMLButtonElement>('[data-saved-delete-cancel]')) {
+    cancel.addEventListener('click', () => { deleting = null; deleteDialog.close() })
+  }
+  deleteConfirm.addEventListener('click', () => {
+    const active = currentSession()
+    const target = deleting
+    if (active === null || target === null || api.deleteSavedReport === undefined) return
+    if (savedMutations.has(target.id)) return
+    deleting = null
+    deleteDialog.close()
+    announceSaved(`Deleting ${target.name}…`)
+    void savedAction(target.id, `Deleting ${target.name}…`, async (_active, current) => {
+      await api.deleteSavedReport!(target.id, active.signal)
+      if (current()) {
+        if (openSaved?.id === target.id) { openSaved = null; showOpenSaved() }
+      }
+      return `${target.name} deleted.`
+    }, true)
+  })
   for (const choice of document.querySelectorAll<HTMLButtonElement>('[data-saved-view]')) {
     choice.addEventListener('click', () => {
       const view = choice.dataset.savedView
@@ -3698,12 +4579,102 @@ export const createReportsController = (
   }
   savedSearch.addEventListener('input', () => { void loadSavedReports() })
   savedCustomOnly.addEventListener('change', () => { void loadSavedReports() })
+  for (const choice of document.querySelectorAll<HTMLButtonElement>('[data-saved-screen-view]')) {
+    choice.addEventListener('click', () => {
+      const view = choice.dataset.savedScreenView
+      if (view !== 'all' && view !== 'yours' && view !== 'shared') return
+      screenView = view
+      for (const button of document.querySelectorAll<HTMLButtonElement>('[data-saved-screen-view]')) {
+        button.setAttribute('aria-pressed', String(button === choice))
+      }
+      void loadSavedScreen()
+    })
+  }
+  savedScreenSearch.addEventListener('input', () => { void loadSavedScreen() })
+  saveOpen.addEventListener('click', () => { openNameDialog(null) })
+  for (const cancel of nameDialog.querySelectorAll<HTMLButtonElement>('[data-saved-name-cancel]')) {
+    cancel.addEventListener('click', () => { naming = null; nameDialog.close() })
+  }
+  nameDialog.addEventListener('close', () => { nameSubmit.disabled = false; setRequestBusy(nameResult, false) })
+  nameForm.addEventListener('submit', (event) => {
+    event.preventDefault()
+    const active = currentSession()
+    const target = naming
+    const name = nameInput.value.trim()
+    if (active === null || target === null || nameSubmit.disabled) return
+    if (name === '') { nameResult.textContent = 'Give the report a name.'; return }
+    const request = target.rename === null
+      ? api.createReportView?.({ name, view: currentReportAddress() }, active.signal)
+      : api.updateSavedReport?.(target.rename.id, { version: target.rename.version, name }, active.signal)
+    if (request === undefined) return
+    nameSubmit.disabled = true
+    nameResult.textContent = 'Saving…'
+    setRequestBusy(nameResult, true)
+    void request.then((report) => {
+      if (currentSession() !== active || naming !== target) return
+      if (target.rename === null) {
+        // The page is now that saved report, and a reload keeps it so.
+        openSaved = report
+        const address = new URL(globalThis.location.href)
+        address.searchParams.set('saved', report.id)
+        globalThis.history.replaceState(null, '', `${address.pathname}${address.search}`)
+        showOpenSaved()
+        openBannerResult.textContent = 'Saved. It is private to you until you share it.'
+      } else if (openSaved?.id === report.id) {
+        openSaved = report
+        showOpenSaved()
+      }
+      naming = null
+      nameDialog.close()
+      void loadQuickLinks()
+      if (savedScreenActive) void loadSavedScreen()
+    }).catch((error: unknown) => {
+      if (currentSession() !== active || naming !== target) return
+      nameResult.textContent = messageFor(error)
+      nameSubmit.disabled = false
+    }).finally(() => {
+      if (currentSession() === active && naming === target) setRequestBusy(nameResult, false)
+    })
+  })
+  openBannerSave.addEventListener('click', () => {
+    const active = currentSession()
+    const target = openSaved
+    if (active === null || target === null || api.updateSavedReport === undefined || openBannerSave.disabled) return
+    const own = ++bannerGeneration
+    openBannerSave.disabled = true
+    openBannerResult.textContent = 'Saving…'
+    setRequestBusy(openBannerResult, true)
+    void api.updateSavedReport(target.id, { version: target.version, view: currentReportAddress() }, active.signal)
+      .then((report) => {
+        if (currentSession() !== active || own !== bannerGeneration || openSaved?.id !== target.id) return
+        openSaved = report
+        showOpenSaved()
+        openBannerResult.textContent = 'Changes saved.'
+        void loadQuickLinks()
+      })
+      .catch((error: unknown) => {
+        if (currentSession() === active && own === bannerGeneration && openSaved?.id === target.id) openBannerResult.textContent = messageFor(error)
+      })
+      .finally(() => {
+        if (currentSession() === active && own === bannerGeneration) { openBannerSave.disabled = false; setRequestBusy(openBannerResult, false) }
+      })
+  })
 
   const openBuilder = async (source?: Readonly<SavedReport>): Promise<void> => {
     const active = currentSession()
     if (active === null || api.getReportDefinitionRegistry === undefined) return
+    restoreBuilderControls()
+    builderPending = false
+    const own = ++builderGeneration
+    const current = () => currentSession() === active && own === builderGeneration && builder.open
     builderStatus.textContent = 'Loading fields and metrics…'
+    setRequestBusy(builderStatus, true)
     builder.showModal()
+    builderPending = true
+    const controls = [...builder.querySelectorAll<HTMLInputElement>('input,select,textarea,button')].filter(control => control !== builderClose)
+    const disabled = controls.map(control => control.disabled)
+    restoreBuilderControls = () => { controls.forEach((control, index) => { control.disabled = disabled[index] ?? false }); restoreBuilderControls = () => {} }
+    controls.forEach(control => { control.disabled = true })
     builderFrom.value = period.range().from
     builderTo.value = period.range().to
     if (source === undefined) {
@@ -3711,7 +4682,9 @@ export const createReportsController = (
       builderProjects.value = ''
     }
     try {
-      builderRegistry ??= await api.getReportDefinitionRegistry(active.signal)
+      const registry = builderRegistry ?? await api.getReportDefinitionRegistry(active.signal)
+      if (!current()) return
+      builderRegistry = registry
       const fields = builderRegistry.fields.flatMap((raw) => {
         const field = raw as { id?: unknown; label?: unknown; groupable?: unknown }
         return typeof field.id === 'string' && typeof field.label === 'string' && field.groupable === true
@@ -3736,7 +4709,13 @@ export const createReportsController = (
       for (const option of builderMetrics.options) option.selected = source === undefined ? option.index === 0 : selectedMetrics.has(option.value)
       builderStatus.textContent = ''
     } catch (error) {
-      builderStatus.textContent = messageFor(error)
+      if (current()) builderStatus.textContent = messageFor(error)
+    } finally {
+      if (current()) {
+        builderPending = false
+        restoreBuilderControls()
+        setRequestBusy(builderStatus, false)
+      }
     }
   }
   builderOpen.addEventListener('click', () => { editingSaved = null; void openBuilder() })
@@ -3754,6 +4733,33 @@ export const createReportsController = (
   builderMetricsUp.addEventListener('click', () => moveSelected(builderMetrics, -1))
   builderMetricsDown.addEventListener('click', () => moveSelected(builderMetrics, 1))
   builderClose.addEventListener('click', () => builder.close())
+  builder.addEventListener('close', () => {
+    builderGeneration++
+    builderPending = false
+    restoreBuilderControls()
+    setRequestBusy(builderStatus, false)
+  })
+  const builderAction = async (phase: string, work: (active: ActiveSession, current: () => boolean) => Promise<void>) => {
+    const active = currentSession(), own = builderGeneration
+    if (active === null || builderPending || !builder.open) return
+    const current = () => currentSession() === active && own === builderGeneration && builder.open
+    builderPending = true
+    const controls = [...builder.querySelectorAll<HTMLInputElement>('input,select,textarea,button')].filter(control => control !== builderClose)
+    const disabled = controls.map(control => control.disabled)
+    restoreBuilderControls = () => { controls.forEach((control, index) => { control.disabled = disabled[index] ?? false }); restoreBuilderControls = () => {} }
+    controls.forEach(control => { control.disabled = true })
+    builderStatus.textContent = phase
+    setRequestBusy(builderStatus, true)
+    try { await work(active, current) }
+    catch (error) { if (current()) builderStatus.textContent = messageFor(error) }
+    finally {
+      if (current()) {
+        builderPending = false
+        restoreBuilderControls()
+        setRequestBusy(builderStatus, false)
+      }
+    }
+  }
   builderTemplate.addEventListener('change', () => {
     const template = builderTemplate.value
     if (template === 'detailed-time') {
@@ -3767,40 +4773,93 @@ export const createReportsController = (
     }
   })
   builderPreview.addEventListener('click', () => {
-    const active = currentSession()
-    if (active === null || api.previewReportDefinition === undefined) return
+    if (api.previewReportDefinition === undefined) return
     const input = savedReportInput()
-    builderStatus.textContent = 'Running preview…'
-    void api.previewReportDefinition(input, active.signal).then((report) => {
+    void builderAction('Running preview…', async (active, current) => {
+      const report = await api.previewReportDefinition!(input, active.signal)
+      if (!current()) return
       renderRunnerResult(report, input.name)
       builderStatus.textContent = report.state === 'ready' ? 'Preview is ready.' : report.state === 'empty' ? 'No rows match.' : 'Narrow the report filters.'
-    }).catch((error: unknown) => { builderStatus.textContent = messageFor(error) })
+    })
   })
   builderForm.addEventListener('submit', (event) => {
     event.preventDefault()
-    const active = currentSession()
-    if (active === null || api.createSavedReport === undefined) return
+    if (api.createSavedReport === undefined) return
     const input = savedReportInput()
-    builderStatus.textContent = editingSaved === null ? 'Saving report…' : 'Updating report…'
-    const save = editingSaved === null
-      ? api.createSavedReport(input, active.signal)
-      : api.updateSavedReport?.(editingSaved.id, { version: editingSaved.version, ...input }, active.signal)
-    if (save === undefined) return
-    void save.then((report) => {
+    const editing = editingSaved
+    void builderAction(editing === null ? 'Saving report…' : 'Updating report…', async (active, current) => {
+      const save = editing === null
+        ? api.createSavedReport!(input, active.signal)
+        : api.updateSavedReport?.(editing.id, { version: editing.version, ...input }, active.signal)
+      if (save === undefined) return
+      const report = await save
+      if (!current()) return
       editingSaved = null
+      builderPending = false
+      restoreBuilderControls()
+      setRequestBusy(builderStatus, false)
       builder.close()
       savedLibrary.hidden = false
       savedStatus.textContent = `${report.name} saved.`
       void loadSavedReports()
-    }).catch((error: unknown) => { builderStatus.textContent = messageFor(error) })
+    })
   })
   retry.addEventListener('click', () => {
     retryAction?.()
   })
+  reportSortChanged = (sort) => {
+    reportSortAddress = sort
+    // The address names the sort so a shared or saved report reopens in the
+    // same order; replacing the entry keeps Back for the filters, not the clicks.
+    const address = new URL(globalThis.location.href)
+    address.searchParams.set('sort', sortToken(sort))
+    globalThis.history.replaceState(null, '', `${address.pathname}${address.search}`)
+  }
+  const resetAuxiliaryFeedback = (): void => {
+    shareGeneration++
+    builderGeneration++
+    bannerGeneration++
+    sharePending = false
+    builderPending = false
+    exportPending = false
+    timeActionPending = false
+    restoreShareControls()
+    restoreBuilderControls()
+    savedMutations.clear()
+    setRequestBusy(status, false)
+    directoryPeople = null
+    for (const region of [shareResult, builderStatus, nameResult, openBannerResult, savedStatus, savedScreenStatus, entryDeleteResult]) {
+      setRequestBusy(region, false)
+      region.textContent = ''
+    }
+    for (const dialog of [shareDialog, builder, nameDialog, deleteDialog, entryDeleteDialog]) {
+      if (dialog.open) dialog.close()
+    }
+    sharePeople.replaceChildren()
+    sharePerson.replaceChildren()
+    shareRoles.replaceChildren()
+    savedList.replaceChildren()
+    savedLibrary.hidden = true
+    naming = null
+    deleting = null
+    entryDeletion = null
+  }
   return {
     async activate(identity, signal, onSessionFailure) {
       if (!reportsPage) return
+      resetAuxiliaryFeedback()
+      if (expenseDiscoverySignal !== signal) {
+        expenseDiscoverySignal = signal
+        expensesOff = false
+        if (expenseTemplateOption !== null) builderTemplate.append(expenseTemplateOption)
+      }
       session = { identity, signal, onSessionFailure }
+      libraryRequest++
+      savedScreenRequest++
+      savedRunRequest++
+      savedMutations.clear()
+      exportPending = false
+      timeActionPending = false
       clients = []
       projects = []
       detailedReport = null
@@ -3834,7 +4893,6 @@ export const createReportsController = (
       clientInput.disabled = false
       projectInput.disabled = false
       fixedFeeInput.disabled = false
-      invoiceStatusInput.disabled = false
       profitStatusInput.disabled = false
       profitBillingInput.disabled = false
       profitManagerInput.disabled = false
@@ -3852,12 +4910,21 @@ export const createReportsController = (
       results.removeAttribute('aria-busy')
       retry.hidden = true
       status.textContent = 'Loading report filters…'
+      openSaved = null
+      showOpenSaved()
+      renderQuickLinks(quickLinks, [])
+      savedScreenActive = globalThis.location.pathname === '/reports/saved'
+      savedScreen.hidden = !savedScreenActive
+      form.hidden = savedScreenActive
+      status.hidden = savedScreenActive
+      results.hidden = savedScreenActive
       globalThis.addEventListener('popstate', applyLocation, { signal })
       signal.addEventListener(
         'abort',
         () => {
           if (session?.signal !== signal) return
           session = null
+          resetAuxiliaryFeedback()
           clients = []
           projects = []
           detailedReport = null
@@ -3875,6 +4942,18 @@ export const createReportsController = (
           run.disabled = true
           period.setDisabled(true)
           status.textContent = 'Sign in to view reports.'
+          // Nothing drawn for the last person stays for the next.
+          openSaved = null
+          naming = null
+          deleting = null
+          showOpenSaved()
+          renderQuickLinks(quickLinks, [])
+          savedScreenTable.replaceChildren()
+          savedScreenStatus.textContent = ''
+          saveOpen.hidden = true
+          nameDialog.close()
+          shareDialog.close()
+          deleteDialog.close()
         },
         { once: true },
       )
@@ -3891,7 +4970,6 @@ export const createReportsController = (
       expenseOptions = detailedExpenseOptionsFromUrl(initialLocation)
       contractorOnly = initialLocation.searchParams.get('contractor_only') === 'true'
       fixedFeeInput.checked = timeOptions.includeFixedFee
-      invoiceStatusInput.value = invoicedOptions.status ?? ''
       showProfitabilityOptions()
       showExpenseOptions()
       setKind(presentedKind(initial.kind, identity))
@@ -3904,9 +4982,49 @@ export const createReportsController = (
       // second session in the same document gets the strip its profile earns.
       kindStrip?.replaceChildren(
         ...[...kindTabs]
-          .filter(([tabKind]) => canReadKind(tabKind, identity))
+          .filter(
+            ([tabKind]) =>
+              canReadKind(tabKind, identity) &&
+              !(activityLogOff && tabKind === 'activity-log') &&
+              !(expensesOff && tabKind === 'detailed-expense'),
+          )
           .map(([, anchor]) => anchor),
+        ...(savedTab !== null && canReadFinancialReports(identity.profile) ? [savedTab] : []),
       )
+      void api
+        .getActivityLogEnabled?.(signal)
+        .then((enabled) => {
+          if (!enabled) hideActivityLogKind()
+        })
+        .catch(() => {})
+      if (savedScreenActive) {
+        for (const anchor of kindTabs.values()) anchor.removeAttribute('aria-current')
+        savedTab?.setAttribute('aria-current', 'page')
+        saveOpen.hidden = true
+        if (!canReadFinancialReports(identity.profile)) {
+          savedScreenStatus.textContent = 'Your profile cannot open saved reports.'
+          return
+        }
+        await loadSavedScreen()
+        return
+      }
+      saveOpen.hidden = !canReadFinancialReports(identity.profile) || api.createReportView === undefined
+      if (canReadFinancialReports(identity.profile)) {
+        void loadQuickLinks()
+        const openId = initialLocation.searchParams.get('saved')
+        if (openId !== null && api.getSavedReport !== undefined) {
+          void api.getSavedReport(openId, signal).then((report) => {
+            if (session?.signal !== signal) return
+            openSaved = report
+            showOpenSaved()
+          }).catch(() => {
+            if (session?.signal !== signal) return
+            openBannerName.textContent = 'This saved report is no longer available to you.'
+            openBannerSave.hidden = true
+            openBanner.hidden = false
+          })
+        }
+      }
       if (api.listReportClients === undefined || api.listReportProjects === undefined) {
         status.textContent = 'Report filters are unavailable in this build.'
         run.disabled = true

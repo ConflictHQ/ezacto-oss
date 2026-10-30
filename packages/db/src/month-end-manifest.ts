@@ -152,6 +152,12 @@ export const monthEndManifest = async (
           WHERE project.client_id IN (SELECT descendant_id FROM client_hierarchy
             WHERE ancestor_id = ${row.client_id}))
       WHERE organization.id = 1`))[0]
+    // Hours as the invoice billed them: the entries it claimed, at their
+    // rounded value. Null where it claimed none, not zero.
+    const billed = (await database.all<{ entryCount: number; seconds: number }>(sql`
+      SELECT count(*) AS "entryCount",
+        coalesce(sum(coalesce(rounded_seconds, seconds)), 0) AS "seconds"
+      FROM time_entries WHERE invoice_id = ${row.id}`))[0]
     const costCents = cost === undefined || cost.entryCount === 0 || cost.missingRates > 0
       ? null
       : cost.costCents
@@ -162,6 +168,9 @@ export const monthEndManifest = async (
       amountCents: row.amount_cents,
       currency: row.currency,
       target: row.recipient,
+      quantitySeconds:
+        billed === undefined || billed.entryCount === 0 ? null : billed.seconds,
+      clientName: row.client_name,
       brandName: brand?.name ?? null,
       costCents,
       marginCents:

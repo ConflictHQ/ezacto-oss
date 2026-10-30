@@ -13,6 +13,11 @@
   display: none !important;
 }
 
+/* Backups are the platform's where the server says so (issue 1216). */
+html[data-backups-unavailable] [data-settings-data-backups] {
+  display: none;
+}
+
 /*
  * Density and type scale. Old Harvest fitted a working week on one screen and
  * gave every page one number big enough to read from across the room; §4 and §6
@@ -669,7 +674,8 @@
   .team-period strong {
     min-width: 0;
   }
-  .team-period [data-team-week-current] {
+  .team-period [data-team-week-current],
+  .team-period [data-capacity-current] {
     grid-column: 1 / -1;
     width: 100%;
   }
@@ -748,14 +754,14 @@
   color: var(--ez-muted);
   font-size: 12px;
 }
-.report-filters input,
+.report-filters input:not([type="checkbox"], [type="radio"]),
 .report-filters select,
 .report-filters button,
 [data-report-retry] {
   min-width: 0;
   min-height: 44px;
 }
-.report-filters input,
+.report-filters input:not([type="checkbox"], [type="radio"]),
 .report-filters select {
   width: 100%;
   padding: 0 10px;
@@ -763,6 +769,19 @@
   border-radius: var(--ez-radius);
   background: var(--ez-ground);
   color: var(--ez-ink);
+}
+.report-check-field {
+  display: flex;
+  align-items: center;
+  min-height: 44px;
+  gap: 8px;
+}
+.report-check-field input[type="checkbox"] {
+  flex: none;
+  width: 18px;
+  height: 18px;
+  margin: 0;
+  accent-color: var(--ez-action);
 }
 .report-filters [hidden] {
   display: none;
@@ -794,6 +813,7 @@
   min-width: 0;
 }
 .period-step {
+  min-height: 44px;
   display: grid;
   place-items: center;
   flex: none;
@@ -876,6 +896,17 @@
   border-top: 1px solid var(--ez-border);
 }
 .report-saved-card p { flex: 1; margin: 0; color: var(--ez-muted); }
+.report-saved-audience { color: var(--ez-muted); white-space: nowrap; }
+.report-quick-links,
+.report-saved-open,
+.report-saved-screen { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 16px; margin-block: 12px; }
+.report-saved-screen { display: grid; align-items: stretch; }
+.report-quick-links[hidden],
+.report-saved-open[hidden],
+.report-saved-screen[hidden] { display: none; }
+.report-saved-open { margin: 0; }
+.report-share-dialog fieldset { display: grid; gap: 8px; margin: 0 0 12px; padding: 12px; border: 1px solid var(--ez-border); border-radius: var(--ez-radius); }
+.report-share-dialog ul { display: grid; gap: 6px; margin: 0; padding: 0; list-style: none; }
 [data-report-builder] {
   width: min(720px, calc((100vw - 32px) / var(--ez-zoom, 1)));
   max-height: calc((100vh - 32px) / var(--ez-zoom, 1));
@@ -1094,6 +1125,72 @@
   border-radius: var(--ez-radius);
   background: var(--ez-ground);
   color: var(--ez-ink);
+}
+.filter-bar {
+  display: grid;
+  gap: 10px;
+  margin-block: 12px;
+}
+.filter-bar-fields {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: end;
+  gap: 12px;
+}
+.filter-bar-field {
+  display: grid;
+  gap: 6px;
+  min-width: 0;
+}
+.filter-bar-field label {
+  color: var(--ez-muted);
+  font-size: 12px;
+}
+.filter-bar-field select,
+.filter-bar-field input[type='search'] {
+  min-width: 0;
+  min-height: 44px;
+  padding: 0 10px;
+  border: 1px solid var(--ez-border);
+  border-radius: var(--ez-radius);
+  background: var(--ez-ground);
+  color: var(--ez-ink);
+}
+.filter-bar-toggle {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 44px;
+}
+.filter-bar-toggle input {
+  width: 20px;
+  height: 20px;
+}
+.filter-bar-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.filter-bar-chip,
+.filter-bar-clear {
+  min-height: 44px;
+  padding: 0 12px;
+  border: 1px solid var(--ez-border);
+  border-radius: var(--ez-radius);
+  background: var(--ez-surface);
+  color: var(--ez-ink);
+  cursor: pointer;
+}
+.filter-bar-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+.filter-bar-clear {
+  justify-self: start;
 }
 .report-detailed-active {
   display: flex;
@@ -1399,6 +1496,7 @@
   border: 1px solid var(--ez-border);
   border-radius: var(--ez-radius);
   background: var(--ez-ground);
+  color: var(--ez-ink);
   box-shadow: 0 18px 48px color-mix(in srgb, var(--ez-shadow) 8%, transparent);
 }
 .invoice-document-heading {
@@ -1532,6 +1630,9 @@
 }
 .invoice-line-wrap {
   overflow-x: auto;
+}
+.invoice-end-clients {
+  margin-top: 16px;
 }
 .invoice-line-editor {
   margin-top: 8px;
@@ -1724,7 +1825,8 @@
   font-size: 13px;
 }
 .invoice-payment-heading button,
-.invoice-payment-actions button {
+.invoice-payment-actions button,
+[data-invoice-provider-alerts] button {
   min-height: 44px;
   padding: 0 14px;
   border: 1px solid var(--ez-border);
@@ -2835,6 +2937,9 @@
 .expense-workspace {
   width: 100%;
 }
+.expense-intro {
+  max-width: 64ch;
+}
 .expense-intro,
 .expense-page-status,
 .expense-lock-message {
@@ -2911,6 +3016,62 @@
   color: var(--ez-ink);
 }
 
+/* The clear button sits in the toolbar's last track, level with the controls. */
+.activity-log-toolbar > button,
+[data-activity-more] {
+  align-self: end;
+  min-height: 44px;
+  padding: 8px 16px;
+  border: 1px solid var(--ez-border);
+  border-radius: var(--ez-radius);
+  background: var(--ez-ground);
+  color: var(--ez-ink);
+  cursor: pointer;
+}
+
+/* A log read a page at a time (issue 929): the count, Newer and Older, and the
+   page size on one wrapping row under the table. */
+.log-pager {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 12px;
+  margin-top: 12px;
+}
+.log-pager-count {
+  flex: 1 1 160px;
+  margin: 0;
+  color: var(--ez-muted);
+  font-size: 13px;
+}
+.log-pager-button {
+  min-width: 44px;
+  min-height: 44px;
+  padding: 8px 16px;
+  border: 1px solid var(--ez-border);
+  border-radius: var(--ez-radius);
+  background: var(--ez-ground);
+  color: var(--ez-ink);
+  cursor: pointer;
+}
+.log-pager-button:disabled { cursor: default; opacity: 0.5; }
+.log-pager-size {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--ez-muted);
+  font-size: 13px;
+}
+.log-pager-size select {
+  min-height: 44px;
+  padding: 8px 12px;
+  border: 1px solid var(--ez-border);
+  border-radius: var(--ez-radius);
+  background: var(--ez-ground);
+  color: var(--ez-ink);
+}
+.log-empty { margin: 16px 0; color: var(--ez-muted); }
+
 .expense-form,
 .expense-filter-form {
   display: grid;
@@ -2979,6 +3140,7 @@
   min-height: auto;
 }
 .expense-filter-form {
+  align-items: end;
   margin-bottom: 14px;
 }
 /*
@@ -3232,7 +3394,7 @@
   color: var(--ez-muted);
 }
 .approval-filters select {
-  min-height: 36px;
+  min-height: 44px;
   padding: 0 8px;
   border: 1px solid var(--ez-border);
   border-radius: var(--ez-radius);
@@ -3240,7 +3402,7 @@
   color: var(--ez-ink);
 }
 .approval-filters .filter-apply {
-  min-height: 36px;
+  min-height: 44px;
   padding: 0 16px;
   border: 1px solid var(--ez-action-edge);
   border-radius: var(--ez-radius);
@@ -3323,6 +3485,12 @@
 .lock-policy-form button,
 .manual-lock-form button {
   min-height: 44px;
+  padding: 0 14px;
+}
+.org-timezone-form button,
+.manual-lock-form button {
+  justify-self: start;
+  align-self: start;
 }
 .lock-policy-form input:not([type='checkbox']),
 .lock-policy-form select,
@@ -3499,6 +3667,7 @@
     align-items: stretch;
     flex-direction: column;
   }
+  .org-timezone-form,
   .lock-policy-form,
   .manual-lock-form,
   .timesheet-lock-card {
@@ -3550,6 +3719,26 @@ textarea {
 }
 button {
   cursor: pointer;
+}
+/* A baseline for a button no screen has styled. Buttons here are styled per
+   screen, and a screen that sets only min-height left the browser's grey
+   default showing -- "Saved reports" beside a styled "New report". :where()
+   has no specificity, so any rule that sets its own border or background wins
+   and nothing deliberately styled changes. */
+:where(button) {
+  border: 1px solid var(--ez-border);
+  border-radius: var(--ez-radius);
+  background: var(--ez-ground);
+  color: var(--ez-ink);
+}
+:where(button:hover:not(:disabled)) {
+  background: var(--ez-surface-2);
+}
+:where(select, textarea, input:not([type='checkbox'], [type='radio'], [type='range'], [type='color'], [type='file'], [type='button'], [type='submit'])) {
+  border: 1px solid var(--ez-border);
+  border-radius: var(--ez-radius);
+  background: var(--ez-ground);
+  color: var(--ez-ink);
 }
 button:focus-visible,
 a:focus-visible,
@@ -3633,13 +3822,14 @@ a {
 .command-trigger,
 .menu-trigger {
   align-self: center;
-  min-height: 36px;
+  min-height: 44px;
   border: 1px solid var(--ez-border);
   border-radius: var(--ez-radius);
   background: var(--ez-surface);
   color: var(--ez-ink);
 }
 .timer-chip {
+  min-height: 44px;
   display: flex;
   align-items: center;
   gap: 8px;
@@ -3721,7 +3911,7 @@ a {
  * at all -- there is no keyboard there to take the shortcut.
  */
 .money-toggle {
-  min-width: 36px;
+  min-width: 44px;
 }
 /*
  * Pressed means the amounts are off, which is the state worth marking: the
@@ -3836,7 +4026,8 @@ a {
 }
 /* Week and Day choose between the two timesheets; on the calendar there is
    nothing for them to choose, so the toolbar does not offer them there. */
-html[data-time-view='calendar'] [data-time-views] {
+html[data-time-view='calendar'] [data-time-views],
+html[data-time-view='month'] [data-time-views] {
   display: none;
 }
 .tabstrip.view-switch a:hover:not([aria-current="page"]),
@@ -4262,6 +4453,23 @@ html[data-time-view='calendar'] [data-time-views] {
   gap: 24px;
   margin-bottom: 20px;
 }
+/* The Reports header buttons sat flush at desktop widths: the gap lived only in
+   the mobile query. Declared here it holds at every width, and wrapping keeps
+   the row clean on a narrow one. */
+.report-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.report-actions button {
+  min-height: 44px;
+  padding: 0 14px;
+}
+.report-actions a {
+  display: inline-flex;
+  align-items: center;
+  min-height: 44px;
+}
 .context-row h1,
 .week-surface h2,
 dialog h2,
@@ -4299,7 +4507,7 @@ dialog h2,
   text-transform: uppercase;
 }
 .primary-action {
-  min-height: 36px;
+  min-height: 44px;
   padding: 0 16px;
   border: 1px solid var(--ez-action-edge);
   border-radius: var(--ez-radius);
@@ -4307,6 +4515,17 @@ dialog h2,
   box-shadow: var(--ez-shadow-primary);
   color: var(--ez-action-fg);
   font-weight: 600;
+}
+/* A screen's own button rule outranks the lone class above, so a primary button
+   inside it turned white: "Add expense", "Apply filters", "Add project", "Add
+   client". Those rules are an element or attribute plus a container class, so
+   the element and the class twice beats them. A rule that names a container and
+   this class explicitly still wins, which is how a screen picks its own. */
+button.primary-action.primary-action {
+  border-color: var(--ez-action-edge);
+  background: var(--ez-action);
+  box-shadow: var(--ez-shadow-primary);
+  color: var(--ez-action-fg);
 }
 .authenticated-shell[hidden],
 .auth-gateway[hidden],
@@ -4653,6 +4872,7 @@ dialog h2,
 /* Leaving a half-finished second factor has to be as reachable as finishing
    it: the alternative is a person stuck on a code they cannot produce. */
 .sign-in-restart {
+  min-height: 44px;
   border: 0;
   padding: 0;
   background: none;
@@ -4750,7 +4970,7 @@ dialog h2,
 /* Settings sits beside Sign out because that is where a person looks for their
    own account, and it is the only route into either half. */
 .identity-settings {
-  min-height: 28px;
+  min-height: 44px;
   padding: 0 10px;
   border: 1px solid var(--ez-border);
   border-radius: var(--ez-radius);
@@ -4772,17 +4992,25 @@ dialog h2,
 
 /* The company page's section strip: the same segmented control the calendar
    uses for its view modes, because it is the same thing -- one screen, one
-   part of it at a time -- and not a second level of navigation. */
-.settings-sections {
+   part of it at a time -- and not a second level of navigation. It keeps to
+   one line: wrapped, thirteen segments left the last one stranded on a row of
+   its own. Where the width runs out it scrolls sideways, as the tab strip
+   above it does, and segments a size smaller than the calendar's hold that
+   off until a window narrower than about 1300px beside the sidebar. The
+   padding is room for a focused segment's ring, which the scroller would
+   otherwise clip; the negative margin keeps the segments where they stood. */
+.tabstrip.settings-sections {
   height: auto;
-  padding: 0;
-  margin-bottom: 8px;
+  margin: -6px -6px 2px;
+  padding: 6px;
   border-bottom: 0;
-  flex-wrap: wrap;
-  row-gap: 8px;
+  scrollbar-width: thin;
 }
-.settings-sections a {
+.tabstrip.settings-sections a {
+  flex: none;
   min-height: 32px;
+  padding: 0 12px;
+  font-size: 13px;
 }
 
 .settings-facts {
@@ -4806,14 +5034,21 @@ dialog h2,
 }
 
 /* One section per thing an operator configures. The rules between them are the
-   only thing saying where one setting ends and the next begins. */
+   only thing saying where one setting ends and the next begins. Inside, its
+   parts -- the heading, a status line, the facts, a form, the line a save
+   answers on -- stand one under another a set distance apart, so every
+   section keeps the same rhythm whatever it holds. */
 .settings-section {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  align-content: start;
+  gap: 16px;
   padding: 24px 0;
   border-top: 1px solid var(--ez-border);
 }
 
 .settings-section > header {
-  margin-bottom: 16px;
+  margin-bottom: 4px;
 }
 
 .settings-section > header h2 {
@@ -4821,9 +5056,24 @@ dialog h2,
 }
 
 .settings-section > header p {
-  margin: 4px 0 0;
+  margin: 6px 0 0;
   max-width: 68ch;
   color: var(--ez-muted);
+  line-height: 1.5;
+}
+
+/* A status or result line with nothing to say leaves the flow rather than
+   holding a gap open. Out of the flow rather than `display: none`, so it is
+   still the live region it was when its words arrive. */
+.settings-section > .form-result:empty {
+  position: absolute;
+}
+
+/* What a save, an upload or a switch answered, in the ink of the page rather
+   than the muted grey of a hint, under the control that asked. */
+.settings-section > :is(.settings-form, .settings-actions, .settings-brand-slots) + .form-result {
+  margin-top: -4px;
+  color: var(--ez-ink);
 }
 
 /* A section reads what another system holds, or failed to (issue 809): the
@@ -4857,7 +5107,7 @@ dialog h2,
 .settings-theme {
   display: grid;
   gap: 16px;
-  margin-bottom: 12px;
+  max-width: 720px;
 }
 .theme-group {
   margin: 0;
@@ -4908,7 +5158,7 @@ dialog h2,
   border-radius: var(--ez-radius);
   background: var(--ez-ground);
   color: var(--ez-ink);
-  font-family: var(--ez-font-mono);
+  font-family: var(--ez-font-mono), monospace;
   font-size: 13px;
 }
 
@@ -4916,7 +5166,6 @@ dialog h2,
   display: grid;
   gap: 16px;
   grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
-  margin-bottom: 12px;
 }
 .brand-slot {
   display: flex;
@@ -4971,44 +5220,42 @@ dialog h2,
   align-items: center;
   gap: 8px;
 }
+/* Every form on the company page is a document form, not a row of switches:
+   the shape Settings › Invoices set for itself, now the shape of all of them.
+   Each field is full width with its label over it and its hint beneath it, a
+   checkbox sits beside its words, and the button that saves them comes last,
+   on one measure. As a wrapping row, the Time section set a checkbox above
+   its words beside an unstyled number field and a button. */
 .settings-form {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: end;
-  gap: 16px;
-  margin-bottom: 12px;
+  display: grid;
+  gap: 14px;
+  max-width: 720px;
 }
 
 .settings-form label {
   display: grid;
-  gap: 4px;
+  gap: 6px;
   color: var(--ez-muted);
+  font-size: 13px;
 }
-
-/* Settings › Invoices is a document form, not a row of switches: company
-   information, then default values, each field full width with its hint
-   beneath it, so the wrapping row above does not apply. */
-.settings-form.invoice-defaults-form {
-  display: grid;
-  gap: 14px;
-  align-items: stretch;
-  max-width: 720px;
-}
-.invoice-defaults-form h3 {
+.settings-form h3 {
   margin: 12px 0 0;
   padding-bottom: 8px;
   border-bottom: 1px solid var(--ez-border);
   font-size: 16px;
 }
-.invoice-defaults-form h3:first-child {
+.settings-form h3:first-child {
   margin-top: 0;
 }
-.invoice-defaults-form label {
-  gap: 6px;
-  font-size: 13px;
-}
-.invoice-defaults-form input,
-.invoice-defaults-form textarea {
+/* A field's words are the body's size, not its label's: a phone zooms the
+   page into any field set smaller than 16px the moment it takes focus, and
+   the 14px desk size applies only where there is a pointer, as the body's
+   does. */
+.settings-form input:not([type='checkbox']):not([type='radio']),
+.settings-form select,
+.settings-form textarea,
+.capacity-form input:not([type='hidden']),
+.capacity-form select {
   width: 100%;
   min-height: 44px;
   padding: 8px 12px;
@@ -5017,48 +5264,73 @@ dialog h2,
   background: var(--ez-ground);
   color: var(--ez-ink);
   font: inherit;
+  font-size: 16px;
 }
-.invoice-defaults-form textarea {
+@media (pointer: fine) {
+  .settings-form input:not([type='checkbox']):not([type='radio']),
+  .settings-form select,
+  .settings-form textarea,
+  .capacity-form input:not([type='hidden']),
+  .capacity-form select {
+    font-size: var(--ez-text-size);
+  }
+}
+/* A count of days or a date is a few characters, and a field the width of
+   the form reads as one asking for a sentence. */
+.settings-form input[type='number'] {
+  max-width: 10rem;
+}
+.settings-form input[type='date'] {
+  max-width: 14rem;
+}
+/* Greyed rather than hidden: what a switched-off policy would be when it is
+   switched back on is still worth reading. */
+.settings-form input:not([type='checkbox']):not([type='radio']):disabled,
+.settings-form select:disabled,
+.settings-form textarea:disabled,
+.capacity-form input:disabled,
+.capacity-form select:disabled {
+  background: var(--ez-surface-2);
+  color: var(--ez-muted);
+  cursor: not-allowed;
+}
+.settings-form textarea {
   resize: vertical;
   line-height: 1.45;
 }
-.invoice-defaults-form .hint {
+.settings-form .hint {
   margin: -6px 0 0;
   font-size: 13px;
 }
-.invoice-defaults-form > button {
+.settings-form button {
   justify-self: start;
   min-height: 44px;
+}
+.settings-form > button {
   margin-top: 6px;
 }
-/* A checkbox row in the invoice settings form: the box beside its words, not
-   above them, however the form lays out its other fields. Specific enough to
-   hold against the form's own label and input rules. */
-.settings-form.invoice-defaults-form label.invoice-defaults-check {
+/* A checkbox row: the box beside its words, not above them, however the form
+   lays out its other fields, and the whole row is what a click lands on. A
+   row long enough to wrap keeps the box on its first line. Specific enough to
+   hold against the form's own label rule. */
+.settings-form label:is(.settings-toggle, .invoice-defaults-check) {
   display: flex;
-  align-items: center;
-  gap: 8px;
+  align-items: flex-start;
+  gap: 10px;
   min-height: 44px;
+  padding-block: 12px;
   color: var(--ez-ink);
+  font-size: 14px;
+  line-height: 20px;
+  cursor: pointer;
 }
-.settings-form.invoice-defaults-form .invoice-defaults-check input {
+.settings-form :is(.settings-toggle, .invoice-defaults-check) input {
   flex: none;
   width: 18px;
   height: 18px;
-  min-height: 0;
-  margin: 0;
-  padding: 0;
+  margin: 1px 0 0;
   accent-color: var(--ez-action);
-}
-.settings-form.invoice-defaults-form .invoice-defaults-select {
-  width: 100%;
-  min-height: 44px;
-  padding: 8px 12px;
-  border: 1px solid var(--ez-border);
-  border-radius: var(--ez-radius);
-  background: var(--ez-ground);
-  color: var(--ez-ink);
-  font: inherit;
+  cursor: inherit;
 }
 .settings-form.invoice-defaults-form .invoice-defaults-formats {
   display: flex;
@@ -5215,8 +5487,413 @@ dialog h2,
   word-break: break-all;
 }
 
+/*
+ * Company settings, the parts the browser was still drawing (the 2026-10
+ * styling pass). Everything here is scoped to that page's sections and built
+ * from the shell's own pieces: the 44px control, the surface card with its
+ * hairline rows, the secondary and primary buttons, the muted hint.
+ */
+
+/* A row of buttons that act on what is above them -- save the colours, undo
+   them, go back to the built-in theme; connect, disconnect -- rather than a
+   form of fields. */
+.settings-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 12px;
+}
+
+/* Every button in a section is the 44px the app's other controls are. On its
+   own the destructive class only paints, so it is given the primary button's
+   shape here. */
+.settings-section .primary-action,
+.settings-section .danger-action {
+  min-height: 44px;
+}
+.settings-section .danger-action {
+  padding: 0 16px;
+  border: 1px solid;
+  border-radius: var(--ez-radius);
+  font-weight: 600;
+}
+.settings-section :is(.editor-secondary, .danger-action):disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+.settings-section .editor-secondary:disabled {
+  background: var(--ez-ground);
+}
+.settings-section > .settings-table {
+  margin-bottom: 0;
+}
+/* The DNS record wraps (it is what an operator copies), but not into a column
+   a character wide: below this the table scrolls in its own box instead. */
+[data-settings-sso-domains] .data-table td[data-column='record'] {
+  min-width: 16rem;
+}
+
+/* Modules and Ways in: one card with a row per switch, the shape the
+   Appearance section's colour groups have. The row's heading names the
+   switch, the hint under it says what flipping it does, and the card keeps
+   the form measure so the switch stays within reach of the words. */
+.module-settings-list {
+  max-width: 720px;
+  border: 1px solid var(--ez-border);
+  border-radius: var(--ez-radius);
+  background: var(--ez-surface);
+}
+/* The cards' side padding narrows with the window, as the page's own does,
+   so a phone keeps its width for the words. */
+.module-settings-card {
+  display: grid;
+  gap: 2px;
+  padding: 12px clamp(12px, 3vw, 20px) 16px;
+}
+.module-settings-card + .module-settings-card {
+  border-top: 1px solid var(--ez-border);
+}
+.module-settings-card-header {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0 16px;
+}
+.module-settings-card-header h3 {
+  flex: 1 1 12rem;
+  min-width: 0;
+  margin: 0;
+  font-size: 15px;
+  font-weight: 600;
+}
+.module-settings-warning {
+  margin: 0;
+  max-width: 68ch;
+  color: var(--ez-muted);
+  font-size: 13px;
+  line-height: 1.5;
+}
+.module-settings-card .form-result {
+  margin-top: 6px;
+}
+.module-settings-card .form-result:empty {
+  position: absolute;
+}
+
+/* The switch. Both lists change the moment it moves, which is what a switch
+   says and a checkbox beside a Save button does not. Its state word comes
+   first, so the switch itself holds still at the row's end when the word
+   changes. Off is an outline in the muted ink; on is the action fill, edged
+   as every blue fill is, with the knob in the colour labels take on it. */
+.module-toggle {
+  display: inline-flex;
+  flex-direction: row-reverse;
+  align-items: center;
+  gap: 10px;
+  min-height: 44px;
+  color: var(--ez-ink);
+  font-size: 14px;
+  cursor: pointer;
+}
+.module-toggle input {
+  appearance: none;
+  position: relative;
+  flex: none;
+  width: 36px;
+  height: 20px;
+  margin: 0;
+  border: 1px solid var(--ez-muted);
+  border-radius: 999px;
+  background: var(--ez-ground);
+  cursor: inherit;
+}
+.module-toggle input::before {
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: var(--ez-muted);
+  content: '';
+}
+.module-toggle input:checked {
+  border-color: var(--ez-action-edge);
+  background: var(--ez-action);
+}
+.module-toggle input:checked::before {
+  background: var(--ez-action-fg);
+  transform: translateX(16px);
+}
+@media (prefers-reduced-motion: no-preference) {
+  .module-toggle input::before {
+    transition: transform 120ms ease;
+  }
+}
+/* A method this deployment has no credentials for: shown, and not movable. */
+.module-toggle:has(input:disabled) {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+/* High-contrast modes repaint backgrounds, which is all the switch is drawn
+   with, so there it is drawn in the system's own colours instead. */
+@media (forced-colors: active) {
+  .module-toggle input,
+  .module-toggle input::before {
+    forced-color-adjust: none;
+  }
+  .module-toggle input {
+    border-color: CanvasText;
+    background: Canvas;
+  }
+  .module-toggle input::before {
+    background: CanvasText;
+  }
+  .module-toggle input:checked {
+    border-color: Highlight;
+    background: Highlight;
+  }
+  .module-toggle input:checked::before {
+    background: HighlightText;
+  }
+}
+
+/* Brand: the picker is a secondary button over a file input that is there
+   for the keyboard and the screen reader and drawn nowhere, and each card's
+   buttons sit at its foot, level with the cards beside it. */
+.brand-slot-picker {
+  position: relative;
+}
+.brand-slot-picker input[type='file'] {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+  border: 0;
+}
+.brand-slot-picker:has(input:focus-visible) {
+  outline: 3px solid var(--ez-data);
+  outline-offset: 2px;
+}
+.brand-slot-picker:has(input:disabled) {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+.brand-slot-actions {
+  margin-top: auto;
+  padding-top: 4px;
+}
+
+/*
+ * Erasure and retention: the operator's policy, and the desk where requests
+ * are worked under it. The policy's two groups are cards in the Appearance
+ * section's shape -- a bordered panel with its legend on the border -- and a
+ * category inside one is a card of its own on the page ground, so the nesting
+ * reads as nesting. The fields are the settings form's; only the frame is
+ * set here.
+ */
+[data-retention-form] fieldset {
+  min-width: 0;
+  margin: 0;
+}
+[data-retention-editable] {
+  display: grid;
+  gap: 14px;
+  padding: 0;
+  border: 0;
+}
+[data-retention-editable] > legend {
+  width: 100%;
+  margin-bottom: 4px;
+  padding: 0 0 8px;
+  border-bottom: 1px solid var(--ez-border);
+  color: var(--ez-ink);
+  font-size: 16px;
+  font-weight: 700;
+}
+[data-retention-editable] > fieldset,
+[data-retention-category] {
+  display: grid;
+  gap: 8px;
+  padding: 8px clamp(12px, 3vw, 16px) 16px;
+  border: 1px solid var(--ez-border);
+  border-radius: var(--ez-radius);
+}
+[data-retention-editable] > fieldset {
+  background: var(--ez-surface);
+}
+[data-retention-category] {
+  gap: 0;
+  background: var(--ez-ground);
+}
+[data-retention-category] > [data-retention-details] {
+  margin-top: 8px;
+}
+[data-retention-editable] > fieldset > legend,
+[data-retention-category] > legend {
+  padding: 0 6px;
+  color: var(--ez-ink);
+  font-weight: 600;
+}
+[data-retention-editable] > fieldset > p {
+  margin: 0;
+  max-width: 68ch;
+  color: var(--ez-muted);
+  font-size: 13px;
+  line-height: 1.5;
+}
+/* A checkbox's note hangs under its words rather than under its box. */
+:is([data-privacy-framework], [data-retention-category]) > .hint {
+  margin: -10px 0 4px;
+  padding-left: 28px;
+  font-size: 13px;
+  line-height: 1.45;
+}
+[data-retention-details] {
+  display: grid;
+  gap: 12px;
+  padding: 0;
+  border: 0;
+}
+[data-retention-details] > legend {
+  margin-bottom: 8px;
+  padding: 0;
+  color: var(--ez-muted);
+  font:
+    var(--ez-label-weight) var(--ez-label-size) / 1.4 var(--ez-font-body),
+    sans-serif;
+  letter-spacing: var(--ez-label-tracking);
+  text-transform: uppercase;
+}
+[data-privacy-states] > summary {
+  padding-block: 12px;
+  color: var(--ez-ink);
+  font-weight: 600;
+  cursor: pointer;
+}
+[data-privacy-states] > :not(summary) {
+  margin: 12px 0 0;
+}
+[data-privacy-states] > p {
+  max-width: 68ch;
+  color: var(--ez-muted);
+  font-size: 13px;
+  line-height: 1.5;
+}
+[data-privacy-states] > p:empty {
+  position: absolute;
+}
+
+/* The request desk: a heading over the list of requests, then the review
+   queue and the request being worked, each a card of its own. */
+[data-deletion-requests],
+[data-retention-review],
+[data-deletion-detail],
+[data-account-closure] {
+  display: grid;
+  gap: 12px;
+}
+[data-deletion-requests] {
+  max-width: 720px;
+  margin-top: 8px;
+  padding-top: 24px;
+  border-top: 1px solid var(--ez-border);
+}
+[data-deletion-requests] h3,
+[data-deletion-requests] h4 {
+  margin: 0;
+}
+[data-deletion-requests] h3 {
+  font-size: 16px;
+}
+[data-deletion-requests] h4 {
+  font-size: 15px;
+}
+[data-deletion-requests] p {
+  margin: 0;
+  max-width: 68ch;
+  color: var(--ez-muted);
+  line-height: 1.5;
+}
+[data-deletion-requests] :is([data-deletion-disclosure], [data-closure-inventory]) p {
+  color: var(--ez-ink);
+}
+[data-deletion-requests] p:empty {
+  position: absolute;
+}
+[data-deletion-requests] :is([data-deletion-list], [data-retention-due-list], [data-retention-content], [data-deletion-disclosure], [data-closure-inventory]):empty {
+  display: none;
+}
+[data-deletion-requests] button {
+  justify-self: start;
+}
+[data-deletion-list],
+[data-retention-due-list] {
+  display: grid;
+  gap: 8px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+/* A request is picked from a list of rows, not a stack of default buttons. */
+:is([data-deletion-list], [data-retention-due-list]) button {
+  width: 100%;
+  min-height: 44px;
+  padding: 10px 14px;
+  border: 1px solid var(--ez-border);
+  border-radius: var(--ez-radius);
+  background: var(--ez-ground);
+  color: var(--ez-ink);
+  font: inherit;
+  text-align: left;
+  overflow-wrap: anywhere;
+}
+:is([data-deletion-list], [data-retention-due-list]) button:hover {
+  background: var(--ez-surface-2);
+}
+[data-retention-review],
+[data-deletion-detail] {
+  padding: 16px clamp(12px, 3vw, 20px);
+  border: 1px solid var(--ez-border);
+  border-radius: var(--ez-radius);
+  background: var(--ez-surface);
+}
+[data-account-closure] {
+  margin-top: 4px;
+  padding-top: 16px;
+  border-top: 1px solid var(--ez-border);
+}
+[data-deletion-disclosure],
+[data-closure-inventory],
+[data-retention-content] {
+  display: grid;
+  gap: 8px;
+}
+[data-retention-content] details {
+  padding: 0 16px;
+  border: 1px solid var(--ez-border);
+  border-radius: var(--ez-radius);
+  background: var(--ez-ground);
+}
+[data-retention-content] details[open] {
+  padding-bottom: 16px;
+}
+[data-retention-content] summary {
+  padding-block: 12px;
+  font-weight: 600;
+  cursor: pointer;
+}
+[data-retention-content] details > p {
+  margin-bottom: 12px;
+}
+
 .identity-signout {
-  min-height: 28px;
+  min-height: 44px;
   padding: 0 10px;
   border: 1px solid var(--ez-border);
   border-radius: var(--ez-radius);
@@ -5228,6 +5905,9 @@ dialog h2,
    how the bar announced it had run out of room, and it is a control, not copy. */
 .identity-settings,
 .identity-signout {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   flex: none;
   white-space: nowrap;
 }
@@ -5269,14 +5949,14 @@ dialog h2,
 }
 @media (min-width: 1300px) and (max-width: 1519px) {
   .primary-nav a {
-    padding: 0 10px;
+    padding: 0 9px;
   }
 }
 /* Search keeps its name and its shortcut; it loses only the field around them. */
 @media (min-width: 721px) and (max-width: 1519px) {
   .command-trigger {
-    min-width: 36px;
-    width: 36px;
+    min-width: 44px;
+    width: 44px;
     justify-content: center;
     padding: 0;
   }
@@ -5286,6 +5966,9 @@ dialog h2,
   }
 }
 @media (min-width: 721px) and (max-width: 1299px) {
+  .topbar {
+    padding-inline: 16px;
+  }
   .primary-nav {
     display: none;
   }
@@ -5476,8 +6159,8 @@ dialog h2,
     top: 32px;
     right: 32px;
     display: grid;
-    width: 32px;
-    height: 32px;
+    width: 44px;
+    height: 44px;
     place-items: center;
     padding: 0;
     border: 0;
@@ -5576,7 +6259,7 @@ dialog h2,
     /* The top bar's floor is for a chip that shares a row; in the column it is
        the column's width, and narrowed it is an icon. */
     min-width: 0;
-    min-height: 40px;
+    min-height: 44px;
     margin: 8px 0 0;
   }
   [data-ez-nav='sidebar'] .timer-chip [data-timer-elapsed] {
@@ -5588,7 +6271,7 @@ dialog h2,
     grid-column: 1 / -1;
     width: 100%;
     min-width: 0;
-    min-height: 40px;
+    min-height: 44px;
     justify-content: flex-start;
     padding: 0 6px 0 10px;
   }
@@ -5827,10 +6510,14 @@ dialog h2,
   [data-ez-nav='sidebar'][data-ez-sidebar='collapsed'] .identity-signout {
     display: grid;
     flex: none;
-    width: 36px;
-    min-height: 36px;
+    width: 44px;
+    min-height: 44px;
     place-items: center;
     padding: 0;
+  }
+  [data-ez-nav='sidebar'][data-ez-sidebar='collapsed'] button[data-first-run-help] {
+    width: 44px;
+    min-height: 44px;
   }
   [data-ez-nav='sidebar'][data-ez-sidebar='collapsed'] .identity-settings .ez-icon,
   [data-ez-nav='sidebar'][data-ez-sidebar='collapsed'] .identity-signout .ez-icon {
@@ -6213,7 +6900,7 @@ button[data-auth-action]:disabled {
 }
 .week-actions button,
 .day-switcher button {
-  min-height: 36px;
+  min-height: 44px;
   padding: 0 10px;
   border: 1px solid var(--ez-border);
   border-radius: var(--ez-radius);
@@ -6256,7 +6943,8 @@ button[data-auth-action]:disabled {
   height: 14px;
   stroke-width: 2;
 }
-html[data-time-view='calendar'] .week-grid-foot {
+html[data-time-view='calendar'] .week-grid-foot,
+html[data-time-view='month'] .week-grid-foot {
   display: none;
 }
 /* Log time as the toolbar's square "+" (the ezacto-ui add button); the
@@ -6995,7 +7683,7 @@ html[data-time-view='calendar'] .week-grid-foot {
   display: none;
 }
 .time-person select {
-  min-height: 36px;
+  min-height: 44px;
   padding: 0 8px;
   border: 1px solid var(--ez-border);
   border-radius: var(--ez-radius);
@@ -7235,7 +7923,9 @@ html[data-time-view='calendar'] .week-grid-foot {
 }
 html[data-time-view="day"] .week-grid-wrap,
 html[data-time-view="calendar"] .week-grid-wrap,
-html[data-time-view="calendar"] .day-list {
+html[data-time-view="calendar"] .day-list,
+html[data-time-view="month"] .week-grid-wrap,
+html[data-time-view="month"] .day-list {
   display: none;
 }
 /* The calendar is its own panel rather than a restyled grid: the two answer
@@ -7245,6 +7935,12 @@ html[data-time-view="calendar"] .day-list {
   display: none;
 }
 html[data-time-view="calendar"] .calendar-week {
+  display: block;
+}
+.calendar-month {
+  display: none;
+}
+html[data-time-view="month"] .calendar-month {
   display: block;
 }
 html[data-time-view="day"] .day-list {
@@ -7354,6 +8050,21 @@ dialog header button[aria-label^='Close'] {
 dialog header button[aria-label^='Close']:hover {
   background: var(--ez-surface-2);
   color: var(--ez-ink);
+}
+.time-setup-guidance {
+  display: grid;
+  gap: 14px;
+}
+.time-setup-guidance p {
+  margin: 0;
+}
+.time-setup-guidance a {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 44px;
+  padding: 8px 12px;
+  text-align: center;
 }
 dialog label {
   display: grid;
@@ -8671,7 +9382,7 @@ dialog textarea {
   white-space: nowrap;
 }
 
-.data-table-sort {
+.table-sort {
   display: inline-flex;
   align-items: center;
   gap: 6px;
@@ -8687,9 +9398,19 @@ dialog textarea {
   cursor: pointer;
 }
 
-.data-table-sort:hover { text-decoration: underline; }
-.data-table-sort:focus-visible { outline: 2px solid currentColor; outline-offset: -2px; }
-.data-table .is-numeric .data-table-sort { justify-content: flex-end; }
+.table-sort:hover { text-decoration: underline; }
+.table-sort:focus-visible { outline: 2px solid currentColor; outline-offset: -2px; }
+.data-table .is-numeric .table-sort { justify-content: flex-end; }
+
+/* The mark is drawn, and the header's own aria-sort says the same thing aloud:
+   both carets while a column is not the sorted one, and only the caret for the
+   way the sorted column runs at full strength. */
+.table-sort svg { flex: none; width: 16px; height: 16px; }
+.table-sort [data-part] { opacity: 0.45; }
+th[aria-sort="ascending"] .table-sort [data-part="ascending"],
+th[aria-sort="descending"] .table-sort [data-part="descending"] { opacity: 1; }
+th[aria-sort="ascending"] .table-sort [data-part="descending"],
+th[aria-sort="descending"] .table-sort [data-part="ascending"] { opacity: 0.15; }
 
 /* The row's own actions are the exception: the overflow menu is a popup inside
    this cell, and clipping the cell clips the menu. */
@@ -8706,6 +9427,26 @@ dialog textarea {
 
 .data-table .is-numeric {
   text-align: right;
+}
+
+/* Numbers and short facts take their content's width and no more, so the name
+   column gets the slack. Every body cell carries max-width:0, which shares the
+   width out equally: "Storefro..." clipped beside three half-empty money
+   columns. width:1% with nowrap is the shrink-to-content idiom for a cell. */
+.data-table th.is-numeric,
+.data-table td.is-numeric,
+.data-table th.is-fit,
+.data-table td.is-fit {
+  width: 1%;
+  max-width: none;
+  overflow: visible;
+  white-space: nowrap;
+}
+.data-table tbody td.is-wrap {
+  max-width: none;
+  overflow: visible;
+  text-overflow: clip;
+  white-space: normal;
 }
 
 /* Grouping is a band, not an indent — the label owns the full width. */
@@ -8864,7 +9605,7 @@ dialog textarea {
     padding: 12px;
   }
   .data-table-menu button,
-  .data-table-sort {
+  .table-sort {
     min-height: 48px;
   }
 }
@@ -8979,6 +9720,7 @@ dialog textarea {
      test lifts the FIRST `@media print` it finds as the paper stylesheet, so a
      second block earlier in the file silently became the whole of it. */
   .report-detailed-controls,
+  .filter-bar,
   .report-entry-actions,
   .topbar,
   .crumb-bar,
@@ -10152,34 +10894,372 @@ dialog textarea {
   background: var(--ez-orange-tint);
 }
 
-/* The calendar, as the ezacto-ui Month view draws it: a band naming the
+/* The calendar (issue 943). Height is minutes: --cal-start and --cal-span are
+   minutes from midnight, so one rule places a block, a draft, the cursor and
+   the line for now, and the hour height is the only number that scales them. */
+.calendar-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  margin: 0 0 12px;
+}
+.calendar-hint {
+  flex: 1 1 320px;
+  color: var(--ez-muted);
+  font-size: 12px;
+}
+.calendar-hint p {
+  margin: 0 0 4px;
+}
+.calendar-hint kbd {
+  padding: 0 4px;
+  border: 1px solid var(--ez-border);
+  border-radius: var(--ez-radius);
+  font: inherit;
+}
+.calendar-layout {
+  display: inline-flex;
+  border: 1px solid var(--ez-border);
+  border-radius: var(--ez-radius);
+  overflow: hidden;
+}
+.calendar-layout button {
+  padding: 6px 14px;
+  border: 0;
+  background: var(--ez-surface);
+  color: var(--ez-ink);
+  font: inherit;
+  cursor: pointer;
+}
+.calendar-layout button[aria-pressed='true'] {
+  background: var(--ez-action);
+  color: var(--ez-action-fg);
+}
+/* The status line above the clock holds a line's height whether it has
+   anything to say or not. "Saving…" comes and goes with every move, and a line
+   that opened and closed moved the whole clock by its height -- under a pointer
+   still dragging, a time it never moved to. Selected by where it sits, not by
+   data-calendar-status: the controller uses that attribute as a flag and
+   removes it. */
+.calendar-week > .form-result {
+  min-height: 1lh;
+}
+.calendar-surface {
+  --cal-hour: 48px;
+  --cal-ruler: 56px;
+}
+.cal[data-layout='day'] {
+  --cal-hour: 72px;
+}
+.cal-scroll {
+  max-height: 70vh;
+  overflow: auto;
+  border: 1px solid var(--ez-border);
+  border-radius: var(--ez-radius);
+  background: var(--ez-surface);
+}
+/* Seven columns do not fit a phone; the week scrolls sideways there rather
+   than squeezing a block narrower than a thumb. */
+.cal[data-layout='week'] .cal-grid {
+  min-width: 720px;
+}
+.cal-grid {
+  display: grid;
+  grid-template-columns: var(--cal-ruler) repeat(var(--cal-days), minmax(0, 1fr));
+}
+.cal-corner,
+.cal-head {
+  position: sticky;
+  top: 0;
+  z-index: 3;
+  background: var(--ez-surface-2);
+  border-bottom: 1px solid var(--ez-border);
+}
+.cal-head {
+  display: flex;
+  justify-content: space-between;
+  gap: 6px;
+  padding: 6px 8px;
+  border-left: 1px solid var(--ez-border);
+  font-size: 13px;
+}
+.cal-head[data-today='true'] .cal-head-number {
+  color: var(--ez-data);
+  font-weight: 700;
+}
+.cal-head-weekday {
+  margin-right: 4px;
+  color: var(--ez-muted);
+}
+.cal-head-total,
+.cal-dayhead-total {
+  color: var(--ez-muted);
+}
+.cal-dayhead {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  padding: 12px;
+  border-bottom: 1px solid var(--ez-border);
+}
+.cal-dayhead-date {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin: 0;
+  flex: 1;
+}
+.cal-dayhead-number {
+  font-family: var(--ez-font-display);
+  font-size: 40px;
+  line-height: 1;
+}
+.cal-dayhead-date[data-today='true'] .cal-dayhead-number {
+  color: var(--ez-data);
+}
+.cal-dayhead-words {
+  display: flex;
+  flex-direction: column;
+}
+.cal-dayhead-month {
+  color: var(--ez-muted);
+  font-size: 13px;
+}
+.cal-dayhead-total {
+  margin: 0;
+}
+.cal-step {
+  padding: 6px;
+  border: 1px solid var(--ez-border);
+  border-radius: var(--ez-radius);
+  background: var(--ez-surface);
+  color: var(--ez-ink);
+  cursor: pointer;
+}
+.cal-band-label {
+  grid-column: 1;
+  padding: 6px 8px;
+  color: var(--ez-muted);
+  font-size: 12px;
+  border-bottom: 1px solid var(--ez-border);
+}
+.cal-band {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin: 0;
+  padding: 4px;
+  list-style: none;
+  border-left: 1px solid var(--ez-border);
+  border-bottom: 1px solid var(--ez-border);
+  min-width: 0;
+}
+.cal-chip {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  width: 100%;
+  padding: 3px 6px;
+  border: 1px solid var(--ez-border);
+  border-radius: var(--ez-radius);
+  background: var(--ez-status-bg);
+  color: var(--ez-status-fg);
+  font: inherit;
+  font-size: 12px;
+  text-align: left;
+  cursor: pointer;
+}
+.cal-chip-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.cal-ruler,
+.cal-col {
+  position: relative;
+  height: calc(var(--cal-hour) * 24);
+}
+.cal-ruler-hour {
+  position: absolute;
+  top: calc(var(--cal-start) / 60 * var(--cal-hour));
+  right: 6px;
+  color: var(--ez-muted);
+  font-size: 11px;
+  transform: translateY(-50%);
+}
+.cal-ruler-hour:first-child {
+  transform: none;
+}
+.cal-col {
+  border-left: 1px solid var(--ez-border);
+  background-image: linear-gradient(var(--ez-border) 1px, transparent 1px);
+  background-size: 100% var(--cal-hour);
+  touch-action: pan-y;
+  cursor: crosshair;
+}
+.cal-col[data-today='true'] {
+  background-color: var(--ez-orange-tint);
+}
+.cal-block,
+.cal-cursor,
+.cal-guide {
+  position: absolute;
+  top: calc(var(--cal-start) / 60 * var(--cal-hour));
+  height: calc(var(--cal-span) / 60 * var(--cal-hour));
+  left: calc(var(--cal-lane, 0) / var(--cal-lanes, 1) * 100%);
+  width: calc(100% / var(--cal-lanes, 1));
+  box-sizing: border-box;
+}
+.cal-block {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  min-height: 18px;
+  padding: 2px 6px;
+  overflow: hidden;
+  border: 1px solid var(--ez-border);
+  border-radius: var(--ez-radius);
+  background: var(--ez-status-bg);
+  color: var(--ez-status-fg);
+  font: inherit;
+  font-size: 12px;
+  text-align: left;
+  cursor: grab;
+  touch-action: pan-y;
+}
+.cal-block[data-state='running'] {
+  border-style: dashed;
+}
+.cal-block[data-state='locked'] {
+  cursor: not-allowed;
+  background: var(--ez-surface-2);
+  color: var(--ez-muted);
+}
+.cal-block[data-state='moving'],
+.cal-block[data-state='draft'] {
+  z-index: 2;
+  border-color: var(--ez-action);
+  box-shadow: var(--ez-shadow);
+}
+.cal-block[data-state='draft'] {
+  pointer-events: none;
+}
+.cal-block[data-state='saving'] {
+  opacity: 0.6;
+}
+.cal-block:focus-visible,
+.cal-cursor:focus-visible,
+.cal-chip:focus-visible,
+.cal-step:focus-visible {
+  outline: 2px solid var(--ez-action);
+  outline-offset: 1px;
+}
+.cal-block-title {
+  font-weight: 600;
+}
+.cal-block-title,
+.cal-block-task,
+.cal-block-time,
+.cal-block-hours {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.cal-block-lock {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 11px;
+}
+.cal-handle {
+  position: absolute;
+  left: 0;
+  right: 0;
+  height: 8px;
+  cursor: ns-resize;
+  touch-action: none;
+}
+.cal-handle[data-calendar-handle='start'] {
+  top: 0;
+}
+.cal-handle[data-calendar-handle='end'] {
+  bottom: 0;
+}
+.cal-cursor {
+  z-index: 1;
+  border: 1px dashed var(--ez-action);
+  border-radius: var(--ez-radius);
+  background: transparent;
+  color: var(--ez-ink);
+  opacity: 0;
+  pointer-events: none;
+}
+.cal-cursor:focus {
+  opacity: 1;
+}
+.cal-cursor-label {
+  padding: 2px 6px;
+  font-size: 11px;
+}
+.cal-guide {
+  height: calc(15 / 60 * var(--cal-hour));
+  left: 0;
+  width: 100%;
+  border-top: 1px solid var(--ez-action);
+  pointer-events: none;
+}
+.cal-guide::after {
+  content: attr(data-time);
+  position: absolute;
+  left: 4px;
+  top: 1px;
+  color: var(--ez-data);
+  font-size: 10px;
+}
+.cal-now {
+  position: absolute;
+  top: calc(var(--cal-start) / 60 * var(--cal-hour));
+  left: 0;
+  right: 0;
+  border-top: 2px solid var(--ez-red);
+  pointer-events: none;
+}
+.calendar-surface[data-dragging] {
+  user-select: none;
+  cursor: grabbing;
+}
+
+
+/* The month, as the ezacto-ui Month view draws it: a band naming the
    month with its total at the right, then a grid of weeks in a rounded frame,
    a cell a day with its number and a chip an entry, today's number on a blue
    disc, the neighbouring months' days greyed. */
-[data-calendar-status]:empty {
+[data-calendar-month-status]:empty {
   display: none;
 }
 /* A month has no week bar, no day to step and no cells to edit: the strip,
    the phone's day stepper and the grid's keyboard hint stay off it. */
-html[data-time-view='calendar'] .day-strip,
-html[data-time-view='calendar'] .day-switcher,
-html[data-time-view='calendar'] .week-hint {
+html[data-time-view='month'] .day-strip,
+html[data-time-view='month'] .day-switcher,
+html[data-time-view='month'] .week-hint {
   display: none;
 }
-.cal-band {
+.cal-month-band {
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 16px;
   border-bottom: 1px solid var(--ez-border);
 }
-.cal-band-title {
+.cal-month-band-title {
   margin: 0;
   padding: 24px 20px;
   color: var(--ez-muted);
   font-size: 13px;
 }
-.cal-band-total {
+.cal-month-band-total {
   display: flex;
   flex-direction: column;
   align-items: flex-end;
@@ -10190,21 +11270,21 @@ html[data-time-view='calendar'] .week-hint {
   border-left: 1px solid var(--ez-border);
   text-align: right;
 }
-.cal-band-total-label {
+.cal-month-band-total-label {
   color: var(--ez-muted);
   font-size: 12px;
   font-weight: 600;
   letter-spacing: 0.04em;
   text-transform: uppercase;
 }
-.cal-band-total-figure {
+.cal-month-band-total-figure {
   color: var(--ez-ink);
   font-size: 18px;
   font-weight: 700;
   letter-spacing: -0.5px;
   font-variant-numeric: tabular-nums;
 }
-.calendar-week [data-calendar-grid] {
+.calendar-month [data-calendar-month-grid] {
   overflow-x: auto;
 }
 .cal-month {
@@ -10231,7 +11311,7 @@ html[data-time-view='calendar'] .week-hint {
   text-align: center;
   text-transform: uppercase;
 }
-.cal-cell {
+.cal-month-cell {
   min-width: 0;
   min-height: 110px;
   padding: 8px;
@@ -10239,26 +11319,26 @@ html[data-time-view='calendar'] .week-hint {
   border-bottom: 1px solid var(--ez-border);
   background: var(--ez-ground);
 }
-.cal-cell:nth-child(7n) {
+.cal-month-cell:nth-child(7n) {
   border-right: 0;
 }
-.cal-month-week:last-child .cal-cell {
+.cal-month-week:last-child .cal-month-cell {
   border-bottom: 0;
 }
-.cal-cell[data-outside] {
+.cal-month-cell[data-outside] {
   background: var(--ez-surface);
 }
-.cal-cell[data-today] {
+.cal-month-cell[data-today] {
   background: var(--ez-orange-tint);
 }
-.cal-day-num {
+.cal-month-day-num {
   display: block;
   margin-bottom: 6px;
   color: var(--ez-muted);
   font-size: 12px;
   font-weight: 600;
 }
-.cal-cell[data-today] .cal-day-num {
+.cal-month-cell[data-today] .cal-month-day-num {
   display: flex;
   align-items: center;
   justify-content: center;
@@ -10270,7 +11350,7 @@ html[data-time-view='calendar'] .week-hint {
   font-size: 11px;
 }
 /* A chip an entry: the project and the time, one line, the rest in the tip. */
-.cal-entry {
+.cal-month-entry {
   display: block;
   width: 100%;
   margin-bottom: 4px;
@@ -10292,29 +11372,29 @@ html[data-time-view='calendar'] .week-hint {
     box-shadow 0.1s,
     border-color 0.1s;
 }
-.cal-entry:hover,
-.cal-entry:focus-visible {
+.cal-month-entry:hover,
+.cal-month-entry:focus-visible {
   border-color: color-mix(in srgb, var(--ez-data) 40%, var(--ez-blue-light));
   box-shadow: 0 2px 8px color-mix(in srgb, var(--ez-action) 10%, transparent);
 }
-.cal-entry-time {
+.cal-month-entry-time {
   color: var(--ez-data);
   font-weight: 700;
   font-variant-numeric: tabular-nums;
 }
 /* The running entry in the live green, as the reference: a tint of the hue
    under the chip and its words in the words-green (theme-contrast.test.ts). */
-.cal-entry[data-running] {
+.cal-month-entry[data-running] {
   border-color: color-mix(in srgb, var(--ez-live) 30%, var(--ez-ground));
   background: color-mix(in srgb, var(--ez-live) 8%, var(--ez-ground));
   color: var(--ez-live-text);
 }
-.cal-entry[data-running] .cal-entry-time {
+.cal-month-entry[data-running] .cal-month-entry-time {
   color: var(--ez-live-text);
 }
 /* The tip over a chip under the pointer or the keyboard: the whole entry,
    project, task and time, for the chips too narrow to read it off. */
-.cal-tip {
+.cal-month-tip {
   position: absolute;
   z-index: 6;
   max-width: 260px;
@@ -10328,7 +11408,7 @@ html[data-time-view='calendar'] .week-hint {
   pointer-events: none;
   box-shadow: 0 4px 12px var(--ez-shadow);
 }
-.cal-tip[hidden] {
+.cal-month-tip[hidden] {
   display: none;
 }
 
@@ -10419,7 +11499,17 @@ html[data-time-view='calendar'] .week-hint {
 .staff-payments input:not([type='checkbox']), .staff-payments select, .staff-payments textarea, .staff-payments button { min-height: 44px; padding: 8px 12px; border: 1px solid var(--ez-border); border-radius: var(--ez-radius); background: var(--ez-ground); color: var(--ez-ink); font: inherit; }
 .staff-payment-summary { padding: 12px 16px; background: var(--ez-status-bg); margin-bottom: 20px; }
 .staff-payment-person, .staff-payment-opening { margin-top: 28px; border-top: 1px solid var(--ez-border); padding-top: 20px; }
+[data-request-busy]::before { content: ''; display: inline-block; vertical-align: middle; margin-inline-end: 9px; width: 14px; height: 14px; border: 2px solid var(--ez-border); border-top-color: var(--ez-action); border-radius: 50%; animation: auth-spin 900ms linear infinite; }
+@media (prefers-reduced-motion: reduce) { [data-request-busy]::before { animation: none; } }
 .staff-payment-person form, .staff-payment-opening form { display: grid; gap: 12px; max-width: 640px; margin: 20px 0; }
+.staff-payment-opening [data-deel-stage-message][data-busy='true'] { display: flex; align-items: center; gap: 9px; }
+.staff-payment-opening [data-deel-stage-message][data-busy='true']::before { content: ''; width: 14px; aspect-ratio: 1; flex: 0 0 auto; border: 2px solid var(--ez-border); border-top-color: var(--ez-action); border-radius: 50%; animation: auth-spin 900ms linear infinite; }
+@media (prefers-reduced-motion: reduce) { .staff-payment-opening [data-deel-stage-message][data-busy='true']::before { animation: none; } }
+[data-deel-payment-refresh][aria-busy='true'] { display: flex; align-items: center; gap: 9px; }
+[data-deel-payment-refresh][aria-busy='true']::before { content: ''; width: 14px; aspect-ratio: 1; flex: 0 0 auto; border: 2px solid var(--ez-border); border-top-color: var(--ez-action); border-radius: 50%; animation: auth-spin 900ms linear infinite; }
+[data-settings-section='work-items'] button { min-height: 44px; padding: 8px 12px; border: 1px solid var(--ez-border); border-radius: var(--ez-radius); background: var(--ez-surface); color: var(--ez-ink); font: inherit; }
+[data-github-reader-manifest] { white-space: pre-wrap; overflow-wrap: anywhere; font-size: 12px; }
+@media (prefers-reduced-motion: reduce) { [data-deel-payment-refresh][aria-busy='true']::before { animation: none; } }
 .staff-payment-person header { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; }
 [data-payment-opening-people] { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 10px; }
 [data-payment-opening-people] label { display: flex; align-items: center; gap: 8px; }
@@ -10467,3 +11557,595 @@ html[data-time-view='calendar'] .week-hint {
 .apple-disconnect .auth-card { max-width: none; }
 .apple-disconnect-confirm { display: flex; gap: 12px; align-items: start; }
 .apple-disconnect-confirm input { width: auto; flex: 0 0 auto; }
+
+/* Week change in flight: the old rows stay put but cannot be edited, and a slow
+   answer swaps them for placeholders (apps/web/src/shell/browser.ts). */
+.week-grid-wrap[aria-busy='true'],
+.day-list[aria-busy='true'] {
+  opacity: 0.55;
+}
+.grid-skeleton {
+  display: block;
+  height: 36px;
+  border-radius: 6px;
+  background: var(--ez-border);
+}
+.day-skeleton {
+  margin: 12px 16px;
+  height: 56px;
+}
+@media (prefers-reduced-motion: no-preference) {
+  .grid-skeleton {
+    animation: ez-skeleton-pulse 1.2s ease-in-out infinite;
+  }
+}
+@keyframes ez-skeleton-pulse {
+  50% {
+    opacity: 0.45;
+  }
+}
+
+/*
+ * The capacity view (issue 1007). A week planned beyond capacity is marked in
+ * words as well as weight, so the flag never rests on colour alone.
+ */
+.capacity-intro {
+  max-width: 70ch;
+  color: var(--ez-muted);
+}
+.capacity-cell {
+  display: grid;
+  gap: 2px;
+  min-width: 9ch;
+}
+.capacity-cell > span {
+  color: var(--ez-muted);
+  font-size: 13px;
+}
+.capacity-cell > em {
+  color: var(--ez-red);
+  font-size: 13px;
+  font-style: normal;
+  font-weight: 600;
+}
+
+/* The customer estimate page (issue 1010): a contact's own page, outside the
+   staff shell. Built from the shared table, facts and button rules. */
+.portal-estimates {
+  max-width: 880px;
+  margin: 0 auto;
+  padding: 24px 16px 48px;
+}
+.portal-estimates-header h1 {
+  margin: 0 0 16px;
+}
+.portal-estimates-totals {
+  display: grid;
+  gap: 8px;
+  margin: 16px 0 0;
+  padding: 0;
+}
+.portal-estimates-totals > div {
+  display: flex;
+  justify-content: space-between;
+  gap: 16px;
+}
+.portal-estimates-totals dt {
+  color: var(--ez-muted);
+}
+.portal-estimates-totals dd {
+  margin: 0;
+}
+.portal-estimates-total {
+  padding-top: 8px;
+  border-top: 1px solid var(--ez-border);
+  font-weight: 600;
+}
+.portal-estimates-total dt {
+  color: inherit;
+}
+.portal-estimates-notes {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.portal-estimates-actions,
+.portal-estimates-confirm {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  align-items: center;
+}
+.portal-estimates-confirm p {
+  flex: 1 1 100%;
+  margin: 0;
+}
+
+/* The hosted invoice page a client reaches from the emailed link (issue 936). */
+.portal-invoice {
+  max-width: 640px;
+  margin: 0 auto;
+  padding: 24px 16px 48px;
+}
+.portal-invoice h1 {
+  margin: 0 0 8px;
+}
+.portal-invoice-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  margin: 24px 0 16px;
+}
+.portal-invoice-actions a {
+  display: inline-flex;
+  align-items: center;
+  min-height: 44px;
+  text-decoration: none;
+}
+
+/* The own payments screen (issue 100). */
+.my-payments-intro {
+  max-width: 70ch;
+  color: var(--ez-muted);
+}
+.my-payments-summary {
+  display: grid;
+  grid-template-columns: max-content 1fr;
+  gap: 4px 16px;
+  margin: 0;
+}
+.my-payments-summary dt {
+  color: var(--ez-muted);
+}
+.my-payments-summary dd {
+  margin: 0;
+  font-weight: 600;
+}
+
+/* Administrator entry on the capacity screen (issue 1007). */
+.capacity-form {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  align-items: flex-end;
+}
+.capacity-form label {
+  display: grid;
+  flex: 1 1 160px;
+  min-width: 0;
+  gap: 4px;
+  font-size: 13px;
+}
+.resource-calendar-controls {
+  margin-block: 12px;
+}
+.resource-calendar-controls label[hidden] {
+  display: none;
+}
+[data-calendar-more] {
+  min-height: 44px;
+  margin-block: 12px;
+}
+.resource-calendar-timeline {
+  display: grid;
+  gap: 12px;
+  margin-block: 20px;
+}
+.resource-calendar-timeline[hidden] {
+  display: none;
+}
+.resource-calendar-allocation {
+  min-width: 0;
+  padding: 12px;
+  border: 1px solid var(--ez-border);
+  border-radius: var(--ez-radius);
+}
+.resource-calendar-allocation h3,
+.resource-calendar-allocation p {
+  overflow-wrap: anywhere;
+  margin: 0 0 8px;
+}
+.resource-calendar-track {
+  height: 12px;
+  background: var(--ez-ground);
+  border: 1px solid var(--ez-border);
+  border-radius: var(--ez-radius);
+  overflow: hidden;
+}
+.resource-calendar-track > span {
+  display: block;
+  height: 100%;
+  min-width: 2px;
+  background: var(--ez-action);
+}
+.allocation-date-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+.allocation-date-actions button, .allocation-date-review button, .allocation-date-review input {
+  min-height: 44px;
+  min-width: 44px;
+}
+.allocation-date-actions button { touch-action: pan-y; }
+.resource-calendar-track > span[data-gesture-preview] { opacity: 0.6; outline: 2px dashed var(--ez-action); }
+.allocation-date-review { display: grid; max-width: 100%; min-width: 0; }
+.allocation-date-review > * { min-width: 0; }
+.allocation-date-editor h3 { overflow-wrap: anywhere; }
+.allocation-date-review .data-table-scroll { max-height: 24rem; }
+.capacity-form button {
+  min-height: 44px;
+  padding: 8px 14px;
+  border: 1px solid var(--ez-border);
+  border-radius: var(--ez-radius);
+  background: var(--ez-ground);
+  color: var(--ez-ink);
+  font: inherit;
+}
+.placeholder-planning input:not([type='hidden']),
+.placeholder-planning select,
+.placeholder-planning button,
+.placeholder-planning .data-table-overflow > summary {
+  min-height: 44px;
+}
+.placeholder-planning .data-table-overflow > summary {
+  min-width: 44px;
+}
+[data-placeholder-rows] .data-table {
+  min-width: 660px;
+}
+[data-placeholder-definitions] .data-table {
+  min-width: 440px;
+}
+.placeholder-planning .data-table .is-wrap {
+  overflow-wrap: anywhere;
+}
+.placeholder-planning .capacity-form h3,
+.placeholder-planning .capacity-form p {
+  flex-basis: 100%;
+}
+.team-period [data-capacity-current] {
+  padding-inline: 14px;
+  white-space: nowrap;
+}
+
+.invoice-hours-line { grid-column: 1 / -1; margin: 0; }
+
+.invoice-time-release { grid-column: 1 / -1; min-width: 0; display: grid; gap: 8px; padding: 12px; border: 1px solid var(--ez-border); }
+.invoice-time-release p { margin: 0; }
+.invoice-time-release > div { display: grid; gap: 8px; }
+.invoice-time-release label { display: flex; align-items: center; gap: 8px; }
+
+[data-email-suppression-recipient] { overflow-wrap: anywhere; }
+
+.scheduled-run button {
+  min-height: 44px;
+  padding: 8px 12px;
+  border: 1px solid var(--ez-border);
+  border-radius: var(--ez-radius);
+  background: var(--ez-ground);
+  color: var(--ez-ink);
+  font: inherit;
+}
+.scheduled-run button.primary-action { background: var(--ez-action); color: var(--ez-action-fg); }
+.scheduled-run [hidden] { display: none !important; }
+.scheduled-run .data-table { min-width: 800px; table-layout: auto; }
+.scheduled-run .data-table tbody td { max-width: none; white-space: normal; overflow-wrap: anywhere; }
+
+.settings-data-actions { display: flex; flex-wrap: wrap; gap: 0.5rem; }
+.settings-data-command { max-width: 100%; overflow-x: auto; white-space: pre-wrap; overflow-wrap: anywhere; }
+.settings-bulk-actions { display: grid; gap: 1rem; padding-inline-start: 1.25rem; }
+.settings-bulk-actions li { min-width: 0; }
+
+/* A quote is edited as a document; fields and line groups wrap on phones. */
+[data-estimate-composer] {
+  min-width: 0;
+  margin-block: 1rem;
+}
+[data-quote-form],
+[data-quote-form] fieldset {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(240px, 100%), 1fr));
+  gap: 1rem;
+  min-width: 0;
+}
+[data-quote-form] > fieldset,
+[data-quote-lines],
+[data-quote-form] > output,
+[data-quote-form] > .recurring-actions {
+  grid-column: 1 / -1;
+}
+[data-quote-form] label {
+  display: grid;
+  gap: 0.5rem;
+  min-width: 0;
+}
+[data-quote-form] input:not([type='checkbox']),
+[data-quote-form] select,
+[data-quote-form] textarea {
+  width: 100%;
+  min-width: 0;
+  box-sizing: border-box;
+}
+[data-quote-form] button,
+[data-estimate-composer] summary {
+  min-height: 44px;
+  overflow-wrap: anywhere;
+}
+[data-quote-form] input:not([type='checkbox']),
+[data-quote-form] select,
+[data-quote-form] textarea {
+  min-height: 44px;
+  padding: 8px 12px;
+  border: 1px solid var(--ez-border);
+  border-radius: var(--ez-radius);
+  background: var(--ez-ground);
+  color: var(--ez-ink);
+  font: inherit;
+}
+[data-quote-form] textarea {
+  min-height: 100px;
+  resize: vertical;
+}
+[data-quote-form] fieldset {
+  padding: 1rem;
+  border: 1px solid var(--ez-border);
+  border-radius: var(--ez-radius);
+}
+[data-quote-lines] {
+  display: grid;
+  gap: 1rem;
+}
+[data-quote-form] .quote-tax-flag {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+/* Payment defaults on the team page (issue 1152). A table that stacks into
+   blocks on a phone, so the page never scrolls sideways. */
+.team-defaults { margin: 1rem 0; }
+.team-defaults-table { width: 100%; border-collapse: collapse; }
+.team-defaults-table th,
+.team-defaults-table td { padding: 0.4rem 0.5rem; text-align: left; vertical-align: middle; }
+@media (max-width: 720px) {
+  .team-defaults-table thead { display: none; }
+  .team-defaults-table,
+  .team-defaults-table tbody,
+  .team-defaults-table tr,
+  .team-defaults-table td { display: block; width: 100%; box-sizing: border-box; }
+  .team-defaults-table tr { padding: 0.5rem 0; border-bottom: 1px solid currentColor; }
+  .team-defaults-table td { padding: 0.25rem 0; }
+}
+
+/* Provider-free suggestions have a separate identity and never count as time. */
+.cal-proposal {
+  touch-action: pan-y;
+  min-height: 44px;
+  border: 2px dashed var(--ez-data);
+  background: var(--ez-surface);
+  color: var(--ez-ink);
+  cursor: pointer;
+}
+.cal-proposal .cal-block-time { display: block; overflow: hidden; text-overflow: ellipsis; }
+.cal-proposal:focus-visible { outline: 3px solid var(--ez-data); outline-offset: 2px; }
+.calendar-proposals { padding: 8px 16px; border-block: 1px solid var(--ez-border); }
+.calendar-proposals p { margin: 0; max-width: 70ch; }
+.calendar-proposals button,
+[data-proposal-discard],
+[data-proposal-check] { min-height: 44px; padding: 8px 12px; }
+[data-entry-proposal-source] { overflow-wrap: anywhere; }
+
+.entry-dialog[data-entry-context='proposal'] .timer-actions > button {
+  min-height: 44px;
+}
+.entry-dialog[data-entry-context='proposal'] [data-dialog-close] {
+  min-width: 44px;
+  min-height: 44px;
+}
+
+/* The owner’s first-run guide stays usable in either navigation layout. */
+.first-run-checklist {
+  margin: 20px;
+  padding: 20px;
+  border: 1px solid var(--ez-border);
+  border-radius: 12px;
+  background: var(--ez-ground);
+}
+.first-run-checklist header {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  gap: 12px;
+}
+.first-run-checklist h2 {
+  margin: 4px 0 12px;
+}
+.first-run-checklist ol {
+  padding-left: 24px;
+}
+.first-run-checklist li a,
+.first-run-checklist button {
+  display: inline-flex;
+  min-height: 44px;
+  align-items: center;
+}
+.first-run-checklist li[data-complete="true"] a {
+  text-decoration-style: dotted;
+}
+.first-run-checklist button {
+  padding: 8px 12px;
+  border: 1px solid var(--ez-border);
+  border-radius: 6px;
+  background: var(--ez-ground);
+  color: var(--ez-ink);
+  cursor: pointer;
+}
+
+button[data-first-run-help] {
+  min-height: 44px;
+}
+
+/* Keep the policy action readable beside the timezone field on a phone. */
+[data-org-timezone-submit] {
+  min-width: max-content;
+  white-space: nowrap;
+}
+
+/* The setup guide joins the compact account controls in the header bands.
+   Its accessible name stays complete when only its icon fits. */
+@media (max-width: 1699px) {
+  button[data-first-run-help] {
+    display: grid;
+    width: 44px;
+    padding: 0;
+    place-items: center;
+  }
+  button[data-first-run-help] .ez-icon {
+    display: block;
+  }
+  button[data-first-run-help] .identity-action-label {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip-path: inset(50%);
+    white-space: nowrap;
+  }
+}
+
+/* A keyboard shortcut past the shared navigation, inside the session fence. */
+.app-skip-link {
+  position: fixed;
+  z-index: 950;
+  top: 12px;
+  left: 12px;
+  min-height: 44px;
+  padding: 12px 16px;
+  border: 1px solid var(--ez-border);
+  border-radius: var(--ez-radius);
+  background: var(--ez-ground);
+  color: var(--ez-ink);
+  transform: translateY(calc(-100% - 24px));
+  clip-path: inset(50%);
+}
+.app-skip-link:focus {
+  transform: none;
+  clip-path: none;
+  outline: 3px solid var(--ez-data);
+  outline-offset: 3px;
+}
+.app-content[tabindex="-1"]:focus {
+  outline: 3px solid var(--ez-data);
+  outline-offset: -3px;
+}
+
+/* Shared controls also serve standalone authentication and portal documents. */
+:where(a[href]) {
+  text-decoration-thickness: 0.08em;
+  text-underline-offset: 0.16em;
+}
+:where(a[href]:visited) { color: var(--ez-data); }
+:where(a[href]:hover) { text-decoration: underline; }
+input::file-selector-button {
+  font: inherit;
+  color: var(--ez-ink);
+  background: var(--ez-surface);
+  border: 1px solid var(--ez-border);
+  border-radius: var(--ez-radius);
+  padding: 8px 12px;
+  margin-inline-end: 12px;
+  cursor: pointer;
+}
+input::file-selector-button:hover { background: var(--ez-surface-2); }
+.standalone-auth {
+  width: min(100%, 488px);
+  margin: 48px auto;
+  padding: 24px;
+  box-sizing: border-box;
+}
+.standalone-auth .auth-card { box-sizing: border-box; }
+:where(.portal-estimates, .portal-invoice, .apple-disconnect, .standalone-auth) :where(button) {
+  min-height: 44px;
+  padding: 8px 12px;
+  font-weight: 600;
+}
+:where(.portal-estimates, .portal-invoice, .apple-disconnect, .standalone-auth) :where(input:not([type='checkbox']):not([type='radio']):not([type='hidden']), select, textarea) {
+  min-height: 44px;
+  max-width: 100%;
+  box-sizing: border-box;
+  padding: 8px 12px;
+}
+.sign-in-form .apple-disconnect-confirm {
+  display: flex;
+  min-height: 44px;
+}
+.apple-disconnect-confirm input {
+  width: 18px;
+  height: 18px;
+  min-height: 18px;
+  padding: 0;
+  margin: 3px 0 0;
+  accent-color: var(--ez-data);
+}
+
+/* Approved-hour staging keeps selection and confirmation targets usable on phones. */
+[data-deel-stage-people] { display: grid; gap: 8px; }
+[data-deel-stage-people] label, [data-deel-stage] > label { display: flex; align-items: center; gap: 8px; min-height: 44px; }
+[data-deel-stage] input[type='checkbox'] { width: 18px; height: 18px; flex: 0 0 auto; }
+[data-deel-stage-preview] { overflow-wrap: anywhere; }
+[data-deel-stage] fieldset { min-width: 0; }
+[data-deel-stage-people] label { overflow-wrap: anywhere; }
+
+.calendar-feed-status[aria-busy='true']::before { content: ''; display: inline-block; width: 14px; height: 14px; margin-right: 8px; border: 2px solid var(--ez-border); border-top-color: var(--ez-action); border-radius: 50%; animation: auth-spin 900ms linear infinite; }
+[data-calendar-feeds] { margin-top: 24px; }
+[data-calendar-feed-secret] label { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin-block: 8px; }
+@media (prefers-reduced-motion: reduce) { .calendar-feed-status[aria-busy='true']::before { animation: none; } }
+/* Browser CSV review stays within the Company pane at phone and desktop widths. */
+.csv-import {
+  border-top: 1px solid var(--ez-border);
+  margin-top: 24px;
+  padding-top: 24px;
+  min-width: 0;
+}
+.csv-import :where(button, input:not([type='checkbox']), select) {
+  min-height: 44px;
+  max-width: 100%;
+  box-sizing: border-box;
+}
+.csv-import :where(button, .settings-toggle) { min-width: 44px; }
+.csv-import :where(.csv-import-actions, .csv-import-kinds) {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.csv-import-card {
+  border: 1px solid var(--ez-border);
+  border-radius: 8px;
+  padding: 16px;
+  margin-block: 12px;
+  overflow-wrap: anywhere;
+}
+.csv-import :where(dl, dd, p, li, h5) { overflow-wrap: anywhere; }
+.csv-import dd { margin-inline-start: 0; }
+.csv-import dt { font-weight: 600; }
+.csv-import :where(.csv-import-facts, .csv-import-parents) {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 2fr);
+  gap: 8px 16px;
+}
+.csv-import .settings-toggle { min-height: 44px; align-items: center; }
+.csv-import [hidden] { display: none !important; }
+
+.bank-deposit-workspace { display: grid; gap: 1rem; min-width: 0; }
+.bank-deposit-workspace button { min-height: 44px; }
+.bank-deposit-toolbar { display: flex; flex-wrap: wrap; align-items: center; gap: .75rem; }
+.bank-deposit-list { list-style: none; padding: 0; display: grid; gap: .5rem; }
+.bank-deposit-list button { width: 100%; min-height: 44px; text-align: left; white-space: normal; overflow-wrap: anywhere; }
+.bank-deposit-facts { display: grid; grid-template-columns: repeat(auto-fit, minmax(15rem, 1fr)); gap: 1rem; }
+.bank-deposit-facts dd { margin: .25rem 0 0; overflow-wrap: anywhere; }
+.bank-deposit-workspace form { display: grid; gap: .75rem; margin: 1rem 0; padding: 1rem; border: 1px solid var(--ez-border); border-radius: .5rem; }
+.bank-deposit-workspace form label { display: block; }
+.bank-deposit-workspace input:not([type=checkbox]), .bank-deposit-workspace select { max-width: 100%; min-height: 44px; }
+.bank-deposit-workspace [hidden] { display: none !important; }
+
+[data-calendar-connections]:not([hidden]),
+[data-calendar-connections-list] { display: grid; gap: 16px; }
+[data-calendar-provider] { display: grid; gap: 12px; min-width: 0; padding: 16px; border: 1px solid var(--ez-border); border-radius: var(--ez-radius); }
+[data-calendar-provider] :is(h3, p) { margin: 0; }
+.calendar-connection-actions { display: flex; flex-wrap: wrap; gap: 8px; }

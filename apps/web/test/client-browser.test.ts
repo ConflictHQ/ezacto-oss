@@ -8,6 +8,7 @@ import {
   type Retainer,
   type Whoami,
 } from '@conflict-hq/ezacto-client'
+import { setSortPreferenceOwner } from '../src/components/table-sort.js'
 import { describe, expect, it, vi } from 'vitest'
 import { createClientDirectoryController } from '../src/clients/browser.js'
 import type { ClientDirectoryApi, ClientInvoiceSending } from '../src/clients/model.js'
@@ -225,6 +226,39 @@ describe('Clients V1 browser controller', () => {
     expect(createClientContact.mock.calls[0]![0]).not.toHaveProperty('invoice_recipient_status')
   })
 
+  it('[browser #852] sorts a client\'s projects and contacts by a header', async () => {
+    writeDocument()
+    const later: GeneralResource = { ...project, id: 32, name: 'Alpha site', code: null }
+    const api: Partial<ClientDirectoryApi> = {
+      listDirectoryClients: vi.fn(async () => page([child, parent])),
+      getDirectoryClient: vi.fn(async () => child),
+      listClientContacts: vi.fn(async () => page([contact])),
+      listClientProjects: vi.fn(async () => page([project, later])),
+    }
+    const identity: Whoami = {
+      user_id: 1,
+      profile: 'member',
+      manager_grants: [],
+      authentication: { kind: 'session' },
+    }
+    await createClientDirectoryController(api).activate(identity, new AbortController().signal, () => false)
+
+    const names = (): string[] =>
+      [...document.querySelectorAll('[data-client-projects] tbody tr[data-row] td[data-column="name"] a')].map(
+        (link) => link.textContent ?? '',
+      )
+    const header = (): HTMLButtonElement =>
+      document.querySelector<HTMLButtonElement>(
+        '[data-client-projects] thead button[data-sort-column="name"]',
+      )!
+    expect(names()).toEqual(['Alpha site', '[WEB] Launch'])
+    // The table draws itself again on a sort, so the header is found afresh.
+    header().click()
+    expect(names()).toEqual(['[WEB] Launch', 'Alpha site'])
+    header().click()
+    expect(names()).toEqual(['Alpha site', '[WEB] Launch'])
+  })
+
   it('[security #466] renders operational relations but no commercial facts for members', async () => {
     writeDocument()
     const api: Partial<ClientDirectoryApi> = {
@@ -419,10 +453,10 @@ describe('Clients V1 browser controller', () => {
       ),
     ]
     expect(pills.map((pill) => pill.dataset.recipientStatus)).toEqual([
-      'recipient',
-      'cc',
       'bcc',
+      'cc',
       'none',
+      'recipient',
     ])
     const painted = pills.map((pill) => {
       const style = window.getComputedStyle(pill)
@@ -454,7 +488,7 @@ describe('Clients V1 browser controller', () => {
     // The recipient carries the heaviest of them rather than a fill that prints
     // as nothing, so the row that gets the invoice is the boldest on the page
     // instead of the faintest.
-    expect(painted[0]?.border).toBe('2px solid')
+    expect(painted[pills.findIndex(pill => pill.dataset.recipientStatus === 'recipient')]?.border).toBe('2px solid')
   })
 
   it('[browser] filters the tree without orphaning a matched child', async () => {
@@ -556,6 +590,9 @@ describe('Clients V1 browser controller', () => {
 
   it('[browser #486] says the archive is empty rather than that the directory is', async () => {
     writeDocument('client-list', '/clients')
+    const shell = document.querySelector<HTMLElement>('[data-authenticated-shell]')!
+    shell.inert = false
+    shell.hidden = false
     await createClientDirectoryController({
       listDirectoryClients: vi.fn(async () => page([parent, child])),
     }).activate(
@@ -874,8 +911,9 @@ describe('billing a client through BILL (issue 542)', () => {
     authentication: { kind: 'session' },
   }
 
-  const activate = async (api: Partial<ClientDirectoryApi>) => {
+  const activate = async (api: Partial<ClientDirectoryApi>, billUnavailable = false) => {
     writeDocument()
+    if (billUnavailable) document.documentElement.setAttribute('data-bill-unavailable', '')
     const controller = createClientDirectoryController({
       ...base,
       ...api,
@@ -896,6 +934,18 @@ describe('billing a client through BILL (issue 542)', () => {
     })
     expect(section().hidden).toBe(false)
     expect(toggle().checked).toBe(true)
+  })
+
+  it('[browser #1217] makes no BILL calls when only another provider is available', async () => {
+    document.documentElement.setAttribute('data-bill-unavailable', '')
+    try {
+      const getBillStatus = vi.fn(), getBillClientDelivery = vi.fn(), setBillClientDelivery = vi.fn()
+      await activate({ getBillStatus, getBillClientDelivery, setBillClientDelivery }, true)
+      expect(section().hidden).toBe(true)
+      expect(getBillStatus).not.toHaveBeenCalled()
+      expect(getBillClientDelivery).not.toHaveBeenCalled()
+      expect(setBillClientDelivery).not.toHaveBeenCalled()
+    } finally { document.documentElement.removeAttribute('data-bill-unavailable') }
   })
 
   it('[security] hides it entirely where the deployment cannot reach BILL', async () => {
@@ -1417,4 +1467,33 @@ describe('a client’s invoice sending', () => {
     expect(to().value).toBe('')
     expect(cc().value).toBe('')
   })
+})
+
+
+it('[browser #852] sorts siblings naturally and retains hierarchy, focus and person-specific memory', async () => {
+  const clients = [parent, { ...child, name: 'Unit 10' }, { ...child, id: 12, name: 'Unit 9' }, { ...parent, id: 20, name: 'Other root' }]
+  const mount = async (userId: number) => {
+    setSortPreferenceOwner(userId)
+    writeDocument('client-list', '/clients')
+    const shell = document.querySelector<HTMLElement>('[data-authenticated-shell]')!
+    shell.inert = false
+    shell.hidden = false
+    await createClientDirectoryController({ listDirectoryClients: async () => page(clients) })
+      .activate({ ...administrator, user_id: userId }, new AbortController().signal, () => false)
+  }
+  const ids = () => [...document.querySelectorAll('[data-client-tree] tbody tr[data-row-key]')].map(row => row.getAttribute('data-row-key'))
+  const header = () => document.querySelector<HTMLButtonElement>('[data-client-tree] button[data-sort-column="client"]')!
+  try {
+    await mount(1)
+    expect(ids()).toEqual(['20', '10', '12', '11'])
+    header().click()
+    expect(ids()).toEqual(['10', '11', '12', '20'])
+    expect(document.activeElement === header()).toBe(true)
+    expect(header().closest('th')?.getAttribute('aria-sort')).toBe('descending')
+    expect(document.querySelector('[data-client-tree] [data-row-key="11"] .client-tree-name')?.getAttribute('style')).toContain('16px')
+    await mount(1)
+    expect(ids()).toEqual(['10', '11', '12', '20'])
+    await mount(2)
+    expect(ids()).toEqual(['20', '10', '12', '11'])
+  } finally { setSortPreferenceOwner(null); localStorage.clear() }
 })

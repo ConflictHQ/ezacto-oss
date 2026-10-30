@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto'
 import { spawn } from 'node:child_process'
-import { rm } from 'node:fs/promises'
+import { rm, readdir, readFile } from 'node:fs/promises'
 import { createServer } from 'node:net'
 import { join } from 'node:path'
 import { createCanonicalTemporaryDirectory } from '../../../scripts/container-physical-snapshot.mjs'
@@ -352,6 +352,18 @@ try {
     seconds: 1_800,
     notes: 'Docker first-run acceptance',
   })
+  // Ephemeral CSV inputs must never enter a durable physical snapshot.
+  const csvBytes=Buffer.from('Email,Client,Project,Task,Description,Billable,Start Date,Start Time,End Date,End Time,Duration (h)\nowner@example.test,Acceptance Client,Container Project,Development,owned private CSV snapshot sentinel,Yes,2026-08-31,09:00:00,2026-08-31,09:01:00,00:01:00\n')
+  const stagedResponse=await fetch(`${origin}/api/v1/csv-imports`,{method:'POST',headers:{cookie,origin,'content-type':'application/octet-stream','x-csv-bytes':String(csvBytes.length),'x-csv-sha256':createHash('sha256').update(csvBytes).digest('hex')},body:csvBytes})
+  if(stagedResponse.status!==201)throw new Error('owned CSV staging failed')
+  const staged=(await stagedResponse.json()).data
+  const mapped=await fetch(`${origin}/api/v1/csv-imports/${staged.id}/mapping`,{method:'PATCH',headers:{cookie,origin,'content-type':'application/json'},body:JSON.stringify({version:staged.version,workspace_identity:'owned-docker-workspace',exporter_zone:'UTC',date_format:'iso',destination_interpretation:'source_wall_time',currency_policy:'destination_rates',mapping:{},excluded_lines:[]})})
+  if(mapped.status!==200)throw new Error('owned CSV mapping failed')
+  const preview=await fetch(`${origin}/api/v1/csv-imports/${staged.id}/preview`,{method:'POST',headers:{cookie,origin,'content-type':'application/json'},body:'{}'})
+  if(preview.status!==200)throw new Error('owned CSV preview failed')
+  const readNonce=async name=>(await command('docker',['exec',name,'node','-e',"const D=require('better-sqlite3');const db=new D('/data/db.sqlite',{readonly:true});try{process.stdout.write(db.prepare('SELECT nonce FROM csv_staging_instance WHERE singleton=1').get().nonce)}finally{db.close()}"])).stdout.trim()
+  const originalNonce=await readNonce(firstName)
+  if(!/^[a-f0-9]{64}$/.test(originalNonce))throw new Error('source CSV incarnation unavailable')
   const attachmentBytes = Buffer.from('Docker physical restore attachment')
   const form = new FormData()
   form.append(
@@ -412,6 +424,9 @@ try {
     '--output',
     bundle,
   ])
+  if((await readdir(bundle)).includes('csv-staging'))throw new Error('snapshot copied ephemeral CSV input')
+  const csvSnapshot=JSON.parse(await readFile(join(bundle,'snapshot.json'),'utf8'))
+  if(csvSnapshot.files.some(file=>file.path.startsWith('csv-staging')))throw new Error('snapshot retained CSV input metadata')
   await command('docker', ['rm', firstName])
   await command('docker', ['volume', 'rm', volume])
 
@@ -458,6 +473,8 @@ try {
   await privacyRestore('release')
   await runContainer(secondName, appPort, smtpPort, restoredVolume)
   await waitForHealth(origin, secondName)
+  if(await readNonce(secondName)===originalNonce)throw new Error('restored CSV incarnation was not rotated')
+  if((await fetch(`${origin}/api/v1/csv-imports/${staged.id}`,{headers:{cookie}})).status!==404)throw new Error('restored destination exposed old private CSV input')
   const restored = await fetch(`${origin}/api/v1/time-entries/${entry.id}`, {
     headers: { cookie },
   })

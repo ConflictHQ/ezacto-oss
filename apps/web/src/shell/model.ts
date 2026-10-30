@@ -1,3 +1,8 @@
+import type { CalendarConnectionApi } from '../calendar-connections/model.js'
+import type { CalendarProposalApi } from '../calendar-proposals/browser.js'
+import type { FirstRunApi } from '../first-run/model.js'
+import type { EstimateComposerApi } from '../estimates/composer.js'
+import type { ScheduledRunApi } from '../scheduled-runs/model.js'
 import type { StaffPaymentsApi } from '../staff-payments/browser.js'
 import {
   EzactoClient,
@@ -29,16 +34,22 @@ import {
   type ApiToken,
   type CreateApiTokenInput,
   type IssuedApiToken,
+  type TwoFactorChallengeIssued,
   type TwoFactorEnrolment,
   type TwoFactorStatus,
+  type ProfileNotificationInput,
+  type TeamNotificationPreference,
 } from '@conflict-hq/ezacto-client'
 import type { InvoiceState } from '../invoices/model.js'
-import type { ActivityRow } from '../activity/browser.js'
+import type { ActivityExportQuery, ActivityQuery, ActivityRow } from '../activity/browser.js'
+import type { CapacityApi, PlanningApi } from '../capacity/model.js'
+import type { MyPaymentsApi } from '../my-payments/model.js'
+import type { LogPageResult } from '../components/paged-log.js'
 import type {
+  EmailLogQuery,
   EmailLogRow,
-  EmailLogStatus,
+  OutboxQuery,
   OutboxRow,
-  OutboxStatus,
 } from '../deliveries/browser.js'
 import type { TimeEntrySettings } from '../components/time-entry-editor.js'
 import type { ClientDirectoryApi, ClientInvoiceSending } from '../clients/model.js'
@@ -54,6 +65,7 @@ import type { CompanySettingsApi } from '../module-settings/model.js'
 import type { EmailConfigurationApi } from '../email-config/model.js'
 import type { RecurringWorkspaceApi } from '../recurring/model.js'
 import type { EstimateWorkspaceApi } from '../estimates/model.js'
+import type { BankDepositApi } from '../bank-deposits/model.js'
 import type { RetainerWorkspaceApi } from '../retainers/model.js'
 import { shellFetch } from './net.js'
 
@@ -80,7 +92,7 @@ export interface InvoiceJournalChoice {
 }
 
 export interface ShellApi
-  extends StaffPaymentsApi,
+  extends Partial<CalendarProposalApi>, StaffPaymentsApi,
     Partial<ClientDirectoryApi>,
     Partial<ProjectDirectoryApi>,
     Partial<ReportWorkspaceApi>,
@@ -89,14 +101,28 @@ export interface ShellApi
     Partial<EmailConfigurationApi>,
     Partial<RecurringWorkspaceApi>,
     Partial<EstimateWorkspaceApi>,
+    Partial<EstimateComposerApi>,
     Partial<RetainerWorkspaceApi>,
+    Partial<BankDepositApi>,
     Partial<InvoicePaymentApi>,
     Partial<InvoiceEditorApi>,
     Partial<RoleAdminApi>,
     Partial<TaskAdminApi>,
     Partial<TeamDirectoryApi>,
-    Partial<CompanySettingsApi> {
+    Partial<CompanySettingsApi>,
+    Partial<FirstRunApi> {
+  calendarConnections?: CalendarConnectionApi
   whoami(signal?: AbortSignal): Promise<Whoami>
+  /**
+   * Your own reminder preferences (issue 935), under Settings. Optional like
+   * the other settings reads: a shell built against an API without the route
+   * leaves the section hidden rather than offering a form that cannot save.
+   */
+  getProfileNotifications?(signal?: AbortSignal): Promise<TeamNotificationPreference>
+  updateProfileNotifications?(
+    input: ProfileNotificationInput,
+    signal?: AbortSignal,
+  ): Promise<TeamNotificationPreference>
   /**
    * Issue 731: an enrolled user is not signed in yet. The challenge answer
    * carries no principal, so the caller has to read the status rather than
@@ -115,11 +141,40 @@ export interface ShellApi
   logoutCurrentSession(signal?: AbortSignal): Promise<Session>
   listProjects(cursor?: string, signal?: AbortSignal): Promise<CursorPage<GeneralResource>>
   listClients?(cursor?: string, signal?: AbortSignal): Promise<CursorPage<GeneralResource>>
+  /** Whether the Activity log module is on, so the surface is not offered when it is off. */
+  getActivityLogEnabled?(signal?: AbortSignal): Promise<boolean>
+  /** Planned hours against capacity and tracked time, person by week (issue 1007). */
+  getCapacity?(
+    range: { readonly from: string; readonly to: string },
+    signal?: AbortSignal,
+  ): ReturnType<CapacityApi['getCapacity']>
+  resourceCalendar?: CapacityApi['calendar']
+  /** Allocation and time off entry on the capacity screen, for an administrator (issue 1007). */
+  planning?: PlanningApi
+  placeholders?: CapacityApi['placeholders']
+  /** The signed-in person's own payment summary (issue 100). */
+  getMyPayments?(month: string, signal?: AbortSignal): ReturnType<MyPaymentsApi['getMyPayments']>
+  scheduledRuns?: ScheduledRunApi
+  getMyStaffInvoices?: MyPaymentsApi['getMyStaffInvoices']
   /** The page size a caller may raise when it is walking, not browsing. */
   listActivityLog?(
-    query: { readonly from?: string; readonly to?: string; readonly event_type?: string },
+    query: ActivityQuery,
     signal?: AbortSignal,
-  ): Promise<{ readonly data: readonly ActivityRow[] }>
+  ): Promise<{
+    readonly data: readonly ActivityRow[]
+    readonly page?: { readonly next_cursor: string | null }
+  }>
+  /** The filtered view as a CSV file (issue 8). Absent where the build cannot export. */
+  exportActivityLog?(
+    query: ActivityExportQuery,
+    signal?: AbortSignal,
+  ): Promise<{ readonly blob: Blob; readonly filename: string; readonly truncated: boolean }>
+  /** Finished years the live activity log still holds (issue 8). */
+  listRollableActivityYears?(
+    signal?: AbortSignal,
+  ): Promise<readonly { readonly year: number; readonly entries: number }[]>
+  /** Rolls one finished year of the activity log into its archive. Administrators only. */
+  rollActivityYear?(year: number, signal?: AbortSignal): Promise<void>
   /**
    * The tokens you have issued, and issuing another (issue 485).
    *
@@ -136,6 +191,17 @@ export interface ShellApi
   beginTwoFactorEnrolment?(signal?: AbortSignal): Promise<TwoFactorEnrolment>
   confirmTwoFactorEnrolment?(code: string, signal?: AbortSignal): Promise<TwoFactorStatus>
   disableTwoFactor?(code: string, signal?: AbortSignal): Promise<TwoFactorStatus>
+  /** Issue 770: the emailed second factor. Turning it off needs no code; it is session-only. */
+  enableTwoFactorEmail?(signal?: AbortSignal): Promise<TwoFactorStatus>
+  disableTwoFactorEmail?(signal?: AbortSignal): Promise<TwoFactorStatus>
+  /**
+   * Mails a code for an open challenge. The earlier challenge dies with this
+   * call, so the answer carries the token to use from now on.
+   */
+  sendTwoFactorEmailCode?(
+    input: { readonly challenge?: string },
+    signal?: AbortSignal,
+  ): Promise<TwoFactorChallengeIssued>
   listApiTokens?(signal?: AbortSignal): Promise<readonly ApiToken[]>
   createApiToken?(
     input: CreateApiTokenInput,
@@ -144,13 +210,13 @@ export interface ShellApi
   revokeApiToken?(tokenId: number, signal?: AbortSignal): Promise<void>
   /** What was sent, and what became of it (issue 485). */
   listEmailLog?(
-    query: { readonly status?: EmailLogStatus },
+    query: EmailLogQuery,
     signal?: AbortSignal,
-  ): Promise<{ readonly data: readonly EmailLogRow[] }>
+  ): Promise<LogPageResult<EmailLogRow>>
   listOutboxDeliveries?(
-    query: { readonly status?: OutboxStatus },
+    query: OutboxQuery,
     signal?: AbortSignal,
-  ): Promise<{ readonly data: readonly OutboxRow[] }>
+  ): Promise<LogPageResult<OutboxRow>>
   retryOutboxDelivery?(
     subscriberId: string,
     eventId: string,
@@ -161,6 +227,7 @@ export interface ShellApi
     signal?: AbortSignal,
     perPage?: number,
     states?: readonly InvoiceState[],
+    sort?: string,
   ): Promise<CursorPage<Invoice>>
   listTasks(cursor?: string, signal?: AbortSignal): Promise<CursorPage<GeneralResource>>
   /**
@@ -243,6 +310,7 @@ export interface ShellApi
   getProfile?(signal?: AbortSignal): Promise<{
     user_id: number
     timezone: string
+    effective_timezone?: string
     first_name?: string
     last_name?: string
     email?: string | null
@@ -879,6 +947,41 @@ export const filingDate = (zones: readonly string[], now = new Date()): string =
   return localDate(now)
 }
 
+/**
+ * The filing day and the minute of it, read in the same zone `filingDate`
+ * would choose: where the calendar measures a running entry to and draws its
+ * line for now (issue 943). A clock read in another zone would put that line
+ * on the right day at the wrong hour.
+ */
+export const filingClock = (
+  zones: readonly string[],
+  now = new Date(),
+): { readonly date: string; readonly minutes: number } => {
+  for (const timeZone of zones) {
+    try {
+      const parts = new Intl.DateTimeFormat('en-CA', {
+        timeZone,
+        year: 'numeric',
+        month: '2-digit',
+        day: '2-digit',
+        hour: '2-digit',
+        minute: '2-digit',
+        hourCycle: 'h23',
+      }).formatToParts(now)
+      const part = (type: Intl.DateTimeFormatPartTypes): string =>
+        parts.find((candidate) => candidate.type === type)?.value ?? ''
+      return {
+        date: `${part('year')}-${part('month')}-${part('day')}`,
+        minutes: (Number(part('hour')) % 24) * 60 + Number(part('minute')),
+      }
+    } catch {
+      // Not a zone this engine knows; the next candidate is what the server
+      // would use too.
+    }
+  }
+  return { date: localDate(now), minutes: now.getHours() * 60 + now.getMinutes() }
+}
+
 export const weekRange = (
   within: string,
   weekStartDay: 'saturday' | 'sunday' | 'monday' = 'monday',
@@ -940,6 +1043,11 @@ const isModuleDisabled = (error: EzactoApiError): boolean => {
  * and the week only reads expenses to offer submitting it, which is the
  * owner's to do and is not offered on somebody else's week.
  */
+// An explicit module refusal lasts for this authenticated activation. A new
+// activation re-discovers availability, without retrying a withdrawn endpoint
+// on every week navigation. Weak ownership releases old sessions on abort/GC.
+const expensesUnavailable = new WeakSet<AbortSignal>()
+
 export const loadShellSnapshot = async (
   api: ShellApi,
   now = new Date(),
@@ -954,11 +1062,12 @@ export const loadShellSnapshot = async (
   // Settings took the whole week with it ("your week could not load").
   // Only an explicit refusal hides the module: a build without the adapter,
   // or a route that 404s, says nothing about what the administrator chose.
-  let expensesAvailable = true
-  const expenseRequest = api.listExpenses?.(range, signal).catch((error: unknown) => {
+  let expensesAvailable = signal === undefined || !expensesUnavailable.has(signal)
+  const expenseRequest = !expensesAvailable ? Promise.resolve([]) : api.listExpenses?.(range, signal).catch((error: unknown) => {
     if (error instanceof EzactoApiError && error.status === 404) return []
     if (error instanceof EzactoApiError && error.status === 403 && isModuleDisabled(error)) {
       expensesAvailable = false
+      if (signal !== undefined) expensesUnavailable.add(signal)
       return []
     }
     throw error
@@ -1056,6 +1165,21 @@ export const startTimer = async (
     : api.createTimeEntry(input, signal)
 }
 
+const collectPlanned = async <Row>(
+  load: (cursor?: string) => Promise<CursorPage<Row>>,
+  signal?: AbortSignal,
+): Promise<Row[]> => {
+  const rows: Row[] = []
+  let cursor: string | undefined
+  do {
+    signal?.throwIfAborted()
+    const page = await load(cursor)
+    rows.push(...page.data)
+    cursor = page.page.next_cursor ?? undefined
+  } while (cursor !== undefined)
+  return rows
+}
+
 const withSignal = (signal?: AbortSignal): { signal?: AbortSignal } =>
   signal === undefined ? {} : { signal }
 
@@ -1080,6 +1204,41 @@ const clientInvoiceSending = (
 })
 
 export const createShellApi = (client: EzactoClient): ShellApi => ({
+  githubPublication: {
+    getGithubPublications: args => client.getGithubPublications(args),
+    getGithubReaderStatus: args => client.getGithubReaderStatus(args),
+    previewGithubPublication: args => client.previewGithubPublication(args),
+    setGithubPublicationPolicy: args => client.setGithubPublicationPolicy(args),
+    consentGithubPublication: args => client.consentGithubPublication(args),
+    actGithubPublication: args => client.actGithubPublication(args),
+  },
+  githubReader: {
+    getGithubReaderStatus: (args) => client.getGithubReaderStatus(args),
+    beginGithubAppSetup: (args) => client.beginGithubAppSetup(args),
+    listGithubReaderInstallations: (args) => client.listGithubReaderInstallations(args),
+    listGithubReaderRepositories: (args) => client.listGithubReaderRepositories(args),
+    mapGithubRepository: (args) => client.mapGithubRepository(args),
+    disconnectGithubReader: (args) => client.disconnectGithubReader(args),
+    reconcileGithubReader: (args) => client.reconcileGithubReader(args),
+    catalog: async (signal) => {
+      const [projects, tasks, assignments] = await Promise.all([
+        collectPlanned(cursor => client.listProjects({ query: { is_active: true, per_page: 200, ...(cursor ? { cursor } : {}) }, ...withSignal(signal) }), signal),
+        collectPlanned(cursor => client.listTasks({ query: { is_active: true, per_page: 200, ...(cursor ? { cursor } : {}) }, ...withSignal(signal) }), signal),
+        collectPlanned(cursor => client.listTaskAssignments({ query: { is_active: true, per_page: 200, ...(cursor ? { cursor } : {}) }, ...withSignal(signal) }), signal),
+      ])
+      return {
+        projects: projects.map(row => ({ id: row.id, name: String(row.name ?? `Project ${row.id}`) })),
+        tasks: tasks.map(row => ({ id: row.id, name: String(row.name ?? `Task ${row.id}`) })),
+        assignments: assignments.map(row => ({ project_id: Number(row.project_id), task_id: Number(row.task_id) })),
+      }
+    },
+  },
+  getDeelStaging: (args) => client.getDeelStaging(args),
+  previewDeelStaging: (args) => client.previewDeelStaging(args),
+  stageDeelHours: (args) => client.stageDeelHours(args),
+  getDeelStageStatus: (args) => client.getDeelStageStatus(args),
+  refreshDeelPaymentStatus: (args) => client.refreshDeelPaymentStatus(args),
+  csvImports: client,
   getPaymentRunReport: async (from,to,signal) => (await client.getPaymentRunReport({query:{from,to},...withSignal(signal)})).data,
   previewPaymentRun: async (body,signal) => (await client.previewPaymentRun({body,...withSignal(signal)})).data,
   approvePaymentRun: async (id,body,signal) => (await client.approvePaymentRun({id,body,...withSignal(signal)})).data,
@@ -1087,8 +1246,26 @@ export const createShellApi = (client: EzactoClient): ShellApi => ({
   reconcilePaymentRunItem: async (id,itemId,signal) => (await client.reconcilePaymentRunItem({id,itemId,...withSignal(signal)})).data,
   configureStaffPaymentProvider: (body, signal) =>
     client.configureStaffPaymentProvider({ body, ...withSignal(signal) }),
+  acceptContractorReview: async (body, signal) => (await client.acceptContractorReview({ body, ...withSignal(signal) })).data,
+  getContractorAcceptances: async (month, signal) => (await client.getContractorAcceptances({ query: { month }, ...withSignal(signal) })).data,
+  getContractorReview: async (month, signal) => (await client.getContractorReview({ query: { month }, ...withSignal(signal) })).data,
   getPaymentActuals: async (month, signal) => (await client.getPaymentActuals({ query: { month }, ...withSignal(signal) })).data,
   confirmPaymentActuals: (body, signal) => client.confirmPaymentActuals({ body, ...withSignal(signal) }),
+  getStaffInvoiceReport: async (month, signal) => (await client.getStaffInvoiceReport({ query: { month }, ...withSignal(signal) })).data,
+  saveStaffInvoice: async (command, signal) => (await client.saveStaffInvoice({ body: command, ...withSignal(signal) })).data,
+  uploadStaffInvoiceDocument: async (invoiceId, month, id, file, signal) => {
+    const body = new FormData(); body.set('file', file);
+    return (await client.uploadStaffInvoiceDocument({ invoiceId, 'Idempotency-Key': id, query: { month }, body, ...withSignal(signal) })).data;
+  },
+  getMyStaffInvoices: (month, signal) => client.getMyStaffInvoices({ query: { month }, ...withSignal(signal) }),
+  getAdvanceCreditReport: async (from, to, signal) => (await client.getAdvanceCreditReport({ query: { from, to }, ...withSignal(signal) })).data,
+  applyAdvanceCredit: async (command, signal) => { await client.applyAdvanceCredit({ body: command, ...withSignal(signal) }) },
+  reverseAdvanceCredit: async (command, signal) => { await client.reverseAdvanceCredit({ body: command, ...withSignal(signal) }) },
+  returnAdvanceCredit: async (command, signal) => { await client.returnAdvanceCredit({ body: command, ...withSignal(signal) }) },
+  getPaymentAllocationReport: async (month, signal) => (await client.getPaymentAllocationReport({ query: { month }, ...withSignal(signal) })).data,
+  previewPaymentAllocation: async (body, signal) => (await client.previewPaymentAllocation({ body, ...withSignal(signal) })).data,
+  allocatePayment: (body, signal) => client.allocatePayment({ body, ...withSignal(signal) }),
+  reversePaymentAllocation: (body, signal) => client.reversePaymentAllocation({ body, ...withSignal(signal) }),
   getStaffPaymentReport: async (month, signal) =>
     (await client.getStaffPaymentReport({ query: { month }, ...withSignal(signal) })).data,
   recordStaffPaymentEvent: (body, signal) =>
@@ -1127,6 +1304,73 @@ export const createShellApi = (client: EzactoClient): ShellApi => ({
         ...withSignal(signal),
       })
     ).data
+  },
+  getFirstRunStatus: async (userId, signal, includeCompletedSetup = false) => {
+    const owner = (await client.getTeamPerson({ id: userId, ...withSignal(signal) })).data
+    if (!owner.is_owner) return null
+    const entries = await client.listTimeEntries({
+      query: { user_id: userId, per_page: 1 },
+      ...withSignal(signal),
+    })
+    if (entries.data.length > 0 && !includeCompletedSetup)
+      return {
+        hasTimeEntry: true,
+        hasClient: false,
+        hasProject: false,
+        hasTask: false,
+        hasProjectTask: false,
+        hasOwnAssignment: false,
+        projectId: null,
+      }
+    const [clients, projects, tasks, options] = await Promise.all([
+      client.listClients({ query: { is_active: true, per_page: 1 }, ...withSignal(signal) }),
+      client.listProjects({ query: { is_active: true, per_page: 1 }, ...withSignal(signal) }),
+      collect(
+        (cursor) =>
+          client.listTasks({
+            query: { is_active: true, per_page: 200, ...(cursor ? { cursor } : {}) },
+            ...withSignal(signal),
+          }),
+        signal,
+      ),
+      client.listTimeEntryOptions(withSignal(signal)),
+    ])
+    // Prefer an already usable project. Otherwise guide the owner through the
+    // first active project, keeping the task and person checks on that project.
+    const projectId = options.data[0]?.project_id ?? projects.data[0]?.id ?? null
+    const [taskAssignments, ownAssignments] =
+      projectId === null
+        ? [[], null]
+        : await Promise.all([
+            collect(
+              (cursor) =>
+                client.listTaskAssignments({
+                  query: {
+                    project_id: projectId,
+                    is_active: true,
+                    per_page: 200,
+                    ...(cursor ? { cursor } : {}),
+                  },
+                  ...withSignal(signal),
+                }),
+              signal,
+            ),
+            client.listUserAssignments({
+              query: { project_id: projectId, user_id: userId, is_active: true, per_page: 1 },
+              ...withSignal(signal),
+            }),
+          ])
+    return {
+      hasTimeEntry: entries.data.length > 0,
+      hasClient: clients.data.length > 0,
+      hasProject: projects.data.length > 0,
+      hasTask: tasks.length > 0,
+      hasProjectTask: taskAssignments.some((assignment) =>
+        tasks.some((task) => task.id === assignment['task_id']),
+      ),
+      hasOwnAssignment: (ownAssignments?.data.length ?? 0) > 0,
+      projectId,
+    }
   },
   listProjects: (cursor, signal) =>
     client.listProjects({
@@ -1194,6 +1438,11 @@ export const createShellApi = (client: EzactoClient): ShellApi => ({
       },
       ...withSignal(signal),
     }),
+  getClientRateCard: async (id, signal) => (await client.getClientRateCard({id, ...withSignal(signal)})).data,
+  createClientRateCard: async (id, name, signal) => (await client.createClientRateCard({id, body: {name}, ...withSignal(signal)})).data,
+  createClientRateCardVersion: async (id, input, signal) => (await client.createClientRateCardVersion({id, body: input, ...withSignal(signal)})).data,
+  getClientEffectiveRateCard: async (id, taskId, date, signal) => (await client.getClientEffectiveRateCard({id, query: {task_id: taskId, spent_date: date}, ...withSignal(signal)})).data,
+  listRateCardTasks: (cursor, signal) => client.listTasks({query: {per_page: 200, is_active: true, ...(cursor === undefined ? {} : {cursor})}, ...withSignal(signal)}),
   getDirectoryClient: async (id, signal) =>
     (await client.getClient({ id, ...withSignal(signal) })).data,
   createDirectoryClient: async (input, signal) =>
@@ -1279,6 +1528,12 @@ export const createShellApi = (client: EzactoClient): ShellApi => ({
     (await client.getTimeEntryNoteSettings(withSignal(signal))).data,
   updateTimeEntryNoteSettings: async (patch, signal) =>
     (await client.updateTimeEntryNoteSettings({ body: patch, ...withSignal(signal) })).data,
+  updateTimeEntryRoundingSettings: async (patch, signal) =>
+    (await client.updateTimeEntryRoundingSettings({ body: patch, ...withSignal(signal) })).data,
+  previewTimeRoundingRecalculation: async (scope, signal) =>
+    (await client.previewTimeRoundingRecalculation({ query: scope, ...withSignal(signal) })).data,
+  applyTimeRoundingRecalculation: async (request, signal) =>
+    (await client.applyTimeRoundingRecalculation({ body: request, ...withSignal(signal) })).data,
   getInvoiceReminders: async (signal) =>
     (await client.getOrganizationInvoiceReminders(withSignal(signal))).data.reminder_policy,
   updateInvoiceReminders: async (policy, signal) => {
@@ -1290,10 +1545,29 @@ export const createShellApi = (client: EzactoClient): ShellApi => ({
     ).data
     return { policy: saved.reminder_policy, applied: saved.applied_to_open_invoices ?? 0 }
   },
+  getProfileNotifications: async (signal) =>
+    (await client.getProfileNotifications(withSignal(signal))).data,
+  updateProfileNotifications: async (input, signal) =>
+    (await client.updateProfileNotifications({ body: input, ...withSignal(signal) })).data,
+  getNotificationSettings: async (signal) =>
+    (await client.getNotificationSettings(withSignal(signal))).data,
+  updateNotificationSettings: async (patch, signal) =>
+    (await client.setNotificationSettings({ body: patch, ...withSignal(signal) })).data,
+  getTimesheetAutoApproval: async (signal) =>
+    (await client.getTimesheetAutoApproval(withSignal(signal))).data,
+  updateTimesheetAutoApproval: async (patch, signal) =>
+    (await client.setTimesheetAutoApproval({ body: patch, ...withSignal(signal) })).data,
+  webhooks: client,
+  listEmailSuppressions: (cursor, signal) => client.listEmailSuppressions({query:{per_page:50,...(cursor===undefined?{}:{cursor})},...withSignal(signal)}),
+  liftEmailSuppression: async (id, input, signal) => (await client.liftEmailSuppression({id,body:input,...withSignal(signal)})).data,
   getEmailHealth: async (signal) =>
     (await client.getEmailHealth(withSignal(signal))).data,
+  checkOffsiteBackupDestination: async (signal) => (await client.checkOffsiteBackupDestination(withSignal(signal))).data,
   getBackupStatus: async (signal) =>
     (await client.getBackupStatus(withSignal(signal))).data,
+  createBackupDownloadLink: async (input, signal) =>
+    (await client.createBackupDownloadLink({ body: input, ...withSignal(signal) })).data,
+  listBackupRuns: (query, signal) => client.listBackupRuns({ query, ...withSignal(signal) }),
   // Issue 593 shipped the Accounting settings section reading these four and
   // nothing supplying them, so the screen reported "not configured" on every
   // deployment and the connect button never appeared. The suite did not catch
@@ -1311,6 +1585,8 @@ export const createShellApi = (client: EzactoClient): ShellApi => ({
       })
     ).data,
   disconnectQuickBooks: (signal) => client.disconnectQuickBooks(withSignal(signal)),
+  getQuickBooksReconciliation: async (signal) =>
+    (await client.getQuickBooksReconciliation(withSignal(signal))).data,
   // Bound here because this is the only place the real client reaches the
   // client screen. Issue 593 shipped a settings section reading four methods
   // nothing supplied, and the suite stayed green because the tests inject
@@ -1363,6 +1639,17 @@ export const createShellApi = (client: EzactoClient): ShellApi => ({
     (await client.confirmTwoFactorEnrolment({ body: { code }, ...withSignal(signal) })).data,
   disableTwoFactor: async (code, signal) =>
     (await client.disableTwoFactor({ body: { code }, ...withSignal(signal) })).data,
+  enableTwoFactorEmail: async (signal) =>
+    (await client.enableTwoFactorEmail(withSignal(signal))).data,
+  disableTwoFactorEmail: async (signal) =>
+    (await client.disableTwoFactorEmail(withSignal(signal))).data,
+  sendTwoFactorEmailCode: async (input, signal) =>
+    (
+      await client.sendTwoFactorEmailCode({
+        body: input.challenge === undefined ? {} : { challenge: input.challenge },
+        ...withSignal(signal),
+      })
+    ).data,
   listApiTokens: async (signal) => (await client.listApiTokens(withSignal(signal))).data,
   createApiToken: async (input, signal) =>
     (await client.createApiToken({ body: input, ...withSignal(signal) })).data,
@@ -1408,6 +1695,36 @@ export const createShellApi = (client: EzactoClient): ShellApi => ({
   }),
   removeWisePayoutDestination: async (userId, signal) => {
     await client.removeWisePayoutDestination({ userId, ...withSignal(signal) })
+  },
+  listPayoutProviders: async (args) => {
+    return client.listPayoutProviders({ ...withSignal(args?.signal) })
+  },
+  listPayoutAccounts: async ({ id, signal }) => {
+    return client.listPayoutAccounts({ id, ...withSignal(signal) })
+  },
+  linkPayoutAccount: async ({ id, body, signal }) => {
+    await client.linkPayoutAccount({ id, body, ...withSignal(signal) })
+  },
+  detachPayoutAccount: async ({ id, signal }) => {
+    await client.detachPayoutAccount({ id, ...withSignal(signal) })
+  },
+  setPayoutProviderEnabled: async ({ provider, body, signal }) => {
+    await client.setPayoutProviderEnabled({ provider, body, ...withSignal(signal) })
+  },
+  getPayoutPreference: async ({ id, signal }) => client.getPayoutPreference({ id, ...withSignal(signal) }),
+  setPayoutPreference: async ({ id, provider, expectedVersion, signal }) => {
+    await client.setPayoutPreference({
+      id,
+      body: { provider, expected_version: expectedVersion },
+      ...withSignal(signal),
+    })
+  },
+  listPayoutPreferences: async (args) => client.listPayoutPreferences({ ...withSignal(args?.signal) }),
+  getUserEmailFactor: async (userId, signal) =>
+    (await client.getUserTwoFactorEmail({ id: userId, ...withSignal(signal) })).data
+      .email_enabled,
+  disableUserEmailFactor: async (userId, signal) => {
+    await client.disableUserTwoFactorEmail({ id: userId, ...withSignal(signal) })
   },
   createTeamPerson: async (input, signal) =>
     (await client.createUser({ body: input, ...withSignal(signal) })).data,
@@ -1557,6 +1874,10 @@ export const createShellApi = (client: EzactoClient): ShellApi => ({
     (await client.listSavedReports({ query: filter, ...withSignal(signal) })).data,
   createSavedReport: async (input, signal) =>
     (await client.createSavedReport({ body: input, ...withSignal(signal) })).data,
+  createReportView: async (input, signal) =>
+    (await client.createReportView({ body: input, ...withSignal(signal) })).data,
+  getSavedReport: async (reportId, signal) =>
+    (await client.getSavedReport({ reportId, ...withSignal(signal) })).data,
   previewReportDefinition: async (input, signal) =>
     (await client.previewReportDefinition({ body: input, ...withSignal(signal) })).data,
   runSavedReport: async (reportId, signal) =>
@@ -1576,6 +1897,15 @@ export const createShellApi = (client: EzactoClient): ShellApi => ({
   },
   shareSavedReport: async (reportId, userId, signal) => {
     await client.shareSavedReport({ reportId, userId, ...withSignal(signal) })
+  },
+  unshareSavedReport: async (reportId, userId, signal) => {
+    await client.unshareSavedReport({ reportId, userId, ...withSignal(signal) })
+  },
+  shareSavedReportWithRole: async (reportId, profile, signal) => {
+    await client.shareSavedReportWithRole({ reportId, profile, ...withSignal(signal) })
+  },
+  unshareSavedReportWithRole: async (reportId, profile, signal) => {
+    await client.unshareSavedReportWithRole({ reportId, profile, ...withSignal(signal) })
   },
   executeDetailedTimeAction: async (input, signal) =>
     (await client.executeDetailedTimeAction({ body: input, ...withSignal(signal) })).data,
@@ -1599,6 +1929,8 @@ export const createShellApi = (client: EzactoClient): ShellApi => ({
     (await client.getProject({ id, ...withSignal(signal) })).data,
   createDirectoryProject: async (input, signal) =>
     (await client.createProject({ body: input, ...withSignal(signal) })).data,
+  recoverProjectMissingRates: async (id, fingerprint, signal) =>
+    (await client.recoverProjectMissingRates({ id, body: fingerprint === undefined ? {} : { fingerprint }, ...withSignal(signal) })).data,
   updateDirectoryProject: async (id, input, signal) =>
     (await client.updateProject({ id, body: input, ...withSignal(signal) })).data,
   archiveDirectoryProject: async (id, signal) => {
@@ -1684,6 +2016,8 @@ export const createShellApi = (client: EzactoClient): ShellApi => ({
   archiveProjectUserAssignment: async (id, signal) => {
     await client.deleteUserAssignment({ id, ...withSignal(signal) })
   },
+  getActivityLogEnabled: async (signal) =>
+    (await client.getActivityLogStatus(withSignal(signal))).data.enabled,
   getActivityLog: async (range, signal) =>
     (
       await client.listActivityLog({
@@ -1775,19 +2109,123 @@ export const createShellApi = (client: EzactoClient): ShellApi => ({
         ...withSignal(signal),
       })
     ).data,
+  getCapacity: (range, signal) =>
+    client.getCapacity({ query: range, ...withSignal(signal) }),
+  resourceCalendar: {
+    feeds: {
+      list: async signal => (await client.listCalendarFeeds(withSignal(signal))).data,
+      create: async (body,signal) => (await client.createCalendarFeed({body,...withSignal(signal)})).data,
+      rotate: async (id,signal) => (await client.rotateCalendarFeed({id,...withSignal(signal)})).data,
+      revoke: (id,signal) => client.revokeCalendarFeed({id,...withSignal(signal)}),
+      download: async (id,signal) => new Blob([await client.downloadCalendarFeed({id,...withSignal(signal)})],{type:'text/calendar'}),
+    },
+    context: signal => client.getResourceCalendarContext(withSignal(signal)),
+    read: (query, cursor, signal) => client.getResourceCalendar({
+      query: { ...query, per_page: 50, ...(cursor === undefined ? {} : { cursor }) }, ...withSignal(signal),
+    }),
+    allocations: (query, cursor, signal) => client.getResourceCalendarAllocations({
+      query: { ...query, per_page: 100, ...(cursor === undefined ? {} : { cursor }) }, ...withSignal(signal),
+    }),
+    projects: (cursor, signal) => client.listResourceCalendarProjects({
+      query: { per_page: 100, ...(cursor === undefined ? {} : { cursor }) }, ...withSignal(signal),
+    }),
+  },
+  placeholders: {
+    list: (range, signal) => collectPlanned(cursor => client.listPlaceholderAllocations({
+      query: { ...range, state: 'open', per_page: 200, ...(cursor === undefined ? {} : { cursor }) }, ...withSignal(signal),
+    }), signal),
+    listDefinitions: signal => collectPlanned(cursor => client.listPlanningPlaceholders({
+      query: { is_active: true, per_page: 200, ...(cursor === undefined ? {} : { cursor }) }, ...withSignal(signal),
+    }), signal),
+    createDefinition: (body, signal) => client.createPlanningPlaceholder({ body, ...withSignal(signal) }),
+    updateDefinition: (id, body, signal) => client.updatePlanningPlaceholder({ id, body, ...withSignal(signal) }),
+    archiveDefinition: (id, version, signal) => client.deletePlanningPlaceholder({ id, body: { version }, ...withSignal(signal) }),
+    create: (body, signal) => client.createPlaceholderAllocation({ body, ...withSignal(signal) }),
+    update: (id, body, signal) => client.updatePlaceholderAllocation({ id, body, ...withSignal(signal) }),
+    archive: (id, version, signal) => client.deletePlaceholderAllocation({ id, body: { version }, ...withSignal(signal) }),
+    assign: async (id, body, signal) => (await client.assignPlaceholderAllocation({ id, body, ...withSignal(signal) })).data,
+  },
+  planning: {
+    holidays: {
+      list: (range, signal) => collectPlanned(cursor => client.listOrganizationHolidays({ query: { ...range, per_page: 200, ...(cursor === undefined ? {} : { cursor }) }, ...withSignal(signal) }), signal),
+      create: (body, signal) => client.createOrganizationHoliday({ body, ...withSignal(signal) }),
+      update: (id, body, signal) => client.updateOrganizationHoliday({ id, body, ...withSignal(signal) }),
+      remove: (id, version, signal) => client.deleteOrganizationHoliday({ id, body: { version }, ...withSignal(signal) }),
+    },
+    listProjects: async (signal) =>
+      (
+        await collect(
+          (cursor) =>
+            client.listProjects({
+              query: {
+                per_page: 200,
+                is_active: true,
+                ...(cursor === undefined ? {} : { cursor }),
+              },
+              ...withSignal(signal),
+            }),
+          signal,
+        )
+      ).map((project) => ({
+        id: project.id,
+        name: typeof project.name === 'string' ? project.name : `Project ${project.id}`,
+      })),
+    listAllocations: (range, signal) =>
+      collectPlanned(
+        (cursor) =>
+          client.listAllocations({
+            query: { ...range, per_page: 200, ...(cursor === undefined ? {} : { cursor }) },
+            ...withSignal(signal),
+          }),
+        signal,
+      ),
+    createAllocation: (input, signal) =>
+      client.createAllocation({ body: input, ...withSignal(signal) }),
+    getAllocation: async (id, signal) => (await client.getAllocation({ id, ...withSignal(signal) })).data,
+    updateAllocation: (id, patch, signal, idempotencyKey) =>
+      client.updateAllocation({ id, body: patch, ...withSignal(signal), ...(idempotencyKey === undefined ? {} : { headers: { 'Idempotency-Key': idempotencyKey } }) }),
+    deleteAllocation: (id, version, signal) => client.deleteAllocation({ id, body: { version }, ...withSignal(signal) }),
+    listTimeOff: (range, signal) =>
+      collectPlanned(
+        (cursor) =>
+          client.listTimeOff({
+            query: { ...range, per_page: 200, ...(cursor === undefined ? {} : { cursor }) },
+            ...withSignal(signal),
+          }),
+        signal,
+      ),
+    createTimeOff: (input, signal) => client.createTimeOff({ body: input, ...withSignal(signal) }),
+    updateTimeOff: (id, patch, signal) =>
+      client.updateTimeOff({ id, body: patch, ...withSignal(signal) }),
+    deleteTimeOff: (id, version, signal) => client.deleteTimeOff({ id, body: { version }, ...withSignal(signal) }),
+  },
+  scheduledRuns: {
+    consumeReviewLink: async (id,token,signal) => {await client.consumeScheduledReviewLink({id,body:{token},...withSignal(signal)})},
+    read: (id, signal) => client.getScheduledRun({ id, ...withSignal(signal) }),
+    confirm: (id, signal, acknowledgeReportWarnings) => client.confirmScheduledRun({ id, body: {acknowledge_report_warnings:acknowledgeReportWarnings===true}, ...withSignal(signal) }),
+    retry: (id, signal) => client.retryScheduledRun({ id, ...withSignal(signal) }),
+    cancel: (id, signal) => client.cancelScheduledRun({ id, ...withSignal(signal) }),
+  },
+  getMyPayments: (month, signal) =>
+    client.getMyPayments({ query: { month }, ...withSignal(signal) }),
   listActivityLog: (query, signal) =>
     client.listActivityLog({ query: { per_page: 200, ...query }, ...withSignal(signal) }),
-  listEmailLog: (query, signal) =>
-    client.listEmailLog({ query: { per_page: 200, ...query }, ...withSignal(signal) }),
+  listRollableActivityYears: async (signal) =>
+    (await client.listRollableActivityYears({ ...withSignal(signal) })).data.rollable,
+  rollActivityYear: async (year, signal) => {
+    await client.rollActivityYear({ body: { year }, ...withSignal(signal) })
+  },
+  listEmailLog: (query, signal) => client.listEmailLog({ query, ...withSignal(signal) }),
   listOutboxDeliveries: (query, signal) =>
-    client.listOutboxDeliveries({ query: { per_page: 200, ...query }, ...withSignal(signal) }),
+    client.listOutboxDeliveries({ query, ...withSignal(signal) }),
   retryOutboxDelivery: (subscriberId, eventId, signal) =>
     client.retryOutboxDelivery({ subscriberId, eventId, ...withSignal(signal) }),
-  listInvoices: (cursor, signal, perPage, states) =>
+  listInvoices: (cursor, signal, perPage, states, sort) =>
     client.listInvoices({
       query: {
         per_page: perPage ?? 50,
         ...(cursor === undefined ? {} : { cursor }),
+        ...(sort === undefined ? {} : { sort }),
         // Empty means "every state", which is the absent parameter, not a
         // request for nothing.
         ...(states === undefined || states.length === 0
@@ -1842,13 +2280,31 @@ export const createShellApi = (client: EzactoClient): ShellApi => ({
         ...withSignal(signal),
       })
     ).data,
+  bankFeedStatus: async (signal) => (await client.getBankFeedStatus(withSignal(signal))).data,
+  bankFeedSync: async (signal) => (await client.syncBankFeeds({ body: {}, ...withSignal(signal) })).data,
+  bankDepositAccounts: async (signal) => (await client.listBankDepositAccounts(withSignal(signal))).data,
+  bankDepositList: (state, page, signal) => client.listBankDeposits({ query: { ...(state ? { state } : {}), page, per_page: 50 }, ...withSignal(signal) }),
+  bankDepositInvoices: async (id, signal) => (await client.listBankDepositInvoices({ id, ...withSignal(signal) })).data,
+  bankDepositAssign: async (id, key, body, signal) => (await client.assignBankDeposit({ id, 'Idempotency-Key': key, body, ...withSignal(signal) })).data,
+  bankDepositReject: async (id, key, body, signal) => (await client.rejectBankDeposit({ id, 'Idempotency-Key': key, body, ...withSignal(signal) })).data,
+  bankDepositReopen: async (id, key, body, signal) => (await client.reopenBankDeposit({ id, 'Idempotency-Key': key, body, ...withSignal(signal) })).data,
+  bankDepositConfirm: async (id, key, body, signal) => (await client.confirmBankDeposit({ id, 'Idempotency-Key': key, body, ...withSignal(signal) })).data,
+  bankDepositVerify: async (id, key, body, signal) => (await client.verifyBankDepositSource({ id, 'Idempotency-Key': key, body, ...withSignal(signal) })).data,
   listEstimates: (cursor, signal) =>
     client.listEstimates({
       query: { per_page: 50, ...(cursor === undefined ? {} : { cursor }) },
       ...withSignal(signal),
     }),
+  listEstimateTemplates: (signal) => client.listEstimateTemplates({...withSignal(signal)}),
+  createEstimateTemplate: async (body, signal) => (await client.createEstimateTemplate({body,...withSignal(signal)})).data,
+  updateEstimateTemplate: async (id, body, signal) => (await client.updateEstimateTemplate({id,body,...withSignal(signal)})).data,
+  createEstimateDraft: async (body, key, signal) => (await client.createEstimateDraft({body,'Idempotency-Key':key,...withSignal(signal)})).data,
   getEstimate: async (id, signal) =>
     (await client.getEstimate({ id, ...withSignal(signal) })).data,
+  listEstimateMessages: async (id, signal) =>
+    (await client.listEstimateMessages({ id, ...withSignal(signal) })).data,
+  setEstimateExpiry: async (id, body, signal) =>
+    (await client.setEstimateExpiry({ id, body, ...withSignal(signal) })).data,
   convertEstimate: async (id, body, idempotencyKey, signal) =>
     (
       await client.convertEstimate({
@@ -2023,6 +2479,8 @@ export const createShellApi = (client: EzactoClient): ShellApi => ({
         ...withSignal(signal),
       })
     ).data,
+  releaseInvoiceLineTime: async (id, body, signal) => (await client.releaseInvoiceLineTime({ id, body, ...withSignal(signal) })).data,
+  getInvoiceHoursReconciliation: async (id, signal) => (await client.getInvoiceHoursReconciliation({ id, ...withSignal(signal) })).data,
   getInvoice: async (id, signal) =>
     (await client.getInvoice({ id, ...withSignal(signal) })).data,
   // Exact and unique, so the page holds that invoice or nothing.
@@ -2043,6 +2501,10 @@ export const createShellApi = (client: EzactoClient): ShellApi => ({
     (await client.listInvoiceMessages({ id, ...withSignal(signal) })).data,
   listInvoicePayments: async (id, signal) =>
     (await client.listInvoicePayments({ id, ...withSignal(signal) })).data,
+  listInvoiceProviderAlerts: async (id, signal) =>
+    (await client.listInvoiceProviderAlerts({ id, ...withSignal(signal) })).data,
+  reviewInvoiceProviderAlert: async (id, alertId, signal) =>
+    (await client.reviewInvoiceProviderAlert({ id, alertId, body: {}, ...withSignal(signal) })).data,
   listInvoiceAttachments: async (id, signal) =>
     (await client.listInvoiceAttachments({ invoiceId: id, ...withSignal(signal) })).data,
   getInvoiceQuickBooks: async (id, signal) =>
@@ -2190,6 +2652,20 @@ export const createShellApi = (client: EzactoClient): ShellApi => ({
         ...withSignal(signal),
       })
     ).data,
+  calendarConnections: {
+    manualCleanup: async (signal) => (await client.listCalendarManualCleanup({ provider: 'microsoft', ...withSignal(signal) })).data,
+    confirmManualCleanup: (item, signal) => client.confirmCalendarManualCleanup({ provider: 'microsoft', body: { obligation_id: item.id, generation: item.generation, credential_revision: item.credential_revision, confirm_removed: true }, ...withSignal(signal) }),
+    list: (signal) => client.listCalendarConnections(withSignal(signal)),
+    authorize: async (provider, generation, signal) =>
+      (await client.beginCalendarAuthorization({ provider, body: { generation }, ...withSignal(signal) })).data.authorization_url,
+    refresh: (provider, signal) => client.refreshCalendarConnection({ provider, body: {}, ...withSignal(signal) }),
+    disconnect: (provider, generation, signal) => client.disconnectCalendarConnection({ provider, body: { generation }, ...withSignal(signal) }),
+  },
+  listCalendarProposals: (query, signal) => client.listCalendarProposals({ query, ...withSignal(signal) }),
+  acceptCalendarProposal: async (id, body, signal) =>
+    (await client.acceptCalendarProposal({ id, body, ...withSignal(signal) })).data,
+  discardCalendarProposal: async (id, signal) =>
+    (await client.discardCalendarProposal({ id, ...withSignal(signal) })).data,
   getTimeEntrySettings: async (signal) =>
     (await client.getTimeEntrySettings(withSignal(signal))).data,
   listTimeEntries: async (query, signal) => {
@@ -2422,6 +2898,27 @@ export const createSameOriginShellApi = (): ShellApi => ({
     const disposition = response.headers.get('content-disposition') ?? ''
     const named = /filename="([^"]+)"/u.exec(disposition)?.[1]
     return { blob: await response.blob(), filename: named ?? `hours-${String(id)}.${format}` }
+  },
+  // The activity log as a file, for the same reason: the name and whether the
+  // file was cut at its row cap are in headers the client drops.
+  exportActivityLog: async (query, signal) => {
+    const search = new URLSearchParams()
+    for (const [key, value] of Object.entries(query)) search.set(key, String(value))
+    const response = await shellFetch(
+      `/api/v1/activity-log/export${search.size === 0 ? '' : `?${search.toString()}`}`,
+      { credentials: 'same-origin', ...(signal === undefined ? {} : { signal }) },
+    )
+    if (!response.ok) {
+      const body: unknown = await response.json().catch(() => null)
+      throw new EzactoApiError(response.status, body, response.headers.get('x-request-id'))
+    }
+    const disposition = response.headers.get('content-disposition') ?? ''
+    const named = /filename="([^"]+)"/u.exec(disposition)?.[1]
+    return {
+      blob: await response.blob(),
+      filename: named ?? 'activity-log.csv',
+      truncated: response.headers.get('x-export-truncated') === 'true',
+    }
   },
   // The detailed time report as a file, for the same reason: the name the
   // server gives it -- period and client -- is in a header the client drops.

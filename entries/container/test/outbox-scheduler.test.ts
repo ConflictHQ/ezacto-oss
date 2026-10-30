@@ -100,4 +100,24 @@ describe('work before the drain (issue 801)', () => {
     expect(drain).toHaveBeenCalledTimes(1)
     await scheduler.close()
   })
+  it('[unit] reports a tick that stopped on a claim failure, once, without the detail', async () => {
+    const reportError = vi.fn()
+    const summary = {
+      examined: 1,
+      delivered: 0,
+      retried: 0,
+      failed: 0,
+      contention: 0,
+      interrupted: new Error('D1_ERROR: Network connection lost.'),
+    }
+    const scheduler = new ContainerOutboxScheduler(
+      { drain: vi.fn(async () => summary) } as unknown as OutboxService,
+      { intervalMs: 100, reportError },
+    )
+    await expect(scheduler.drain()).resolves.toBe(summary)
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    expect(reportError).toHaveBeenCalledTimes(1)
+    expect(reportError).toHaveBeenCalledWith('claim_interrupted')
+    await scheduler.close()
+  })
 })

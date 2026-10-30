@@ -1,3 +1,4 @@
+import { setRequestBusy } from '../request-feedback.js'
 import {
   paymentActualsTotal,
   type ConfirmPaymentActuals,
@@ -38,6 +39,7 @@ export const createActualsController = (
     ledger = null
     list.replaceChildren()
     status.textContent = ''
+    setRequestBusy(status, false)
     refresh.disabled = true
   }
   refresh.addEventListener('click', () => {
@@ -50,6 +52,7 @@ export const createActualsController = (
     if (!current || !active || active.aborted || !api.getPaymentActuals) return
     list.replaceChildren()
     status.textContent = 'Loading captured hours and rates…'
+    setRequestBusy(status, true)
     refresh.disabled = true
     try {
       const actuals = await api.getPaymentActuals(current.month, active)
@@ -249,6 +252,8 @@ export const createActualsController = (
           }
           command = approved
           saving = true
+          status.textContent = 'Confirming earnings…'
+          setRequestBusy(status, true)
           confirm.disabled = true
           select.disabled = true
           refresh.disabled = true
@@ -290,6 +295,7 @@ export const createActualsController = (
             })
             .finally(() => {
               saving = false
+              if (!active.aborted && own === generation) setRequestBusy(status, false)
               if (!active.aborted) {
                 select.disabled = false
                 refresh.disabled = false
@@ -307,7 +313,10 @@ export const createActualsController = (
     } catch (error) {
       if (!active.aborted && own === generation) status.textContent = errorText(error)
     } finally {
-      if (!active.aborted && own === generation) refresh.disabled = false
+      if (!active.aborted && own === generation) {
+        setRequestBusy(status, false)
+        refresh.disabled = false
+      }
     }
   }
   return {

@@ -1,4 +1,4 @@
-import type { Attachment, GeneralResource, Whoami } from '@conflict-hq/ezacto-client'
+import type { Attachment, GeneralResource, Whoami, ProjectMissingRates } from '@conflict-hq/ezacto-client'
 import { canManageCommercialTerms } from '@ezacto/core'
 
 export type ProjectDirectoryPage<T = GeneralResource> = {
@@ -27,6 +27,7 @@ export interface ProjectBudgetSummary {
 }
 
 export interface ProjectDirectoryApi {
+  recoverProjectMissingRates?(id: number, fingerprint: string | undefined, signal?: AbortSignal): Promise<ProjectMissingRates>
   // Optional: a build without the rollup shows the list without money columns
   // rather than one call per project, which is what kept them off it.
   listProjectBudgetSummaries?(

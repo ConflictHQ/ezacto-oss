@@ -95,6 +95,7 @@ const shellApi = (): ShellApi => ({
     time_format: 'decimal' as const,
     clock: '12h' as const,
     week_start_day: 'monday' as const,
+    time_rounding: { mode: 'exact' as const, minutes: 15 as const },
   })),
   listTimeEntries: vi.fn(async () => []),
   createTimeEntry: vi.fn(),

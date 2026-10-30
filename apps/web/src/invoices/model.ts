@@ -1,8 +1,12 @@
+import type { TimeEntrySettings } from '../components/time-entry-editor.js'
 import { EzactoApiError } from '@conflict-hq/ezacto-client'
 import type {
   Attachment,
   GeneralResource,
   Invoice,
+  InvoiceHoursReconciliationEnvelope,
+  InvoiceLineTimeReleaseInput,
+  InvoiceLineTimeReleaseEnvelope,
   InvoiceEditInput,
   InvoiceEmailDeliveryInput,
   InvoiceGenerationInput,
@@ -26,8 +30,9 @@ import type {
   VersionedRowDeleteInput,
   Whoami,
 } from '@conflict-hq/ezacto-client'
-import { inspectEmailTemplateVariables } from '@ezacto/core'
+import { inspectEmailTemplateVariables, invoicePeriodLabel, sendWeekday } from '@ezacto/core'
 import { parseDurationSeconds } from '../shell/model.js'
+import type { InvoiceProviderAlertApi } from './provider-alerts-model.js'
 
 /**
  * The sentence to show for a failed invoice request: the first field the API
@@ -120,7 +125,8 @@ export const invoiceStatesFor = (
 
 export type InvoiceHoursReportFormat = 'pdf' | 'csv' | 'xlsx'
 
-export interface InvoicePaymentApi {
+export interface InvoicePaymentApi extends InvoiceProviderAlertApi {
+  getInvoiceHoursReconciliation?(id: number, signal?: AbortSignal): Promise<InvoiceHoursReview>
   getInvoice(id: number, signal?: AbortSignal): Promise<Invoice>
   /**
    * The one invoice with exactly this number, or null: how a page addressed by
@@ -133,6 +139,13 @@ export interface InvoicePaymentApi {
    * nicety: the page reads without one, and says "Client #id" instead.
    */
   getDirectoryClient?(id: number, signal?: AbortSignal): Promise<GeneralResource>
+  /**
+   * The projects the lines are linked to and the organization's rounding rule,
+   * so the page can say which rounding applies to them (issue 949). Both are
+   * niceties: the page reads without them.
+   */
+  getDirectoryProject?(id: number, signal?: AbortSignal): Promise<GeneralResource>
+  getTimeEntrySettings?(signal?: AbortSignal): Promise<Pick<TimeEntrySettings, 'time_rounding'>>
   /** The hours this invoice billed, as a file (the work journal, issue 647). */
   downloadInvoiceHoursReport?(
     id: number,
@@ -357,8 +370,13 @@ export const invoiceAttachmentChanges = (
  * the same commands under the same keys -- and the two reads are for the
  * read-only client and the projects a line can be linked to.
  */
+export interface InvoiceTimeReleaseApi {
+  releaseInvoiceLineTime?(id:number,command:InvoiceLineTimeReleaseInput,signal?:AbortSignal):Promise<InvoiceLineTimeReleaseEnvelope['data']>
+}
+export type InvoiceHoursReview = InvoiceHoursReconciliationEnvelope['data']
+
 export interface InvoiceEditorApi
-  extends Pick<
+  extends InvoiceTimeReleaseApi, Pick<
     InvoicePaymentApi,
     | 'getInvoice'
     | 'findInvoiceByNumber'
@@ -367,6 +385,7 @@ export interface InvoiceEditorApi
     | 'updateInvoiceLine'
     | 'deleteInvoiceLine'
   > {
+  getInvoiceHoursReconciliation?(id: number, signal?: AbortSignal): Promise<InvoiceHoursReview>
   /** The client the invoice is for, by name. A name is a nicety; the page edits without one. */
   getDirectoryClient?(id: number, signal?: AbortSignal): Promise<GeneralResource>
   /**
@@ -461,6 +480,7 @@ export const invoiceIdentityCanWrite = (identity: Readonly<Whoami>): boolean =>
  * list to its route table.
  */
 const reservedInvoiceSegments: ReadonlySet<string> = new Set([
+  'bank-deposits',
   'by-id',
   'configure',
   'estimates',
@@ -621,6 +641,7 @@ export const invoiceMessageLabel = (
   if (event === undefined || event === null || event === '')
     return 'Invoice activity'
   if (event === 'send') return 'marked sent'
+  if (event === 'view') return 'viewed online'
   return event.replaceAll('_', ' ').replaceAll('-', ' ')
 }
 
@@ -798,6 +819,40 @@ export const invoiceLineUnitPriceForForm = (cents: number): string => {
 
 export const invoiceLineQuantityForForm = (line: Readonly<InvoiceLine>): string =>
   line.quantity.toString()
+
+/** What the lines of one end-client come to; `clientId` is null for lines that name none. */
+export interface InvoiceEndClientSubtotal {
+  readonly clientId: number | null
+  readonly cents: number
+}
+
+/**
+ * An invoice for a parent client bills the work of the clients beneath it, and
+ * a line says whose by its project (issue 33). The lines gathered by that
+ * client, in the order each first appears, with the whole cents they come to --
+ * or null where they name fewer than two, which is every invoice for a single
+ * client. A line whose project is unknown, or that has none, is counted under
+ * `null` and listed last, so the subtotals always add up to the lines.
+ */
+export const invoiceEndClientSubtotals = (
+  lines: readonly Pick<InvoiceLine, 'project_id' | 'amount_cents'>[],
+  clientOfProject: ReadonlyMap<number, number>,
+): InvoiceEndClientSubtotal[] | null => {
+  const totals = new Map<number | null, number>()
+  for (const line of lines) {
+    const clientId = line.project_id === null ? null : (clientOfProject.get(line.project_id) ?? null)
+    const cents = (totals.get(clientId) ?? 0) + line.amount_cents
+    if (!Number.isSafeInteger(cents)) return null
+    totals.set(clientId, cents)
+  }
+  const named = [...totals].filter(([clientId]) => clientId !== null)
+  if (named.length < 2) return null
+  const other = totals.get(null)
+  return [
+    ...named.map(([clientId, cents]) => ({ clientId, cents })),
+    ...(other === undefined ? [] : [{ clientId: null, cents: other }]),
+  ]
+}
 
 const ratePercentPattern = /^(0|[1-9][0-9]*)(?:\.([0-9]{1,4}))?$/u
 
@@ -1418,12 +1473,19 @@ export const invoiceLineItemsText = (invoice: Readonly<Invoice>): string => {
 /**
  * The variables an invoice's record of a send fills in the browser, with the
  * same values the server fills the email with. The pay link is the server's to
- * mint, so the record reads it empty; everything else matches.
+ * mint, so the record reads it empty; everything else matches. The weekday is
+ * read in the organization's zone, which the Send dialog's defaults carry;
+ * without it the token is left as typed rather than guessed from this
+ * browser's own zone.
  */
 export const interpolateInvoiceTemplate = (
   template: string,
   invoice: Readonly<Invoice>,
-  names: Readonly<{ clientName: string; companyName: string }> = { clientName: '', companyName: '' },
+  names: Readonly<{ clientName: string; companyName: string; timeZone?: string }> = {
+    clientName: '',
+    companyName: '',
+  },
+  sentAt: string = new Date().toISOString(),
 ): string => {
   // Worked out only for the tokens the text names: the lines and the dates
   // cost something to render, and a token whose value cannot be worked out is
@@ -1456,6 +1518,8 @@ export const interpolateInvoiceTemplate = (
     invoice_payment_url: () => '',
     client_name: () => names.clientName,
     company_name: () => names.companyName,
+    invoice_period: () => invoicePeriodLabel(invoice.period_start, invoice.period_end),
+    send_weekday: () => (names.timeZone === undefined ? null : sendWeekday(sentAt, names.timeZone)),
   }
   return template.replace(/%([A-Za-z][A-Za-z0-9_]*)%/gu, (token, name: string) =>
     Object.hasOwn(variables, name) ? (variables[name]!() ?? token) : token,

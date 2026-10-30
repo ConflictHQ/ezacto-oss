@@ -1,10 +1,16 @@
 import { and, eq, getTableColumns, isNotNull, isNull, or, sql } from 'drizzle-orm'
-import type { ApprovalStatus } from '@ezacto/core'
+import {
+  assertTimeRoundingPolicy,
+  effectiveTimeRounding,
+  roundTimeSeconds,
+  type ApprovalStatus,
+  type EffectiveTimeRounding,
+} from '@ezacto/core'
 import type { BetterSQLite3Database } from 'drizzle-orm/better-sqlite3'
 import type { DrizzleD1Database } from 'drizzle-orm/d1'
 import type * as schema from './schema.js'
 import { resolveEntryRates } from './rate-resolver.js'
-import { organizations, taskAssignments, timeEntries } from './schema.js'
+import { organizations, projects, taskAssignments, timeEntries } from './schema.js'
 import {
   assertStoredTimeEntryNoteRequirement,
   currentTimeEntryNotePolicyAllows,
@@ -19,17 +25,6 @@ import {
 
 type Database = BetterSQLite3Database<typeof schema> | DrizzleD1Database<typeof schema>
 
-export const timeRoundingPolicies = [
-  'none',
-  'nearest_6',
-  'nearest_15',
-  'nearest_30',
-  'up_6',
-  'up_15',
-  'up_30',
-] as const
-
-export type TimeRounding = (typeof timeRoundingPolicies)[number]
 export type TimeEntry = typeof timeEntries.$inferSelect
 
 export interface TimeBoundary {
@@ -74,19 +69,14 @@ export interface CreateStoppedTimeEntryInput extends TimeEntryBaseInput {
   updatedAt: string
 }
 
-type OrganizationTimeSettings = Pick<
-  typeof organizations.$inferSelect,
-  'timeEntryMode' | 'timeRounding'
->
-
-const increments: Record<Exclude<TimeRounding, 'none'>, number> = {
-  nearest_6: 6 * 60,
-  nearest_15: 15 * 60,
-  nearest_30: 30 * 60,
-  up_6: 6 * 60,
-  up_15: 15 * 60,
-  up_30: 30 * 60,
+export class ZeroDurationTimeEntryError extends Error {
+  constructor() {
+    super('completed time entries must have a positive rounded duration')
+    this.name = 'ZeroDurationTimeEntryError'
+  }
 }
+
+type OrganizationTimeSettings = Pick<typeof organizations.$inferSelect, 'timeEntryMode'>
 
 const assertNonnegativeSeconds = (seconds: number, field = 'seconds'): void => {
   if (!Number.isSafeInteger(seconds) || seconds < 0) {
@@ -94,21 +84,37 @@ const assertNonnegativeSeconds = (seconds: number, field = 'seconds'): void => {
   }
 }
 
-export const roundSeconds = (seconds: number, policy: TimeRounding): number => {
-  assertNonnegativeSeconds(seconds)
-  if (policy === 'none') return seconds
-  if (!Object.hasOwn(increments, policy))
-    throw new RangeError(`unsupported time rounding: ${policy}`)
-  const increment = increments[policy]
-  const quotient = Math.floor(seconds / increment)
-  const remainder = seconds % increment
-  const roundedQuotient = policy.startsWith('nearest_')
-    ? quotient + (remainder >= increment / 2 ? 1 : 0)
-    : quotient + (remainder === 0 ? 0 : 1)
-  const rounded = roundedQuotient * increment
-  if (!Number.isSafeInteger(rounded))
-    throw new RangeError('rounded seconds exceed safe integer range')
-  return rounded
+/**
+ * The rule an entry on this project is saved under (issue 949): the project's
+ * own where it has one, else the organization's. Read when the entry is
+ * written, so the rounded figure stored with it is the rule of that moment.
+ * A project that does not exist reads as the organization's rule; the write
+ * that asked is refused by its own foreign key.
+ */
+export const timeRoundingForProject = async (
+  database: Database,
+  projectId: number,
+): Promise<EffectiveTimeRounding> => {
+  const [row] = await database
+    .select()
+    .from(organizations)
+    .leftJoin(projects, eq(projects.id, projectId))
+    .where(eq(organizations.id, 1))
+    .limit(1)
+  if (!row) throw new Error('organization must exist before writing time entries')
+  const project = row.projects
+  return effectiveTimeRounding(
+    assertTimeRoundingPolicy({
+      mode: row.organizations.timeRoundingMode,
+      minutes: row.organizations.timeRoundingMinutes,
+    }),
+    project === null || project.timeRoundingMode === null
+      ? null
+      : assertTimeRoundingPolicy({
+          mode: project.timeRoundingMode,
+          minutes: project.timeRoundingMinutes,
+        }),
+  )
 }
 
 const datePattern = /^(\d{4})-(\d{2})-(\d{2})$/
@@ -394,6 +400,11 @@ export const createStoppedTimeEntry = async (
       true,
     )
   }
+  const roundedSeconds = roundTimeSeconds(
+    seconds,
+    await timeRoundingForProject(database, input.projectId),
+  )
+  if (seconds >= 0 && roundedSeconds === 0) throw new ZeroDurationTimeEntryError()
   const base = await valuesFromBase(database, input, input.spentDate)
   await assertStoredTimeEntryNoteRequirement(
     database,
@@ -415,7 +426,7 @@ export const createStoppedTimeEntry = async (
         ${input.spentDate},
         ${seconds},
         ${seconds},
-        ${roundSeconds(seconds, settings.timeRounding)},
+        ${roundedSeconds},
         ${null},
         ${startedTime},
         ${endedTime},
@@ -468,8 +479,8 @@ export const stopTimeEntry = async (
     entityId: timeEntryId,
     policyLocked,
   }
-  const settings = await getTimeSettings(database)
   const entry = await getTimeEntry(database, timeEntryId)
+  const rounding = await timeRoundingForProject(database, entry.projectId)
   let seconds: number
   let endedTime = entry.endedTime
   if (entry.timerStartedAt !== null) {
@@ -490,6 +501,7 @@ export const stopTimeEntry = async (
   } else {
     throw new Error(`time entry ${timeEntryId} is not running`)
   }
+  const roundedSeconds = roundTimeSeconds(seconds, rounding)
   const expectedCheckpoint = sql`
     ${timeEntries.userId} = ${entry.userId}
     AND
@@ -510,7 +522,7 @@ export const stopTimeEntry = async (
         .set({
           seconds,
           secondsWithoutTimer: seconds,
-          roundedSeconds: roundSeconds(seconds, settings.timeRounding),
+          roundedSeconds,
           timerStartedAt: null,
           endedTime,
           updatedAt: boundary.instant,

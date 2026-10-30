@@ -1,5 +1,9 @@
+import { cp, mkdtemp, rm } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+import { runTimesheetAutoApproval } from '../../db/src/timesheet-auto-approval.js'
 import { Miniflare } from 'miniflare'
-import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest'
 import { createD1Database } from '../../db/src/adapters.js'
 import { migrateD1 } from '../../db/src/migrate.js'
 import { createTimesheetApprovalRepository } from '../../db/src/timesheet-approvals.js'
@@ -63,146 +67,247 @@ interface Harness {
   close(): Promise<void>
 }
 
-const createHarness = async (): Promise<Harness> => {
-  const miniflare = new Miniflare({
-    modules: true,
-    script: 'export default { fetch() { return new Response("ok") } }',
-    d1Databases: ['DB'],
-  })
-  const d1 = await miniflare.getD1Database('DB')
-  await migrateD1(d1)
-  const run = async (sql: string, ...params: unknown[]) => {
-    await d1.prepare(sql).bind(...params).run()
-  }
-  await run(
-    `INSERT INTO organizations (name, modules, created_at, updated_at)
-     VALUES ('Approval API org', '{"approval":true}', ?, ?)`,
-    now,
-    now,
-  )
-  await run(
-    `INSERT INTO users
-      (id, first_name, last_name, profile, manager_grants, created_at, updated_at)
-     VALUES
-      (10, 'Ada', 'Admin', 'administrator', '[]', ?, ?),
-      (1, 'Maya', 'Member', 'member', '[]', ?, ?),
-      (2, 'Priya', 'Manager', 'project_manager', '[]', ?, ?),
-      (3, 'Pia', 'People', 'people_admin', '[]', ?, ?)`,
-    now,
-    now,
-    now,
-    now,
-    now,
-    now,
-    now,
-    now,
-  )
-  await run(
-    `INSERT INTO clients (id, name, currency, created_at, updated_at)
-     VALUES (1, 'Approval client', 'USD', ?, ?)`,
-    now,
-    now,
-  )
-  await run(
-    `INSERT INTO projects (id, client_id, name, created_at, updated_at)
-     VALUES (1, 1, 'Approval project', ?, ?)`,
-    now,
-    now,
-  )
-  await run(
-    `INSERT INTO tasks (id, name, created_at, updated_at)
-     VALUES (1, 'Approval task', ?, ?)`,
-    now,
-    now,
-  )
-  await run(
-    `INSERT INTO user_assignments (id, project_id, user_id, created_at, updated_at)
-     VALUES (1, 1, 1, ?, ?)`,
-    now,
-    now,
-  )
-  await run(
-    `INSERT INTO task_assignments
-      (id, project_id, task_id, billable, created_at, updated_at)
-     VALUES (1, 1, 1, 1, ?, ?)`,
-    now,
-    now,
-  )
-  await run(
-    `INSERT INTO expense_categories (id, name, created_at, updated_at)
-     VALUES (1, 'Travel', ?, ?)`,
-    now,
-    now,
-  )
-  await run(
-    `INSERT INTO teammate_assignments (manager_id, user_id, created_at, updated_at)
-     VALUES (2, 1, ?, ?)`,
-    now,
-    now,
-  )
-  await run(
-    `INSERT INTO time_entries (
-      id, user_id, project_id, task_id, user_assignment_id, task_assignment_id,
-      spent_date, seconds, seconds_without_timer, rounded_seconds, notes,
-      billable, created_at, updated_at
-    ) VALUES (1, 1, 1, 1, 1, 1, '2026-08-25', 3600, 3600, 3600,
-      'Initial work', 1, ?, ?)`,
-    now,
-    now,
-  )
-  await run(
-    `INSERT INTO expenses (
-      id, user_id, project_id, expense_category_id, spent_date, notes,
-      total_cost_cents, billable, created_at, updated_at
-    ) VALUES (1, 1, 1, 1, '2026-08-25', 'Train receipt', -125, 1, ?, ?)`,
-    now,
-    now,
-  )
+const d1Worker = {
+  modules: true,
+  script: 'export default { fetch() { return new Response("ok") } }',
+  d1Databases: ['DB'],
+} as const
 
-  const database = createD1Database(d1)
-  const tracked = new DrizzleTrackedResourceRepository(database, {
-    isLocked: async () => false,
-  })
-  const approvals = createTimesheetApprovalRepository(database)
-  const app = createApiApp({
-    authentication,
-    installApi: (api) => {
-      installTrackedResourceRoutes(api, {
-        repository: tracked,
-        cursorSigningKey,
-        clock: { now: () => ({ instant: now, date: '2026-08-31', time: '12:00' }) },
-        isExpensesModuleEnabled: async () => true,
-      })
-      installTimesheetApprovalRoutes(api, {
-        service: approvals,
-        cursorSigningKey,
-        clock: () => now,
-      })
-    },
-  })
-  return {
-    d1,
-    request: (path, init = {}, principal = { userId: 1, profile: 'member' }) => {
-      const headers = new Headers(init.headers)
-      headers.set('origin', 'https://api.test')
-      headers.set('x-test-user', String(principal.userId))
-      headers.set('x-test-profile', principal.profile)
-      return Promise.resolve(
-        app.request(`https://api.test/api/v1${path}`, { ...init, headers }),
-      )
-    },
-    close: () => miniflare.dispose(),
+// Migrate a pristine real D1 database once; each case gets its own physical
+// copy and fresh worker so no mutable fixture state is shared.
+let migratedD1Snapshot: Promise<string> | undefined
+const migratedD1Directory = (): Promise<string> => {
+  migratedD1Snapshot ??= (async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'ezacto-approvals-d1-ledger-'))
+    let miniflare: Miniflare | undefined
+    try {
+      miniflare = new Miniflare({ ...d1Worker, d1Persist: directory })
+      await migrateD1(await miniflare.getD1Database('DB'))
+      // Dispose checkpoints the WAL before copying the physical database.
+      await miniflare.dispose()
+      miniflare = undefined
+      return directory
+    } catch (error) {
+      try {
+        try {
+          await miniflare?.dispose()
+        } finally {
+          await rm(directory, { recursive: true, force: true })
+        }
+      } catch (cleanupError) {
+        throw new AggregateError([error, cleanupError], 'D1 snapshot setup and cleanup failed', { cause: cleanupError })
+      }
+      throw error
+    }
+  })()
+  return migratedD1Snapshot
+}
+
+afterAll(async () => {
+  const directory = await migratedD1Snapshot?.catch(() => undefined)
+  if (directory) await rm(directory, { recursive: true, force: true })
+})
+
+const createHarness = async (): Promise<Harness> => {
+  const directory = await mkdtemp(join(tmpdir(), 'ezacto-approvals-d1-case-'))
+  let miniflare: Miniflare | undefined
+  const close = async () => {
+    try {
+      await miniflare?.dispose()
+    } finally {
+      await rm(directory, { recursive: true, force: true })
+    }
+  }
+  try {
+    await cp(await migratedD1Directory(), directory, { recursive: true })
+    miniflare = new Miniflare({ ...d1Worker, d1Persist: directory })
+    const d1 = await miniflare.getD1Database('DB')
+    const run = async (sql: string, ...params: unknown[]) => {
+      await d1.prepare(sql).bind(...params).run()
+    }
+    await run(
+      `INSERT INTO organizations (name, modules, created_at, updated_at)
+       VALUES ('Approval API org', '{"approval":true}', ?, ?)`,
+      now,
+      now,
+    )
+    await run(
+      `INSERT INTO users
+        (id, first_name, last_name, profile, manager_grants, created_at, updated_at)
+       VALUES
+        (10, 'Ada', 'Admin', 'administrator', '[]', ?, ?),
+        (1, 'Maya', 'Member', 'member', '[]', ?, ?),
+        (2, 'Priya', 'Manager', 'project_manager', '[]', ?, ?),
+        (3, 'Pia', 'People', 'people_admin', '[]', ?, ?)`,
+      now,
+      now,
+      now,
+      now,
+      now,
+      now,
+      now,
+      now,
+    )
+    await run(
+      `INSERT INTO clients (id, name, currency, created_at, updated_at)
+       VALUES (1, 'Approval client', 'USD', ?, ?)`,
+      now,
+      now,
+    )
+    await run(
+      `INSERT INTO projects (id, client_id, name, created_at, updated_at)
+       VALUES (1, 1, 'Approval project', ?, ?)`,
+      now,
+      now,
+    )
+    await run(
+      `INSERT INTO tasks (id, name, created_at, updated_at)
+       VALUES (1, 'Approval task', ?, ?)`,
+      now,
+      now,
+    )
+    await run(
+      `INSERT INTO user_assignments (id, project_id, user_id, created_at, updated_at)
+       VALUES (1, 1, 1, ?, ?)`,
+      now,
+      now,
+    )
+    await run(
+      `INSERT INTO task_assignments
+        (id, project_id, task_id, billable, created_at, updated_at)
+       VALUES (1, 1, 1, 1, ?, ?)`,
+      now,
+      now,
+    )
+    await run(
+      `INSERT INTO expense_categories (id, name, created_at, updated_at)
+       VALUES (1, 'Travel', ?, ?)`,
+      now,
+      now,
+    )
+    await run(
+      `INSERT INTO teammate_assignments (manager_id, user_id, created_at, updated_at)
+       VALUES (2, 1, ?, ?)`,
+      now,
+      now,
+    )
+    await run(
+      `INSERT INTO time_entries (
+        id, user_id, project_id, task_id, user_assignment_id, task_assignment_id,
+        spent_date, seconds, seconds_without_timer, rounded_seconds, notes,
+        billable, created_at, updated_at
+      ) VALUES (1, 1, 1, 1, 1, 1, '2026-08-25', 3600, 3600, 3600,
+        'Initial work', 1, ?, ?)`,
+      now,
+      now,
+    )
+    await run(
+      `INSERT INTO expenses (
+        id, user_id, project_id, expense_category_id, spent_date, notes,
+        total_cost_cents, billable, created_at, updated_at
+      ) VALUES (1, 1, 1, 1, '2026-08-25', 'Train receipt', -125, 1, ?, ?)`,
+      now,
+      now,
+    )
+
+    const database = createD1Database(d1)
+    const tracked = new DrizzleTrackedResourceRepository(database, {
+      isLocked: async () => false,
+    })
+    const approvals = createTimesheetApprovalRepository(database)
+    const app = createApiApp({
+      authentication,
+      installApi: (api) => {
+        installTrackedResourceRoutes(api, {
+          repository: tracked,
+          cursorSigningKey,
+          clock: { now: () => ({ instant: now, date: '2026-08-31', time: '12:00' }) },
+          isExpensesModuleEnabled: async () => true,
+        })
+        installTimesheetApprovalRoutes(api, {
+          service: approvals,
+          cursorSigningKey,
+          clock: () => now,
+        })
+      },
+    })
+    return {
+      d1,
+      request: (path, init = {}, principal = { userId: 1, profile: 'member' }) => {
+        const headers = new Headers(init.headers)
+        headers.set('origin', 'https://api.test')
+        headers.set('x-test-user', String(principal.userId))
+        headers.set('x-test-profile', principal.profile)
+        return Promise.resolve(
+          app.request(`https://api.test/api/v1${path}`, { ...init, headers }),
+        )
+      },
+      close,
+    }
+  } catch (error) {
+    try {
+      await close()
+    } catch (cleanupError) {
+      throw new AggregateError([error, cleanupError], 'D1 case setup and cleanup failed', { cause: cleanupError })
+    }
+    throw error
   }
 }
 
 describe('timesheet approval API', () => {
   let harness: Harness
+  let activeHarness: Harness | undefined
 
+  beforeAll(async () => { await migratedD1Directory() }, 60_000)
   beforeEach(async () => {
+    activeHarness = undefined
     harness = await createHarness()
+    activeHarness = harness
   })
 
-  afterEach(async () => harness.close())
+  afterEach(async () => {
+    const active = activeHarness
+    activeHarness = undefined
+    await active?.close()
+  })
+
+  it('[api #1009] exposes the system receipt and removes an automatic approval from the pending queue', async () => {
+    await harness.d1
+      .prepare(
+        "UPDATE organizations SET auto_approval_enabled=1,auto_approval_window_days=1,auto_approval_effective_from='2026-08-01T00:00:00.000Z',auto_approval_actor_user_id=10 WHERE id=1",
+      )
+      .run()
+    const response = await harness.request('/timesheet-submissions', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ period_start: '2026-08-24', period_end: '2026-08-30' }),
+    })
+    expect(response.status).toBe(201)
+    const submitted = (await response.json()) as { data: { id: number } }
+    const run = await runTimesheetAutoApproval(
+      createD1Database(harness.d1),
+      '2026-09-01T12:00:00.000Z',
+    )
+    expect(run.approved).toEqual([submitted.data.id])
+    const detail = await harness.request(`/timesheet-submissions/${submitted.data.id}`)
+    expect(await detail.json()).toMatchObject({
+      data: {
+        status: 'approved',
+        reviewed_by_user_id: null,
+        automatic_approval: {
+          actor: 'system',
+          authorized_by_user_id: 10,
+          window_days: 1,
+          approved_at: '2026-09-01T12:00:00.000Z',
+        },
+      },
+    })
+    const pending = await harness.request('/timesheet-submissions/pending', undefined, {
+      userId: 10,
+      profile: 'administrator',
+    })
+    expect(await pending.json()).toMatchObject({ data: [] })
+  })
 
   it('[api][e2e:approve-lock] rejects visibly, resubmits, approves, and locks over real D1', async () => {
     const submit = await harness.request('/timesheet-submissions', {

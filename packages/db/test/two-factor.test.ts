@@ -279,6 +279,135 @@ for (const [runtime, factory] of factories) {
       expect(await harness.store.challengeHolder('d'.repeat(64), created)).toBeNull()
     })
 
+    describe('mailed code on a challenge (issue 770)', () => {
+      const tokenHash = 'e'.repeat(64)
+      const codeHash = '1'.repeat(64)
+      const wrongHash = '2'.repeat(64)
+      const input = (token: string, hash?: string, user = 1, createdAt = created) => ({
+        userId: user,
+        tokenHash: token,
+        expiresAt: later,
+        createdAt,
+        cleanupBefore: '2026-09-08T09:00:00.000Z',
+        ...(hash === undefined ? {} : { codeHash: hash }),
+      })
+
+      it('[security] stores the hash and counts the guesses on the challenge', async () => {
+        await harness.store.createChallenge(input(tokenHash, codeHash))
+        const [row] = await harness.rows<{ code_hash: string; code_attempts: number }>(
+          `SELECT code_hash, code_attempts FROM two_factor_challenges WHERE token_hash = ?`,
+          tokenHash,
+        )
+        expect(row).toEqual({ code_hash: codeHash, code_attempts: 0 })
+        expect(
+          await harness.store.redeemChallengeCode(tokenHash, wrongHash, created, 5),
+        ).toEqual({ status: 'rejected' })
+        const [after] = await harness.rows<{ code_attempts: number }>(
+          `SELECT code_attempts FROM two_factor_challenges WHERE token_hash = ?`,
+          tokenHash,
+        )
+        expect(after?.code_attempts).toBe(1)
+      })
+
+      it('[security] exhausts after the ceiling and refuses the right code then', async () => {
+        await harness.store.createChallenge(input(tokenHash, codeHash))
+        for (let guess = 1; guess < 5; guess += 1) {
+          expect(
+            await harness.store.redeemChallengeCode(tokenHash, wrongHash, created, 5),
+          ).toEqual({ status: 'rejected' })
+        }
+        // The fifth wrong guess spends the last of the budget.
+        expect(
+          await harness.store.redeemChallengeCode(tokenHash, wrongHash, created, 5),
+        ).toEqual({ status: 'exhausted' })
+        expect(
+          await harness.store.redeemChallengeCode(tokenHash, codeHash, created, 5),
+        ).toEqual({ status: 'exhausted' })
+        // The challenge was never consumed, so it did not become a session.
+        expect(await harness.store.consumeChallenge(tokenHash, created)).toEqual({ userId: 1 })
+      })
+
+      it('[security] redeems exactly once, and a replay is refused', async () => {
+        await harness.store.createChallenge(input(tokenHash, codeHash))
+        expect(
+          await harness.store.redeemChallengeCode(tokenHash, codeHash, created, 5),
+        ).toEqual({ status: 'accepted', userId: 1 })
+        expect(
+          await harness.store.redeemChallengeCode(tokenHash, codeHash, created, 5),
+        ).toEqual({ status: 'unknown' })
+        expect(await harness.store.consumeChallenge(tokenHash, created)).toBeNull()
+      })
+
+      it('[security] a success does not count as a guess', async () => {
+        await harness.store.createChallenge(input(tokenHash, codeHash))
+        await harness.store.redeemChallengeCode(tokenHash, codeHash, created, 5)
+        const [row] = await harness.rows<{ code_attempts: number }>(
+          `SELECT code_attempts FROM two_factor_challenges WHERE token_hash = ?`,
+          tokenHash,
+        )
+        expect(row?.code_attempts).toBe(0)
+      })
+
+      it('[security] refuses the right code once the challenge has expired', async () => {
+        await harness.store.createChallenge(input(tokenHash, codeHash))
+        expect(
+          await harness.store.redeemChallengeCode(
+            tokenHash,
+            codeHash,
+            '2026-09-08T10:05:00.001Z',
+            5,
+          ),
+        ).toEqual({ status: 'unknown' })
+      })
+
+      it('[security] a challenge with no code never redeems by code', async () => {
+        await harness.store.createChallenge(input(tokenHash))
+        expect(
+          await harness.store.redeemChallengeCode(tokenHash, codeHash, created, 5),
+        ).toEqual({ status: 'unknown' })
+        expect(
+          await harness.store.redeemChallengeCode('f'.repeat(64), codeHash, created, 5),
+        ).toEqual({ status: 'unknown' })
+      })
+
+      it('[security] a resend invalidates the earlier challenge and its code', async () => {
+        const first = 'a'.repeat(64)
+        const second = 'b'.repeat(64)
+        await harness.store.createChallenge(input(first, codeHash))
+        const resentAt = '2026-09-08T10:01:00.000Z'
+        expect(
+          await harness.store.createChallenge(input(second, wrongHash, 1, resentAt)),
+        ).toBe('created')
+        expect(
+          await harness.store.redeemChallengeCode(first, codeHash, resentAt, 5),
+        ).toEqual({ status: 'unknown' })
+        expect(
+          await harness.store.redeemChallengeCode(second, wrongHash, resentAt, 5),
+        ).toEqual({ status: 'accepted', userId: 1 })
+      })
+
+      it("[security] a resend leaves another user's challenge alone", async () => {
+        const mine = 'a'.repeat(64)
+        const theirs = 'b'.repeat(64)
+        await harness.store.createChallenge(input(mine, codeHash, 1))
+        await harness.store.createChallenge(input(theirs, wrongHash, 2))
+        expect(
+          await harness.store.redeemChallengeCode(mine, codeHash, created, 5),
+        ).toEqual({ status: 'accepted', userId: 1 })
+      })
+
+      it('[architecture] refuses to rewrite the code hash in place', async () => {
+        await harness.store.createChallenge(input(tokenHash, codeHash))
+        await expect(
+          harness.execute(
+            `UPDATE two_factor_challenges SET code_hash = ? WHERE token_hash = ?`,
+            wrongHash,
+            tokenHash,
+          ),
+        ).rejects.toThrow(/single use and immutable/)
+      })
+    })
+
     it('[e2e:first-run] a recovery code gets one person in exactly once', async () => {
       await harness.store.beginEnrolment({ userId: 1, secret, codes }, created)
       await harness.store.confirmEnrolment(1, 100, created)

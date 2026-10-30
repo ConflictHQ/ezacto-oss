@@ -1,0 +1,411 @@
+{
+  "source_revision_asserted": "9d20989d5fdebce7772a38af10edcd8cf31a8d25",
+  "health_revision_probed": "9d20989d5fdebce7772a38af10edcd8cf31a8d25",
+  "upstream": {
+    "repository": "https://github.com/kgajera/hrvst-cli",
+    "commit": "088414c97e182048fd901ba1252fdafbd0e97e65",
+    "file": "harvest-api-v2-postman-collection.json",
+    "sha256": "c92b474b437d7af652e03514cf3504cfe11e12bb38fac658b67b3e8be5613f48"
+  },
+  "upstream_license": "MIT",
+  "collection_unchanged": true,
+  "runner": "Own GET-only adapter reads original request definitions; substitutes fixture path variables/authorization variables, then rewrites exact https://api.harvestapp.com/v2 origin to owned loopback /harvest/v2 transport. No collection bytes modified. No Postman scripts executed; all scripts verified blank. Redirects denied.",
+  "native_fixture": "New pinned container, volume, fictional owner/client/project/task/entry/expense; short-lived native read-only token.",
+  "scopes": [
+    "clients:read",
+    "projects:read",
+    "team:read",
+    "time_entries:read",
+    "expenses:read"
+  ],
+  "response_assertions": "All selected responses status200; list counts1/pagination envelope; detail IDs1; assignment project1; time1.25hours; expense23.45USD.",
+  "selected_requests": 15,
+  "passed": 15,
+  "results": [
+    {
+      "request_path": [
+        "Clients",
+        "List all clients"
+      ],
+      "request_sha256": "e39ef0c11fbf58843e07efe38fb743267a77312e1a0b464782143e52b647b779",
+      "original_path": "/v2/clients",
+      "resolved_path": "/v2/clients",
+      "status": 200,
+      "response_keys": [
+        "clients",
+        "per_page",
+        "total_pages",
+        "total_entries",
+        "next_page",
+        "previous_page",
+        "page",
+        "links"
+      ],
+      "rows": 1
+    },
+    {
+      "request_path": [
+        "Clients",
+        "Retrieve a specific client"
+      ],
+      "request_sha256": "a78d0b8bb8076e6cb0e197e6c28ae43b26a1e4ff476770d6405aea47594143b8",
+      "original_path": "/v2/clients/:client_id",
+      "resolved_path": "/v2/clients/1",
+      "status": 200,
+      "response_keys": [
+        "id",
+        "name",
+        "is_active",
+        "address",
+        "currency",
+        "created_at",
+        "updated_at"
+      ]
+    },
+    {
+      "request_path": [
+        "Expenses",
+        "List all expenses"
+      ],
+      "request_sha256": "4fa9d98258eaafe7788d13e935397ac8bfa7071b103b78d6eea2b68403aac798",
+      "original_path": "/v2/expenses",
+      "resolved_path": "/v2/expenses",
+      "status": 200,
+      "response_keys": [
+        "expenses",
+        "per_page",
+        "total_pages",
+        "total_entries",
+        "next_page",
+        "previous_page",
+        "page",
+        "links"
+      ],
+      "rows": 1
+    },
+    {
+      "request_path": [
+        "Expenses",
+        "Retrieve a specific expense"
+      ],
+      "request_sha256": "c4fbd6c867d50392c76c5b8f907a25bd8b00890cc5967895911268edad9ba8c2",
+      "original_path": "/v2/expenses/:expense_id",
+      "resolved_path": "/v2/expenses/1",
+      "status": 200,
+      "response_keys": [
+        "id",
+        "notes",
+        "total_cost",
+        "units",
+        "is_closed",
+        "approval_status",
+        "is_locked",
+        "is_billed",
+        "locked_reason",
+        "spent_date",
+        "created_at",
+        "updated_at",
+        "billable",
+        "user",
+        "user_assignment",
+        "project",
+        "expense_category",
+        "client",
+        "invoice"
+      ]
+    },
+    {
+      "request_path": [
+        "Projects",
+        "List all projects"
+      ],
+      "request_sha256": "2a953e4a05c15e9b70c379ab759242739dd11eaa43d1e58c2341abbf59ad2600",
+      "original_path": "/v2/projects",
+      "resolved_path": "/v2/projects",
+      "status": 200,
+      "response_keys": [
+        "projects",
+        "per_page",
+        "total_pages",
+        "total_entries",
+        "next_page",
+        "previous_page",
+        "page",
+        "links"
+      ],
+      "rows": 1
+    },
+    {
+      "request_path": [
+        "Projects",
+        "Retrieve a specific project"
+      ],
+      "request_sha256": "42a76fb7e1ab0f060c3e0f54a88c3eae89341a600f43f3994911862d963b9d6c",
+      "original_path": "/v2/projects/:project_id",
+      "resolved_path": "/v2/projects/1",
+      "status": 200,
+      "response_keys": [
+        "id",
+        "name",
+        "code",
+        "is_active",
+        "is_billable",
+        "is_fixed_fee",
+        "bill_by",
+        "hourly_rate",
+        "budget",
+        "budget_by",
+        "budget_is_monthly",
+        "notify_when_over_budget",
+        "over_budget_notification_percentage",
+        "show_budget_to_all",
+        "created_at",
+        "updated_at",
+        "starts_on",
+        "ends_on",
+        "notes",
+        "cost_budget",
+        "cost_budget_include_expenses",
+        "fee",
+        "client"
+      ]
+    },
+    {
+      "request_path": [
+        "Tasks",
+        "List all tasks"
+      ],
+      "request_sha256": "fa305de9d41964b1d798a9fd233028c9c3f73ee56150960bc1492972425727c3",
+      "original_path": "/v2/tasks",
+      "resolved_path": "/v2/tasks",
+      "status": 200,
+      "response_keys": [
+        "tasks",
+        "per_page",
+        "total_pages",
+        "total_entries",
+        "next_page",
+        "previous_page",
+        "page",
+        "links"
+      ],
+      "rows": 1
+    },
+    {
+      "request_path": [
+        "Tasks",
+        "Retrieve a specific task"
+      ],
+      "request_sha256": "32eddbb6019bb1c94bed935c91352947a715ca0f2a04ebbab7a84be1068f48f3",
+      "original_path": "/v2/tasks/:task_id",
+      "resolved_path": "/v2/tasks/1",
+      "status": 200,
+      "response_keys": [
+        "id",
+        "name",
+        "billable_by_default",
+        "is_default",
+        "default_hourly_rate",
+        "is_active",
+        "created_at",
+        "updated_at"
+      ]
+    },
+    {
+      "request_path": [
+        "Time Entries",
+        "List all time entries"
+      ],
+      "request_sha256": "9abb4eb3ea78f7f3e9849c1fb3f2443d810a43eccce78d646c8b298ea6801975",
+      "original_path": "/v2/time_entries",
+      "resolved_path": "/v2/time_entries",
+      "status": 200,
+      "response_keys": [
+        "time_entries",
+        "per_page",
+        "total_pages",
+        "total_entries",
+        "next_page",
+        "previous_page",
+        "page",
+        "links"
+      ],
+      "rows": 1
+    },
+    {
+      "request_path": [
+        "Time Entries",
+        "Retrieve a specific time entry"
+      ],
+      "request_sha256": "5338e90d918b121a15bee8b7ae6fc30b430f7977d0b7ae715a028e5a788a33af",
+      "original_path": "/v2/time_entries/:time_entry_id",
+      "resolved_path": "/v2/time_entries/1",
+      "status": 200,
+      "response_keys": [
+        "id",
+        "spent_date",
+        "hours",
+        "hours_without_timer",
+        "rounded_hours",
+        "notes",
+        "is_locked",
+        "locked_reason",
+        "is_closed",
+        "approval_status",
+        "is_billed",
+        "timer_started_at",
+        "started_time",
+        "ended_time",
+        "is_running",
+        "billable",
+        "budgeted",
+        "billable_rate",
+        "cost_rate",
+        "created_at",
+        "updated_at",
+        "user",
+        "client",
+        "project",
+        "task",
+        "user_assignment",
+        "task_assignment",
+        "invoice",
+        "external_reference"
+      ]
+    },
+    {
+      "request_path": [
+        "Users",
+        "User Project Assignments",
+        "List active project assignments"
+      ],
+      "request_sha256": "e6b0007564a90549ecba8fab7703922e7892e26ba025b93221ad0bf0b4d08439",
+      "original_path": "/v2/users/:user_id/project_assignments",
+      "resolved_path": "/v2/users/1/project_assignments",
+      "status": 200,
+      "response_keys": [
+        "project_assignments",
+        "per_page",
+        "total_pages",
+        "total_entries",
+        "next_page",
+        "previous_page",
+        "page",
+        "links"
+      ],
+      "rows": 1
+    },
+    {
+      "request_path": [
+        "Users",
+        "User Project Assignments",
+        "List active project assignments for the currently authenticated user"
+      ],
+      "request_sha256": "aee3cfbef9fc674ed7a67bc34c81843d499918fe2e3b1d02bcdd6b71d2b152bf",
+      "original_path": "/v2/users/me/project_assignments",
+      "resolved_path": "/v2/users/me/project_assignments",
+      "status": 200,
+      "response_keys": [
+        "project_assignments",
+        "per_page",
+        "total_pages",
+        "total_entries",
+        "next_page",
+        "previous_page",
+        "page",
+        "links"
+      ],
+      "rows": 1
+    },
+    {
+      "request_path": [
+        "Users",
+        "Retrieve the currently authenticated user"
+      ],
+      "request_sha256": "1344efc5c9570bf0fb90239f7cfdc2317d19a4ed93ff48210929d4e6c0348d5e",
+      "original_path": "/v2/users/me",
+      "resolved_path": "/v2/users/me",
+      "status": 200,
+      "response_keys": [
+        "id",
+        "first_name",
+        "last_name",
+        "email",
+        "telephone",
+        "timezone",
+        "has_access_to_all_future_projects",
+        "is_contractor",
+        "is_active",
+        "weekly_capacity",
+        "default_hourly_rate",
+        "cost_rate",
+        "roles",
+        "access_roles",
+        "avatar_url",
+        "created_at",
+        "updated_at"
+      ]
+    },
+    {
+      "request_path": [
+        "Users",
+        "List all users"
+      ],
+      "request_sha256": "521fef7f9b626d31254a0e0b431a8a9dcbe3d181a8f2d1cfbd8f01661e6009fe",
+      "original_path": "/v2/users",
+      "resolved_path": "/v2/users",
+      "status": 200,
+      "response_keys": [
+        "users",
+        "per_page",
+        "total_pages",
+        "total_entries",
+        "next_page",
+        "previous_page",
+        "page",
+        "links"
+      ],
+      "rows": 1
+    },
+    {
+      "request_path": [
+        "Users",
+        "Retrieve a specific user"
+      ],
+      "request_sha256": "89cc23c416b6f30a810a11861511508d33755dad547e6f8f7b128eef94c4784a",
+      "original_path": "/v2/users/:user_id",
+      "resolved_path": "/v2/users/1",
+      "status": 200,
+      "response_keys": [
+        "id",
+        "first_name",
+        "last_name",
+        "email",
+        "telephone",
+        "timezone",
+        "has_access_to_all_future_projects",
+        "is_contractor",
+        "is_active",
+        "weekly_capacity",
+        "default_hourly_rate",
+        "cost_rate",
+        "roles",
+        "access_roles",
+        "avatar_url",
+        "created_at",
+        "updated_at"
+      ]
+    }
+  ],
+  "limitations": [
+    "Selected supported GET subset only; no writes/invoices or full Postman runtime executed",
+    "No Harvest request, credential, production or customer data used"
+  ],
+  "runner_sha256": "bc430d4cd8713e2031eb561b7ce2a85148c0d021a19a4c5bafb384fd8f9886fb",
+  "cleanup": {
+    "scoped_token_revoked": true,
+    "revoked_token_http_status": 401,
+    "owned_container_volume_image_and_private_fixture_removed": true
+  },
+  "guard_tests": "4 passed: scripts/method/origin refusal; zero/short/duplicate selection; non200/revision mismatch; real HTTP redirect refused"
+}

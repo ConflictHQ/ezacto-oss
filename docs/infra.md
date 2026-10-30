@@ -41,9 +41,16 @@ App Review exception is documented in [app-review-instance.md](app-review-instan
 - Available now: hosted D1 Time Travel (30 days on the Paid plan, per-minute,
   on by default) and a stopped-container physical snapshot of `db.sqlite` plus
   attachments. Restore is a confirmed operator action, never automatic.
-- Planned, not yet implemented: the shared D18 logical bundle, nightly Worker
-  export to R2 (#37), and `ez backup` / `ez restore` (#28). The physical
-  container snapshot is not that portable bundle. See [`RESTORE.md`](../RESTORE.md).
+- Also available: `ez backup` / `ez restore` / `ez export --verify` for a
+  container bundle, the Worker's nightly CSV bundle in R2 (`backups/<date>/`,
+  recorded in `backup_runs`), the operational nightly SQL dump
+  (`.github/workflows/backup-sql.yml`, #773), and `ez backup --sync-to s3://...`
+  to copy a container bundle to a bucket you own (#38). The container and Worker
+  bundles are different formats and the Worker bundle has no restore command; the
+  container physical snapshot is neither. See [`RESTORE.md`](../RESTORE.md),
+  including bucket versioning, Object Lock and put-only credential guidance.
+- Not yet built (#38): the Worker's scheduled sync, off-site status in
+  `backup/status`, destination preflight, and encrypting before objects leave.
 
 ## Env & secrets
 
@@ -255,7 +262,17 @@ build, review — a red gate blocks merge.
 Prod is never automatic. "It merged" and "we are ready to move a real book of
 work onto it" are different questions, and only one is answered by a push event.
 
-The run re-runs `verify` rather than trusting that `ci.yml` did, deploys with
+After every verification job succeeds, PR CI uploads a `verified-source` receipt
+with the tested Git tree, PR head, repository and run ID. Deployment has a
+five-minute source gate: it resolves the merged PR for the release, requires its
+latest CI run to have succeeded, downloads that run's receipt, and compares its
+tree with the checked-out `main` release. It refuses missing/expired receipts,
+red or unfinished checks, branch dispatches, and changed source. If the base
+advanced, merge current `main` into the PR and verify that result before merging.
+Receipts are retained for 90 days; older releases require a fresh verified PR.
+The full suite runs once on the PR, rather than again after merge.
+
+The deploy job builds and provisions as before, deploys with
 `--var RELEASE:$GITHUB_SHA`, and then **polls the live host's `/healthz` until it
 reports that SHA**. A wrangler exit code says the upload was accepted — not that
 the domain resolves, the certificate is up, or the route is bound. The target

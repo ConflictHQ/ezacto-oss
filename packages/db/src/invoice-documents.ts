@@ -339,8 +339,8 @@ export interface InvoiceJournalEntry {
   readonly spentDate: string
   readonly personName: string
   /**
-   * The project's client -- for a claimed entry always the invoice's own,
-   * which migration 0004 enforces -- printed on every row as Harvest does.
+   * The project's client -- the invoice's own, or for a parent's invoice an
+   * end-client beneath it (migration 0115) -- printed on every row as Harvest does.
    */
   readonly clientName: string
   readonly projectName: string

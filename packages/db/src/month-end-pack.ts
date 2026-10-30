@@ -3,6 +3,7 @@ import {
   previewClientReportNotes,
   renderDetailedReportDocument,
   type ReportNoteWarning,
+  type ScheduledReportPerson,
 } from '@ezacto/core'
 import { sql } from 'drizzle-orm'
 import type { BetterSQLite3Database } from 'drizzle-orm/better-sqlite3'
@@ -31,6 +32,7 @@ export interface MonthEndPackSend {
 }
 
 export interface MonthEndPackDelivery {
+  readReport?(key: string): Promise<Uint8Array | null>
   attach(input: Readonly<MonthEndPackAttachment>): Promise<void>
   queue(input: Readonly<MonthEndPackSend>): Promise<void>
 }
@@ -51,6 +53,7 @@ interface DetailRow {
   id: number
   spentDate: string
   projectName: string
+  personId: number
   personName: string
   roundedSeconds: number
   notes: string | null
@@ -78,7 +81,8 @@ const invoice = async (database: Database, invoiceId: number): Promise<InvoiceRo
     FROM invoices invoice JOIN clients client ON client.id = invoice.client_id
     WHERE invoice.id = ${invoiceId}`)
   const found = rows[0]
-  if (found === undefined || found.target === null) throw new Error('month-end invoice or recipient is missing')
+  if (found === undefined || found.target === null)
+    throw new Error('month-end invoice or recipient is missing')
   return found
 }
 
@@ -87,9 +91,10 @@ const details = async (
   clientId: number,
   from: string,
   to: string,
-): Promise<readonly DetailRow[]> => database.all<DetailRow>(sql`
+): Promise<readonly DetailRow[]> =>
+  database.all<DetailRow>(sql`
   SELECT entry.id, entry.spent_date AS "spentDate", project.name AS "projectName",
-    person.first_name || ' ' || person.last_name AS "personName",
+    person.id AS "personId", person.first_name || ' ' || person.last_name AS "personName",
     entry.rounded_seconds AS "roundedSeconds", entry.notes,
     entry.client_visible AS "clientVisible",
     organization.report_notes_client_visible_default AS "visibleDefault"
@@ -104,30 +109,42 @@ const details = async (
   ORDER BY entry.spent_date, entry.id`)
 
 const rangeFromOccurrence = (occurrenceKey: string): { from: string; to: string } => {
-  if (!/^\d{4}-\d{2}$/u.test(occurrenceKey)) throw new Error('month-end occurrence key must be YYYY-MM')
+  if (!/^\d{4}-\d{2}$/u.test(occurrenceKey))
+    throw new Error('month-end occurrence key must be YYYY-MM')
   const from = `${occurrenceKey}-01`
   const next = new Date(`${from}T00:00:00.000Z`)
-  if (!Number.isFinite(next.valueOf())) throw new Error('month-end occurrence key is not a calendar month')
+  if (!Number.isFinite(next.valueOf()))
+    throw new Error('month-end occurrence key is not a calendar month')
   next.setUTCMonth(next.getUTCMonth() + 1)
   next.setUTCDate(0)
   return { from, to: next.toISOString().slice(0, 10) }
 }
 
-export const createMonthEndPackService = (
-  database: Database,
-  delivery: MonthEndPackDelivery,
-) => {
-  const store = createScheduledActionStore(database)
+export interface MonthEndArtifactObjects {
+  put(key: string, bytes: ArrayBuffer, contentType: string): Promise<void>
+}
+export interface MonthEndPackProposalInput {
+  jobId: number
+  expectedJobVersion?: number
+  occurrenceKey: string
+  clientIds?: readonly number[]
+  proposedAt: string
+  expiresAt: string
+}
 
-  const render = async (runId: number, invoiceId: number): Promise<{
+const createMonthEndPackRenderer = (database: Database) => {
+  const render = async (
+    occurrenceKey: string,
+    invoiceId: number,
+  ): Promise<{
     invoice: InvoiceRow
+    brandName: string
+    people: readonly ScheduledReportPerson[]
     name: string
     bytes: Uint8Array
     warnings: readonly ReportNoteWarning[]
   }> => {
-    const run = await store.read(runId)
-    if (run === null) throw new Error('month-end run is missing')
-    const range = rangeFromOccurrence(run.occurrenceKey)
+    const range = rangeFromOccurrence(occurrenceKey)
     const invoiceRecord = await invoice(database, invoiceId)
     const rows = await details(database, invoiceRecord.clientId, range.from, range.to)
     const visibleDefault = rows[0]?.visibleDefault !== 0
@@ -141,10 +158,23 @@ export const createMonthEndPackService = (
     )
     const visibleIds = new Set(notePreview.entries.map(({ id }) => id))
     const brand = await resolveReportBrand(database, invoiceRecord.clientId)
-    const organization = await database.all<{ name: string }>(sql`SELECT name FROM organizations WHERE id = 1`)
+    const organization = await database.all<{ name: string }>(
+      sql`SELECT name FROM organizations WHERE id = 1`,
+    )
     const brandName = brand?.name ?? organization[0]?.name ?? invoiceRecord.clientName
+    const people = new Map<number, ScheduledReportPerson>()
+    for (const row of rows) {
+      const person = people.get(row.personId) ?? {
+        id: row.personId,
+        name: row.personName,
+        seconds: 0,
+      }
+      person.seconds += row.roundedSeconds
+      people.set(row.personId, person)
+    }
     const totalSeconds = rows.reduce((total, row) => total + row.roundedSeconds, 0)
-    const name = `work-detail-${run.occurrenceKey}-invoice-${invoiceRecord.number}.pdf`
+    const safeNumber = invoiceRecord.number.replace(/[^a-zA-Z0-9._-]/g, '_').slice(0, 100)
+    const name = `work-detail-${occurrenceKey}-invoice-${safeNumber}.pdf`
     const bytes = renderDetailedReportDocument({
       title: 'Detailed time',
       period: `${range.from} through ${range.to}`,
@@ -167,51 +197,96 @@ export const createMonthEndPackService = (
       })),
       runningTotals: [`Hours ${(totalSeconds / 3_600).toFixed(2)}`],
     })
-    return { invoice: invoiceRecord, name, bytes, warnings: notePreview.warnings }
+    return {
+      invoice: invoiceRecord,
+      brandName,
+      people: [...people.values()],
+      name,
+      bytes,
+      warnings: notePreview.warnings,
+    }
   }
+  return render
+}
 
+/** Render every proposed report before materializing its immutable manifest. */
+export const proposeMonthEndPack = async (
+  database: Database,
+  input: Readonly<MonthEndPackProposalInput>,
+  objects?: MonthEndArtifactObjects,
+): Promise<MonthEndPackProposal> => {
+  const store = createScheduledActionStore(database)
+  const render = createMonthEndPackRenderer(database)
+  const range = rangeFromOccurrence(input.occurrenceKey)
+  const manifest = await monthEndManifest(database, {
+    periodStart: range.from,
+    periodEnd: range.to,
+    scope: input.clientIds === undefined ? {} : { clientIds: input.clientIds },
+  })
+  const existing = await database.all<{ id: number }>(sql`
+              SELECT id FROM proposed_runs WHERE job_id=${input.jobId} AND occurrence_key=${input.occurrenceKey}`)
+  if (existing.length > 0)
+    return { outcome: { outcome: 'already_proposed' }, manifest, previews: [] }
+  // Rendering is a prerequisite, not a side effect of a stored proposal.
+  // A failing report must leave nothing for an operator to confirm.
+  const captured = await Promise.all(
+    manifest.items.map(async (item) => {
+      const rendered = await render(input.occurrenceKey, item.subjectId)
+      const hash = new Uint8Array(
+        await crypto.subtle.digest('SHA-256', new Uint8Array(rendered.bytes).buffer),
+      )
+      const contentHash = [...hash].map((byte) => byte.toString(16).padStart(2, '0')).join('')
+      const key = `sha256/${contentHash.slice(0, 2)}/${contentHash}`
+      if (objects) await objects.put(key, new Uint8Array(rendered.bytes).buffer, 'application/pdf')
+      return {
+        item: {
+          ...item,
+          ...(objects
+            ? {
+                report: { key, contentHash, name: rendered.name, byteSize: rendered.bytes.length },
+                reportWarnings: rendered.warnings,
+                reportPeople: rendered.people,
+              }
+            : {}),
+        },
+        preview: {
+          invoiceId: item.subjectId,
+          brandName: rendered.brandName,
+          warnings: rendered.warnings,
+        },
+      }
+    }),
+  )
+  const outcome = await store.propose({
+    jobId: input.jobId,
+    ...(input.expectedJobVersion === undefined
+      ? {}
+      : { expectedJobVersion: input.expectedJobVersion }),
+    occurrenceKey: input.occurrenceKey,
+    items: captured.map((entry) => entry.item),
+    proposedAt: input.proposedAt,
+    expiresAt: input.expiresAt,
+  })
   return {
-    propose: async (input: Readonly<{
-      jobId: number
-      occurrenceKey: string
-      clientIds?: readonly number[]
-      proposedAt: string
-      expiresAt: string
-    }>): Promise<MonthEndPackProposal> => {
-      const range = rangeFromOccurrence(input.occurrenceKey)
-      const manifest = await monthEndManifest(database, {
-        periodStart: range.from,
-        periodEnd: range.to,
-        scope: input.clientIds === undefined ? {} : { clientIds: input.clientIds },
-      })
-      const outcome = await store.propose({
-        jobId: input.jobId,
-        occurrenceKey: input.occurrenceKey,
-        items: manifest.items,
-        proposedAt: input.proposedAt,
-        expiresAt: input.expiresAt,
-      })
-      const runId = outcome.outcome === 'proposed' ? outcome.run.id : 0
-      const previews = runId === 0
-        ? []
-        : await Promise.all(manifest.items.map(async (item, index) => {
-            void index
-            const rendered = await render(runId, item.subjectId)
-            const brand = await resolveReportBrand(database, rendered.invoice.clientId)
-            return {
-              invoiceId: item.subjectId,
-              brandName: brand?.name ?? rendered.invoice.clientName,
-              warnings: rendered.warnings,
-            }
-          }))
-      return { outcome, manifest, previews }
-    },
+    outcome,
+    manifest,
+    previews: outcome.outcome === 'proposed' ? captured.map((entry) => entry.preview) : [],
+  }
+}
+
+export const createMonthEndPackService = (database: Database, delivery: MonthEndPackDelivery) => {
+  const store = createScheduledActionStore(database)
+  const render = createMonthEndPackRenderer(database)
+  return {
+    propose: (input: Readonly<MonthEndPackProposalInput>) => proposeMonthEndPack(database, input),
 
     confirmAndExecute: async (
       runId: number,
       userId: number,
       now: () => string,
-    ): Promise<RunExecutionReport | { runId: number; completed: 0; failed: readonly []; runCompleted: true }> => {
+    ): Promise<
+      RunExecutionReport | { runId: number; completed: 0; failed: readonly []; runCompleted: true }
+    > => {
       const current = await store.read(runId)
       if (current === null) throw new Error('month-end run is missing')
       if (current.state === 'completed') {
@@ -219,7 +294,8 @@ export const createMonthEndPackService = (
       }
       if (current.state === 'proposed') {
         const confirmation = await store.confirm(runId, userId, now())
-        if (confirmation.outcome !== 'confirmed') throw new Error(`month-end confirmation refused: ${confirmation.outcome}`)
+        if (confirmation.outcome !== 'confirmed')
+          throw new Error(`month-end confirmation refused: ${confirmation.outcome}`)
       } else if (current.state !== 'confirmed') {
         throw new Error(`month-end run is ${current.state}`)
       }
@@ -228,19 +304,36 @@ export const createMonthEndPackService = (
         now,
         handler: async (item) => {
           if (item.subjectType !== 'invoice') throw new Error('month-end item is not an invoice')
-          const rendered = await render(runId, item.subjectId)
+          if (!item.target) throw new Error('The confirmed manifest has no recipient.')
+          if ((await invoice(database, item.subjectId)).target !== item.target)
+            throw new Error('The invoice recipient changed after the manifest was proposed.')
+          const rendered = item.report ? null : await render(current.occurrenceKey, item.subjectId)
+          const bytes = item.report ? await delivery.readReport?.(item.report.key) : rendered!.bytes
+          if (!bytes) throw new Error('The exact saved report is unavailable.')
+          if (item.report) {
+            const hash = [
+              ...new Uint8Array(
+                await crypto.subtle.digest('SHA-256', new Uint8Array(bytes).buffer),
+              ),
+            ]
+              .map((byte) => byte.toString(16).padStart(2, '0'))
+              .join('')
+            if (bytes.length !== item.report.byteSize || hash !== item.report.contentHash)
+              throw new Error('The saved report does not match its captured hash.')
+          }
+          const name = item.report?.name ?? rendered!.name
           const key = `month-end:${String(runId)}:${String(item.id)}`
           await delivery.attach({
             invoiceId: item.subjectId,
-            name: rendered.name,
+            name,
             contentType: 'application/pdf',
-            bytes: rendered.bytes,
+            bytes,
             idempotencyKey: `${key}:attachment`,
           })
           await delivery.queue({
             invoiceId: item.subjectId,
-            to: rendered.invoice.target,
-            attachmentName: rendered.name,
+            to: item.target,
+            attachmentName: name,
             idempotencyKey: `${key}:send`,
           })
         },

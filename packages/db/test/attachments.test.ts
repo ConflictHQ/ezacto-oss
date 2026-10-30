@@ -10,6 +10,7 @@ import {
   type AttachmentDatabase,
   type AttachmentMetadataInput,
 } from '../src/attachments.js'
+import { DrizzleTrackedResourceRepository } from '../src/tracked-resource-repository.js'
 import { sampleReceiptBytes } from './fixtures/sample-receipt.js'
 import { createContainerDatabase, createD1Database } from '../src/adapters.js'
 import {
@@ -649,6 +650,38 @@ for (const [runtime, factory] of factories) {
       ).toEqual([{ id: migrationIds.at(-1) }])
       await db.migrateAgain()
       expect(await db.rows(`SELECT id, number FROM invoices`)).toEqual(before)
+      expect(await db.rows(`PRAGMA foreign_key_check`)).toEqual([])
+    })
+
+    it('[regression] deletes an expense with receipts, keeping the stored objects (959)', async () => {
+      database = await factory()
+      const db = database
+      await seedParents(db)
+      const store = createAttachmentStore(db.orm)
+      const invoice = await store.createInvoiceAttachment({ invoiceId: 1, ...metadata('a') })
+      const receipt = await store.createExpenseAttachment({
+        expenseId: 152975211,
+        ...metadata('a', { name: 'receipt.pdf' }),
+      })
+      await store.createExpenseAttachment({
+        expenseId: 152975211,
+        ...metadata('e', { name: 'second.pdf' }),
+      })
+
+      await db.run(`DELETE FROM expenses WHERE id = 152975211 AND 0`)
+      expect(await store.listExpenseAttachments(152975211)).toHaveLength(2)
+
+      const tracked = new DrizzleTrackedResourceRepository(db.orm as never, {
+        isLocked: async () => false,
+      })
+      await expect(tracked.deleteExpense(1, 152975211)).resolves.toMatchObject({
+        id: 152975211,
+      })
+      expect(await db.rows(`SELECT id FROM expenses WHERE id = 152975211`)).toEqual([])
+      expect(await store.getExpenseAttachment(152975211, receipt.id)).toBeNull()
+      expect(await db.rows(`SELECT id FROM attachments WHERE id != ?`, invoice.id)).toEqual([])
+      expect(await db.rows(`SELECT id FROM file_objects`)).toHaveLength(2)
+      expect(await store.getInvoiceAttachment(1, invoice.id)).toEqual(invoice)
       expect(await db.rows(`PRAGMA foreign_key_check`)).toEqual([])
     })
 

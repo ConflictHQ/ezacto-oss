@@ -1,3 +1,6 @@
+import { createCalendarGrantVault } from '@ezacto/core'
+import { createCalendarConnectionStore } from '../src/calendar-connections.js'
+import { createCalendarSyncService } from '../../integrations/src/calendar-sync.js'
 import BetterSqlite3 from 'better-sqlite3'
 import { Miniflare } from 'miniflare'
 import { afterEach, describe, expect, it } from 'vitest'
@@ -116,6 +119,58 @@ for (const runtime of ['SQLite', 'D1'])
         tracking: createAccountDeletionStatusRepository(db),
       }
     }
+    it('[privacy #1200] inventories both Wise delivery ledgers as linked billing evidence', async () => {
+      const { closure, exec } = await setup()
+      await exec(`INSERT INTO user_payout_accounts(id,user_id,provider,external_id,linked_by_user_id,linked_at,verified_at,created_at,updated_at)
+        VALUES(1,2,'wise','synthetic-recipient',1,'${at}','${at}','${at}','${at}')`)
+      await exec(`INSERT INTO payout_transfers(id,user_id,period_start,period_end,payout_account_id,amount_cents,currency,state,external_transfer_id,created_at,updated_at)
+        VALUES(1,2,'2026-09-01','2026-09-30',1,1000,'USD','planned','synthetic-transfer','${at}','${at}')`)
+      for (const table of ['wise_webhook_deliveries', 'wise_signed_webhook_deliveries'])
+        await exec(`INSERT INTO ${table}(delivery_id,subscription_id,event_type,transfer_id,current_state,received_at)
+          VALUES('same-key','synthetic-subscription','transfers#state-change','synthetic-transfer','processing','${at}')`)
+      const preview = await closure.preview(1, 'close-pat')
+      expect(preview.inventory).toContainEqual({
+        location: 'wise_all_webhook_deliveries.transfer_id', count: 2, category: 'billing_and_payments',
+      })
+      expect(preview.uncovered_categories).toContain('billing_and_payments')
+    })
+
+    it('[privacy #42] inventories suppressed recipient addresses and retains reviewed delivery evidence on closure', async () => {
+      const { closure, exec, rows } = await setup()
+      await exec(`INSERT INTO email_log(id,from_json,to_json,template,subject,status,created_at,updated_at)
+    VALUES(1,'{"email":"billing@example.test"}','[{"email":"pat@example.test"}]','verify_email','Fixture','queued','${at}','${at}')`)
+      await exec(`INSERT INTO email_feedback_events(event_id,signature_token,event_type,severity,recipient,provider_message_id,delivery_id,received_at)
+    VALUES('privacy-feedback','privacy-token','failed','permanent','pat@example.test','privacy-message',1,'${at}')`)
+      await exec(
+        `UPDATE email_feedback_events SET processed_at='${at}',outcome='bounced' WHERE event_id='privacy-feedback'`,
+      )
+      await exec(`INSERT INTO email_suppression_lifts(address,through_event_id,actor_user_id,note,complaint_acknowledged,lifted_at)
+    VALUES('pat@example.test',1,1,'Recipient verified address',0,'${at}')`)
+      const preview = await closure.preview(1, 'close-pat')
+      expect(preview.inventory).toEqual(
+        expect.arrayContaining([
+          { location: 'email_suppression_events.address', count: 1, category: 'audit_and_security' },
+          { location: 'email_suppression_lifts.address', count: 1, category: 'audit_and_security' },
+        ]),
+      )
+      await closure.close({
+        actorUserId: 1,
+        id: 'close-pat',
+        reviewToken: preview.review_token,
+        expectedVersion: 1,
+        expectedPolicyVersion: 1,
+        now: later,
+        acknowledged: true,
+      })
+      expect(await rows('SELECT address FROM user_emails WHERE user_id=2')).toEqual([])
+      expect(await rows('SELECT address FROM email_suppression_events')).toEqual([
+        { address: 'pat@example.test' },
+      ])
+      expect(await rows('SELECT note FROM email_suppression_lifts')).toEqual([
+        { note: 'Recipient verified address' },
+      ])
+    })
+
     it('erases optional profile and linked identities while preserving honest residual status and denying SSO replay', async () => {
       const { closure, rows, exec, identity, requests } = await setup()
       const preview = await closure.preview(1, 'close-pat')
@@ -213,6 +268,91 @@ for (const runtime of ['SQLite', 'D1'])
         { is_active: 1, first_name: 'Jo' },
       ])
     })
+    it('erases OAuth custody and invalidates a closure review when the grant changes', async () => {
+      const {closure,db,sessions,rows}=await setup()
+      const service=await createCalendarSyncService({store:createCalendarConnectionStore(db),deploymentKey:new Uint8Array(32).fill(7),now:()=>new Date(at)})
+      const person={userId:2,sessionId:(await sessions.issue(2)).session.id}
+      const other={userId:3,sessionId:(await sessions.issue(3)).session.id}
+      await service.completeOAuth(person,'google',0,{refreshToken:'OWNED_PRIVATE_REFRESH',scopes:['calendar.readonly']})
+      await service.completeOAuth(other,'google',0,{refreshToken:'OTHER_PRIVATE_REFRESH',scopes:['calendar.readonly']})
+      const preview=await closure.preview(1,'close-pat')
+      const custody=createCalendarConnectionStore(db),held=(await custody.read(2,'google'))!,lease=(await custody.claim(held,'rotate-for-proof',at,later))!,vault=await createCalendarGrantVault(new Uint8Array(32).fill(7))
+      const next={...lease,credentialRevision:lease.credentialRevision+1}
+      await custody.rotate(lease,{keyId:vault.keyId,sealedGrant:await vault.sealGrant({refreshToken:'ROTATED_PRIVATE_REFRESH',scopes:['calendar.readonly']},next),sealedCursor:null},at)
+      await expect(closure.close({actorUserId:1,id:'close-pat',reviewToken:preview.review_token,expectedVersion:1,expectedPolicyVersion:1,now:later,acknowledged:true})).rejects.toMatchObject({code:'concurrent_change'})
+      await closure.close({actorUserId:1,id:'close-pat',reviewToken:(await closure.preview(1,'close-pat')).review_token,expectedVersion:1,expectedPolicyVersion:1,now:later,acknowledged:true})
+      expect(await rows('SELECT user_id FROM calendar_connections')).toEqual([{user_id:3}])
+      expect(await rows("SELECT user_id,status,request_id FROM calendar_cleanup_obligations")).toEqual([{user_id:2,status:'pending',request_id:'close-pat'}])
+      expect(JSON.stringify(await rows('SELECT * FROM account_closures'))).not.toContain('PRIVATE_REFRESH')
+    })
+    it('erases the closed person’s calendar proposals (issue 428) and nobody else’s', async () => {
+      const { closure, rows, exec } = await setup()
+      // A meeting title is personal data and is not time worked, so unlike an
+      // accepted time entry it is not retained for attribution.
+      await exec(
+        `INSERT INTO calendar_proposals(user_id,provider,calendar_id,event_id,title,starts_at,ends_at,created_at,updated_at) VALUES
+        (2,'google','primary','e1','Pat’s 1:1','2026-10-08T14:00:00.000Z','2026-10-08T15:00:00.000Z','${at}','${at}'),
+        (3,'google','primary','e1','Jo’s 1:1','2026-10-08T14:00:00.000Z','2026-10-08T15:00:00.000Z','${at}','${at}')`,
+      )
+      const preview = await closure.preview(1, 'close-pat')
+      expect(JSON.stringify(preview)).not.toContain('calendar_proposals')
+      await closure.close({
+        actorUserId: 1,
+        id: 'close-pat',
+        reviewToken: preview.review_token,
+        expectedVersion: 1,
+        expectedPolicyVersion: 1,
+        now: later,
+        acknowledged: true as const,
+      })
+      expect(await rows('SELECT user_id,title FROM calendar_proposals ORDER BY id')).toEqual([
+        { user_id: 3, title: 'Jo’s 1:1' },
+      ])
+    })
+    it('erases the closed person’s planned allocations (issue 1007) and nobody else’s', async () => {
+      const { closure, rows, exec } = await setup()
+      // A plan for someone who has left is moot and is not time worked.
+      for (const query of [
+        `INSERT INTO clients(id,name,currency,created_at,updated_at) VALUES(1,'QA Client','USD','${at}','${at}')`,
+        `INSERT INTO projects(id,client_id,name,created_at,updated_at) VALUES(1,1,'QA Project','${at}','${at}')`,
+        `INSERT INTO allocations(user_id,project_id,start_date,end_date,planned_seconds_per_week,created_at,updated_at) VALUES
+        (2,1,'2026-10-05','2026-10-25',57600,'${at}','${at}'),
+        (3,1,'2026-10-05','2026-10-25',57600,'${at}','${at}')`,
+      ])
+        await exec(query)
+      const preview = await closure.preview(1, 'close-pat')
+      expect(JSON.stringify(preview)).not.toContain('allocations')
+      await closure.close({
+        actorUserId: 1,
+        id: 'close-pat',
+        reviewToken: preview.review_token,
+        expectedVersion: 1,
+        expectedPolicyVersion: 1,
+        now: later,
+        acknowledged: true as const,
+      })
+      expect(await rows('SELECT user_id FROM allocations ORDER BY id')).toEqual([{ user_id: 3 }])
+    })
+    it('erases the closed person’s time off (issue 1007) and nobody else’s', async () => {
+      const { closure, rows, exec } = await setup()
+      await exec(
+        `INSERT INTO time_off(user_id,start_date,end_date,kind,created_at,updated_at) VALUES
+        (2,'2026-10-12','2026-10-14','vacation','${at}','${at}'),
+        (3,'2026-10-12','2026-10-14','vacation','${at}','${at}')`,
+      )
+      const preview = await closure.preview(1, 'close-pat')
+      expect(JSON.stringify(preview)).not.toContain('time_off')
+      await closure.close({
+        actorUserId: 1,
+        id: 'close-pat',
+        reviewToken: preview.review_token,
+        expectedVersion: 1,
+        expectedPolicyVersion: 1,
+        now: later,
+        acknowledged: true as const,
+      })
+      expect(await rows('SELECT user_id FROM time_off ORDER BY id')).toEqual([{ user_id: 3 }])
+    })
     it('removes every local secret and refuses already-issued session, API, email and app-handoff credentials', async () => {
       const { closure, db, rows, exec, sessions, magic, codes } = await setup()
       const session = await sessions.issue(2)
@@ -258,6 +398,12 @@ for (const runtime of ['SQLite', 'D1'])
       await exec(
         `INSERT INTO user_recovery_codes(user_id,selector,algorithm,version,memory_kib,time_cost,parallelism,salt,code_hash,created_at,updated_at) VALUES(2,'AAAAAAAA','argon2id',19,19456,2,1,'${'B'.repeat(22)}','${'C'.repeat(43)}','${at}','${at}')`,
       )
+      await exec(
+        `INSERT INTO user_email_second_factors(user_id,enabled_at) VALUES(2,'${at}')`,
+      )
+      await exec(
+        `INSERT INTO two_factor_email_code_sends(user_id,sent_at) VALUES(2,'${at}')`,
+      )
       expect(await sessions.authenticate(session.token)).not.toBeNull()
       expect(await authenticateApiToken(db, token.token, at)).not.toBeNull()
       await closure.close({
@@ -279,12 +425,18 @@ for (const runtime of ['SQLite', 'D1'])
         'two_factor_challenges',
         'user_totp_enrolments',
         'user_recovery_codes',
+        'user_email_second_factors',
+        'two_factor_email_code_sends',
       ])
         expect(await rows(`SELECT * FROM ${table}`), table).toEqual([])
+      // A closed account is not handed the emailed factor afterwards either.
+      await expect(
+        exec(`INSERT INTO user_email_second_factors(user_id,enabled_at) VALUES(2,'${later}')`),
+      ).rejects.toThrow('closed account')
       expect(await sessions.authenticate(session.token)).toBeNull()
       expect(await authenticateApiToken(db, token.token, later)).toBeNull()
       expect(await magic.consumeByToken(hash, later)).toBeNull()
-      expect(await magic.consumeByCode(2, hash, later, 5)).toBeNull()
+      expect(await magic.consumeByCode(2, hash, later, 5, hash)).toBeNull()
       expect(await codes.consume(hash, later)).toBeNull()
       await expect(magic.create(link)).rejects.toThrow('closed account')
       await expect(codes.create(code)).rejects.toThrow('closed account')

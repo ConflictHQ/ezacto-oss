@@ -120,16 +120,29 @@ export const organizations = sqliteTable(
     // Migration 0097: what every new invoice starts with.
     invoiceDefaultNotes: text('invoice_default_notes'),
     invoiceDefaultSubject: text('invoice_default_subject'),
+    // Migration 0127 (issue 1010): days an estimate stays answerable after it is sent.
+    estimateValidityDays: integer('estimate_validity_days'),
     // Migration 0099: addresses copied on every invoice email.
     invoiceAlwaysCc: text('invoice_always_cc', { mode: 'json' })
       .$type<Array<{ name: string; email: string }>>()
       .notNull()
       .default([]),
+    /**
+     * The single rounding enum before issue 949. Still in the table -- dropping
+     * it would mean a rebuild -- and read by nothing: migration 0112 copied it
+     * into the two columns below.
+     */
     timeRounding: text('time_rounding', {
       enum: ['none', 'nearest_6', 'nearest_15', 'nearest_30', 'up_6', 'up_15', 'up_30'],
     })
       .notNull()
       .default('none'),
+    // Migration 0112 (issue 949): how time is rounded unless a project says
+    // otherwise. Validated by triggers, not CHECKs.
+    timeRoundingMode: text('time_rounding_mode', { enum: ['exact', 'up', 'down', 'nearest'] })
+      .notNull()
+      .default('exact'),
+    timeRoundingMinutes: integer('time_rounding_minutes').notNull().default(15),
     modules: text('modules', { mode: 'json' }).$type<Record<string, boolean>>().notNull(),
     require2fa: integer('require_2fa', { mode: 'boolean' }).notNull().default(false),
     requireSso: integer('require_sso', { mode: 'boolean' }).notNull().default(false),
@@ -757,6 +770,21 @@ export const savedReportPins = sqliteTable(
   (table) => [primaryKey({ columns: [table.reportId, table.userId] })],
 )
 
+export const savedReportRoleShares = sqliteTable(
+  'saved_report_role_shares',
+  {
+    reportId: text('report_id').notNull().references(() => savedReports.id, { onDelete: 'cascade' }),
+    profile: text('profile', {
+      enum: ['member', 'project_manager', 'people_admin', 'accounting', 'executive_manager', 'administrator'],
+    }).notNull(),
+    createdAt: text('created_at').notNull(),
+  },
+  (table) => [
+    primaryKey({ columns: [table.reportId, table.profile] }),
+    index('saved_report_role_shares_profile').on(table.profile, table.reportId),
+  ],
+)
+
 export const reportTimeCommands = sqliteTable(
   'report_time_commands',
   {
@@ -879,6 +907,8 @@ export const projects = sqliteTable(
     name: text('name').notNull(),
     code: text('code').notNull().default(''),
     isActive: integer('is_active', { mode: 'boolean' }).notNull().default(true),
+    /** Practice data created by hosted bootstrap, never by ordinary project creation. */
+    isExample: integer('is_example', { mode: 'boolean' }).notNull().default(false),
     billingMethod: text('billing_method', {
       enum: ['non_billable', 'time_materials', 'fixed_fee'],
     })
@@ -914,12 +944,17 @@ export const projects = sqliteTable(
     notes: text('notes'),
     billingCurrency: text('billing_currency'),
     timeEntryNotesMinimumLength: integer('time_entry_notes_minimum_length'),
+    // Migration 0112 (issue 949): this project's own rounding, or both null for
+    // the organization's.
+    timeRoundingMode: text('time_rounding_mode', { enum: ['exact', 'up', 'down', 'nearest'] }),
+    timeRoundingMinutes: integer('time_rounding_minutes'),
     ...timestamps,
   },
   (table) => [
     uniqueIndex('projects_harvest_id_unique').on(table.harvestId),
     index('projects_client_id').on(table.clientId),
     check('projects_is_active_boolean', sql`${table.isActive} in (0, 1)`),
+    check('projects_is_example_boolean', sql`${table.isExample} in (0, 1)`),
     check(
       'projects_hourly_rate_nonnegative',
       sql`${table.hourlyRateCents} is null or ${table.hourlyRateCents} >= 0`,
@@ -1112,6 +1147,9 @@ export const estimates = sqliteTable(
     sentAt: text('sent_at'),
     acceptedAt: text('accepted_at'),
     declinedAt: text('declined_at'),
+    sentContentHash: text('sent_content_hash'),
+    // Migration 0127 (issue 1010): the last day a customer can answer; null = none set.
+    expiresOn: text('expires_on'),
     clientKey: text('client_key')
       .notNull()
       .default(sql`lower(hex(randomblob(32)))`),
@@ -1258,10 +1296,16 @@ export const estimateMessages = sqliteTable(
       enum: ['queued', 'sent', 'bounced', 'complained', 'failed'],
     }),
     providerMessageId: text('provider_message_id'),
+    contactId: integer('contact_id').references(() => contacts.id, { onDelete: 'set null' }),
+    contentHash: text('content_hash'),
+    estimateVersion: integer('estimate_version'),
     ...timestamps,
   },
   (table) => [
     uniqueIndex('estimate_messages_harvest_id_unique').on(table.harvestId),
+    uniqueIndex('estimate_messages_customer_response_unique')
+      .on(table.estimateId, table.estimateVersion)
+      .where(sql`${table.estimateVersion} is not null`),
     uniqueIndex('estimate_messages_invoice_event_unique')
       .on(table.estimateId)
       .where(sql`${table.eventType} = 'invoice'`),
@@ -1667,7 +1711,12 @@ export const invoiceLineItems = sqliteTable(
   (table) => [
     uniqueIndex('invoice_line_items_harvest_id_unique').on(table.harvestId),
     uniqueIndex('invoice_line_items_invoice_position_unique').on(table.invoiceId, table.position),
-    index('invoice_line_items_invoice_id').on(table.invoiceId),
+    index('invoice_line_items_invoice_totals').on(
+      table.invoiceId,
+      table.amountCents,
+      table.taxed,
+      table.taxed2,
+    ),
     index('invoice_line_items_project_id').on(table.projectId),
     check('invoice_line_items_position_nonnegative', sql`${table.position} >= 0`),
     check('invoice_line_items_taxed_boolean', sql`${table.taxed} in (0, 1)`),
@@ -3664,6 +3713,240 @@ export const timeEntries = sqliteTable(
   ],
 )
 
+/**
+ * Calendar events offered to a person as time they might have worked (issue
+ * 428). Not time entries: nothing here reaches a report, a lock or an invoice
+ * until it is accepted, which writes a real entry and links it back.
+ */
+export const calendarProposals = sqliteTable(
+  'calendar_proposals',
+  {
+    id: integer('id').primaryKey({ autoIncrement: true }),
+    userId: integer('user_id')
+      .notNull()
+      .references(() => users.id, { onDelete: 'restrict' }),
+    provider: text('provider', { enum: ['google', 'microsoft'] }).notNull(),
+    calendarId: text('calendar_id').notNull(),
+    eventId: text('event_id').notNull(),
+    occurrence: text('occurrence').notNull().default(''),
+    title: text('title').notNull(),
+    startsAt: text('starts_at').notNull(),
+    endsAt: text('ends_at').notNull(),
+    status: text('status', { enum: ['proposed', 'accepted', 'discarded', 'cancelled'] })
+      .notNull()
+      .default('proposed'),
+    sourceVersion: text('source_version'),
+    observedSourceVersion: text('observed_source_version'),
+    sourceChangedAt: text('source_changed_at'),
+    sourceCancelledAt: text('source_cancelled_at'),
+    timeEntryId: integer('time_entry_id').references(() => timeEntries.id, {
+      onDelete: 'set null',
+    }),
+    decidedAt: text('decided_at'),
+    ...timestamps,
+  },
+  (table) => [
+    uniqueIndex('calendar_proposals_event_identity').on(
+      table.userId,
+      table.provider,
+      table.calendarId,
+      table.eventId,
+      table.occurrence,
+    ),
+    index('calendar_proposals_user_starts').on(table.userId, table.startsAt),
+    uniqueIndex('calendar_proposals_time_entry')
+      .on(table.timeEntryId)
+      .where(sql`${table.timeEntryId} is not null`),
+  ],
+)
+
+/**
+ * Planned hours per week for a person on a project over a range of dates (issue
+ * 1007). Not time entries and not billing: nothing here reaches a report, a
+ * lock or an invoice, and there is no money column. Dates are plain local days.
+ */
+export const allocations = sqliteTable(
+  'allocations',
+  {
+    id: integer('id').primaryKey({ autoIncrement: true }),
+    userId: integer('user_id')
+      .notNull()
+      .references(() => users.id, { onDelete: 'restrict' }),
+    projectId: integer('project_id')
+      .notNull()
+      .references(() => projects.id, { onDelete: 'restrict' }),
+    startDate: text('start_date').notNull(),
+    endDate: text('end_date').notNull(),
+    plannedSecondsPerWeek: integer('planned_seconds_per_week').notNull(),
+    version: integer('version').notNull().default(0),
+    ...timestamps,
+  },
+  (table) => [
+    index('allocations_user_dates').on(table.userId, table.startDate, table.endDate),
+    index('allocations_project_dates').on(table.projectId, table.startDate, table.endDate),
+  ],
+)
+
+/** Named unassigned project demand (issue 1191). Names no user and holds no capacity. */
+export const placeholders = sqliteTable('placeholders', {
+  id: integer('id').primaryKey({ autoIncrement: true }),
+  name: text('name').notNull(),
+  isActive: integer('is_active', { mode: 'boolean' }).notNull().default(true),
+  revision: integer('revision').notNull().default(0),
+  createdByUserId: integer('created_by_user_id').references(() => users.id, { onDelete: 'restrict' }),
+  ...timestamps,
+})
+
+/** Dated unassigned hours on a project. `assignedAllocationId` is deliberately not a foreign key. */
+export const placeholderAllocations = sqliteTable(
+  'placeholder_allocations',
+  {
+    id: integer('id').primaryKey({ autoIncrement: true }),
+    placeholderId: integer('placeholder_id')
+      .notNull()
+      .references(() => placeholders.id, { onDelete: 'restrict' }),
+    projectId: integer('project_id')
+      .notNull()
+      .references(() => projects.id, { onDelete: 'restrict' }),
+    startDate: text('start_date').notNull(),
+    endDate: text('end_date').notNull(),
+    plannedSecondsPerWeek: integer('planned_seconds_per_week').notNull(),
+    state: text('state', { enum: ['open', 'assigned', 'archived'] }).notNull().default('open'),
+    revision: integer('revision').notNull().default(0),
+    assignedAllocationId: integer('assigned_allocation_id'),
+    ...timestamps,
+  },
+  (table) => [index('placeholder_allocations_project_dates').on(table.projectId, table.startDate, table.endDate)],
+)
+
+/**
+ * One application of a CSV time file (issue 1012): the file's sha-256 under a
+ * source id, with the mapping it was applied through. The same file is the same
+ * run however often it is applied.
+ */
+export const csvImportRuns = sqliteTable(
+  'csv_import_runs',
+  {
+    id: integer('id').primaryKey({ autoIncrement: true }),
+    sourceId: text('source_id').notNull(),
+    fileSha256: text('file_sha256').notNull(),
+    mappingJson: text('mapping_json').notNull(),
+    mappingSha256: text('mapping_sha256').notNull(),
+    status: text('status', { enum: ['partial', 'aborted', 'complete'] }).notNull(),
+    totalRows: integer('total_rows').notNull(),
+    rejectedRows: integer('rejected_rows').notNull().default(0),
+    lastError: text('last_error'),
+    ...timestamps,
+    finishedAt: text('finished_at'),
+    browserPlanJson: text('browser_plan_json'),
+    browserPlanId: text('browser_plan_id'),
+    browserState: text('browser_state', { enum: ['draft', 'partial', 'complete', 'cancelled'] }),
+    confirmedByUserId: integer('confirmed_by_user_id').references(() => users.id, { onDelete: 'restrict' }),
+    leaseHolder: text('lease_holder'),
+    leaseActorUserId: integer('lease_actor_user_id').references(() => users.id, { onDelete: 'restrict' }),
+    leaseGeneration: integer('lease_generation').notNull().default(0),
+    leaseExpiresAt: integer('lease_expires_at'),
+    committedChunks: integer('committed_chunks').notNull().default(0),
+    applyState: text('apply_state', { enum: ['queued','running','paused','partial','failed','complete','cancelled'] }),
+    applyReady: integer('apply_ready', {mode:'boolean'}).notNull().default(false),
+    applyCode: text('apply_code'),
+    applyStageId: text('apply_stage_id'),
+    applyStageVersion: integer('apply_stage_version'),
+    applyPreviewId: text('apply_preview_id'),
+    applyTargetNonce: text('apply_target_nonce'),
+    applySessionId: integer('apply_session_id').references(() => sessions.id, { onDelete: 'set null' }),
+    applyActorUserId: integer('apply_actor_user_id').references(() => users.id, { onDelete: 'set null' }),
+    applyInputExpiresAt: text('apply_input_expires_at'),
+    applyCommandId: text('apply_command_id'),
+    applyConfirmationCommandId: text('apply_confirmation_command_id'),
+    applyCancelCommandId: text('apply_cancel_command_id'),
+    applyRequestJson: text('apply_request_json'),
+    applyReceiptsJson: text('apply_receipts_json').notNull().default('{}'),
+    applySourceSecondsTotal: integer('apply_source_seconds_total'),
+    applyAcknowledgedDestinationDelta: integer('apply_acknowledged_destination_delta'),
+    applyAttempts: integer('apply_attempts').notNull().default(0),
+    applyFailureChunk: integer('apply_failure_chunk'),
+    applyNextAttemptAt: text('apply_next_attempt_at'),
+  },
+  (table) => [uniqueIndex('csv_import_runs_identity').on(table.sourceId, table.fileSha256)],
+)
+
+/** The source key of one CSV row and the time entry it became. */
+export const csvImportEntries = sqliteTable(
+  'csv_import_entries',
+  {
+    id: integer('id').primaryKey({ autoIncrement: true }),
+    runId: integer('run_id')
+      .notNull()
+      .references(() => csvImportRuns.id, { onDelete: 'restrict' }),
+    sourceId: text('source_id').notNull(),
+    sourceKey: text('source_key').notNull(),
+    sourceLine: integer('source_line'),
+    sourceSeconds: integer('source_seconds'),
+    timeEntryId: integer('time_entry_id').references(() => timeEntries.id, {
+      onDelete: 'set null',
+    }),
+    createdAt: text('created_at').notNull(),
+  },
+  (table) => [
+    uniqueIndex('csv_import_entries_source_key').on(table.sourceId, table.sourceKey),
+    uniqueIndex('csv_import_entries_time_entry')
+      .on(table.timeEntryId)
+      .where(sql`${table.timeEntryId} is not null`),
+    index('csv_import_entries_run').on(table.runId),
+  ],
+)
+
+/**
+ * An issue tracker this instance has connected (issue 1008, slice 1). One row
+ * per provider: the instance is one organization. `credentialRef` names the
+ * deployment secret holding the credential and is null once disconnected.
+ */
+export const workItemConnections = sqliteTable('work_item_connections', {
+  id: integer('id').primaryKey({ autoIncrement: true }),
+  provider: text('provider').notNull().unique(),
+  status: text('status', { enum: ['active', 'disconnected'] }).notNull(),
+  ownerUserId: integer('owner_user_id')
+    .notNull()
+    .references(() => users.id, { onDelete: 'restrict' }),
+  credentialRef: text('credential_ref'),
+  connectedAt: text('connected_at').notNull(),
+  disconnectedAt: text('disconnected_at'),
+  ...timestamps,
+})
+
+/** A time entry or a project pointing at one tracker item. */
+export const workItemLinks = sqliteTable(
+  'work_item_links',
+  {
+    id: integer('id').primaryKey({ autoIncrement: true }),
+    connectionId: integer('connection_id')
+      .notNull()
+      .references(() => workItemConnections.id, { onDelete: 'restrict' }),
+    timeEntryId: integer('time_entry_id').references(() => timeEntries.id, {
+      onDelete: 'cascade',
+    }),
+    projectId: integer('project_id').references(() => projects.id, { onDelete: 'cascade' }),
+    providerItemId: text('provider_item_id').notNull(),
+    url: text('url'),
+    createdBy: integer('created_by')
+      .notNull()
+      .references(() => users.id, { onDelete: 'restrict' }),
+    ...timestamps,
+  },
+  (table) => [
+    uniqueIndex('work_item_links_entry')
+      .on(table.connectionId, table.timeEntryId)
+      .where(sql`${table.timeEntryId} is not null`),
+    uniqueIndex('work_item_links_project_item')
+      .on(table.connectionId, table.projectId, table.providerItemId)
+      .where(sql`${table.projectId} is not null`),
+    index('work_item_links_item').on(table.connectionId, table.providerItemId),
+    index('work_item_links_time_entry').on(table.timeEntryId),
+    index('work_item_links_project').on(table.projectId),
+  ],
+)
+
 export const timeEntryRateReprices = sqliteTable(
   'time_entry_rate_reprices',
   {
@@ -3677,9 +3960,12 @@ export const timeEntryRateReprices = sqliteTable(
     costRateCents: integer('cost_rate_cents'),
     reason: text('reason').notNull(),
     repricedAt: text('repriced_at').notNull(),
+    runId: text('run_id'),
+    actorUserId: integer('actor_user_id').references(() => users.id, { onDelete: 'restrict' }),
   },
   (table) => [
     index('time_entry_rate_reprices_entry_id').on(table.timeEntryId, table.id),
+    index('time_entry_rate_reprices_run').on(table.runId, table.id),
     check(
       'time_entry_rate_reprices_previous_billable_nonnegative',
       sql`${table.previousBillableRateCents} is null or ${table.previousBillableRateCents} >= 0`,
@@ -3989,4 +4275,105 @@ export const accountDeletionCompletionAudit = sqliteTable('account_deletion_comp
 })
 export const accountRestoreQuarantine = sqliteTable('account_restore_quarantine', {
  id:integer('id').primaryKey(),quarantined:integer('quarantined',{mode:'boolean'}).notNull(),sourceDigest:text('source_digest'),evidence:text('evidence'),updatedAt:text('updated_at').notNull(),
+})
+
+/**
+ * Days a person is away, entered by an administrator (issue 1007). They reduce
+ * the capacity the planning view counts as available; they are not work, not
+ * leave management and not billing. `secondsPerDay` null is a whole day.
+ */
+export const timeOff = sqliteTable(
+  'time_off',
+  {
+    id: integer('id').primaryKey({ autoIncrement: true }),
+    userId: integer('user_id')
+      .notNull()
+      .references(() => users.id, { onDelete: 'restrict' }),
+    startDate: text('start_date').notNull(),
+    endDate: text('end_date').notNull(),
+    kind: text('kind', { enum: ['vacation', 'sick', 'holiday', 'other'] }).notNull(),
+    secondsPerDay: integer('seconds_per_day'),
+    version: integer('version').notNull().default(0),
+    ...timestamps,
+  },
+  (table) => [index('time_off_user_dates').on(table.userId, table.startDate, table.endDate)],
+)
+
+/**
+ * A named rate card attached to one client node (issue 34). Never updated or
+ * deleted: its rates are the append-only versions below.
+ */
+export const clientRateCards = sqliteTable('client_rate_cards', {
+  id: integer('id').primaryKey({ autoIncrement: true }),
+  clientId: integer('client_id')
+    .notNull()
+    .unique()
+    .references(() => clients.id, { onDelete: 'restrict' }),
+  name: text('name').notNull(),
+  ...timestamps,
+})
+
+export const clientRateCardVersions = sqliteTable(
+  'client_rate_card_versions',
+  {
+    id: integer('id').primaryKey({ autoIncrement: true }),
+    cardId: integer('card_id')
+      .notNull()
+      .references(() => clientRateCards.id, { onDelete: 'restrict' }),
+    startDate: text('start_date'),
+    /** JSON array of {task_id: number | null, amount_cents: number}. */
+    lines: text('lines').notNull(),
+    createdAt: text('created_at').notNull(),
+  },
+  (table) => [
+    uniqueIndex('client_rate_card_versions_card_start_unique').on(table.cardId, table.startDate),
+    index('client_rate_card_versions_card').on(table.cardId),
+  ],
+)
+
+/** Full local weekdays the operator marks unavailable for the whole organization. */
+export const organizationHolidays = sqliteTable('organization_holidays', {
+  id: integer('id').primaryKey({ autoIncrement: true }),
+  date: text('holiday_date').notNull().unique(),
+  name: text('name').notNull(),
+  version: integer('version').notNull().default(0),
+  ...timestamps,
+})
+
+/** Registered browser CSV source identity; row dedup stays in csvImportEntries. */
+export const csvImportDatasets = sqliteTable('csv_import_datasets', {
+  singleton: integer('singleton').notNull().default(1).unique(),
+  sourceId: text('source_id').primaryKey(),
+  workspaceIdentity: text('workspace_identity').notNull().unique(),
+  createdAt: text('created_at').notNull(),
+})
+export const csvImportChunks = sqliteTable('csv_import_chunks', {
+  actorUserId: integer('actor_user_id').notNull().references(() => users.id, { onDelete: 'restrict' }),
+  runId: integer('run_id').notNull().references(() => csvImportRuns.id, { onDelete: 'restrict' }),
+  chunkIndex: integer('chunk_index').notNull(),
+  requestSha256: text('request_sha256').notNull(),
+  sourceKey: text('source_key').notNull(),
+  sourceLine: integer('source_line').notNull(),
+  sourceSeconds: integer('source_seconds').notNull(),
+  insertedRows: integer('inserted_rows').notNull(),
+  alreadyImportedRows: integer('already_imported_rows').notNull(),
+  committedAt: text('committed_at').notNull(),
+}, (table) => [primaryKey({ columns: [table.runId, table.chunkIndex] }), uniqueIndex('csv_import_chunks_source_position').on(table.runId, table.sourceKey)])
+
+/** Committed setup lineage survives cancellation; it is not a row dedup store. */
+export const csvImportSetup = sqliteTable('csv_import_setup', {
+  actorUserId: integer('actor_user_id').notNull().references(() => users.id, { onDelete: 'restrict' }),
+  runId: integer('run_id').notNull().references(() => csvImportRuns.id, { onDelete: 'restrict' }),
+  setupKey: text('setup_key').notNull(),
+  entityKind: text('entity_kind').notNull(),
+  entityId: integer('entity_id').notNull(),
+  requestSha256: text('request_sha256').notNull(),
+  createdAt: text('created_at').notNull(),
+  policyFactsSha256: text('policy_facts_sha256'),
+}, (table) => [primaryKey({ columns: [table.runId, table.setupKey] })])
+
+/** Changes when a destination is reset/replaced; private staging is scoped to it. */
+export const csvStagingInstance = sqliteTable('csv_staging_instance', {
+  singleton: integer('singleton').primaryKey(),
+  nonce: text('nonce').notNull(),
 })

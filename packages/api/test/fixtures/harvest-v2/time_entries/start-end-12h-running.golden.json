@@ -1,0 +1,61 @@
+{
+  "id": 9001,
+  "spent_date": "2024-03-08",
+  "hours": 0,
+  "hours_without_timer": 0,
+  "rounded_hours": 0,
+  "notes": null,
+  "is_locked": false,
+  "locked_reason": null,
+  "is_closed": false,
+  "approval_status": "unsubmitted",
+  "is_billed": false,
+  "timer_started_at": null,
+  "started_time": "12:15pm",
+  "ended_time": null,
+  "is_running": true,
+  "billable": true,
+  "budgeted": true,
+  "billable_rate": 125.5,
+  "cost_rate": 80,
+  "created_at": "2024-01-05T10:00:00Z",
+  "updated_at": "2024-03-09T16:45:30Z",
+  "user": {
+    "id": 401,
+    "name": "Sample Sample-Worker"
+  },
+  "client": {
+    "id": 101,
+    "name": "Sample Widgets Ltd",
+    "currency": "USD"
+  },
+  "project": {
+    "id": 301,
+    "name": "Sample Rollout",
+    "code": "SMP-1"
+  },
+  "task": {
+    "id": 201,
+    "name": "Sample Design"
+  },
+  "user_assignment": {
+    "id": 501,
+    "is_project_manager": false,
+    "is_active": true,
+    "budget": 20,
+    "created_at": "2024-01-05T10:00:00Z",
+    "updated_at": "2024-03-09T16:45:30Z",
+    "hourly_rate": 125.5
+  },
+  "task_assignment": {
+    "id": 601,
+    "billable": true,
+    "is_active": true,
+    "created_at": "2024-01-05T10:00:00Z",
+    "updated_at": "2024-03-09T16:45:30Z",
+    "hourly_rate": 150,
+    "budget": 10
+  },
+  "invoice": null,
+  "external_reference": null
+}

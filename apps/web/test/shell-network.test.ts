@@ -362,7 +362,6 @@ describe('an instance that has not said it honours keys', () => {
   it.each([
     [408, {}],
     [429, {}],
-    [503, { 'retry-after': '1' }],
   ] as const)(
     '[unit] still sends a write again after an explicit refusal, a %i',
     async (status, headers) => {
@@ -450,7 +449,9 @@ describe('an abort', () => {
   it('[security] stops a write mid-wait, and sends nothing more', async () => {
     const script = scripted([answer(503, { 'retry-after': '1' }), answer(201)])
     const controller = new AbortController()
-    const fetch = createRetryingFetch({ fetch: script.fetch, random: () => 0.5 })
+    const support = createKeySupport()
+    support.learn(origin, answer(200, advertised))
+    const fetch = createRetryingFetch({ fetch: script.fetch, support, random: () => 0.5 })
     const pending = fetch(`${origin}/api/v1/time-entries`, {
       ...post(),
       signal: controller.signal,
@@ -723,15 +724,54 @@ describe('an instance that does not honour keys', () => {
     expect(server.writes).toHaveLength(1)
   })
 
-  it('[acceptance] sends a write again after a 503 that names a time: it did nothing', async () => {
+  it('[acceptance] leaves an unsupported 503 unresolved even when this fixture did nothing', async () => {
     const server = instance({ advertises: false, losses: ['503'] })
     const client = clientFor(server.fetch)
     await client.getWhoami()
 
-    const created = await client.createTimeEntry({ body: entryInput })
+    await expect(client.createTimeEntry({ body: entryInput })).rejects.toMatchObject({ status: 503 })
 
-    expect(server.entries).toHaveLength(1)
-    expect(created.data).toEqual(server.entries[0])
-    expect(server.writes).toHaveLength(2)
+    expect(server.entries).toHaveLength(0)
+    expect(server.writes).toHaveLength(1)
   })
 })
+
+it.each(['0', '3600'])('[security] does not duplicate a committed unsupported write after 503 with Retry-After %s', async (retryAfter) => {
+  const server = instance({ advertises: false, losses: [] })
+  const client = clientFor(async (input, init) => {
+    const response = await server.fetch(input, init)
+    if (init?.method === 'POST' && server.writes.length === 1) {
+      return answer(503, { 'retry-after': retryAfter })
+    }
+    return response
+  })
+  await client.getWhoami()
+  const outcome = await client.createTimeEntry({ body: entryInput }).catch((error: unknown) => error)
+  expect(server.entries).toHaveLength(1)
+  expect(server.writes).toHaveLength(1)
+  expect(outcome).toBeInstanceOf(EzactoApiError)
+  expect(outcome).toMatchObject({ status: 503 })
+})
+
+for (const path of ['/auth/sign-in', '/auth/two-factor/challenge']) {
+  it.each(['drop', 408, 429, 500, 503] as const)(`[security] sends ${path} once despite API key support after %s`, async (failure) => {
+    let effects = 0
+    const pending = createPendingWrites()
+    const support = createKeySupport()
+    support.learn(origin, answer(200, advertised))
+    const fetch = createRetryingFetch({
+      support,
+      pending,
+      sleep: async () => undefined,
+      fetch: async () => {
+        effects += 1
+        if (effects > 1) return answer(200)
+        if (failure === 'drop') throw dropped()
+        return answer(failure, { ...advertised, 'retry-after': '0' })
+      },
+    })
+    await fetch(`${origin}${path}`, post()).catch(() => undefined)
+    expect(effects).toBe(1)
+    expect([pending.unsent, pending.retrying]).toEqual([0, 0])
+  })
+}

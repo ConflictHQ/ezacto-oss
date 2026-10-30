@@ -23,6 +23,8 @@ export interface ProfileRepositoryPort {
    * organization zone is what actually decides their day until they choose.
    */
   readTimezone(userId: number): Promise<string | null>
+  /** Authoritative filing zone; omitted by older/custom profile compositions. */
+  readEffectiveTimezone?(userId: number): Promise<string>
   /** The person's own name and primary address; absent where not composed. */
   readIdentity?(
     userId: number,
@@ -99,6 +101,7 @@ export const installProfileRoutes = <Bindings extends object>(
   options: ProfileRouteOptions,
 ): void => {
   const profileData = async (userId: number, timezone: string | null) => {
+    const effectiveTimezone = await options.repository.readEffectiveTimezone?.(userId)
     const copy = (await options.repository.readInvoiceCopy?.(userId)) ?? null
     const identity = (await options.repository.readIdentity?.(userId)) ?? null
     return {
@@ -111,6 +114,7 @@ export const installProfileRoutes = <Bindings extends object>(
             email: identity.email,
           }),
       timezone: timezone ?? 'UTC',
+      ...(effectiveTimezone === undefined ? {} : { effective_timezone: effectiveTimezone }),
       // On unless the person turned it off; absent where nothing sends invoices.
       ...(copy === null ? {} : { invoice_copy_to_self: copy }),
     }

@@ -1,3 +1,4 @@
+import { setRequestBusy } from '../request-feedback.js'
 import { renderDataTable } from '../components/data-table.js'
 import { isDemoDeployment } from '../demo.js'
 import {
@@ -128,6 +129,7 @@ export const createEmailConfigurationController = (
     loaded = null
     saveKey = null
     senderPending = false
+    setRequestBusy(senderStatus, false)
     savePending = false
     senderList.replaceChildren()
     templateList.replaceChildren()
@@ -184,20 +186,34 @@ export const createEmailConfigurationController = (
     senderList.replaceChildren(
       renderDataTable<SenderIdentity>({
         caption: 'Sender identities',
+        table: 'email-senders',
+        defaultSort: { column: 'role', direction: 'ascending' },
         rows,
         rowKey: (identity) => String(identity.id),
         columns: [
-          { key: 'email', label: 'Address', render: (identity) => identity.email },
-          { key: 'name', label: 'Display name', render: (identity) => identity.display_name },
+          { key: 'email', label: 'Address', sortValue: (identity) => identity.email, render: (identity) => identity.email },
+          {
+            key: 'name',
+            label: 'Display name',
+            sortValue: (identity) => identity.display_name,
+            render: (identity) => identity.display_name,
+          },
           {
             key: 'reply',
             label: 'Reply-to',
+            sortValue: (identity) => identity.reply_to_email,
             render: (identity) => identity.reply_to_email ?? '—',
           },
-          { key: 'provider', label: 'Provider', render: (identity) => identity.provider },
+          {
+            key: 'provider',
+            label: 'Provider',
+            sortValue: (identity) => identity.provider,
+            render: (identity) => identity.provider,
+          },
           {
             key: 'evidence',
             label: 'Provider evidence',
+            sortValue: (identity) => senderEvidenceLabel(identity),
             render: (identity) => {
               const pill = document.createElement('span')
               pill.className = 'invoice-state'
@@ -210,6 +226,8 @@ export const createEmailConfigurationController = (
           {
             key: 'role',
             label: 'Role',
+            sortDescription: 'Default first, then available, then archived',
+            sortValue: (identity) => identity.is_default ? 0 : identity.archived_at === null ? 1 : 2,
             render: (identity) =>
               identity.archived_at !== null
                 ? 'Archived'
@@ -228,7 +246,7 @@ export const createEmailConfigurationController = (
                       {
                         label: 'Make default',
                         primary: true,
-                        disabled: demo,
+                        disabled: demo || senderPending,
                         onSelect: () => {
                           void runSenderCommand('default', identity)
                         },
@@ -236,7 +254,7 @@ export const createEmailConfigurationController = (
                     ]),
                 {
                   label: 'Refresh evidence',
-                  disabled: demo,
+                  disabled: demo || senderPending,
                   onSelect: () => {
                     void runSenderCommand('refresh', identity)
                   },
@@ -248,7 +266,7 @@ export const createEmailConfigurationController = (
                   : [
                       {
                         label: 'Archive',
-                        disabled: demo,
+                        disabled: demo || senderPending,
                         onSelect: () => {
                           void runSenderCommand('archive', identity)
                         },
@@ -283,6 +301,8 @@ export const createEmailConfigurationController = (
       return
     }
     senderPending = true
+    renderSenders()
+    setRequestBusy(senderStatus, true)
     senderStatus.textContent =
       command === 'refresh' ? 'Asking the provider…' : 'Applying the change…'
     try {
@@ -294,7 +314,13 @@ export const createEmailConfigurationController = (
       if (session.onSessionFailure(error)) return
       senderStatus.textContent = messageFor(error)
     } finally {
-      if (current() === session) senderPending = false
+      if (current() === session) {
+        senderPending = false
+        const outcome = senderStatus.textContent
+        renderSenders()
+        senderStatus.textContent = outcome
+        setRequestBusy(senderStatus, false)
+      }
     }
   }
 
@@ -308,28 +334,37 @@ export const createEmailConfigurationController = (
     templateList.replaceChildren(
       renderDataTable<EmailTemplate>({
         caption: 'Email templates',
+        table: 'email-templates',
+        defaultSort: { column: 'kind', direction: 'ascending' },
         rows,
         rowKey: (template) => template.kind,
         columns: [
           {
             key: 'kind',
+            fit: true,
             label: 'Template',
+            sortValue: (template) => emailTemplateKindLabel(template.kind),
             render: (template) => emailTemplateKindLabel(template.kind),
           },
           {
             key: 'purpose',
+            wrap: true,
             label: 'Sent when',
             render: (template) => emailTemplateKindPurpose(template.kind),
           },
           {
             key: 'subject',
+            wrap: true,
             label: 'Subject',
+            sortValue: (template) => template.subject_template,
             render: (template) => template.subject_template,
           },
           {
             key: 'version',
+            fit: true,
             label: 'Version',
             numeric: true,
+            sortValue: (template) => template.version,
             render: (template) => String(template.version),
           },
         ],
@@ -378,12 +413,14 @@ export const createEmailConfigurationController = (
         columns: [
           {
             key: 'version',
+            fit: true,
             label: 'Version',
             numeric: true,
             render: (template) => String(template.version),
           },
           {
             key: 'created',
+            fit: true,
             label: 'Saved',
             render: (template) => template.created_at.slice(0, 10),
           },
@@ -397,6 +434,7 @@ export const createEmailConfigurationController = (
           },
           {
             key: 'subject',
+            wrap: true,
             label: 'Subject',
             render: (template) => template.subject_template,
           },

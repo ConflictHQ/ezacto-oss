@@ -7,6 +7,7 @@ import {
 import { createApp } from '../../worker/src/app.js'
 import { readContainerConfig, type ContainerConfig } from './config.js'
 import { createContainerRuntime } from './runtime.js'
+import { createContainerHandler } from './handler.js'
 import { clientAddress } from './client-address.js'
 
 const externalRequest = (
@@ -48,9 +49,9 @@ const main = async (): Promise<void> => {
   const config = readContainerConfig(process.env)
   const runtime = await createContainerRuntime(config)
   const app = createApp(runtime.services, runtime.brandAssets, runtime.instanceTheme)
+  const handle = createContainerHandler(runtime.services, app, config.appEnv)
   const server = serve({
-    fetch: (request, bindings) =>
-      app.fetch(externalRequest(request, bindings, config), config.appEnv),
+    fetch: (request, bindings) => handle(externalRequest(request, bindings, config)),
     hostname: config.host,
     port: config.port,
   }) as Server

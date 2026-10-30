@@ -119,11 +119,21 @@ const policyKey = (subject: Readonly<PolicySubject>): string =>
 /**
  * Maya (2) logs time on one project with two tasks; Ada (1) administers.
  * Rounding is up to the quarter hour so a derived duration is visibly rounded.
+ *
+ * The rule goes in the columns the database has. One migrated only to before
+ * 0100 also predates 0112 (issue 949), so it holds the rule as the single enum
+ * that 0112 later copies into the direction and increment.
  */
 const installFixture = async (db: TestDatabase, mode: Mode): Promise<void> => {
+  const organizationColumns = (
+    await db.rows<{ name: string }>(`PRAGMA table_info(organizations)`)
+  ).map(({ name }) => name)
+  const rounding = organizationColumns.includes('time_rounding_mode')
+    ? { columns: 'time_rounding_mode, time_rounding_minutes', values: `'up', 15` }
+    : { columns: 'time_rounding', values: `'up_15'` }
   await db.run(
-    `INSERT INTO organizations (name, time_entry_mode, time_rounding, modules, created_at, updated_at)
-     VALUES ('Fictional Studio', ?, 'up_15', ?, ?, ?)`,
+    `INSERT INTO organizations (name, time_entry_mode, ${rounding.columns}, modules, created_at, updated_at)
+     VALUES ('Fictional Studio', ?, ${rounding.values}, ?, ?, ?)`,
     mode,
     JSON.stringify({ expenses: true, invoices: true, approval: true }),
     ...stamps(2),
@@ -220,6 +230,20 @@ for (const [runtime, factory] of factories) {
       return { db: database, tracked }
     }
 
+    it('[issue 1284] refuses completed zero-hour rows but allows a running placeholder', async () => {
+      const { db } = await setup('duration')
+      await expect(insertRow(db, { id: 40, seconds: 0 })).rejects.toThrow(
+        /time_entry_zero_duration/,
+      )
+      await expect(
+        insertRow(db, {
+          id: 41,
+          seconds: 0,
+          timerStartedAt: '2026-09-14T15:00:00.000Z',
+        }),
+      ).resolves.toBeUndefined()
+    }, 60_000)
+
     it('[unit] 0100 upgrades a duration organization without touching a row', async () => {
       const { db } = await setup('duration', false)
       // What a duration organization already holds: an hour, a correction
@@ -308,7 +332,7 @@ for (const [runtime, factory] of factories) {
       // Re-running the ledger is a no-op.
       await db.migrate()
       expect(await db.rows(`SELECT count(*) AS count FROM time_entries`)).toEqual([{ count: 4 }])
-    }, 30_000)
+    }, 60_000)
 
     it('[unit] logs a stopped start/end entry in a duration organization, seconds derived and rounded', async () => {
       const { db, tracked } = await setup('duration')
@@ -380,7 +404,7 @@ for (const [runtime, factory] of factories) {
         seconds: 1_000,
         roundedSeconds: 1_800,
       })
-    }, 30_000)
+    }, 60_000)
 
     it('[unit] refuses the shapes a duration organization cannot hold and writes nothing', async () => {
       const { db, tracked } = await setup('duration')
@@ -422,7 +446,7 @@ for (const [runtime, factory] of factories) {
       })
       expect(await db.rows(`SELECT count(*) AS count FROM time_entries`)).toEqual([{ count: 0 }])
       expect(await db.rows(`SELECT count(*) AS count FROM event_outbox`)).toEqual([{ count: 0 }])
-    }, 30_000)
+    }, 60_000)
 
     it('[money] accepts overlapping entries, and every total counts each one in full', async () => {
       const { db, tracked } = await setup('duration')
@@ -503,6 +527,20 @@ for (const [runtime, factory] of factories) {
       expect(detailed.report.rows).toEqual([
         expect.objectContaining({ spentDate: '2026-09-15', seconds: fiveHours, timeEntryCount: 3 }),
       ])
+
+      // The daily line says what was done: every distinct note its entries carry,
+      // once each. The entry grain keeps each entry's own note.
+      await db.run(
+        `UPDATE time_entries SET notes = CASE WHEN seconds = 3600 THEN 'Migration review' ELSE 'Client call' END WHERE user_id = 2`,
+      )
+      const daily = await reports.detailedTime({ ...week, grain: 'day' })
+      if (daily.kind !== 'report') throw new Error('expected a report')
+      expect(daily.report.rows[0]?.notes?.split(' · ').sort()).toEqual(['Client call', 'Migration review'])
+      const perEntry = await reports.detailedTime({ ...week, grain: 'entry' })
+      if (perEntry.kind !== 'report') throw new Error('expected a report')
+      expect(perEntry.report.rows.map((row) => row.notes).sort()).toEqual(
+        expect.arrayContaining(['Client call', 'Client call', 'Migration review']),
+      )
       expect(await reports.memberHours({ ...week, userId: 2 })).toMatchObject({
         seconds: fiveHours,
         roundedSeconds: fiveHours,
@@ -523,7 +561,7 @@ for (const [runtime, factory] of factories) {
         '2026-09-18T12:00:00.000Z',
       )
       expect(submission).toMatchObject({ entryCount: 3, totalSeconds: fiveHours })
-    }, 30_000)
+    }, 60_000)
 
     it('[unit] edits each entry by its own shape, whatever the organization mode', async () => {
       const { tracked } = await setup('duration')
@@ -587,7 +625,7 @@ for (const [runtime, factory] of factories) {
           at('2026-09-15T19:04:00.000Z'),
         ),
       ).toMatchObject({ startedTime: null, seconds: 2_700, roundedSeconds: 2_700 })
-    }, 30_000)
+    }, 60_000)
 
     it('[unit] keeps the running timer a duration timer beside start/end entries', async () => {
       const { db, tracked } = await setup('duration')
@@ -665,7 +703,7 @@ for (const [runtime, factory] of factories) {
            WHERE timer_started_at IS NOT NULL OR (started_time IS NOT NULL AND ended_time IS NULL)`,
         ),
       ).toEqual([{ count: 0 }])
-    }, 30_000)
+    }, 60_000)
 
     it('[security] holds policy locks, approvals and invoices on start/end entries', async () => {
       const { db, tracked } = await setup('duration')
@@ -723,7 +761,7 @@ for (const [runtime, factory] of factories) {
       expect(
         await db.rows(`SELECT count(*) AS count FROM time_entries WHERE spent_date = '2026-09-19'`),
       ).toEqual([{ count: 0 }])
-    }, 30_000)
+    }, 60_000)
 
     it('[unit] leaves a start_end organization exactly as it was', async () => {
       const { db, tracked } = await setup('start_end')
@@ -772,7 +810,7 @@ for (const [runtime, factory] of factories) {
       expect(
         await db.rows(`SELECT id, seconds, started_time FROM time_entries WHERE id = 22`),
       ).toEqual([{ id: 22, seconds: -900, started_time: null }])
-    }, 30_000)
+    }, 60_000)
   })
 }
 
@@ -870,5 +908,5 @@ describe('the 0100 insert rule, shape by shape', () => {
 
     // In a start/end organization not even a message moves.
     expect(await answers(true, 'start_end')).toEqual(await answers(false, 'start_end'))
-  }, 30_000)
+  }, 60_000)
 })

@@ -1,0 +1,53 @@
+{
+  "assignment": {
+    "id": 501,
+    "projectId": 301,
+    "userId": 401,
+    "isActive": true,
+    "isProjectManager": false,
+    "useDefaultRates": false,
+    "hourlyRateCents": null,
+    "budgetSeconds": 72000,
+    "createdAt": "2024-01-05T10:00:00.123Z",
+    "updatedAt": "2024-03-09T16:45:30.987Z"
+  },
+  "project": {
+    "id": 301,
+    "clientId": 101,
+    "name": "Sample Rollout",
+    "code": "SMP-1",
+    "createdAt": "2024-01-05T10:00:00.123Z",
+    "updatedAt": "2024-03-09T16:45:30.987Z"
+  },
+  "client": {
+    "id": 101,
+    "name": "Sample Widgets Ltd",
+    "address": null,
+    "currency": "USD",
+    "isActive": true,
+    "createdAt": "2024-01-05T10:00:00.123Z",
+    "updatedAt": "2024-03-09T16:45:30.987Z"
+  },
+  "taskAssignments": [
+    {
+      "assignment": {
+        "id": 601,
+        "projectId": 301,
+        "taskId": 201,
+        "isActive": true,
+        "billable": true,
+        "hourlyRateCents": null,
+        "budgetSeconds": 36000,
+        "budgetCents": null,
+        "createdAt": "2024-01-05T10:00:00.123Z",
+        "updatedAt": "2024-03-09T16:45:30.987Z"
+      },
+      "task": {
+        "id": 201,
+        "name": "Sample Design",
+        "createdAt": "2024-01-05T10:00:00.123Z",
+        "updatedAt": "2024-03-09T16:45:30.987Z"
+      }
+    }
+  ]
+}

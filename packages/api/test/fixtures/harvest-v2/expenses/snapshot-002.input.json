@@ -1,0 +1,80 @@
+{
+  "expense": {
+    "id": 6002,
+    "createdAt": "2024-02-03T10:20:30Z",
+    "updatedAt": "2024-02-03T10:20:30Z",
+    "spentDate": "2024-02-03",
+    "notes": "Sample expenses notes 6002",
+    "billable": false,
+    "state": {
+      "approvalStatus": "unsubmitted",
+      "invoiceId": null,
+      "isBilled": false,
+      "isLocked": true,
+      "lockedReason": "Sample expenses locked_reason 6002",
+      "lockedReasonCode": null
+    },
+    "totalCostCents": 222,
+    "units": 2
+  },
+  "context": {
+    "user": {
+      "id": 4006,
+      "firstName": "Sample users first_name 4006",
+      "lastName": "Sample users last_name 4006",
+      "createdAt": "2024-02-03T10:20:30Z",
+      "updatedAt": "2024-02-03T10:20:30Z"
+    },
+    "project": {
+      "id": 2009,
+      "createdAt": "2024-02-03T10:20:30Z",
+      "updatedAt": "2024-02-03T10:20:30Z",
+      "name": "Sample projects name 2009",
+      "code": "SMP-2009",
+      "isActive": true,
+      "clientId": 1030,
+      "billingMethod": "non_billable",
+      "billBy": "none",
+      "hourlyRateCents": null,
+      "budgetSeconds": null,
+      "budgetBy": "none",
+      "budgetIsMonthly": false,
+      "notifyWhenOverBudget": false,
+      "overBudgetPct": 2,
+      "showBudgetToAll": false,
+      "startsOn": null,
+      "endsOn": null,
+      "notes": "",
+      "costBudgetCents": null,
+      "costBudgetIncludeExpenses": false,
+      "feeCents": null
+    },
+    "client": {
+      "id": 1030,
+      "createdAt": "2024-02-03T10:20:30Z",
+      "updatedAt": "2024-02-03T10:20:30Z",
+      "name": "Sample clients name 1030",
+      "isActive": true,
+      "address": "",
+      "currency": "USD"
+    },
+    "userAssignment": {
+      "id": 7162,
+      "createdAt": "2024-02-03T10:20:30Z",
+      "updatedAt": "2024-02-03T10:20:30Z",
+      "isProjectManager": false,
+      "isActive": false,
+      "hourlyRateCents": 200,
+      "budgetSeconds": null
+    },
+    "isBilled": false,
+    "lockedReason": "Sample expenses locked_reason 6002",
+    "invoice": null,
+    "expenseCategory": {
+      "id": 9010,
+      "name": "Sample category 9010",
+      "unitName": null,
+      "unitPriceCents": null
+    }
+  }
+}

@@ -11,6 +11,7 @@ import {
 } from '@ezacto/core'
 import type BetterSqlite3 from 'better-sqlite3'
 import { sql, type SQL } from 'drizzle-orm'
+import { SQLiteSyncDialect } from 'drizzle-orm/sqlite-core'
 import type { BetterSQLite3Database } from 'drizzle-orm/better-sqlite3'
 import type { DrizzleD1Database } from 'drizzle-orm/d1'
 import type * as schema from './schema.js'
@@ -121,6 +122,8 @@ const definitions: Readonly<Record<GeneralResourceKind, ResourceDefinition>> = {
       notes: 'notes',
       billingCurrency: 'billing_currency',
       timeEntryNotesMinimumLength: 'time_entry_notes_minimum_length',
+      timeRoundingMode: 'time_rounding_mode',
+      timeRoundingMinutes: 'time_rounding_minutes',
     },
     booleans: new Set([
       'isActive',
@@ -243,6 +246,8 @@ const definitions: Readonly<Record<GeneralResourceKind, ResourceDefinition>> = {
 
 const identifier = (name: string) => sql.identifier(name)
 
+const idChunk = 40
+
 const isD1Client = (client: NativeClient): client is D1Database => 'batch' in client
 
 const nativeClient = (database: Database): NativeClient =>
@@ -326,6 +331,12 @@ const recordFromRow = (
 ): GeneralResourceRecord => {
   const output: Record<string, GeneralValue> = {}
   for (const [column, raw] of Object.entries(row)) {
+    // A read-only bootstrap marker. Ordinary project responses keep their
+    // existing shape; practice projects remain identifiable after a rename.
+    if (definition.table === 'projects' && column === 'is_example') {
+      if (raw === 1) output['isExample'] = true
+      continue
+    }
     if (
       column === 'statement_key' ||
       (definition.table === 'users' && (column === 'version' || column === 'team_write_token'))
@@ -365,7 +376,8 @@ const translate = (error: unknown): never => {
     lower.includes('must be a valid date') ||
     lower.includes('derived') ||
     lower.includes('retain an active administrator') ||
-    lower.includes('owner cannot be deactivated')
+    lower.includes('owner cannot be deactivated') ||
+    lower.includes('time rounding must be')
   ) {
     throw new GeneralResourceError('invalid_input', message)
   }
@@ -524,7 +536,17 @@ const validatedUserEmail = async (
   return address
 }
 
-export const createGeneralResourceRepository = (database: Database): GeneralResourceRepository => ({
+/** Trusted DB-only atomic append seam. Statements run immediately after a
+ * successful base INSERT, before default relations. A refusing statement rolls
+ * the entire canonical creation back. No SQL enters the core resource port. */
+export interface GeneralResourceCreateHooks {
+  followUps(kind: GeneralResourceKind, targetTable: string): readonly AtomicStatement[]
+  afterRelations?(kind: GeneralResourceKind, targetTable: string): readonly AtomicStatement[]
+}
+export const createGeneralResourceRepository = (
+  database: Database,
+  createHooks?: GeneralResourceCreateHooks,
+): GeneralResourceRepository => ({
   async highWatermark(kind, filters, viewer) {
     const definition = definitions[kind]
     const rows = await database.all<{ maximum: number | null }>(
@@ -542,6 +564,49 @@ export const createGeneralResourceRepository = (database: Database): GeneralReso
     return hydrate(database, kind, rows, viewer)
   },
 
+  async count(kind, filters, viewer) {
+    const definition = definitions[kind]
+    const rows = await database.all<{ total: number }>(
+      sql`SELECT count(*) AS total FROM ${identifier(definition.table)} WHERE ${whereFor(kind, definition, filters, undefined, viewer)}`,
+    )
+    return Number(rows[0]?.total ?? 0)
+  },
+
+  async listOffset(kind, filters, window, viewer) {
+    if (
+      !Number.isSafeInteger(window.offset) ||
+      window.offset < 0 ||
+      !Number.isSafeInteger(window.take) ||
+      window.take < 1
+    )
+      throw new RangeError('offset window must be a non-negative offset and a positive take')
+    const definition = definitions[kind]
+    const rows = await database.all<Record<string, unknown>>(
+      sql`SELECT * FROM ${identifier(definition.table)} WHERE ${whereFor(kind, definition, filters, undefined, viewer)} ORDER BY id LIMIT ${window.take} OFFSET ${window.offset}`,
+    )
+    return hydrate(database, kind, rows, viewer)
+  },
+
+  async getMany(kind, ids, viewer) {
+    const definition = definitions[kind]
+    const unique = [...new Set(ids)]
+    const rows: Record<string, unknown>[] = []
+    // D1 binds at most 100 parameters to a statement.
+    for (let start = 0; start < unique.length; start += idChunk) {
+      const chunk = unique.slice(start, start + idChunk)
+      rows.push(
+        ...(await database.all<Record<string, unknown>>(
+          sql`SELECT * FROM ${identifier(definition.table)} WHERE id IN (${sql.join(
+            chunk.map((id) => sql`${id}`),
+            sql`, `,
+          )}) AND ${teamGeneralResourceAccessSql(kind, viewer)}`,
+        )),
+      )
+    }
+    rows.sort((left, right) => Number(left.id) - Number(right.id))
+    return hydrate(database, kind, rows, viewer)
+  },
+
   async get(kind, id, viewer) {
     const definition = definitions[kind]
     const rows = await database.all<Record<string, unknown>>(
@@ -556,7 +621,7 @@ export const createGeneralResourceRepository = (database: Database): GeneralReso
   async create(kind, input, now, viewer) {
     const definition = definitions[kind]
     for (const field of Object.keys(input)) {
-      if (definition.columns[field] === undefined)
+      if (!Object.hasOwn(definition.columns, field))
         throw new GeneralResourceError(
           'invalid_input',
           `${field} is not accepted by the repository.`,
@@ -645,6 +710,7 @@ export const createGeneralResourceRepository = (database: Database): GeneralReso
             ],
           },
         ]
+        statements.push(...(createHooks?.followUps(kind, definition.table) ?? []))
         if (kind === 'roles' && roleUserIds !== undefined && roleUserIds.length > 0) {
           statements.push({
             text: `INSERT INTO user_roles (user_id, role_id, created_at, updated_at)
@@ -665,7 +731,7 @@ export const createGeneralResourceRepository = (database: Database): GeneralReso
           statements.push({
             text: `INSERT INTO user_emails
               (user_id, address, verified_at, is_primary, created_at, updated_at)
-              VALUES (last_insert_rowid(), ?, ?, 1, ?, ?) RETURNING id`,
+              VALUES ((SELECT max(id) FROM users), ?, ?, 1, ?, ?) RETURNING id`,
             params: [String(relationEmail), now, now, now],
           })
         }
@@ -706,6 +772,7 @@ export const createGeneralResourceRepository = (database: Database): GeneralReso
             },
           )
         }
+        statements.push(...(createHooks?.afterRelations?.(kind, definition.table) ?? []))
         const atomicRows = await runAtomic(database, statements)
         rows = atomicRows[0] ?? []
       } else if (kind === 'user-assignments') {
@@ -735,18 +802,27 @@ export const createGeneralResourceRepository = (database: Database): GeneralReso
               ...guard.bindings,
             ],
           },
+          ...(createHooks?.followUps(kind, definition.table) ?? []),
           {
             text: `UPDATE users
               SET version = version + 1, team_write_token = NULL, updated_at = ?
               WHERE id = ? AND changes() = 1 RETURNING id`,
             params: [now, Number(effectiveInput.userId)],
           },
+          ...(createHooks?.afterRelations?.(kind, definition.table) ?? []),
         ])
         rows = atomicRows[0] ?? []
       } else {
-        rows = await database.all<Record<string, unknown>>(
-          sql`INSERT INTO ${identifier(definition.table)} (${sql.join(columns, sql`, `)}) VALUES (${sql.join(values, sql`, `)}) RETURNING *`,
-        )
+        const insert = sql`INSERT INTO ${identifier(definition.table)} (${sql.join(columns, sql`, `)}) VALUES (${sql.join(values, sql`, `)}) RETURNING *`
+        if (createHooks) {
+          const compiled = new SQLiteSyncDialect().sqlToQuery(insert)
+          const atomicRows = await runAtomic(database, [
+            { text: compiled.sql, params: compiled.params },
+            ...createHooks.followUps(kind, definition.table),
+            ...(createHooks.afterRelations?.(kind, definition.table) ?? []),
+          ])
+          rows = atomicRows[0] ?? []
+        } else rows = await database.all<Record<string, unknown>>(insert)
       }
       if (rows.length === 0)
         throw new GeneralResourceError('not_found', 'The resource does not exist.')
@@ -771,7 +847,7 @@ export const createGeneralResourceRepository = (database: Database): GeneralReso
     const definition = definitions[kind]
     if (kind === 'users') await assertResourceAccess(database, kind, id, viewer)
     for (const field of Object.keys(input)) {
-      if (definition.columns[field] === undefined)
+      if (!Object.hasOwn(definition.columns, field))
         throw new GeneralResourceError(
           'invalid_input',
           `${field} is not accepted by the repository.`,
@@ -1052,6 +1128,27 @@ export const createGeneralResourceRepository = (database: Database): GeneralReso
     return rateFromRow(rows[0]!)
   },
 
+  async currentRates(kind, userIds, onDate) {
+    const table = kind === 'billable' ? 'user_billable_rates' : 'user_cost_rates'
+    const unique = [...new Set(userIds)]
+    const amounts = new Map<number, number>()
+    for (let start = 0; start < unique.length; start += idChunk) {
+      const chunk = unique.slice(start, start + idChunk)
+      // Oldest start first, so the latest rate in force overwrites an earlier one.
+      const rows = await database.all<{ user_id: number; amount_cents: number }>(
+        sql`SELECT user_id, amount_cents FROM ${identifier(table)}
+          WHERE user_id IN (${sql.join(
+            chunk.map((id) => sql`${id}`),
+            sql`, `,
+          )})
+            AND (start_date IS NULL OR start_date <= ${onDate})
+            AND (end_date IS NULL OR end_date >= ${onDate})
+          ORDER BY user_id, coalesce(start_date, '')`,
+      )
+      for (const row of rows) amounts.set(Number(row.user_id), Number(row.amount_cents))
+    }
+    return amounts
+  },
 })
 
 const rateFromRow = (row: Record<string, unknown>): UserRateRecord => ({

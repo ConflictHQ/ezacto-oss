@@ -227,11 +227,12 @@ that does not.
 Two things to settle here rather than discover later:
 
 - The loader's own bookkeeping tables (`_ezacto_load_admission`,
-  `_ezacto_load_progress`, `_ezacto_load_anomalies` and six siblings, plus two
-  indexes) are created by the load and never dropped. They go into prod with
-  everything else. Keeping them is defensible — `_ezacto_load_anomalies` is the
+  `_ezacto_load_progress`, `_ezacto_load_anomalies` and nine siblings, three of
+  them the load lease, its log and its fence guard, plus two indexes) are
+  created by the load and never dropped. They go into prod with everything
+  else. Keeping them is defensible — `_ezacto_load_anomalies` is the
   on-database record of the load's anomalies — but decide it, and note the
-  decision, so the next schema audit is not surprised by nine unexplained
+  decision, so the next schema audit is not surprised by twelve unexplained
   tables. They cannot simply be dropped before the dump if you may ever need to
   resume a load: reconcile and the worksheet path both read them.
 - `_ezacto_load_anomalies` is the itemised list behind
@@ -703,6 +704,7 @@ is the last thing you set before dispatching.
 | `MAGIC_LINK_SIGNING_KEY` | secret | only for the client portal | the portal routes are not served, so every magic link a client is sent answers 404 |
 | `OIDC_GOOGLE_CLIENT_ID` / `_SECRET` | secrets | pair | no Google sign-in; a half-pair fails the deploy |
 | `MAILGUN_API_KEY` + `MAILGUN_DOMAIN` | secret + variable | for mail | no outbound mail; configuring SES as well fails the deploy |
+| `MAILGUN_WEBHOOK_SIGNING_KEY` | secret | for bounce and complaint tracking | `/webhooks/mailgun` is not mounted (404), so bounces and complaints never reach the message log |
 
 `OIDC_REDIRECT_ORIGIN` fails the deploy rather than the worker, which is the
 better of the two failures but still a failure at the end of the night. It is an
@@ -881,7 +883,7 @@ Measured on a fresh rehearsal against the live account, 2026-09-07, snapshot
 `bc074919`:
 
 ```
-matches <count>   rounding 0   gaps 8   unexplained 0
+matches 26109   rounding 0   gaps 8   unexplained 0
 ```
 
 The eight are the four rows above. Every correction in the account loaded,

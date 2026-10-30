@@ -3,7 +3,7 @@ import type { BetterSQLite3Database } from 'drizzle-orm/better-sqlite3'
 import type { DrizzleD1Database } from 'drizzle-orm/d1'
 import type * as schema from './schema.js'
 
-type ActivityDatabase = BetterSQLite3Database<typeof schema> | DrizzleD1Database<typeof schema>
+export type ActivityDatabase = BetterSQLite3Database<typeof schema> | DrizzleD1Database<typeof schema>
 type NativeClient = BetterSqlite3.Database | D1Database
 
 /**
@@ -29,14 +29,39 @@ type NativeClient = BetterSqlite3.Database | D1Database
  * subject, in order" is no longer a property anything can check.
  */
 export const ACTIVITY_EVENT_AGGREGATES = {
+  'organization_holiday.created': 'organization_calendar',
+  'organization_holiday.updated': 'organization_calendar',
+  'organization_holiday.deleted': 'organization_calendar',
   'auth.signed_in': 'user_authentication',
   'auth.signed_out': 'user_authentication',
   'api_token.created': 'api_token',
   'api_token.revoked': 'api_token',
+  // The emailed second factor (issue 770), recorded against the user whose
+  // sign-in it changes -- not against the actor, who may be an administrator.
+  'two_factor.email_enabled': 'user_authentication',
+  'two_factor.email_disabled': 'user_authentication',
   'backup.exported': 'backup_run',
   'backup.restored': 'backup_restore',
+  'backup.restore_drilled': 'backup_drill',
+  'webhook_subscription.created': 'webhook_configuration',
+  'webhook_subscription.paused': 'webhook_configuration',
+  'webhook_subscription.resumed': 'webhook_configuration',
+  'webhook_subscription.secret_rotated': 'webhook_configuration',
+  'webhook_subscription.deleted': 'webhook_configuration',
+  'webhook_delivery.replayed': 'webhook_configuration',
   // A person asking for their own account to be deleted (account-deletion.ts).
   'account.deletion_requested': 'user_account',
+  // Issue 1009: an administrator changing the automatic-approval policy (subject
+  // 1, the one policy), and the sweep approving a week under it (subject: the
+  // submission).
+  'timesheet_auto_approval.updated': 'timesheet_auto_approval_policy',
+  'timesheet.auto_approved': 'timesheet_auto_approval',
+  // An administrator connecting or disconnecting an issue tracker (issue 1008).
+  'work_item_connection.connected': 'work_item_connection',
+  'work_item_connection.disconnected': 'work_item_connection',
+  // An administrator rolling a finished year of the log into its own table
+  // (issue 8). The subject is the year rolled, so a year reads as one history.
+  'activity_log.rolled': 'activity_log_roll',
 } as const
 
 export type ActivityEventType = keyof typeof ACTIVITY_EVENT_AGGREGATES
@@ -107,12 +132,12 @@ const assertRowId = (value: number, field: string): void => {
   }
 }
 
-const nativeClient = (database: ActivityDatabase): NativeClient =>
+export const nativeClient = (database: ActivityDatabase): NativeClient =>
   (database as ActivityDatabase & { $client: NativeClient }).$client
 
 const isD1Client = (client: NativeClient): client is D1Database => 'batch' in client
 
-const atomic = async (
+export const atomic = async (
   client: NativeClient,
   statements: readonly { sql: string; params: readonly unknown[] }[],
 ): Promise<Record<string, unknown>[][]> => {
@@ -124,10 +149,15 @@ const atomic = async (
     ).map((result) => (result.results ?? []) as Record<string, unknown>[])
   }
   return client.transaction(() =>
-    statements.map(
-      (statement) =>
-        client.prepare(statement.sql).all(...statement.params) as Record<string, unknown>[],
-    ),
+    statements.map((statement) => {
+      const prepared = client.prepare(statement.sql)
+      // A schema change (the activity roll) returns no rows and `all()` refuses it.
+      if (!prepared.reader) {
+        prepared.run(...statement.params)
+        return []
+      }
+      return prepared.all(...statement.params) as Record<string, unknown>[]
+    }),
   )()
 }
 
@@ -156,6 +186,29 @@ export const captureActivityEvent = async (
   input: ActivityEventInput,
   options: CaptureActivityEventOptions = {},
 ): Promise<ActivityCaptureResult> => {
+  const capture = activityCaptureStatements(input, options)
+  const [inserted, existing] = await atomic(nativeClient(database), capture.statements)
+  return capturedResult(capture, inserted, existing)
+}
+
+export interface ActivityCaptureStatements {
+  readonly statements: readonly [
+    { sql: string; params: readonly unknown[] },
+    { sql: string; params: readonly unknown[] },
+  ]
+  readonly input: ActivityEventInput
+  readonly aggregateType: string
+}
+
+/**
+ * The two statements a capture runs, validated, so a caller that must record an
+ * event in the same transaction as its own change can append them to its batch
+ * and read the outcome back with `capturedResult`.
+ */
+export const activityCaptureStatements = (
+  input: ActivityEventInput,
+  options: CaptureActivityEventOptions = {},
+): ActivityCaptureStatements => {
   const aggregateType = ACTIVITY_EVENT_AGGREGATES[input.eventType]
   if (aggregateType === undefined) {
     throw new RangeError(`${input.eventType} is not an activity event type`)
@@ -187,7 +240,7 @@ export const captureActivityEvent = async (
     [aggregateType]: detail,
   })
 
-  const [inserted, existing] = await atomic(nativeClient(database), [
+  const statements: ActivityCaptureStatements['statements'] = [
     {
       sql: `INSERT INTO event_outbox (
           id, aggregate_type, aggregate_id, aggregate_sequence, event_type,
@@ -227,8 +280,16 @@ export const captureActivityEvent = async (
         WHERE aggregate_type = ? AND aggregate_id = ? AND command_id = ? AND event_index = 0`,
       params: [aggregateType, input.subjectId, input.captureId],
     },
-  ])
+  ]
+  return { statements, input, aggregateType }
+}
 
+export const capturedResult = (
+  capture: Pick<ActivityCaptureStatements, 'input' | 'aggregateType'>,
+  inserted: Record<string, unknown>[] | undefined,
+  existing: Record<string, unknown>[] | undefined,
+): ActivityCaptureResult => {
+  const { input, aggregateType } = capture
   const written = capturedRow(inserted?.[0])
   const recorded = written ?? capturedRow(existing?.[0])
   if (recorded === null) {

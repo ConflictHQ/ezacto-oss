@@ -51,6 +51,12 @@ export interface GeneralListWindow {
   take: number;
 }
 
+/** A page read by position, for the Harvest shim; the native API pages by cursor. */
+export interface GeneralOffsetWindow {
+  offset: number;
+  take: number;
+}
+
 export type GeneralMutationInput = Readonly<Record<string, GeneralValue>>;
 
 export type GeneralResourceErrorCode =
@@ -91,6 +97,25 @@ export interface GeneralResourceRepository {
     window: Readonly<GeneralListWindow>,
     viewer?: Readonly<TeamViewer>,
   ): Promise<readonly GeneralResourceRecord[]>;
+  /** Size of the whole filtered collection the viewer may read. */
+  count(
+    kind: GeneralResourceKind,
+    filters: Readonly<GeneralResourceFilters>,
+    viewer?: Readonly<TeamViewer>,
+  ): Promise<number>;
+  /** Rows in id order from `window.offset`, for offset-paged callers. */
+  listOffset(
+    kind: GeneralResourceKind,
+    filters: Readonly<GeneralResourceFilters>,
+    window: Readonly<GeneralOffsetWindow>,
+    viewer?: Readonly<TeamViewer>,
+  ): Promise<readonly GeneralResourceRecord[]>;
+  /** The readable rows among `ids`, in id order; ids the viewer cannot read are absent. */
+  getMany(
+    kind: GeneralResourceKind,
+    ids: readonly number[],
+    viewer?: Readonly<TeamViewer>,
+  ): Promise<readonly GeneralResourceRecord[]>;
   get(
     kind: GeneralResourceKind,
     id: number,
@@ -129,4 +154,13 @@ export interface GeneralResourceRepository {
     kind: UserRateKind,
     id: number,
   ): Promise<UserRateRecord>;
+  /**
+   * The amount in force on `onDate` (YYYY-MM-DD) for each of `userIds`; a user
+   * with no rate in force is absent from the map.
+   */
+  currentRates(
+    kind: UserRateKind,
+    userIds: readonly number[],
+    onDate: string,
+  ): Promise<ReadonlyMap<number, number>>;
 }

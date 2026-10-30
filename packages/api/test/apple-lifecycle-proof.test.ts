@@ -115,6 +115,10 @@ describe("fixed-trust Apple lifecycle proof", () => {
     const { sign } = await signing();
     const receipt = await sign();
     for (const response of [
+      new Response(null, {
+        status: 302,
+        headers: { location: "https://attacker.example/jwks.json" },
+      }),
       new Response("not json"),
       new Response("x".repeat(32769)),
       Response.json({ keys: [] }),
@@ -136,7 +140,7 @@ describe("fixed-trust Apple lifecycle proof", () => {
       const verifier = createAppleLifecycleVerifier({
         now: () => now,
         fetch: async (_url, init) => {
-          expect(init?.redirect).toBe("error");
+          expect(init?.redirect).toBe("manual");
           return response;
         },
       });

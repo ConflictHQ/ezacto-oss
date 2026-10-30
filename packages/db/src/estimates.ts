@@ -1,6 +1,7 @@
 import { and, eq, sql } from 'drizzle-orm'
 import type { BetterSQLite3Database } from 'drizzle-orm/better-sqlite3'
 import type { DrizzleD1Database } from 'drizzle-orm/d1'
+import { dateInTimeZone, startOfDayInTimeZone } from '@ezacto/core'
 import { percentageToRatePpm } from './invoice-payments.js'
 import type * as schema from './schema.js'
 import { estimateMessages } from './schema.js'
@@ -452,3 +453,114 @@ export const recordEstimateMessageDelivery = async (
   if (!updated) throw new Error('estimate send message does not exist')
   return updated
 }
+
+export interface EstimateContentSource {
+  number: string
+  purchase_order: string | null
+  subject: string | null
+  notes: string | null
+  currency: string
+  issue_date: string
+  tax_rate_ppm: number | null
+  tax2_rate_ppm: number | null
+  discount_rate_ppm: number | null
+  amount_cents: number
+  tax_amount_cents: number
+  tax2_amount_cents: number
+  discount_amount_cents: number
+  line_items: ReadonlyArray<{
+    position: number
+    kind: string
+    description: string | null
+    quantity: number
+    unit_price_cents: number
+    amount_cents: number
+    taxed: boolean
+    taxed2: boolean
+  }>
+}
+
+/**
+ * The version a customer answers: a SHA-256 over everything they are shown to
+ * agree to (header, lines, rates, amounts, currency) and nothing else. State,
+ * timestamps and the internal version counter are left out on purpose, so a
+ * status change does not look like an edit and an edit always does. Fields are
+ * positional, in a fixed order, so the hash does not depend on key order.
+ */
+export const estimateContentHash = async (source: EstimateContentSource): Promise<string> => {
+  const lines = [...source.line_items]
+    .sort((left, right) => left.position - right.position)
+    .map((line) => [
+      line.position,
+      line.kind,
+      line.description,
+      line.quantity,
+      line.unit_price_cents,
+      line.amount_cents,
+      line.taxed,
+      line.taxed2,
+    ])
+  const canonical = JSON.stringify([
+    1,
+    source.number,
+    source.purchase_order,
+    source.subject,
+    source.notes,
+    source.currency,
+    source.issue_date,
+    source.tax_rate_ppm,
+    source.tax2_rate_ppm,
+    source.discount_rate_ppm,
+    source.amount_cents,
+    source.tax_amount_cents,
+    source.tax2_amount_cents,
+    source.discount_amount_cents,
+    lines,
+  ])
+  const digest = new Uint8Array(
+    await crypto.subtle.digest('SHA-256', new TextEncoder().encode(canonical)),
+  )
+  return [...digest].map((byte) => byte.toString(16).padStart(2, '0')).join('')
+}
+
+const addCalendarDays = (date: string, days: number): string => {
+  const shifted = new Date(Date.parse(`${date}T00:00:00.000Z`) + days * 86_400_000)
+  return shifted.toISOString().slice(0, 10)
+}
+
+export interface EstimateExpirySource {
+  /** The last day staff allow an answer, or null when staff set none. */
+  expiresOn: string | null
+  sentAt: string | null
+  /** The organization's days of validity from the first send, or null for none. */
+  validityDays: number | null
+  timeZone: string
+}
+
+/**
+ * The last calendar day an estimate can be answered (issue 1010): the day staff
+ * set, else the day it was first sent, in the instance timezone, plus the
+ * organization's validity days. Null when neither applies, which means the
+ * estimate does not expire. The expiry is deliberately not part of
+ * `estimateContentHash`: moving it never invalidates the version a customer saw.
+ */
+export const effectiveEstimateExpiry = (source: EstimateExpirySource): string | null => {
+  if (source.expiresOn !== null) return source.expiresOn
+  if (source.validityDays === null || source.sentAt === null) return null
+  return addCalendarDays(dateInTimeZone(source.sentAt, source.timeZone), source.validityDays)
+}
+
+/**
+ * The first instant the estimate can no longer be answered: midnight at the end
+ * of the expiry day in the instance timezone. The expiry day itself is still
+ * open; the millisecond before this instant is the last one that is.
+ */
+export const estimateExpiryInstant = (expiryDay: string, timeZone: string): string =>
+  startOfDayInTimeZone(addCalendarDays(expiryDay, 1), timeZone)
+
+export const isEstimateExpired = (
+  expiryDay: string | null,
+  timeZone: string,
+  now: string,
+): boolean =>
+  expiryDay !== null && Date.parse(now) >= Date.parse(estimateExpiryInstant(expiryDay, timeZone))

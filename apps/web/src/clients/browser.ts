@@ -1,3 +1,7 @@
+import { accountingProviderAvailable } from '../accounting-providers.js'
+import { moduleAvailable } from '../module-availability.js'
+import { createClientRateCardController } from './rate-card-browser.js'
+import { focusSortHeader, rememberedSort, resolveSort, sortRows, type TableSort } from '../components/table-sort.js'
 import { renderDataTable } from '../components/data-table.js'
 import { markMoney } from '../money-display.js'
 import { sessionPresenter, type SessionPresenter } from '../session.js'
@@ -186,6 +190,13 @@ export interface ClientDirectoryController {
 export const createClientDirectoryController = (
   api: Partial<ClientDirectoryApi>,
 ): ClientDirectoryController => {
+  const rateCards = createClientRateCardController(api)
+  if (!moduleAvailable('invoices')) {
+    for (const selector of ['#ez-contact-recipient', '#ez-client-bill-to']) {
+      document.querySelector(selector)?.closest('label')?.setAttribute('hidden', '')
+      document.querySelector(selector)?.setAttribute('disabled', '')
+    }
+  }
   const listPage = document.documentElement.dataset.appView === 'client-list'
   const detailPage = document.documentElement.dataset.appView === 'client-detail'
   const listPageElement = required<HTMLElement>('[data-client-list-page]')
@@ -275,6 +286,7 @@ export const createClientDirectoryController = (
   detailPageElement.hidden = !detailPage
 
   let session: ActiveSession | null = null
+  let clientSort: TableSort | null = null
   let clients: readonly GeneralResource[] = []
   let contacts: readonly GeneralResource[] = []
   let projects: readonly GeneralResource[] = []
@@ -410,16 +422,34 @@ export const createClientDirectoryController = (
       listStatus.textContent = empty.textContent
       return
     }
-    const rows = clientHierarchy(visible)
+    const sort = resolveSort([clientSort, rememberedSort('clients')],
+      column => ['client', 'parent', 'bill-to'].includes(column),
+      { column: 'client', direction: 'ascending' })!
+    const relation = (client: GeneralResource, field: string): string | null => {
+      const id = clientNumber(client, field)
+      return id === null ? null : relationLabel(id, clients)
+    }
+    const ordered = sortRows(visible, client => sort.column === 'client'
+      ? clientDisplayName(client)
+      : relation(client, sort.column === 'parent' ? 'parent_client_id' : 'bill_to_client_id'), sort.direction)
+    const positions = new Map(ordered.map((client, index) => [client.id, index]))
+    // Only siblings trade places. A child always remains under its parent.
+    const rows = clientHierarchy(visible, (a, b) => positions.get(a.id)! - positions.get(b.id)!)
     tree.replaceChildren(
       renderDataTable<{ client: GeneralResource; depth: number }>({
         caption: 'Clients',
+        table: 'clients',
+        sort,
+        serverSort: true,
+        onSort: next => { clientSort = next; renderTree(); focusSortHeader(tree, next.column) },
         rows,
         rowKey: ({ client }) => String(client.id),
         columns: [
           {
             key: 'client',
             label: 'Client',
+            sortValue: ({ client }) => clientDisplayName(client),
+            sortDescription: 'Sort siblings; children stay under their parent',
             render: ({ client, depth }) => {
               const cell = document.createElement('div')
               cell.className = 'client-tree-name'
@@ -441,6 +471,7 @@ export const createClientDirectoryController = (
           {
             key: 'parent',
             label: 'Worked-for parent',
+            sortValue: ({ client }) => relation(client, 'parent_client_id'),
             render: ({ client }) => {
               const parentId = clientNumber(client, 'parent_client_id')
               return parentId === null
@@ -451,6 +482,7 @@ export const createClientDirectoryController = (
           {
             key: 'bill-to',
             label: 'Bill-to client',
+            sortValue: ({ client }) => relation(client, 'bill_to_client_id'),
             render: ({ client }) => {
               const billToId = clientNumber(client, 'bill_to_client_id')
               return billToId === null
@@ -475,6 +507,8 @@ export const createClientDirectoryController = (
     projectsList.replaceChildren(
       renderDataTable<GeneralResource>({
         caption: 'Projects for this client',
+        table: 'client-projects',
+        defaultSort: { column: 'name', direction: 'ascending' },
         rows: projects,
         rowKey: (project) => String(project.id),
         empty: 'No projects for this client.',
@@ -482,6 +516,7 @@ export const createClientDirectoryController = (
           {
             key: 'name',
             label: 'Project',
+            sortValue: (project) => clientText(project, 'name') ?? `Project #${project.id}`,
             render: (project) => {
               const name = clientText(project, 'name') ?? `Project #${project.id}`
               const code = clientText(project, 'code')
@@ -491,15 +526,20 @@ export const createClientDirectoryController = (
               return link
             },
           },
-          ...(session !== null && canManageClientTerms(session.identity) ? [{
+          ...(moduleAvailable('invoices') && session !== null && canManageClientTerms(session.identity) ? [{
             key: 'billing',
+            fit: true,
             label: 'Billing',
+            sortValue: (project: GeneralResource) =>
+              clientText(project, 'billing_method')?.replaceAll('_', ' ') ?? null,
             render: (project: GeneralResource) =>
               clientText(project, 'billing_method')?.replaceAll('_', ' ') ?? '—',
           }] : []),
           {
             key: 'status',
+            fit: true,
             label: 'Status',
+            sortValue: (project) => (project['is_active'] === false ? 'Archived' : 'Active'),
             render: (project) => (project['is_active'] === false ? 'Archived' : 'Active'),
           },
         ],
@@ -519,7 +559,7 @@ export const createClientDirectoryController = (
     editingContactId = contact?.id ?? null
     contactForm.reset()
     const routing = field(contactForm, 'invoice_recipient_status')
-    routing.disabled = !canManageClientTerms(active.identity)
+    routing.disabled = !moduleAvailable('invoices') || !canManageClientTerms(active.identity)
     routing.closest('label')!.hidden = routing.disabled
     contactFormTitle.textContent = contact === null ? 'Add contact' : 'Edit contact'
     contactFormSubmit.textContent = contact === null ? 'Add contact' : 'Save contact'
@@ -563,23 +603,36 @@ export const createClientDirectoryController = (
     contactsList.replaceChildren(
       renderDataTable<GeneralResource>({
         caption: 'Contacts for this client',
+        table: 'client-contacts',
+        defaultSort: { column: 'name', direction: 'ascending' },
         rows: contacts,
         rowKey: (contact) => String(contact.id),
         empty: 'No contacts have been added for this client.',
         columns: [
-          { key: 'name', label: 'Contact', render: contactName },
-          { key: 'email', label: 'Email', render: (c) => clientText(c, 'email') ?? '—' },
+          { key: 'name', label: 'Contact', sortValue: contactName, render: contactName },
+          {
+            key: 'email',
+            label: 'Email',
+            sortValue: (c) => clientText(c, 'email'),
+            render: (c) => clientText(c, 'email') ?? '—',
+          },
           {
             key: 'phone',
             label: 'Phone',
+            sortValue: (c) =>
+              [clientText(c, 'phone_office'), clientText(c, 'phone_mobile')]
+                .filter((value): value is string => value !== null)
+                .join(' · ') || null,
             render: (c) =>
               [clientText(c, 'phone_office'), clientText(c, 'phone_mobile')]
                 .filter((value): value is string => value !== null)
                 .join(' · ') || '—',
           },
-          ...(session !== null && canManageClientTerms(session.identity) ? [{
+          ...(moduleAvailable('invoices') && session !== null && canManageClientTerms(session.identity) ? [{
             key: 'recipient',
             label: 'Invoices',
+            sortValue: (contact: GeneralResource) =>
+              recipientLabel(clientText(contact, 'invoice_recipient_status')),
             render: (contact: GeneralResource) => {
               const pill = document.createElement('span')
               pill.className = 'client-recipient-pill'
@@ -623,7 +676,7 @@ export const createClientDirectoryController = (
    */
   const renderDelivery = async (): Promise<void> => {
     const client = currentClient
-    if (client === null || api.getBillClientDelivery === undefined) {
+    if (!moduleAvailable('invoices') || !accountingProviderAvailable('bill') || client === null || api.getBillClientDelivery === undefined) {
       deliverySection.hidden = true
       return
     }
@@ -762,6 +815,7 @@ export const createClientDirectoryController = (
    */
   const refreshSending = async (active: ActiveSession, clientId: number): Promise<void> => {
     if (
+      !moduleAvailable('invoices') ||
       !clientCanSetInvoiceSending(active.identity) ||
       api.getClientInvoiceSending === undefined ||
       api.setClientInvoiceSending === undefined
@@ -798,7 +852,7 @@ export const createClientDirectoryController = (
    * client's own lists, stay as they are on screen.
    */
   const refreshSendingContacts = async (active: ActiveSession, clientId: number): Promise<void> => {
-    if (sending === null || api.getClientInvoiceSending === undefined) return
+    if (!moduleAvailable('invoices') || sending === null || api.getClientInvoiceSending === undefined) return
     const generation = sendingGeneration
     try {
       const fresh = await api.getClientInvoiceSending(clientId, active.signal)
@@ -982,7 +1036,7 @@ export const createClientDirectoryController = (
     if (
       !clientProfileCanReadMoney(active.identity.profile) ||
       api.listClientSubtree === undefined ||
-      api.listClientOpenInvoices === undefined ||
+      (moduleAvailable('invoices') && api.listClientOpenInvoices === undefined) ||
       api.listClientRetainers === undefined ||
       api.getClientRollupReport === undefined
     ) {
@@ -990,6 +1044,8 @@ export const createClientDirectoryController = (
       return
     }
     rollupSection.hidden = false
+    // Keep independent budget and retainer figures without querying a withdrawn book.
+    rollupInvoices.closest('section')!.hidden = !moduleAvailable('invoices')
     rollupFigures.hidden = true
     rollupRetry.hidden = true
     rollupStatus.textContent = 'Loading the rollup…'
@@ -1005,10 +1061,12 @@ export const createClientDirectoryController = (
         await api.listClientSubtree(clientId, active.signal),
       )
       const [invoices, retainers, report] = await Promise.all([
-        collect<Invoice>(
-          (cursor) => api.listClientOpenInvoices!(subtree, cursor, active.signal),
-          active.signal,
-        ),
+        moduleAvailable('invoices')
+          ? collect<Invoice>(
+              (cursor) => api.listClientOpenInvoices!(subtree, cursor, active.signal),
+              active.signal,
+            )
+          : Promise.resolve([]),
         collect<Retainer>(
           (cursor) => api.listClientRetainers!(subtree, cursor, active.signal),
           active.signal,
@@ -1126,6 +1184,13 @@ export const createClientDirectoryController = (
       // the client-directory acceptance caught.
       void refreshRollup(active, id)
       void refreshSending(active, id)
+      void rateCards.activate({
+        identity: active.identity,
+        signal: active.signal,
+        client: selected,
+        clients: allClients,
+        failed: (error, paint) => { active.presentFailure(error, paint) },
+      })
     } catch (error) {
       active.presentFailure(error, () => {
         detailStatus.textContent = messageFor(error)
@@ -1277,7 +1342,7 @@ export const createClientDirectoryController = (
         address: optionalText(data, 'address'),
         ...(currency === null ? {} : { currency: currency.toLocaleUpperCase('en-US') }),
         parent_client_id: relationId(data, 'parent_client_id'),
-        bill_to_client_id: relationId(data, 'bill_to_client_id'),
+        ...(moduleAvailable('invoices') ? { bill_to_client_id: relationId(data, 'bill_to_client_id') } : {}),
         ...(canManageClientTerms(active.identity) ? {
           payment_terms: optionalText(data, 'payment_terms') ?? 'custom',
           default_tax_pct: optionalNumber(data, 'default_tax_pct'),
@@ -1350,7 +1415,7 @@ export const createClientDirectoryController = (
       phone_office: optionalText(data, 'phone_office'),
       phone_mobile: optionalText(data, 'phone_mobile'),
       fax: optionalText(data, 'fax'),
-      ...(canManageClientTerms(active.identity) ? {
+      ...(moduleAvailable('invoices') && canManageClientTerms(active.identity) ? {
         invoice_recipient_status: optionalText(data, 'invoice_recipient_status') ?? 'none',
       } : {}),
     }
@@ -1468,7 +1533,7 @@ export const createClientDirectoryController = (
   deliveryToggle.addEventListener('change', () => {
     const active = session
     const client = currentClient
-    if (active === null || client === null || deliveryBusy) return
+    if (!moduleAvailable('invoices') || !accountingProviderAvailable('bill') || active === null || client === null || deliveryBusy) return
     if (api.setBillClientDelivery === undefined) return
     const id = clientNumber(client, 'id')
     if (id === null) return
@@ -1532,6 +1597,7 @@ export const createClientDirectoryController = (
       client === null ||
       state === null ||
       sendingBusy ||
+      !moduleAvailable('invoices') ||
       !clientCanSetInvoiceSending(active.identity) ||
       api.getClientInvoiceSending === undefined ||
       api.setClientInvoiceSending === undefined
@@ -1582,6 +1648,7 @@ export const createClientDirectoryController = (
 
   return {
     async activate(identity, signal, onSessionFailure) {
+      if (session?.identity.user_id !== identity.user_id) clientSort = null
       const active: ActiveSession = {
         identity,
         signal,

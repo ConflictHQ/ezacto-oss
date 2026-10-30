@@ -172,7 +172,7 @@ const person = (weeklyCapacity: number): TeamPerson =>
     departments: [],
     project_assignments: [],
     notifications: {
-      delivery_active: false,
+      delivery_active: true,
       daily_reminder_enabled: false,
       reminder_time: null,
       reminder_days: [],
@@ -217,6 +217,7 @@ const dashboardApi = (
     time_format: 'decimal' as const,
     clock: '12h' as const,
     week_start_day: 'monday' as const,
+    time_rounding: { mode: 'exact' as const, minutes: 15 as const },
   })),
   listTimeEntries: vi.fn(async (query) => (query.is_running === true ? [] : [entry(10_800)])),
   createTimeEntry: vi.fn(),
@@ -275,6 +276,18 @@ afterEach(() => {
 })
 
 describe('home dashboard', () => {
+  it('[browser #1259] keeps financial reporting while invoices are off without reading the invoice collection', async () => {
+    renderDashboard()
+    document.documentElement.setAttribute('data-invoices-unavailable', '')
+    const listInvoices = vi.fn(async () => ({ data: [], page: { next_cursor: null } }))
+    const getUninvoicedReport = vi.fn(async () => uninvoicedReport(true))
+    await mountShell(dashboardApi('administrator', { listInvoices, getUninvoicedReport }))
+    await vi.waitFor(() => expect(getUninvoicedReport).toHaveBeenCalledOnce())
+    expect(cardKeys()).toContain('uninvoiced')
+    expect(cardKeys()).not.toContain('owed')
+    expect(listInvoices).not.toHaveBeenCalled()
+  })
+
   it('[security] withholds every company figure from a member, and never asks for one', async () => {
     // The premise of the whole screen: a member must not learn the company's
     // uninvoiced total or its receivables from a card. Not by reading it, and
@@ -583,6 +596,7 @@ describe('what the owed card is allowed to claim', () => {
       time_format: 'decimal' as const,
       clock: '12h' as const,
       week_start_day: 'monday' as const,
+      time_rounding: { mode: 'exact' as const, minutes: 15 as const },
     }))
     renderDashboard()
     await mountShell(

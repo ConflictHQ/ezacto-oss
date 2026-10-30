@@ -1,0 +1,27 @@
+{
+  "issue": 1316,
+  "source_revision": "66afb4be4a5285fdd5e5ce3f5632bce10a51c657",
+  "verified_at": "2026-10-27T00:20:52.279532+00:00",
+  "scope": "Owned synthetic native SQLite/D1 custody, administrator API, built CLI over local trusted TLS, and offline physical restore. No production or provider operation.",
+  "results": {
+    "native_sqlite_d1_tests": 14,
+    "administrator_api_tests": 3,
+    "cli_tests": 4,
+    "packed_cli_and_client_smoke": "passed with both tarballs built from this source; these 0.1.4-labelled candidate artifacts are not the earlier public 0.1.4 release"
+  },
+  "assertions": [
+    "Full immutable custody identity, closure request and current review instance are checked atomically with current administrator session and provider lease.",
+    "Old-incarnation and closed-account/late-grant cleanup is available; current-owner Microsoft confirmation remains separate.",
+    "Identical replay does not duplicate evidence; changed identity/evidence, stale role, revoked session, quarantine and active lease are refused.",
+    "Operator evidence is immutable, never labelled provider verification, and never returned verbatim by the API.",
+    "Old source and old reviewer incarnations are excluded from reused-ID closure inventory attribution.",
+    "Actual physical backup/restore remains quarantined; read-only inspection reveals no grant; existing privacy replay/release precedes fresh administrator confirmation and successful new connection.",
+    "Built CLI receives native session through stdin, uses trusted loopback TLS and records exact selected evidence; offline inspection leaves database bytes unchanged.",
+    "Packed matching client exposes operator methods, and installed CLI inspection redacts the stored grant."
+  ],
+  "publication": "New commands and client methods require a build containing #1316 or a later coordinated package release. No npm publication was performed.",
+  "limitations": [
+    "Manual confirmation attests the operator performed and verified external permission removal; it does not automate or cryptographically prove provider revocation.",
+    "The tests use synthetic identities, grants and evidence, not real provider accounts."
+  ]
+}

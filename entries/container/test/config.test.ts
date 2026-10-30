@@ -13,6 +13,52 @@ const valid = (): NodeJS.ProcessEnv => ({
 })
 
 describe('container configuration', () => {
+  it('requires explicit deployment opt-in for GitHub time publication', () => {
+    expect(readContainerConfig(valid()).githubTimePublicationEnabled).toBe(false)
+    expect(
+      readContainerConfig({ ...valid(), GITHUB_TIME_PUBLICATION_ENABLED: 'false' })
+        .githubTimePublicationEnabled,
+    ).toBe(false)
+    expect(
+      readContainerConfig({ ...valid(), GITHUB_TIME_PUBLICATION_ENABLED: 'true' })
+        .githubTimePublicationEnabled,
+    ).toBe(true)
+    expect(() =>
+      readContainerConfig({ ...valid(), GITHUB_TIME_PUBLICATION_ENABLED: 'yes' }),
+    ).toThrow('must be true or false')
+  })
+  it('keeps GitHub App credentials separate from page configuration and validates complete custody', () => {
+    const privateKey = '-----BEGIN PRIVATE KEY-----\nZmFrZQ==\n-----END PRIVATE KEY-----'
+    const config = readContainerConfig({
+      ...valid(),
+      GITHUB_APP_ID: '123',
+      GITHUB_APP_PRIVATE_KEY: privateKey,
+      GITHUB_APP_WEBHOOK_SECRET: 'fixture-hook-secret',
+      GITHUB_APP_ENCRYPTION_KEY: key,
+    })
+    expect(config.githubReader).toEqual({
+      appId: '123',
+      privateKey,
+      webhookSecret: 'fixture-hook-secret',
+    })
+    expect(config.githubAppEncryptionKey).toBe(key)
+    for (const field of [
+      'GITHUB_APP_ID',
+      'GITHUB_APP_PRIVATE_KEY',
+      'GITHUB_APP_WEBHOOK_SECRET',
+      'GITHUB_APP_ENCRYPTION_KEY',
+    ])
+      expect(config.appEnv).not.toHaveProperty(field)
+    expect(() => readContainerConfig({ ...valid(), GITHUB_APP_ID: '123' })).toThrow(
+      'configured together',
+    )
+    expect(() =>
+      readContainerConfig({
+        ...valid(),
+        GITHUB_APP_PRIVATE_KEY: 'not a private key',
+      }),
+    ).toThrow('PEM private key')
+  })
   it('[unit] resolves the stable volume contract without exposing SMTP credentials', () => {
     const config = readContainerConfig(valid())
     expect(config).toMatchObject({
@@ -26,6 +72,56 @@ describe('container configuration', () => {
     })
     expect(config.cursorSigningKey).toEqual(new Uint8Array(32).fill(0x42))
     expect(config.appEnv).not.toHaveProperty('SMTP_URL')
+  })
+
+  it('[unit] ACCOUNTING_ENABLED=false withholds QuickBooks and an invalid value refuses to start (#1217)', () => {
+    const keys = { QUICKBOOKS_CLIENT_ID: 'id', QUICKBOOKS_CLIENT_SECRET: 'secret' }
+    expect(readContainerConfig({ ...valid(), ...keys }).quickBooks).toBeDefined()
+    const off = readContainerConfig({ ...valid(), ...keys, ACCOUNTING_ENABLED: 'false' })
+    expect(off.quickBooks).toBeUndefined()
+    expect(off.appEnv.ACCOUNTING_ENABLED).toBe('false')
+    expect(() => readContainerConfig({ ...valid(), ...keys, ACCOUNTING_ENABLED: 'off' })).toThrow(
+      /ACCOUNTING_ENABLED/,
+    )
+  })
+
+  it('[unit] carries every operator module switch and refuses a bad one at start-up (issue 1254)', () => {
+    const flags = {
+      SSO_ENABLED: 'false',
+      BACKUPS_ENABLED: 'false',
+      INVOICES_ENABLED: 'false',
+      ACCOUNTING_ENABLED: 'true',
+    }
+    expect(readContainerConfig({ ...valid(), ...flags }).appEnv).toMatchObject(flags)
+    expect(readContainerConfig(valid()).appEnv).not.toHaveProperty('SSO_ENABLED')
+    for (const name of Object.keys(flags)) {
+      for (const bad of ['off', 'TRUE', '1']) {
+        expect(() => readContainerConfig({ ...valid(), [name]: bad })).toThrow(new RegExp(name))
+      }
+    }
+  })
+
+  it('[unit] keeps Deel staging credentials private and independent of the QuickBooks switch', () => {
+    const config = readContainerConfig({
+      ...valid(),
+      DEEL_TOKEN: 'owned-fixture-token',
+      DEEL_SYNC_START_DATE: '2026-10-01',
+      ACCOUNTING_ENABLED: 'false',
+    })
+    expect(config.deel).toEqual({ token: 'owned-fixture-token', startDate: '2026-10-01' })
+    expect(config.appEnv).not.toHaveProperty('DEEL_TOKEN')
+    expect(config.appEnv).not.toHaveProperty('DEEL_SYNC_START_DATE')
+    expect(readContainerConfig(valid()).deel).toBeUndefined()
+  })
+
+  it('[unit] reads how often a signed-in request records last-seen (#951)', () => {
+    expect(readContainerConfig(valid()).lastSeenIntervalMs).toBe(300_000)
+    expect(
+      readContainerConfig({ ...valid(), LAST_SEEN_INTERVAL_SECONDS: '0' }).lastSeenIntervalMs,
+    ).toBe(0)
+    expect(
+      readContainerConfig({ ...valid(), LAST_SEEN_INTERVAL_SECONDS: '900' }).lastSeenIntervalMs,
+    ).toBe(900_000)
   })
 
   it('[unit] permits explicit localhost HTTP for a direct self-host development run', () => {
@@ -51,6 +147,8 @@ describe('container configuration', () => {
     ['relative data path', { EZACTO_DATA_DIR: 'data' }],
     ['root data path', { EZACTO_DATA_DIR: '/' }],
     ['invalid port', { PORT: '65536' }],
+    ['malformed last-seen interval', { LAST_SEEN_INTERVAL_SECONDS: '5m' }],
+    ['last-seen interval over an hour', { LAST_SEEN_INTERVAL_SECONDS: '3601' }],
   ])('[security] fails closed for %s', (_name, override) => {
     expect(() => readContainerConfig({ ...valid(), ...override })).toThrow()
   })
@@ -75,9 +173,7 @@ describe('the operator guide and the config it describes', () => {
     const enforced = new Set(
       [...source.matchAll(/required\(environment, '([A-Z_]+)'/gu)].map((match) => match[1]!),
     )
-    const documented = new Set(
-      [...readme.matchAll(/^([A-Z_]+)=/gmu)].map((match) => match[1]!),
-    )
+    const documented = new Set([...readme.matchAll(/^([A-Z_]+)=/gmu)].map((match) => match[1]!))
 
     // Counted before they are compared, so two empty sets cannot agree.
     expect(enforced.size).toBeGreaterThan(0)
@@ -88,10 +184,7 @@ describe('the operator guide and the config it describes', () => {
     // Both are the guide's answer to "what do I do when this goes wrong", and a
     // dead link is that answer missing.
     const root = fileURLToPath(new URL('../../../', import.meta.url))
-    const readme = await readFile(
-      fileURLToPath(new URL('../README.md', import.meta.url)),
-      'utf8',
-    )
+    const readme = await readFile(fileURLToPath(new URL('../README.md', import.meta.url)), 'utf8')
     const targets = [...readme.matchAll(/\]\((\.\.[^)]+\.md)\)/gu)].map((match) => match[1]!)
     expect(targets.length).toBeGreaterThan(0)
     for (const target of targets) {

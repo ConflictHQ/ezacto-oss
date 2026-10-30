@@ -18,3 +18,20 @@ await build({
     '@ezacto/core': resolve(root, '../core/src/report-capabilities.ts'),
   },
 })
+
+// Offline decryption and Worker restore share unpublished, dependency-free
+// format code. Include it in both public entry modules.
+for (const entry of ['backup-decrypt', 'worker-backup']) {
+  await build({
+    entryPoints: [resolve(root, `src/${entry}.ts`)],
+    outfile: resolve(root, `dist/${entry}.js`),
+    bundle: true,
+    platform: 'node',
+    format: 'esm',
+    target: 'node22',
+    packages: 'external',
+    alias: {
+      '@ezacto/core': resolve(root, 'scripts/backup-core.ts'),
+    },
+  })
+}

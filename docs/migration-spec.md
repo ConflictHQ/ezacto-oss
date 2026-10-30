@@ -147,6 +147,17 @@ Key mappings (details in domain-model §7):
 - ≤1000 statements per Worker invocation ⇒ when loading to hosted D1, `load` runs as
   a queued, checkpointed job consuming the snapshot from R2; local SQLite loads have
   no such ceiling and are the default dev path.
+- A load driven from the platform has no machine whose file lock can serialize it, so
+  ownership lives in the target database: `claimLoadLease` takes one row in
+  `_ezacto_load_lease` for a time to live, `loadNextChunk` renews it on every
+  invocation, and a takeover after expiry bumps a fencing token and is logged in
+  `_ezacto_load_lease_log`. Every write the holder makes carries a guard statement in the
+  same batch, so a holder that lost the lease writes nothing further. The lease pins the
+  verified snapshot digest, the hash of `manifest.json` and a fingerprint of every raw
+  object (R2 entity tag, or size and modification time for a file); a source that changes
+  mid-load is refused. The CLI keeps its file lock and claims no lease, but refuses to run
+  beside a live one. The child index is built through a store that is files by default and
+  memory for a run with no disk, bounded by one fixed-width record per parent.
 - 30 s query duration ⇒ no mega-transactions; chunk per-resource with a
   load-progress table so a resumed load is idempotent. Invoice, estimate, and their
   message imports must never use `INSERT OR REPLACE` or `ON CONFLICT DO UPDATE`: their

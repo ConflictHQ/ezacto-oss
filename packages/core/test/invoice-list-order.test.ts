@@ -1,7 +1,10 @@
 import { describe, expect, it } from "vitest";
 import {
   compareInvoiceListPositions,
+  compareInvoiceListPositionsBy,
   compareInvoiceNumbers,
+  defaultInvoiceListSort,
+  parseInvoiceListSort,
   type InvoiceListPosition,
 } from "../src/invoice-list-order.js";
 
@@ -75,6 +78,33 @@ describe("the order the invoice list is read in", () => {
     expect("\u{1F600}" < "Ａ").toBe(true);
     expect(compareInvoiceNumbers("\u{1F600}", "Ａ")).toBeGreaterThan(0);
     expect(compareInvoiceNumbers("A", "AB")).toBeLessThan(0);
+  });
+
+  it("[unit] reads a sort token, and the default sort is the newest-first comparison", () => {
+    expect(parseInvoiceListSort("due_date")).toEqual({ field: "due_date", descending: false });
+    expect(parseInvoiceListSort("-balance")).toEqual({ field: "balance", descending: true });
+    for (const token of ["", "-", "client", "status", "--number", "Number", "number,amount"]) {
+      expect(parseInvoiceListSort(token), token).toBeNull();
+    }
+    const positions = [at("2026-10-01", "9", 3), at("2026-10-01", "10", 2), at("2026-09-01", "20", 1)];
+    expect([...positions].sort(compareInvoiceListPositionsBy(defaultInvoiceListSort))).toEqual(
+      [...positions].sort(compareInvoiceListPositions),
+    );
+  });
+
+  it("[unit] ranks the chosen column first and finishes the order with number and id", () => {
+    const rows: InvoiceListPosition[] = [
+      { ...at("2026-10-01", "9", 3), amountCents: 500 },
+      { ...at("2026-10-01", "10", 2), amountCents: 500 },
+      { ...at("2026-10-02", "11", 1), amountCents: 100 },
+    ];
+    const ascending = [...rows].sort(compareInvoiceListPositionsBy({ field: "amount", descending: false }));
+    expect(ascending.map((row) => row.number)).toEqual(["11", "9", "10"]);
+    const descending = [...rows].sort(compareInvoiceListPositionsBy({ field: "amount", descending: true }));
+    expect(descending.map((row) => row.number)).toEqual(["10", "9", "11"]);
+    // By number alone the date plays no part, and 9 sorts before 10.
+    const byNumber = [...rows].sort(compareInvoiceListPositionsBy({ field: "number", descending: false }));
+    expect(byNumber.map((row) => row.number)).toEqual(["9", "10", "11"]);
   });
 
   it("[unit] is zero only for the same position", () => {

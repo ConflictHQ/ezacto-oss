@@ -17,7 +17,10 @@ const selection = {
   expected_version: n,
 };
 export const paymentRunSchemas = {
-  PaymentSelection: object(selection),
+  PaymentSelection: { ...object({ ...selection,
+    purpose: { type: 'string', enum: ['earnings','advance'] }, currency: s,
+    advance_project_id: nullable(n), advance_reason: nullable(s),
+  }), required: Object.keys(selection) },
   PaymentRunCommand: object({
     id: s,
     name: s,
@@ -47,6 +50,8 @@ export const paymentRunSchemas = {
   }),
   PaymentItem: object({
     ...selection,
+    purpose: { type: 'string', enum: ['earnings','advance'] },
+    advance_project_id: nullable(n), advance_reason: nullable(s),
     id: s,
     run_id: s,
     name: s,

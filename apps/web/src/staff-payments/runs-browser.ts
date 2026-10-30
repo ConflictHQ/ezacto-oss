@@ -1,23 +1,33 @@
-import { previousPaymentMonth } from "@ezacto/core";
+import { paymentFinancialSections, type PaymentFinancialSources } from './report-financials.js';
+import { previousPaymentMonth, paymentMonthEnd } from "@ezacto/core";
 import type {
+  StaffInvoiceReport,
+  AdvanceCreditReport,
   PaymentRun,
   PaymentRunCommand,
   PaymentRunApproval,
   PaymentRunReport,
+  PaymentAllocationReport,
   StaffPaymentReport,
 } from "@ezacto/core";
 import { moneyText } from "../money-display.js";
-import { renderDataTable } from "../components/data-table.js";
+import { renderDataTable, type DataSortValue } from "../components/data-table.js";
 import { isDemoDeployment } from "../demo.js";
 import { staffPaymentAmount, staffPaymentMoney } from "./model.js";
+import { setRequestBusy } from '../request-feedback.js'
 import {
   canPayNow,
   filteredPaymentReport,
   paymentReportTotals,
+  paymentAllocationRows,
   paymentRunCsv,
-  paymentStateLabel,
+  paymentItemStatusLabel,
+  paymentItemDetails,
 } from "./runs-model.js";
 export interface PaymentRunsApi {
+  getStaffInvoiceReport?(month: string, signal?: AbortSignal): Promise<StaffInvoiceReport>;
+  getAdvanceCreditReport?(from: string, to: string, signal?: AbortSignal): Promise<AdvanceCreditReport>;
+  getPaymentAllocationReport?(month: string, signal?: AbortSignal): Promise<PaymentAllocationReport>;
   getPaymentRunReport?(
     from: string,
     to: string,
@@ -41,6 +51,8 @@ export interface PaymentRunsApi {
 }
 const money = (...args: Parameters<typeof staffPaymentMoney>) =>
   moneyText(staffPaymentMoney(...args));
+const moneySort = (amount: number | null, currency: string | null): DataSortValue =>
+  amount === null || currency === null ? null : [currency, amount];
 const node = (tag: string, value: string): HTMLElement => {
   const e = document.createElement(tag);
   e.textContent = value;
@@ -118,33 +130,45 @@ export const createPaymentRunsController = (
     snapshot: StaffPaymentReport | null = null,
     draft: PaymentRun | null = null,
     data: PaymentRunReport | null = null,
+    allocationReports: PaymentAllocationReport[] = [],
+    financialSources: PaymentFinancialSources = {invoices: [], advances: null},
     busy = false,
     generation = 0;
   let pendingCommand: PaymentRunCommand | null = null;
-  const action = async (work: () => Promise<void>, target = status) => {
+  let sessionGeneration = 0
+  let pendingControls: { control: HTMLInputElement; disabled: boolean }[] = []
+  const restoreControls = () => {
+    pendingControls.forEach(({ control, disabled }) => { control.disabled = disabled })
+    pendingControls = []
+  }
+  const action = async (work: (active: AbortSignal, current: () => boolean) => Promise<string | void>, target = status, phase = 'Working…') => {
     if (busy || !signal || signal.aborted) return;
+    const active = signal, revision = sessionGeneration
+    const current = () => signal === active && !active.aborted && sessionGeneration === revision
     busy = true;
-    target.textContent = "Working…";
+    target.textContent = phase;
+    setRequestBusy(target, true)
     const controls = [
       ...(reportMode
         ? reportSection
         : section
       ).querySelectorAll<HTMLInputElement>("input,select,button"),
     ];
-    const prior = controls.map((control) => control.disabled);
+    pendingControls = controls.map(control => ({ control, disabled: control.disabled }))
     controls.forEach((control) => {
       control.disabled = true;
     });
     try {
-      await work();
-      if (!signal.aborted) target.textContent = "";
+      const note = await work(active, current);
+      if (current()) target.textContent = note ?? "";
     } catch (error) {
-      if (!signal.aborted) target.textContent = errorText(error);
+      if (current()) target.textContent = errorText(error);
     } finally {
-      busy = false;
-      controls.forEach((control, index) => {
-        control.disabled = prior[index] ?? false;
-      });
+      if (current()) {
+        busy = false;
+        restoreControls()
+        setRequestBusy(target, false)
+      }
     }
   };
   const paintHistory = () => {
@@ -164,6 +188,8 @@ export const createPaymentRunsController = (
       block.appendChild(
         renderDataTable({
           caption: run.name,
+          table: `payment-run-items:${run.id}`,
+          defaultSort: { column: "name", direction: "ascending" },
           rows: run.items,
           rowKey: (i) => i.id,
           empty: "No payments.",
@@ -171,27 +197,32 @@ export const createPaymentRunsController = (
             {
               key: "name",
               label: "Person",
-              render: (i) => `${i.name} · ${i.month}`,
+              sortValue: (i) => i.name,
+              render: (i) => `${i.name} · ${i.month}${i.purpose === "advance" ? " · Advance deposit" : ""}`,
             },
             {
               key: "amount",
               label: "Recipient receives",
+              sortValue: (i) => moneySort(i.amount_cents, i.currency),
               render: (i) => money(i.amount_cents, i.currency),
             },
             {
               key: "state",
               label: "Status",
-              render: (i) => paymentStateLabel(i.state),
+              sortValue: (i) => paymentItemStatusLabel(i),
+              render: (i) => paymentItemStatusLabel(i),
             },
             {
               key: "reference",
               label: "Wise transfer",
+              sortValue: (i) => i.transfer_id,
               render: (i) => i.transfer_id ?? "Not created",
             },
             {
               key: "failure",
               label: "Details",
-              render: (i) => i.failure ?? "",
+              sortValue: (i) => paymentItemDetails(i) || null,
+              render: (i) => paymentItemDetails(i),
             },
             {
               key: "check",
@@ -204,10 +235,24 @@ export const createPaymentRunsController = (
                 b.addEventListener(
                   "click",
                   () =>
-                    void action(async () => {
-                      await api.reconcilePaymentRunItem!(run.id, i.id, signal);
+                    void action(async (active, current) => {
+                      const checked = await api.reconcilePaymentRunItem!(
+                        run.id,
+                        i.id,
+                        active,
+                      );
+                      if (!current()) return
                       await refresh();
-                    }),
+                      // The check only asks the sender to look again; Wise is
+                      // queried by the next minute's run, so say what happened
+                      // instead of leaving a silent button.
+                      const now = checked.items.find((x) => x.id === i.id);
+                      return `Status check requested for ${i.name}. Now: ${paymentItemStatusLabel(now ?? i)}${
+                        (now ?? i).transfer_id === null
+                          ? ", with no Wise transfer created yet"
+                          : ""
+                      }. Wise is checked within the next minute; press Check status again then to see the result.`;
+                    }, status, 'Checking payment status…'),
                 );
                 return b;
               },
@@ -227,11 +272,13 @@ export const createPaymentRunsController = (
         b.addEventListener(
           "click",
           () =>
-            void action(async () => {
-              await api.cancelPaymentRun!(run.id, signal);
+            void action(async (active, current) => {
+              await api.cancelPaymentRun!(run.id, active);
+              if (!current()) return
               await reload();
+              if (!current()) return
               await refresh();
-            }),
+            }, status, 'Cancelling unsent payments…'),
         );
         block.appendChild(b);
       }
@@ -247,6 +294,77 @@ export const createPaymentRunsController = (
   const paintReport = () => {
     if (!data) return;
     const { rows, items, receipts } = filteredPaymentReport(data, filters());
+    const financialHost = el(reportSection, "[data-run-report-financials]");
+    financialHost.replaceChildren();
+    if (api.getStaffInvoiceReport || api.getAdvanceCreditReport)
+      financialHost.appendChild(node("p", "The status filter follows the earnings ledger for invoices and applications, and the transfer status for credit deposits and returns. Invoice and credit evidence stays visible even when its currency differs from the earnings ledger."));
+    const eligible = filteredPaymentReport(data, { ...filters(), currency: "", show_empty: true }).rows;
+    for (const section of paymentFinancialSections(financialSources, filters(), eligible)) {
+      if (
+        (section.id.startsWith("invoice") && !api.getStaffInvoiceReport) ||
+        (section.id.startsWith("credit") && !api.getAdvanceCreditReport)
+      )
+        continue;
+      financialHost.appendChild(node("h3", section.title));
+      financialHost.appendChild(node("p", section.note));
+      financialHost.appendChild(
+        renderDataTable<Record<string, string | number | null>>({
+          caption: section.title,
+          table: `payment-report-${section.id}`,
+          defaultSort: { column: "Person", direction: "ascending" },
+          rows: section.rows,
+          rowKey: (row) =>
+            JSON.stringify([
+              row["User ID"],
+              row["Work month"],
+              row["Invoice ID"],
+              row["Invoice line"],
+              row["Advance item ID"],
+              row["Application ID"],
+              row["Return ID"],
+            ]),
+          empty: "No records match these filters.",
+          columns: section.columns.map((key) => ({
+            key,
+            label: key.endsWith(" cents") ? key.slice(0, -6) : key,
+            numeric: key.endsWith(" cents"),
+            sortValue: (row) =>
+              key.endsWith(" cents")
+                ? moneySort(row[key] as number | null, row.Currency as string)
+                : (row[key] ?? null),
+            render: (row) =>
+              key.endsWith(" cents")
+                ? money(row[key] as number | null, row.Currency as string)
+                : String(row[key] ?? ""),
+          })),
+        }),
+      );
+    }
+    const allocationHost = el(reportSection, "[data-run-report-allocations]");
+    allocationHost.replaceChildren();
+    if (api.getPaymentAllocationReport) {
+      allocationHost.appendChild(node("h3", "Earnings allocated by project and entry"));
+      allocationHost.appendChild(node("p", "Paid and reserved here include only explicitly allocated payments. Monthly payments stay unassigned until reconciled in Allocations. Project rows include their entries: do not add the two levels. A project allocation is not split across entries."));
+      allocationHost.appendChild(renderDataTable({
+        caption: "Allocation reconciliation",
+        table: "payment-allocation-report",
+        defaultSort: { column: 'name', direction: 'ascending' },
+        rows: paymentAllocationRows(allocationReports, rows),
+        rowKey: (r) => `${r.user_id}/${r.month}/${r.project_id}/${r.entry_id ?? 'project'}`,
+        empty: "No reviewed project or entry earnings match these filters.",
+        columns: [
+          { key: "name", sortValue: (r) => r.name, label: "Person", render: (r) => r.name },
+          { key: "month", sortValue: (r) => r.month, label: "Work month", render: (r) => r.month },
+          { key: "level", sortValue: (r) => r.level, label: "Level", render: (r) => r.level },
+          { key: "project", sortValue: (r) => `${r.project} ${r.entry_id ?? ""}`, label: "Project / entry", render: (r) => r.entry_id === null ? r.project : `${r.project} · entry ${r.entry_id}` },
+          { key: "earned", numeric: true, sortValue: (r) => moneySort(r.earned, r.currency), label: "Earned", render: (r) => money(r.earned, r.currency) },
+          { key: "paid", numeric: true, sortValue: (r) => moneySort(r.paid, r.currency), label: "Allocated paid", render: (r) => money(r.paid, r.currency) },
+          { key: "reserved", numeric: true, sortValue: (r) => moneySort(r.reserved, r.currency), label: "Allocated reserved", render: (r) => money(r.reserved, r.currency) },
+          { key: "remaining", numeric: true, sortValue: (r) => moneySort(r.remaining, r.currency), label: "Remaining to allocate", render: (r) => money(r.remaining, r.currency) },
+          { key: "flags", sortValue: (r) => r.flags, label: "Review flags", render: (r) => r.flags },
+        ],
+      }));
+    }
     const totals = el(reportSection, "[data-run-report-totals]");
     totals.replaceChildren();
     for (const [currency, t] of paymentReportTotals(rows)) {
@@ -276,6 +394,8 @@ export const createPaymentRunsController = (
     el(reportSection, "[data-run-report-balances]").replaceChildren(
       renderDataTable({
         caption: "Balances by person and work month",
+        table: "payment-report-balances",
+        defaultSort: { column: 'name', direction: 'ascending' },
         rows,
         rowKey: (r) => `${r.user_id}/${r.month}`,
         empty: "No matching balances.",
@@ -295,6 +415,7 @@ export const createPaymentRunsController = (
           {
             key: "owed",
             label: "Owed",
+            sortValue: (r) => moneySort(r.amount_cents, r.currency),
             render: (r) => {
               const value = money(r.amount_cents, r.currency);
               if (r.amount_basis === "contractor_cost")
@@ -307,52 +428,61 @@ export const createPaymentRunsController = (
           {
             key: "paid",
             label: "Recorded paid",
+            sortValue: (r) => moneySort(r.status === "settled" ? null : r.paid_cents, r.currency),
             render: (r) =>
               money(r.status === "settled" ? null : r.paid_cents, r.currency),
           },
           {
             key: "reserved",
             label: "Reserved",
+            sortValue: (r) => moneySort(r.reserved_cents ?? 0, r.currency),
             render: (r) => money(r.reserved_cents ?? 0, r.currency),
           },
           {
             key: "available",
             label: "Available to pay",
+            sortValue: (r) => moneySort(r.available_cents ?? r.balance_cents, r.currency),
             render: (r) =>
               money(r.available_cents ?? r.balance_cents, r.currency),
           },
-          { key: "status", label: "Status", render: (r) => r.status },
+          { key: "status", label: "Status", sortValue: (r) => r.status, render: (r) => r.status },
         ],
       }),
     );
     el(reportSection, "[data-run-report-transfers]").replaceChildren(
       renderDataTable({
         caption: "Transfer progress",
+        table: "payment-report-transfers",
+        defaultSort: { column: 'schedule', direction: 'ascending' },
         rows: items,
         rowKey: (i) => i.id,
         empty: "No matching transfers.",
         columns: [
-          { key: "run", label: "Run", render: (i) => i.run_name },
-          { key: "name", label: "Person", render: (i) => i.name },
-          { key: "month", label: "Work month", render: (i) => i.month },
+          { key: "run", label: "Run", sortValue: (i) => i.run_name, render: (i) => i.run_name },
+          { key: "name", label: "Person", sortValue: (i) => i.name, render: (i) => `${i.name}${i.purpose === "advance" ? " · Advance deposit" : ""}` },
+          { key: "month", label: "Work month", sortValue: (i) => i.month, render: (i) => i.month },
           {
             key: "amount",
             label: "Recipient amount",
+            sortValue: (i) => moneySort(i.amount_cents, i.currency),
             render: (i) => money(i.amount_cents, i.currency),
           },
           {
             key: "schedule",
             label: "Scheduled start",
+            sortValue: (i) => Date.parse(i.scheduled_at),
             render: (i) => new Date(i.scheduled_at).toLocaleString(),
           },
           {
             key: "state",
             label: "Status",
-            render: (i) => paymentStateLabel(i.state),
+            sortValue: (i) => paymentItemStatusLabel(i),
+            render: (i) => paymentItemStatusLabel(i),
           },
           {
             key: "cost",
             label: "Source cost (quote)",
+            sortValue: (i) => moneySort((i.execution_quote ?? i.quote).source_cents, i.quote.source_currency),
             render: (i) =>
               money(
                 (i.execution_quote ?? i.quote).source_cents,
@@ -362,6 +492,7 @@ export const createPaymentRunsController = (
           {
             key: "fee",
             label: "Fee (quote)",
+            sortValue: (i) => moneySort((i.execution_quote ?? i.quote).fee_cents, i.quote.source_currency),
             render: (i) =>
               money(
                 (i.execution_quote ?? i.quote).fee_cents,
@@ -371,46 +502,74 @@ export const createPaymentRunsController = (
           {
             key: "ref",
             label: "Wise transfer",
+            sortValue: (i) => i.transfer_id,
             render: (i) => i.transfer_id ?? "",
           },
-          { key: "failure", label: "Details", render: (i) => i.failure ?? "" },
+          { key: "failure", label: "Details", sortValue: (i) => paymentItemDetails(i) || null, render: (i) => paymentItemDetails(i) },
         ],
       }),
     );
     el(reportSection, "[data-run-report-receipts]").replaceChildren(
       renderDataTable({
         caption: "Recorded payments (excluding voided receipts)",
+        table: "payment-report-receipts",
+        defaultSort: { column: 'date', direction: 'descending' },
         rows: receipts,
         rowKey: (r) => r.id,
         empty: "No matching recorded payments.",
         columns: [
-          { key: "name", label: "Person", render: (r) => r.name },
-          { key: "month", label: "Work month", render: (r) => r.month },
+          { key: "name", label: "Person", sortValue: (r) => r.name, render: (r) => r.name },
+          { key: "month", label: "Work month", sortValue: (r) => r.month, render: (r) => r.month },
           {
             key: "date",
             label: "Payment / confirmation date",
+            sortValue: (r) => r.paid_on,
             render: (r) => r.paid_on ?? "",
           },
           {
             key: "amount",
             label: "Amount",
+            sortValue: (r) => moneySort(r.amount_cents, r.currency),
             render: (r) => money(r.amount_cents, r.currency),
           },
-          { key: "provider", label: "Provider", render: (r) => r.source },
-          { key: "reference", label: "Reference", render: (r) => r.reference },
+          { key: "provider", label: "Provider", sortValue: (r) => r.source, render: (r) => r.source },
+          { key: "reference", label: "Reference", sortValue: (r) => r.reference || null, render: (r) => r.reference },
         ],
       }),
     );
   };
   const refresh = async () => {
     if (!api.getPaymentRunReport || !signal || signal.aborted) return;
+    const active = signal, sessionRevision = sessionGeneration
     const own = ++generation;
+    const current = () => signal === active && !active.aborted && own === generation && sessionRevision === sessionGeneration
     const from = reportMode ? input(reportForm, "from").value : snapshot?.month;
     const to = reportMode ? input(reportForm, "to").value : from;
     if (!from || !to) return;
-    const result = await api.getPaymentRunReport(from, to, signal);
-    if (signal.aborted || own !== generation) return;
+    const result = await api.getPaymentRunReport(from, to, active);
+    if (!current()) return;
+    const allocations: PaymentAllocationReport[] = [];
+    if (reportMode && api.getPaymentAllocationReport) {
+      // One read per month (not per person); sequential reads bound API pressure.
+      for (const ledger of result.ledgers) {
+        allocations.push(await api.getPaymentAllocationReport(ledger.month, active));
+        if (!current()) return;
+      }
+    }
+    const financials: PaymentFinancialSources = {invoices: [], advances: null};
+    if (reportMode && api.getStaffInvoiceReport) {
+      for (const ledger of result.ledgers) {
+        financials.invoices.push(await api.getStaffInvoiceReport(ledger.month, active));
+        if (!current()) return;
+      }
+    }
+    if (reportMode && api.getAdvanceCreditReport) {
+      financials.advances = await api.getAdvanceCreditReport(`${from}-01`, paymentMonthEnd(to), active);
+      if (!current()) return;
+    }
     data = result;
+    financialSources = financials;
+    allocationReports = allocations;
     if (reportMode) paintReport();
     else paintHistory();
   };
@@ -438,7 +597,7 @@ export const createPaymentRunsController = (
           {
             key: "person",
             label: "Person / Wise recipient",
-            render: (i) => `${i.name} (${i.month}) → ${i.quote.recipient_name}`,
+            render: (i) => `${i.name} (${i.month})${i.purpose === "advance" ? " · Advance deposit" : ""} → ${i.quote.recipient_name}`,
           },
           {
             key: "destination",
@@ -514,12 +673,27 @@ export const createPaymentRunsController = (
     event.preventDefault();
     // An Enter key still submits a form whose button is hidden.
     if (demo) return;
-    void action(async () => {
+    void action(async (active, current) => {
       if (!snapshot || !api.previewPaymentRun) return;
       const selectedLedger = snapshot;
+      const selected = snapshot.rows.filter(
+        (row) =>
+          (
+            form.elements.namedItem(
+              `select-${row.user_id}`,
+            ) as HTMLInputElement | null
+          )?.checked,
+      );
+      // The label only helps a person find the run later, so a blank one is
+      // named from what was selected rather than asked for.
+      const label =
+        input(form, "run_name").value.trim() ||
+        (selected.length === 1
+          ? `${selected[0]!.name} · ${selected[0]!.month}`
+          : `${selected.length} payments · ${snapshot.month}`);
       pendingCommand ??= {
         id: crypto.randomUUID(),
-        name: input(form, "run_name").value.trim(),
+        name: label.slice(0, 100),
         source_currency: input(form, "source_currency")
           .value.trim()
           .toUpperCase(),
@@ -528,16 +702,7 @@ export const createPaymentRunsController = (
             ? new Date().toISOString()
             : new Date(input(form, "scheduled_at").value).toISOString(),
         timezone,
-        items: snapshot.rows
-          .filter(
-            (row) =>
-              (
-                form.elements.namedItem(
-                  `select-${row.user_id}`,
-                ) as HTMLInputElement | null
-              )?.checked,
-          )
-          .map((row) => ({
+        items: selected.map((row) => ({
             user_id: row.user_id,
             month: row.month,
             expected_version: row.version,
@@ -548,13 +713,13 @@ export const createPaymentRunsController = (
       };
       if (!pendingCommand.items.length)
         throw new Error("Select at least one person to pay.");
-      const run = await api.previewPaymentRun(pendingCommand, signal);
-      if (!signal?.aborted && snapshot === selectedLedger) paintReview(run);
-    });
+      const run = await api.previewPaymentRun(pendingCommand, active);
+      if (current() && snapshot === selectedLedger) paintReview(run);
+    }, status, 'Reviewing payments…');
   });
   approvalForm.addEventListener("submit", (event) => {
     event.preventDefault();
-    void action(async () => {
+    void action(async (active, current) => {
       if (!draft || !api.approvePaymentRun) return;
       await api.approvePaymentRun(
         draft.id,
@@ -566,17 +731,18 @@ export const createPaymentRunsController = (
             ),
           })),
         },
-        signal,
+        active,
       );
-      if (signal?.aborted) return;
+      if (!current()) return;
       draft = null;
       pendingCommand = null;
       review.hidden = true;
       form.hidden = false;
       await reload();
+      if (!current()) return
       await refresh();
-      if (!signal?.aborted) onApproved();
-    });
+      if (current()) onApproved();
+    }, status, 'Confirming payment run…');
   });
   el(section, "[data-run-back]").addEventListener("click", () => {
     draft = null;
@@ -587,7 +753,7 @@ export const createPaymentRunsController = (
   input(reportForm, "show_empty").addEventListener("change", paintReport);
   reportForm.addEventListener("submit", (event) => {
     event.preventDefault();
-    void action(refresh, reportStatus);
+    void action(refresh, reportStatus, 'Loading payment report…');
   });
   for (const name of ["person", "currency", "status"])
     input(reportForm, name).addEventListener("input", paintReport);
@@ -596,7 +762,7 @@ export const createPaymentRunsController = (
     () => {
       if (!data) return;
       const url = URL.createObjectURL(
-        new Blob([paymentRunCsv(data, filters())], {
+        new Blob([paymentRunCsv(data, filters(), allocationReports, financialSources)], {
           type: "text/csv;charset=utf-8",
         }),
       );
@@ -618,15 +784,6 @@ export const createPaymentRunsController = (
     },
     payNow: (userId?: number) => {
       if (busy || !signal || signal.aborted) return;
-      if (!input(form, "run_name").value.trim() && snapshot) {
-        const name =
-          snapshot.rows.find((row) => row.user_id === userId)?.name ??
-          "Payments";
-        input(form, "run_name").value = `${name} · ${snapshot.month}`.slice(
-          0,
-          100,
-        );
-      }
       if (userId !== undefined) {
         if (
           !snapshot?.rows.some(
@@ -659,22 +816,40 @@ export const createPaymentRunsController = (
       }
     },
     activate: async (active: AbortSignal) => {
+      sessionGeneration++
+      generation++
+      restoreControls()
+      busy = false
+      setRequestBusy(status, false)
+      setRequestBusy(reportStatus, false)
       signal = active;
       section.hidden = reportMode || !api.previewPaymentRun;
       reportSection.hidden = !reportMode;
       active.addEventListener(
         "abort",
         () => {
+          if (signal !== active) return
+          sessionGeneration++
           generation++;
+          restoreControls()
+          busy = false
+          status.textContent = ''
+          reportStatus.textContent = ''
+          setRequestBusy(status, false)
+          setRequestBusy(reportStatus, false)
           snapshot = null;
           draft = null;
           data = null;
+          allocationReports = [];
+          financialSources = {invoices: [], advances: null};
           pendingCommand = null;
           section.hidden = true;
           reportSection.hidden = true;
           el(section, "[data-run-history]").replaceChildren();
           el(section, "[data-run-review-items]").replaceChildren();
           for (const selector of [
+            "financials",
+            "allocations",
             "totals",
             "balances",
             "transfers",
@@ -697,7 +872,7 @@ export const createPaymentRunsController = (
         );
         input(reportForm, "from").value = month;
         input(reportForm, "to").value = month;
-        await action(refresh, reportStatus);
+        await action(refresh, reportStatus, 'Loading payment report…');
       }
     },
     ledger: (report: StaffPaymentReport) => {

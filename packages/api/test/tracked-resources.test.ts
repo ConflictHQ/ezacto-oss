@@ -3,7 +3,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import BetterSqlite3 from 'better-sqlite3'
 import { Miniflare } from 'miniflare'
-import { afterAll, afterEach, describe, expect, it } from 'vitest'
+import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest'
 import {
   createContainerDatabase,
   createD1Database,
@@ -122,12 +122,23 @@ let migratedD1Snapshot: Promise<string> | null = null
 const migratedD1Directory = async (): Promise<string> => {
   migratedD1Snapshot ??= (async () => {
     const directory = await mkdtemp(join(tmpdir(), 'ezacto-d1-ledger-'))
-    const miniflare = new Miniflare({ ...d1Worker, d1Persist: directory })
-    await migrateD1(await miniflare.getD1Database('DB'))
-    // dispose() checkpoints the WAL and closes the files, which is what makes
-    // the directory safe to copy rather than a half-written snapshot.
-    await miniflare.dispose()
-    return directory
+    let miniflare: Miniflare | undefined
+    try {
+      miniflare = new Miniflare({ ...d1Worker, d1Persist: directory })
+      await migrateD1(await miniflare.getD1Database('DB'))
+      // Close the source worker before copying its persisted files.
+      await miniflare.dispose()
+      miniflare = undefined
+      return directory
+    } catch (error) {
+      try {
+        try { await miniflare?.dispose() }
+        finally { await rm(directory, { recursive: true, force: true }) }
+      } catch (cleanupError) {
+        throw new AggregateError([error, cleanupError], 'D1 snapshot setup and cleanup failed', { cause: cleanupError })
+      }
+      throw error
+    }
   })()
   return migratedD1Snapshot
 }
@@ -135,54 +146,64 @@ const migratedD1Directory = async (): Promise<string> => {
 // Each case copies this directory and removes its own copy; the original would
 // otherwise outlive the run, one ledger per invocation of this file.
 afterAll(async () => {
-  if (migratedD1Snapshot === null) return
-  await rm(await migratedD1Snapshot, { recursive: true, force: true })
+  const directory = await migratedD1Snapshot?.catch(() => null)
+  if (directory) await rm(directory, { recursive: true, force: true })
 })
 
 const d1Database = async (): Promise<TestDatabase> => {
   const directory = await mkdtemp(join(tmpdir(), 'ezacto-d1-'))
-  await cp(await migratedD1Directory(), directory, { recursive: true })
-  const miniflare = new Miniflare({ ...d1Worker, d1Persist: directory })
-  const d1 = await miniflare.getD1Database('DB')
-  const orm = createD1Database(d1)
-  return {
-    orm,
-    run: async (statement, ...params) => {
-      await d1
-        .prepare(statement)
-        .bind(...params)
-        .run()
-    },
-    rows: async <T>(statement: string, ...params: unknown[]) =>
-      (
+  let miniflare: Miniflare | undefined
+  const close = async () => {
+    try { await miniflare?.dispose() }
+    finally { await rm(directory, { recursive: true, force: true }) }
+  }
+  try {
+    await cp(await migratedD1Directory(), directory, { recursive: true })
+    miniflare = new Miniflare({ ...d1Worker, d1Persist: directory })
+    const d1 = await miniflare.getD1Database('DB')
+    const orm = createD1Database(d1)
+    return {
+      orm,
+      run: async (statement, ...params) => {
         await d1
           .prepare(statement)
           .bind(...params)
-          .all<T>()
-      ).results,
-    interleaveAtomic: (statement, ...params) => {
-      let pending = true
-      const client = new Proxy(d1, {
-        get(target, property) {
-          if (property === 'batch') {
-            return async (statements: D1PreparedStatement[]) => {
-              if (pending) {
-                pending = false
-                await target.prepare(statement).bind(...params).run()
+          .run()
+      },
+      rows: async <T>(statement: string, ...params: unknown[]) =>
+        (
+          await d1
+            .prepare(statement)
+            .bind(...params)
+            .all<T>()
+        ).results,
+      interleaveAtomic: (statement, ...params) => {
+        let pending = true
+        const client = new Proxy(d1, {
+          get(target, property) {
+            if (property === 'batch') {
+              return async (statements: D1PreparedStatement[]) => {
+                if (pending) {
+                  pending = false
+                  await target.prepare(statement).bind(...params).run()
+                }
+                return target.batch(statements)
               }
-              return target.batch(statements)
             }
-          }
-          const value: unknown = Reflect.get(target, property, target)
-          return typeof value === 'function' ? value.bind(target) : value
-        },
-      })
-      return ormWithNativeClient(orm, client)
-    },
-    close: async () => {
-      await miniflare.dispose()
-      await rm(directory, { recursive: true, force: true })
-    },
+            const value: unknown = Reflect.get(target, property, target)
+            return typeof value === 'function' ? value.bind(target) : value
+          },
+        })
+        return ormWithNativeClient(orm, client)
+      },
+      close,
+    }
+  } catch (error) {
+    try { await close() }
+    catch (cleanupError) {
+      throw new AggregateError([error, cleanupError], 'D1 fixture setup and cleanup failed', { cause: cleanupError })
+    }
+    throw error
   }
 }
 
@@ -194,8 +215,8 @@ const factories = [
 const seed = async (database: TestDatabase): Promise<void> => {
   await database.run(
     `INSERT INTO organizations (
-      name, time_entry_mode, time_rounding, modules, created_at, updated_at
-    ) VALUES ('Sanitized Organization', 'duration', 'up_6', ?, ?, ?)`,
+      name, time_entry_mode, time_rounding_mode, time_rounding_minutes, modules, created_at, updated_at
+    ) VALUES ('Sanitized Organization', 'duration', 'up', 6, ?, ?, ?)`,
     modules,
     timestamp,
     timestamp,
@@ -370,50 +391,58 @@ const harness = async (
   options: { ownMoneyVisible?: boolean } = {},
 ): Promise<Harness> => {
   const database = await factory()
-  await seed(database)
-  const locks = new Set<string>()
-  const orm = interleave === undefined
-    ? database.orm
-    : database.interleaveAtomic(interleave.sql, ...interleave.params)
-  let pendingPolicyInterleave = policyInterleave !== undefined
-  const implementation = new DrizzleTrackedResourceRepository(orm, {
-    isLocked: async (subject) => {
-      if (pendingPolicyInterleave && subject.entityType === 'tracked_date') {
-        pendingPolicyInterleave = false
-        await database.run(policyInterleave!.sql, ...policyInterleave!.params)
-      }
-      return locks.has(policyKey(subject))
-    },
-  })
-  const repository: TrackedResourceRepository = implementation
-  let current: ResourceTimeBoundary = {
-    instant: '2026-08-28T09:00:00.000Z',
-    date: '2026-08-28',
-    time: '09:00',
-  }
-  const app = createApiApp({
-    authentication: authenticationWith(options.ownMoneyVisible ?? false),
-    installApi: (api) =>
-      installTrackedResourceRoutes(api, {
-        repository,
-        clock: { now: () => ({ ...current }) },
-        cursorSigningKey: new TextEncoder().encode(
-          'tracked-resource-cursor-key-32-bytes',
-        ),
-        isExpensesModuleEnabled: async () => true,
-      }),
-  })
-  return {
-    database,
-    request: async (path, init) => {
-      const headers = new Headers(init?.headers)
-      headers.set('origin', 'http://localhost')
-      return app.request(path, { ...init, headers })
-    },
-    locks,
-    setBoundary: (boundary) => {
-      current = { ...boundary }
-    },
+  try {
+    await seed(database)
+    const locks = new Set<string>()
+    const orm = interleave === undefined
+      ? database.orm
+      : database.interleaveAtomic(interleave.sql, ...interleave.params)
+    let pendingPolicyInterleave = policyInterleave !== undefined
+    const implementation = new DrizzleTrackedResourceRepository(orm, {
+      isLocked: async (subject) => {
+        if (pendingPolicyInterleave && subject.entityType === 'tracked_date') {
+          pendingPolicyInterleave = false
+          await database.run(policyInterleave!.sql, ...policyInterleave!.params)
+        }
+        return locks.has(policyKey(subject))
+      },
+    })
+    const repository: TrackedResourceRepository = implementation
+    let current: ResourceTimeBoundary = {
+      instant: '2026-08-28T09:00:00.000Z',
+      date: '2026-08-28',
+      time: '09:00',
+    }
+    const app = createApiApp({
+      authentication: authenticationWith(options.ownMoneyVisible ?? false),
+      installApi: (api) =>
+        installTrackedResourceRoutes(api, {
+          repository,
+          clock: { now: () => ({ ...current }) },
+          cursorSigningKey: new TextEncoder().encode(
+            'tracked-resource-cursor-key-32-bytes',
+          ),
+          isExpensesModuleEnabled: async () => true,
+        }),
+    })
+    return {
+      database,
+      request: async (path, init) => {
+        const headers = new Headers(init?.headers)
+        headers.set('origin', 'http://localhost')
+        return app.request(path, { ...init, headers })
+      },
+      locks,
+      setBoundary: (boundary) => {
+        current = { ...boundary }
+      },
+    }
+  } catch (error) {
+    try { await database.close() }
+    catch (cleanupError) {
+      throw new AggregateError([error, cleanupError], 'Tracked fixture setup and cleanup failed', { cause: cleanupError })
+    }
+    throw error
   }
 }
 
@@ -511,12 +540,51 @@ for (const [runtime, factory] of factories) {
   describe(`tracked resource API (${runtime})`, () => {
     let active: Harness | undefined
 
-    afterEach(async () => active?.database.close())
+    if (runtime === 'D1') {
+      // Cold schema construction is infrastructure, not part of the 20s API case budget.
+      beforeAll(async () => { await migratedD1Directory() }, 60_000)
+    }
+    afterEach(async () => {
+      const current = active
+      active = undefined
+      await current?.database.close()
+    })
 
     const setup = async (): Promise<Harness> => {
       active = await harness(factory)
       return active
     }
+
+    it('[issue 1284] does not replace a timer with zero rounded time', async () => {
+      const test = await setup()
+      const running = await data<{ id: number }>(
+        await test.request(
+          '/api/v1/time-entries',
+          jsonRequest('POST', { project_id: 1, task_id: 1 }),
+        ),
+      )
+      const prematureStop = await test.request(
+        `/api/v1/time-entries/${running.id}/stop`,
+        { method: 'POST' },
+      )
+      expect(prematureStop.status).toBe(422)
+      expect(await prematureStop.json()).toMatchObject({
+        error: { fields: [{ code: 'zero_duration' }] },
+      })
+      const replacement = await test.request(
+        '/api/v1/time-entries',
+        jsonRequest('POST', { project_id: 1, task_id: 1 }),
+      )
+      expect(replacement.status).toBe(422)
+      expect(await replacement.json()).toMatchObject({
+        error: { fields: [{ code: 'zero_duration' }] },
+      })
+      expect(
+        await data<{ is_running: boolean }>(
+          await test.request(`/api/v1/time-entries/${running.id}`),
+        ),
+      ).toMatchObject({ is_running: true })
+    }, slowRuntimeTimeout)
 
     it('[api] translates a policy lock created after the time-entry precheck to 422', async () => {
       active = await harness(factory, interleavedLock)
@@ -604,6 +672,7 @@ for (const [runtime, factory] of factories) {
           time_format: 'decimal',
           clock: '12h',
           week_start_day: 'monday',
+          time_rounding: { mode: 'up', minutes: 6 },
         },
         links: { self: '/api/v1/time-entry-settings' },
       })
@@ -620,6 +689,7 @@ for (const [runtime, factory] of factories) {
         time_format: 'hours_minutes',
         clock: '24h',
         week_start_day: 'monday',
+        time_rounding: { mode: 'up', minutes: 6 },
       })
     })
 
@@ -636,6 +706,7 @@ for (const [runtime, factory] of factories) {
           project_id: number
           task_id: number
           minimum_note_length: number
+          time_rounding: { mode: string; minutes: number; source: string }
         }[]
       > => {
         const response = await test.request('/api/v1/time-entry-options')
@@ -649,8 +720,8 @@ for (const [runtime, factory] of factories) {
 
       const initial = await options()
       expect(initial).toEqual([
-        { project_id: 1, task_id: 1, minimum_note_length: 0 },
-        { project_id: 1, task_id: 2, minimum_note_length: 0 },
+        { project_id: 1, task_id: 1, minimum_note_length: 0, time_rounding: { mode: 'up', minutes: 6, source: 'organization' } },
+        { project_id: 1, task_id: 2, minimum_note_length: 0, time_rounding: { mode: 'up', minutes: 6, source: 'organization' } },
       ])
       expect(initial).not.toContainEqual({ project_id: 1, task_id: 3 })
       expect(initial).not.toContainEqual({ project_id: 2, task_id: 1 })
@@ -667,7 +738,7 @@ for (const [runtime, factory] of factories) {
         `UPDATE task_assignments SET is_active = 0 WHERE id = 1`,
       )
       await expect(options()).resolves.toEqual([
-        { project_id: 1, task_id: 2, minimum_note_length: 0 },
+        { project_id: 1, task_id: 2, minimum_note_length: 0, time_rounding: { mode: 'up', minutes: 6, source: 'organization' } },
       ])
       await test.database.run(
         `UPDATE task_assignments SET is_active = 1 WHERE id = 1`,
@@ -675,7 +746,7 @@ for (const [runtime, factory] of factories) {
 
       await test.database.run(`UPDATE tasks SET is_active = 0 WHERE id = 1`)
       await expect(options()).resolves.toEqual([
-        { project_id: 1, task_id: 2, minimum_note_length: 0 },
+        { project_id: 1, task_id: 2, minimum_note_length: 0, time_rounding: { mode: 'up', minutes: 6, source: 'organization' } },
       ])
       await test.database.run(`UPDATE tasks SET is_active = 1 WHERE id = 1`)
 
@@ -738,6 +809,163 @@ for (const [runtime, factory] of factories) {
       expect(invalid.status).toBe(422)
     }, slowRuntimeTimeout)
 
+    it('[api] sets the organization rounding rule for administrators and rewrites nothing', async () => {
+      const test = await setup()
+      const admin = asProfile('administrator')
+      await test.database.run(
+        `INSERT INTO time_entries (
+          id, user_id, project_id, task_id, user_assignment_id, task_assignment_id,
+          spent_date, seconds, seconds_without_timer, rounded_seconds,
+          billable, created_at, updated_at
+        ) VALUES (50, 1, 1, 1, 1, 1, '2026-08-28', 420, 420, 720, 1, ?, ?)`,
+        timestamp,
+        timestamp,
+      )
+      const patch = (body: Record<string, unknown>, actor: RequestInit) =>
+        test.request('/api/v1/time-entry-rounding-settings', actingAs(actor, jsonRequest('PATCH', body)))
+
+      expect((await patch({ mode: 'down' }, asProfile('member'))).status).toBe(403)
+      expect((await patch({ mode: 'down' }, asProfile('accounting'))).status).toBe(403)
+
+      const first = await patch({ mode: 'down' }, admin)
+      expect(first.status).toBe(200)
+      expect(first.headers.get('cache-control')).toBe('no-store')
+      expect(await first.json()).toEqual({
+        data: { mode: 'down', minutes: 6 },
+        links: { self: '/api/v1/time-entry-rounding-settings' },
+      })
+      expect(await data(await patch({ minutes: 10 }, admin))).toEqual({ mode: 'down', minutes: 10 })
+      expect(await data(await patch({ mode: 'nearest', minutes: 60 }, admin))).toEqual({
+        mode: 'nearest',
+        minutes: 60,
+      })
+      expect(
+        await data(await test.request('/api/v1/time-entry-settings')),
+      ).toMatchObject({ time_rounding: { mode: 'nearest', minutes: 60 } })
+
+      for (const bad of [{}, { mode: 'sideways' }, { minutes: 7 }, { minutes: '15' }, { mode: 'up', extra: 1 }]) {
+        expect((await patch(bad, admin)).status, JSON.stringify(bad)).toBe(422)
+      }
+      expect(
+        await test.database.rows(
+          `SELECT time_rounding_mode AS mode, time_rounding_minutes AS minutes FROM organizations`,
+        ),
+      ).toEqual([{ mode: 'nearest', minutes: 60 }])
+      // Saved time keeps the figure it was saved with.
+      expect(
+        await test.database.rows(`SELECT rounded_seconds FROM time_entries WHERE id = 50`),
+      ).toEqual([{ rounded_seconds: 720 }])
+    }, slowRuntimeTimeout)
+
+    it('[api] previews a recalculation and applies exactly that preview', async () => {
+      const test = await setup()
+      const admin = asProfile('administrator')
+      const insert = (id: number, date: string, rounded: number) =>
+        test.database.run(
+          `INSERT INTO time_entries (
+            id, user_id, project_id, task_id, user_assignment_id, task_assignment_id,
+            spent_date, seconds, seconds_without_timer, rounded_seconds,
+            billable, created_at, updated_at
+          ) VALUES (?, 1, 1, 1, 1, 1, ?, 420, 420, ?, 1, ?, ?)`,
+          id,
+          date,
+          rounded,
+          timestamp,
+          timestamp,
+        )
+      // The organization rounds up to 6 minutes: 420 s is 720. Two entries hold
+      // something else, one already holds it.
+      await insert(60, '2026-08-27', 900)
+      await insert(61, '2026-08-28', 360)
+      await insert(62, '2026-08-29', 720)
+
+      const preview = '/api/v1/time-rounding-recalculation'
+      expect((await test.request(preview, asProfile('member'))).status).toBe(403)
+      expect((await test.request(preview, asProfile('accounting'))).status).toBe(403)
+      const response = await test.request(preview, admin)
+      expect(response.status).toBe(200)
+      expect(response.headers.get('cache-control')).toBe('no-store')
+      const read = await data<{
+        open_entries: number
+        changed_entries: number
+        rounded_seconds_before: number
+        rounded_seconds_after: number
+        earliest_spent_date: string
+        latest_spent_date: string
+        projects: { project_name: string; time_rounding: unknown }[]
+        kept: unknown
+        fingerprint: string
+      }>(response)
+      expect(read).toMatchObject({
+        scope: { project_id: null, from: null, to: null },
+        open_entries: 3,
+        changed_entries: 2,
+        rounded_seconds_before: 1_260,
+        rounded_seconds_after: 1_440,
+        earliest_spent_date: '2026-08-27',
+        latest_spent_date: '2026-08-28',
+        kept: { invoiced: 0, approved: 0, locked: 0, other: 0 },
+      })
+      expect(read.projects).toEqual([
+        expect.objectContaining({
+          project_name: 'Assigned Project',
+          time_rounding: { mode: 'up', minutes: 6, source: 'organization' },
+        }),
+      ])
+      expect(read.fingerprint).toMatch(/^[0-9a-f]{64}$/)
+      // Looking changes nothing.
+      expect(
+        await test.database.rows(`SELECT id, rounded_seconds FROM time_entries WHERE id >= 60 ORDER BY id`),
+      ).toEqual([
+        { id: 60, rounded_seconds: 900 },
+        { id: 61, rounded_seconds: 360 },
+        { id: 62, rounded_seconds: 720 },
+      ])
+
+      // A scope narrows it; a bad one is named.
+      expect(
+        await data(await test.request(`${preview}?project_id=1&from=2026-08-28&to=2026-08-29`, admin)),
+      ).toMatchObject({ open_entries: 2, changed_entries: 1 })
+      for (const query of ['from=2026-08-30&to=2026-08-01', 'from=yesterday', 'project_id=0', 'other=1']) {
+        expect((await test.request(`${preview}?${query}`, admin)).status, query).toBe(422)
+      }
+
+      const apply = (body: Record<string, unknown>, actor: RequestInit = admin) =>
+        test.request(preview, actingAs(actor, jsonRequest('POST', body)))
+      expect((await apply({ fingerprint: read.fingerprint }, asProfile('member'))).status).toBe(403)
+      for (const bad of [{}, { fingerprint: 'nope' }, { fingerprint: read.fingerprint, extra: 1 }]) {
+        expect((await apply(bad)).status, JSON.stringify(bad)).toBe(422)
+      }
+      // Well formed, but not this preview's.
+      const stale = await apply({ fingerprint: 'f'.repeat(64) })
+      expect(stale.status).toBe(409)
+      expect(await stale.json()).toMatchObject({ error: { code: 'preview_stale' } })
+      // And a preview for another scope is not this scope's.
+      expect((await apply({ fingerprint: read.fingerprint, project_id: 1, from: '2026-08-29' })).status).toBe(409)
+      expect(
+        await test.database.rows(`SELECT id, rounded_seconds FROM time_entries WHERE id >= 60 ORDER BY id`),
+      ).toEqual([
+        { id: 60, rounded_seconds: 900 },
+        { id: 61, rounded_seconds: 360 },
+        { id: 62, rounded_seconds: 720 },
+      ])
+
+      const applied = await apply({ fingerprint: read.fingerprint })
+      expect(applied.status).toBe(200)
+      expect(await data(applied)).toMatchObject({
+        recalculated_entries: 2,
+        preview: { changed_entries: 2, fingerprint: read.fingerprint },
+      })
+      expect(
+        await test.database.rows(`SELECT id, rounded_seconds FROM time_entries WHERE id >= 60 ORDER BY id`),
+      ).toEqual([
+        { id: 60, rounded_seconds: 720 },
+        { id: 61, rounded_seconds: 720 },
+        { id: 62, rounded_seconds: 720 },
+      ])
+      expect(await data(await test.request(preview, admin))).toMatchObject({ changed_entries: 0 })
+    }, slowRuntimeTimeout)
+
     it('[api] enforces the strongest scoped note rule on every native write path', async () => {
       const test = await setup()
       await test.database.run(
@@ -758,8 +986,8 @@ for (const [runtime, factory] of factories) {
       expect(
         await data<unknown[]>(await test.request('/api/v1/time-entry-options')),
       ).toEqual([
-        { project_id: 1, task_id: 1, minimum_note_length: 7 },
-        { project_id: 1, task_id: 2, minimum_note_length: 7 },
+        { project_id: 1, task_id: 1, minimum_note_length: 7, time_rounding: { mode: 'up', minutes: 6, source: 'organization' } },
+        { project_id: 1, task_id: 2, minimum_note_length: 7, time_rounding: { mode: 'up', minutes: 6, source: 'organization' } },
       ])
 
       const sixCodePoints = '😀😀😀😀😀😀'
@@ -873,6 +1101,11 @@ for (const [runtime, factory] of factories) {
         ),
       ).toMatchObject({ is_running: true })
 
+      test.setBoundary({
+        instant: '2026-08-28T09:20:00.000Z',
+        date: '2026-08-28',
+        time: '09:20',
+      })
       const stopped = await test.request(
         `/api/v1/time-entries/${running.id}/stop`,
         { method: 'POST' },
@@ -1625,8 +1858,8 @@ for (const [runtime, factory] of factories) {
       // The teammate's project/task pairs, which are what a teammate's entry
       // may be logged against; the administrator holds no assignment at all.
       expect(await data(await test.request('/api/v1/time-entry-options?user_id=2', admin))).toEqual([
-        { project_id: 1, task_id: 1, minimum_note_length: 0 },
-        { project_id: 1, task_id: 2, minimum_note_length: 0 },
+        { project_id: 1, task_id: 1, minimum_note_length: 0, time_rounding: { mode: 'up', minutes: 6, source: 'organization' } },
+        { project_id: 1, task_id: 2, minimum_note_length: 0, time_rounding: { mode: 'up', minutes: 6, source: 'organization' } },
       ])
       expect(await data(await test.request('/api/v1/time-entry-options', admin))).toEqual([])
       expect(

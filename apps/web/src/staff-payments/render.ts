@@ -1,3 +1,4 @@
+import { renderDeelStage } from './deel-stage-render.js'
 import { demoUnavailable } from '../demo.js'
 import { renderPaymentRuns } from './runs-render.js'
 export const renderStaffPayments = (view?: string): string =>
@@ -12,13 +13,17 @@ export const renderStaffPayments = (view?: string): string =>
         <div class="staff-payment-toolbar">
           <label>Work month<input type="month" data-payment-month required></label>
           <button type="button" data-payment-refresh>Refresh</button>
-          <button type="button" class="primary-action" data-payment-pay-now>Pay now</button>
+          <button type="button" class="primary-action" data-payment-pay-now>Pay now</button><button type="button" data-payment-stage-deel hidden>Stage hours in Deel</button>
           <a href="/payments/report">Payments report</a>
         </div>
         <div class="payment-tabs" role="tablist" aria-label="Payments sections" data-payment-tabs>
           ${[
             ['balances', 'Balances'],
+            ['reconcile', 'Reconcile'],
             ['actuals', 'Review actuals'],
+            ['allocations', 'Allocations'],
+            ['advances', 'Advances'],
+            ['invoices', 'Contractor invoices'],
             ['send', 'Send or schedule'],
             ['history', 'History'],
             ['settings', 'Settings'],
@@ -42,10 +47,13 @@ export const renderStaffPayments = (view?: string): string =>
       <section data-payment-summary aria-label="Monthly totals" class="staff-payment-summary"></section>
       <div data-payment-ledger>
       <h2>Payment ledger</h2>
-      <div data-payment-list></div>
+      <p data-deel-payment-refresh role="status" aria-live="polite" hidden></p>
+      <p class="hint">Deel status reflects payment for submitted hours. Recorded payment totals reflect the payment receipts entered here.</p>
+      <div data-payment-list></div>${renderDeelStage()}
       <section data-payment-person hidden class="staff-payment-person" aria-labelledby="staff-payment-person-title">
         <header><h2 id="staff-payment-person-title" data-payment-person-title></h2><a data-payment-destination href="/team">Manage Wise destination</a></header>
         <p data-payment-person-summary></p>
+        <div data-payment-person-deel></div>
         <form data-payment-provider-form="person" hidden>
           <label>Preferred payment provider<select name="provider"><option value="">Use organization default</option><option value="wise">Wise</option><option value="deel">Deel</option></select></label>
           <label>Reason for change<textarea name="note" required maxlength="2000"></textarea></label>
@@ -70,12 +78,45 @@ export const renderStaffPayments = (view?: string): string =>
       </section>
       </div>
       </section>
+      <section id="payment-panel-reconcile" role="tabpanel" aria-labelledby="payment-tab-reconcile" data-payment-panel="reconcile" data-contractor-review hidden>
+        <h2>Reconcile contractor payments</h2>
+        <p>Review hours, invoices, receipts and advance credit together. Proposed allocations and credits have not been recorded. Confirm the selected monthly allocations and credit here. Review earnings or invoice changes in their sections before preparing a payment.</p>
+        <button type="button" data-contractor-review-load disabled>Load reconciliation for work month</button>
+        <p role="status" aria-live="polite" data-contractor-review-status></p>
+        <div data-contractor-review-content></div>
+      </section>
       <section id="payment-panel-actuals" role="tabpanel" aria-labelledby="payment-tab-actuals" data-payment-panel="actuals" data-payment-actuals hidden>
         <h2>Review contractor actuals</h2>
         <p>Captured time and cost rates from the contractor report. Includes tracked hours regardless of timesheet approval; review before confirming.</p>
         <button type="button" data-actuals-load>Load actuals for work month</button>
         <p role="status" aria-live="polite" data-actuals-status></p>
         <div data-actuals-review></div>
+      </section>
+      <section id="payment-panel-allocations" role="tabpanel" aria-labelledby="payment-tab-allocations" data-payment-panel="allocations" data-payment-allocations hidden>
+        <h2>Allocate payments to earnings</h2>
+        <p>Link a payment to the project, time entry or hours it pays. Existing monthly payments stay unallocated until you reconcile them here; hours are never split for you.</p>
+        <button type="button" data-allocations-load>Load allocations for work month</button>
+        <p role="status" aria-live="polite" data-allocations-status></p>
+        <div data-allocations-content></div>
+      </section>
+      <section id="payment-panel-advances" role="tabpanel" aria-labelledby="payment-tab-advances" data-payment-panel="advances" data-payment-advances hidden>
+        <h2>Contractor advance deposits</h2>
+        <p>Prepare a deposit before work exists, then apply settled credit explicitly to reviewed earnings. Future hours never consume credit automatically. Applying credit does not send another payment.</p>
+        <details><summary>Prepare an advance transfer</summary><div data-advance-create></div></details>
+        <form data-advance-period class="staff-payment-toolbar">
+          <label>Credit activity from<input type="date" name="from" required></label>
+          <label>Through<input type="date" name="to" required></label>
+          <button type="submit">Load advance credit</button>
+        </form>
+        <p data-advance-status role="status" aria-live="polite"></p>
+        <div data-advance-content></div>
+      </section>
+      <section id="payment-panel-invoices" role="tabpanel" aria-labelledby="payment-tab-invoices" data-payment-panel="invoices" data-staff-invoices hidden>
+        <h2>Contractor payable invoices</h2>
+        <p>Draft from reviewed earnings or record an invoice received from a contractor. Documents never add to the amount owed a second time. Corrections keep their history and existing payments.</p>
+        <button type="button" data-staff-invoice-load>Load contractor invoices for work month</button>
+        <p data-staff-invoice-status role="status" aria-live="polite"></p>
+        <div data-staff-invoice-content></div>
       </section>
       ${renderPaymentRuns()}
       <section id="payment-panel-settings" role="tabpanel" aria-labelledby="payment-tab-settings" data-payment-panel="settings" hidden>
@@ -90,6 +131,25 @@ export const renderStaffPayments = (view?: string): string =>
           <button type="submit">Save organization default</button>
         </form>
         <h3>Provider settings history</h3><div data-payment-provider-history></div>
+      </details>
+      <details data-deel-sync hidden class="staff-payment-opening">
+        <summary>Deel time sync</summary>
+        <p data-deel-sync-status>Loading</p>
+        <form data-deel-sync-settings>
+          <label>Mode<select name="mode"><option value="manual">Manual: I send timesheets myself</option><option value="automatic">Automatic: send once a day at the time below</option></select></label>
+          <label>Automatic run time (organization timezone)<input name="run_time" type="time" required></label>
+          <button type="submit">Save Deel sync settings</button>
+        </form>
+        <form data-deel-sync-preview>
+          <label>First day<input name="from" type="date" required></label>
+          <label>Last day<input name="to" type="date" required></label>
+          <button type="submit">Preview timesheets for Deel</button>
+        </form>
+        <div data-deel-sync-preview-result></div>
+        <label><input type="checkbox" data-deel-sync-reviewed disabled> I have reviewed this preview and want these timesheets sent to Deel</label>
+        <button type="button" data-deel-sync-send disabled>Send to Deel</button>
+        <p class="hint" data-deel-sync-message role="status"></p>
+        <h3>Recent Deel sync runs</h3><div data-deel-sync-runs></div>
       </details>
       <details class="staff-payment-opening">
         <summary>Record historical settlement through this month</summary>

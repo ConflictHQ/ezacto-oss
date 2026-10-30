@@ -164,3 +164,134 @@ matches the product they are paying for. It is a dashboard change rather than a
 code one, which is why it is recorded here — nothing in this repo can enforce
 it, and the next person to compare the two needs to know which side was
 considered right.
+
+## Brand surface audit (#1011)
+
+Where an instance's colours and marks reach, and where they do not. Each row is
+one surface, cites the source that decides it, and is exactly one of:
+
+- **delivered**: the source reads the instance brand today.
+- **gap**: the source does not, and the surface wears the built-in look.
+- **external**: set outside this repository.
+- **none**: nothing in this repository draws it.
+
+`packages/core/test/brand-surfaces.test.ts` holds this table to the source. A
+delivered row fails the build if its source stops reading the brand; a gap row
+fails the build once its source starts, so the row is flipped in the same change
+that closes the gap; and a new HTML page, PDF writer or email body builder that
+has no row fails until it gets one. A new surface cannot quietly bypass the
+instance brand.
+
+| Surface | What | Source | Status |
+| --- | --- | --- | --- |
+| `shell-colours` | App shell and sign-in link the instance stylesheet after the built-in one | `apps/web/src/shell/render.ts` | delivered |
+| `shell-marks` | Topbar and sign-in splash draw the dark-ground wordmark, falling back to the deployment name | `apps/web/src/shell/render.ts` | delivered |
+| `shell-favicon` | Tab icon from the `favicon` slot | `apps/web/src/shell/render.ts` | delivered |
+| `document-shell-marks` | Document shell draws the light-ground wordmark | `apps/web/src/shell/render.ts` | delivered |
+| `palette-stylesheet` | `GET /assets/instance-theme.css`, served without a session | `packages/api/src/instance-theme.ts` | delivered |
+| `portal-brand-api` | `GET /api/v1/brand`: name, marks and palette for a portal | `packages/api/src/brand-assets.ts` | delivered |
+| `invoice-pdf-logo` | Invoice PDF draws the `wordmark_light` mark, else the company name | `packages/db/src/money-resources.ts`, `entries/worker/src/invoice-documents.ts` | delivered |
+| `invoice-pdf-colours` | Invoice PDF draws the palette `action` accent as rules only (table header rule, sender rule), never as text; greyscale without one | `packages/core/src/invoice-document.ts`, `entries/worker/src/invoice-documents.ts` | delivered |
+| `report-pdf-name` | Detailed-time report header carries the nearest-ancestor report brand name | `packages/db/src/month-end-pack.ts`, `packages/core/src/report-document.ts` | delivered |
+| `report-pdf-logo-colours` | Report brands store a logo URL and two colours; the report PDF draws only the name | `packages/core/src/report-document.ts` | gap |
+| `email-body` | The HTML part of outgoing mail opens with a header: the `wordmark_light` mark by its public `/brand/...` URL (alt text is the company name) and a rule in the palette's `action` colour. Nothing is set, nothing is added | `packages/core/src/email-brand.ts`, `packages/api/src/email-brand.ts` | delivered |
+| `email-text-body` | The plain-text part of every message, and the invoice email, which is plain text only, carry no mark or colour | `packages/core/src/invoice-email.ts`, `packages/core/src/email-templates.ts` | gap |
+| `email-sender` | The mailer takes the provider From value and nothing from the brand; `emailSenderName` is read only by the demo | `packages/mailer/src/index.ts` | gap |
+| `apple-disconnect` | The standalone Apple disconnect page links neither the instance stylesheet nor a mark, and names the product in its title and copy | `apps/web/src/shell/render.ts` | gap |
+| `staff-magic-link-confirm` | The standalone page an emailed staff sign-in link opens (`GET /auth/magic-link/verify`) links neither the instance stylesheet nor a mark | `packages/api/src/staff-magic-link.ts` | gap |
+| `portal-estimate-review` | The standalone page a client's contact reads and answers an estimate on (`GET /portal/estimate-review`) links the instance stylesheet after the built-in one, draws the `wordmark_light` mark above its heading (alt text is the deployment name) and carries the favicon. Nothing set, nothing is added | `apps/web/src/portal-estimates/render.ts`, `apps/web/src/portal-brand.ts` | delivered |
+| `portal-invoice` | The standalone page a client reaches from the link in an emailed invoice (`GET /portal/invoices/:token`) links the instance stylesheet after the built-in one, draws the `wordmark_light` mark above its heading (alt text is the company name) and carries the favicon. Nothing set, nothing is added | `apps/web/src/portal-invoice/render.ts`, `apps/web/src/portal-brand.ts` | delivered |
+| `stripe-checkout` | Branded in Stripe's dashboard; see the note above | none | external |
+| `native-apps` | Mobile themes are owned by ConflictHQ/ezacto-mobile#25 | none | none |
+
+Not found anywhere: a product name an administrator sets (the deployment name
+comes from the `BRAND_NAME` variable, not from Settings), a footer line or
+signature text, and report-PDF logo/colour rendering. Invoice PDFs already use
+the validated instance accent for rules, as the audit table records.
+
+### Deliberately never branded
+
+These stay as they are whatever an instance configures, and this audit does not
+propose changing them:
+
+- **The legal and transactional sender.** The verified sender identity and the
+  provider From value on mail identify who is sending. A brand never replaces
+  or hides them.
+- **The AGPL notice and attribution.** `LICENSE` and `NOTICE` describe the
+  software as licensed; branding customer-facing surfaces does not alter those
+  obligations.
+- **Store listing identity.** The app store names, bundle identifiers and
+  listings of the native apps.
+- **Custom domains.** Owned by the hosted and portal work, not by this table.
+
+Product renaming, hiding the product name, and any pricing or entitlement for
+white-label are undecided and recorded as such in #1011. Nothing in this
+repository gates branding.
+
+
+### Remaining scope and next customer-visible slice (#1011)
+
+Customer document branding means an organization's name, marks and colours on
+its app, documents, portal and messages. Full product white-labeling additionally
+means changing the product name, attribution, application icons, sender identity
+or domains. The delivered palette, mark uploads, HTML-mail header and invoice-PDF
+accent cover the former in part; they do not authorize the latter. The surface
+table above remains the source of truth for each delivered surface and gap.
+
+The email header proposed as the first gap in the original issue is now delivered:
+`packages/core/src/email-brand.ts` and `packages/api/src/email-brand.ts` read the
+stored light wordmark and accent, escape alternative text, validate colour and
+HTTP(S) URLs, preserve the sender/text body, and leave unbranded output unchanged.
+Their corresponding `email-brand.test.ts` suites cover these properties. Plain-text
+invoice mail deliberately has no image or colour; adding HTML there is a separate
+message-format change, not a missing call to the header.
+
+**Next buildable slice: the detailed report PDF's accent rule.**
+`packages/db/src/report-brands.ts` already resolves the nearest client's report
+brand, including `accentColor`; `packages/db/src/month-end-pack.ts` currently
+passes only its name to `packages/core/src/report-document.ts`. Pass that resolved
+accent into an optional report-document input and use it for decorative rules,
+following `packages/core/src/invoice-document.ts`. Reuse
+`normalizePaletteColor` from `packages/core/src/instance-theme.ts`; keep text in
+the existing readable ink. This is a report-brand colour, not an instance theme
+override, and must retain the current nearest-ancestor resolution and authority.
+No migration or new administrator permission is needed for that colour slice.
+
+Acceptance for that implementation:
+
+- Core: valid hex changes only decorative rule operations. Absent, invalid or
+  injection-shaped values preserve unbranded output; CSV data, totals, notes,
+  text colours and pagination remain unchanged. Cover multi-page headers and
+  render the resulting PDF for visual review at ordinary and pale accents.
+- SQLite and D1: the same client/ancestor brand resolves for live and month-end
+  exports; a nearer brand wins, missing brands retain the current fallback, and
+  another client's brand cannot be selected by an unauthorized caller.
+- API/runtime: keep existing report permissions and administrator-only
+  instance-brand writes. No new writable branding route or remote image fetch
+  is added.
+- Update the `report-pdf-logo-colours` audit row and
+  `packages/core/test/brand-surfaces.test.ts` in the implementation. If only colour
+  lands, split that row so the remaining logo gap is still explicit.
+
+Report-PDF logos remain a later slice. A stored `logoUrl` alone is not an approved
+server-side fetch policy: choose an owned upload/asset seam or a reviewed bounded
+transport before fetching it. Reuse the existing validated image decoder and
+object-storage approach in `entries/worker/src/invoice-documents.ts` and
+`packages/core/src/pdf-image.ts`; preserve a text fallback when an image is absent
+or unreadable. Signature/footer text is optional future scope and would need
+administrator-only writes, length limits and escaping at each output.
+
+Ownership and unresolved decisions:
+
+- Native colours/icons stay with
+  [ezacto-mobile#25](https://github.com/ConflictHQ/ezacto-mobile/issues/25).
+- Client portal/node branding and its domain integration stay with
+  [#106](https://github.com/ConflictHQ/ezacto-pvt/issues/106) and the portal owner;
+  `GET /api/v1/brand` remains its existing integration seam.
+- Hosted provisioning/custom domains stay with
+  [ezacto-platform#19](https://github.com/ConflictHQ/ezacto-platform/issues/19)
+  and the hosted owner. They are not an extra domain setting in this product.
+- Product renaming, hiding attribution, custom product icons and any
+  pricing/entitlement remain undecided. This plan creates no paid tier or gate.
+  Required sender identity, existing licence/notice text and store listing
+  identity remain as stated above.

@@ -16,7 +16,9 @@ describe('Worker outbox schedule', () => {
       new URL('../wrangler.jsonc', import.meta.url),
       'utf8',
     )
-    expect(configuration.match(/"triggers": \{ "crons": \["\* \* \* \* \*", "0 \* \* \* \*", "0 3 \* \* \*"\] \}/gu)).toHaveLength(2)
+    const schedules = [...configuration.matchAll(/"crons":\s*(\[[^\]]+\])/gu)].map(match => JSON.parse(match[1]!) as string[])
+    expect(schedules).toHaveLength(2)
+    for (const schedule of schedules) expect(schedule).toEqual(['*/5 * * * *', '* * * * *', '0 * * * *', '0 3 * * *'])
   })
 
   // Both the minute drainer and the hourly BILL reconciliation (issue 834)

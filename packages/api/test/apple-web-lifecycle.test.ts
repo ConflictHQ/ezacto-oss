@@ -38,7 +38,7 @@ const setup = async (demo = false) => {
   const retrieve: typeof fetch = async (input, init = {}) => {
     const url = new URL(String(input))
     expect(url.origin).toBe(issuer)
-    expect(init.redirect).toBe('error')
+    expect(init.redirect).toBe('manual')
     if (url.pathname === '/.well-known/jwks.json') return Response.json({ keys: [publicKey] })
     const body = JSON.parse(String(init.body)) as Record<string, unknown>
     requests.push({ path: url.pathname, body, init })

@@ -46,6 +46,41 @@ export interface QuickBooksSyncResult {
   payments: readonly { paymentId: number; outcome: { kind: string; reason?: string } }[]
 }
 
+/** One line of the reconciliation report (issue 1013), structurally. */
+export interface QuickBooksReconciliationRow {
+  status: string
+  issues: readonly string[]
+  ezactoInvoiceId: number | null
+  number: string
+  quickBooksId: string | null
+  linked: boolean
+  ezactoAmountCents: number | null
+  quickBooksAmountCents: number | null
+  ezactoCurrency: string | null
+  quickBooksCurrency: string | null
+  ezactoPaidCents: number | null
+  quickBooksPaidCents: number | null
+  detail: string
+}
+
+/** A QuickBooks payment voided or deleted there that a receipt here came from. */
+export interface QuickBooksPaymentDivergence {
+  quickBooksPaymentId: string
+  kind: string
+  quickBooksUpdatedAt: string
+  detectedAt: string
+  receipts: readonly { paymentId: number; invoiceId: number; invoiceNumber: string; amountCents: number }[]
+}
+
+export interface QuickBooksReconciliation {
+  realmId: string
+  generatedAt: string
+  counts: Readonly<Record<string, number>>
+  rows: readonly QuickBooksReconciliationRow[]
+  paymentDivergences: readonly QuickBooksPaymentDivergence[]
+  recovery: { cdcCursor: string; lastRunAt: string; lastOutcome: string } | null
+}
+
 /**
  * What the routes need from the rest of the system.
  *
@@ -55,6 +90,8 @@ export interface QuickBooksSyncResult {
  * bug in the handshake.
  */
 export interface QuickBooksService {
+  /** Native local readiness; older injected services retain their existing metadata fallback. */
+  configured?(): boolean
   clientId(): string | null
   callbackUrl(): string | null
   /** Where the operator lands after connecting; a page, not an API route. */
@@ -86,6 +123,8 @@ export interface QuickBooksService {
   /** Both answer null for an invoice that does not exist, which is the route's 404. */
   sync(invoiceId: number): Promise<QuickBooksSyncResult | null>
   syncState(invoiceId: number): Promise<QuickBooksInvoiceSyncState | null>
+  /** Read-only comparison with the company; null where QuickBooks is not connected. */
+  reconcile(): Promise<QuickBooksReconciliation | null>
 }
 
 const requireAdministrator = <Bindings extends object>(
@@ -118,6 +157,24 @@ const requireMoneyWriter = <Bindings extends object>(
       status: 403,
       code: 'profile_forbidden',
       message: 'Only administrators and accounting can sync an invoice to QuickBooks.',
+    })
+  }
+}
+
+/**
+ * The report shows every invoice and every receipt total in the book next to
+ * the books' own, so it is for the people who keep them: administrators and
+ * accounting, and nobody else.
+ */
+const requireAccountant = <Bindings extends object>(
+  context: Context<ApiContext<Bindings>>,
+): void => {
+  const principal = requireSessionPrincipal(context)
+  if (!['administrator', 'accounting'].includes(principal.profile)) {
+    throw new ApiError({
+      status: 403,
+      code: 'profile_forbidden',
+      message: 'Only administrators and accounting can read the QuickBooks reconciliation.',
     })
   }
 }
@@ -169,7 +226,7 @@ const requireConfigured = (service: Readonly<QuickBooksService>): {
 } => {
   const clientId = service.clientId()
   const callbackUrl = service.callbackUrl()
-  if (clientId === null || callbackUrl === null) {
+  if (service.configured?.() === false || clientId === null || callbackUrl === null) {
     throw new ApiError({
       status: 503,
       code: 'service_unavailable',
@@ -198,8 +255,70 @@ export const installQuickBooksRoutes = <Bindings extends object>(
     return context.json(
       {
         data: {
-          configured: service.clientId() !== null && service.callbackUrl() !== null,
+          configured: service.configured?.() ?? (service.clientId() !== null && service.callbackUrl() !== null),
           connection: status === null ? null : serialize(status),
+        },
+      },
+      200,
+      { 'cache-control': 'no-store' },
+    )
+  })
+
+  // The reconciliation report (issue 1013): differences between our invoices
+  // and the company's, listed and never corrected. A GET that reads QuickBooks
+  // and writes nothing -- not an invoice, not a receipt, not a QuickBooks
+  // document.
+  api.get('/integrations/quickbooks/reconciliation', async (context) => {
+    requireAccountant(context)
+    const report = await service.reconcile()
+    if (report === null) {
+      throw new ApiError({
+        status: 409,
+        code: 'quickbooks_not_connected',
+        message: 'QuickBooks is not connected.',
+      })
+    }
+    return context.json(
+      {
+        data: {
+          realm_id: report.realmId,
+          generated_at: report.generatedAt,
+          counts: report.counts,
+          rows: report.rows.map((row) => ({
+            status: row.status,
+            issues: row.issues,
+            invoice_id: row.ezactoInvoiceId,
+            number: row.number,
+            quickbooks_id: row.quickBooksId,
+            linked: row.linked,
+            ezacto_amount_cents: row.ezactoAmountCents,
+            quickbooks_amount_cents: row.quickBooksAmountCents,
+            ezacto_currency: row.ezactoCurrency,
+            quickbooks_currency: row.quickBooksCurrency,
+            ezacto_paid_cents: row.ezactoPaidCents,
+            quickbooks_paid_cents: row.quickBooksPaidCents,
+            detail: row.detail,
+          })),
+          payment_divergences: report.paymentDivergences.map((divergence) => ({
+            quickbooks_payment_id: divergence.quickBooksPaymentId,
+            kind: divergence.kind,
+            quickbooks_updated_at: divergence.quickBooksUpdatedAt,
+            detected_at: divergence.detectedAt,
+            receipts: divergence.receipts.map((receipt) => ({
+              payment_id: receipt.paymentId,
+              invoice_id: receipt.invoiceId,
+              invoice_number: receipt.invoiceNumber,
+              amount_cents: receipt.amountCents,
+            })),
+          })),
+          recovery:
+            report.recovery === null
+              ? null
+              : {
+                  cdc_cursor: report.recovery.cdcCursor,
+                  last_run_at: report.recovery.lastRunAt,
+                  last_outcome: report.recovery.lastOutcome,
+                },
         },
       },
       200,

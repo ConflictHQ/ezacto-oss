@@ -1,0 +1,92 @@
+{
+  "revision": "e62df2bb1d3bbc94fda8442dda547eb23088ba55",
+  "transport": "real stdio MCP to real native container HTTP API on loopback",
+  "registration": "private --mcp-config; dynamic ezacto status connected",
+  "allowed_tool": "mcp__ezacto__get_uninvoiced",
+  "observed_calls": [
+    {
+      "name": "mcp__ezacto__get_uninvoiced",
+      "input": {
+        "client": "northpeak"
+      }
+    }
+  ],
+  "scopes": [
+    "clients:read",
+    "reports:read"
+  ],
+  "fixture": {
+    "northpeak_seconds": 9000,
+    "northpeak_time_entries": 2,
+    "hourly_rate_cents": 12000,
+    "northpeak_total_cents": 30000,
+    "other_client_cents_excluded": 99900
+  },
+  "result": "Northpeak has **2.50 hours ($300.00 USD)** that haven't been invoiced yet. This covers all dates.\n\n- **Time:** 2.50 hours from 2 time entries, worth $300.00. Both entries have a rate, so neither is left out of the dollar amount.\n- **Expenses:** none ($0.00).\n- **Total uninvoiced:** $300.00 USD.\n\nAll of it is on one project, **Northpeak project** (no project code).",
+  "cost_usd": 0.026682,
+  "write_refusal_status": 403,
+  "revoked_token_refusal_status": 401,
+  "limitations": [
+    "Independent automated invocation of installed Claude Code, not a human interactive session",
+    "Read-only question only; no production or customer data",
+    "No remote deployment or npm publication verified"
+  ],
+  "date": "2026-10-26",
+  "claude_code_version": "2.1.311",
+  "invocation": [
+    "claude",
+    "--bare",
+    "--strict-mcp-config",
+    "--mcp-config",
+    "PRIVATE_MCP_CONFIG",
+    "--tools",
+    "",
+    "--allowedTools",
+    "mcp__ezacto__get_uninvoiced",
+    "--no-session-persistence",
+    "--permission-prompts",
+    "none",
+    "--max-budget-usd",
+    "1",
+    "--setting-sources",
+    "",
+    "--disable-slash-commands",
+    "--no-chrome",
+    "--verbose",
+    "--output-format",
+    "stream-json",
+    "--print",
+    "what's uninvoiced for northpeak? Use the connected eZacto read tool to answer with exact hours and USD amounts."
+  ],
+  "configuration": {
+    "mcp_server": {
+      "command": "node",
+      "args": [
+        "BUILT_MCP_PATH/cli.js",
+        "--config",
+        "PRIVATE_EZACTO_CONFIG",
+        "--org",
+        "proof32"
+      ]
+    },
+    "scope": "ephemeral --mcp-config only; no global Claude registration",
+    "native_setup": "Pinned image built from source; fresh loopback container and named volume; owner bootstrap and session created scoped token expiring in one hour; ez login --token-stdin --org proof32 --config PRIVATE_EZACTO_CONFIG",
+    "model_override": false,
+    "built_in_tools": [],
+    "settings": "private CLAUDE_CONFIG_DIR; --bare; no user/project/local settings; no slash commands, hooks, Chrome, or persisted session"
+  },
+  "cleanup": [
+    "Scoped token revoked through native administrator session; old token then returned401",
+    "Dedicated container, volume, image and private fixture removed",
+    "Private fixture included owner credentials, CLI/MCP configuration, stdout event log, local Claude state; none committed"
+  ],
+  "profile_redaction_verification": {
+    "command": "npx vitest run packages/mcp/test/server.test.ts -t 'redaction'",
+    "result": "2 passed; 8 unrelated tests skipped",
+    "tests": [
+      "[security] preserves API serializer redaction for the bearer token profile",
+      "[security] preserves report redaction for member, accounting, and administrator tokens"
+    ],
+    "scope": "Existing MCP protocol/API serializer tests rerun at the recorded source revision; separate from the real Claude/native-container query"
+  }
+}

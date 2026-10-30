@@ -66,6 +66,27 @@ report inventory, and a SQLite backup through the installed `ez` command. This
 check runs in CI and before either package is published; it needs access to npm
 for public dependencies and cleans up its temporary installation afterward.
 
+## Instance module availability
+
+`ez --help` and `ez report list` work offline and describe commands supported by
+this client. They do not promise that the selected instance enables every module
+or that the current token has every permission. A report name in the inventory
+is not a successful capability check.
+
+Remote invoice commands, reports and exports retain the server's module and
+permission checks. A `403` with `module_disabled` means the operator has switched
+the module off; signing in again or granting a token another scope cannot enable
+it. JSON failures preserve the server code, HTTP status and request ID. The CLI
+does not fall back to another endpoint or provider after a refusal.
+
+The SSO switch controls interactive provider sign-in, not validation of an
+already-issued API token. `ez login` stores a token; it does not start an SSO
+flow. `ez backup`, `restore`, `backup-decrypt` and `export --verify` operate on
+local files. `backup --sync-to` is an explicit operator copy to the configured
+S3-compatible destination, not the instance's managed backup service. These
+recovery commands remain available with `BACKUPS_ENABLED=false`; possession of
+the files and destination credentials is still required.
+
 ## Report permissions
 
 `ez report list` names the scope required by each report. `ez uninvoiced` and
@@ -79,3 +100,37 @@ at login. If a required scope is missing, it names that scope and the stored
 profile. API failures retain their code, message, HTTP status and request ID in
 `--json` output and readable error text. Permissions are still enforced by the
 server; local config cannot grant access.
+
+## Editing draft invoices
+
+```sh
+ez sudo invoice edit 1400 --subject "October retainer" --notes-file notes.txt \
+  --issue-date 2026-10-05 --due-date 2026-11-04 --terms net_30
+ez sudo invoice edit 1400 --line 2 --quantity 3 --rate 150.50 --description "Review"
+ez sudo invoice unlink-time 1400 --entries 101,102
+```
+
+`sudo` requires an administrator API token with `invoices:read` and
+`invoices:write`. It prompts privately for the same administrator's verified
+email and password, then any enrolled authenticator/recovery or email second
+factor. Password sign-in must be enabled. For automation, pass `--reauth-stdin`
+and pipe a private JSON object with `email`, `password`, and optional `code`
+(authenticator or recovery code); credentials are never command-line arguments.
+Email-code reauthentication is interactive.
+
+The server issues an elevation bound to that API token and that draft invoice
+for at most 15 minutes. The CLI holds it in memory and revokes it when the
+command finishes; it never saves the password or elevation in config. Ordinary
+`ez invoice edit` and `unlink-time` calls without elevation receive HTTP 403.
+
+`edit` reviews the draft before reauthentication and refuses a changed document.
+Each write carries a fresh `Idempotency-Key` and `expected_version`. Line numbers
+are one-based; rates are decimal currency units. Header and line edits are
+separate commands: if the header saves and a later line fails, the CLI reports
+the saved header so the operator can review it before retrying.
+
+`unlink-time` additionally requires `time_entries:write`. It releases only the
+explicit stopped entries linked to the named draft, atomically; an ineligible or
+cross-invoice selection changes nothing. Invoice line amounts remain as saved
+and need review. Every edit/release records the actor, elevation and exact
+before/after values in the same database transaction.

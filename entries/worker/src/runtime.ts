@@ -1,9 +1,42 @@
+import { createCalendarOperatorCleanupStore } from '@ezacto/db/d1'
+import { createConfiguredCalendarServices } from '@ezacto/integrations'
+import { createCalendarOAuthStore } from '@ezacto/db/d1'
+import { createConfiguredBankFeedRuntime } from '@ezacto/integrations'
+import { createBankDepositIngestionService } from '@ezacto/db/d1'
+import { createBankDepositReviewService } from '@ezacto/db/d1'
+import { createCsvWorkerRuntime, csvWorkerConfigured } from './csv-runtime.js'
+import { createCalendarConnectionStore } from '@ezacto/db/d1'
+import { createCalendarSyncService } from '@ezacto/integrations'
+import { createStripePaymentAlertStore, prepareStripePaymentAlertNotifications } from '@ezacto/db/d1'
+import { createCalendarFeedService } from '@ezacto/db/d1'
+import { createGithubReaderService } from '@ezacto/db/d1'
+import { createDeelPaymentStatusStore } from '@ezacto/db/d1'
+import { createDeelPaymentStatusRuntime } from '@ezacto/integrations'
+import { createDeelStageStore } from '@ezacto/db/d1'
+import { createDeelStagingRuntime } from '@ezacto/integrations'
+import { parseWiseMode } from '@ezacto/integrations'
+import { moduleAvailability } from '@ezacto/api'
+import { retryTransientD1IdempotentOperation } from '@ezacto/db/d1'
+import { createOrganizationHolidayRepository } from '@ezacto/db/d1'
+import { createWebhookSecretVault } from '@ezacto/core'
+import { createWebhookService } from '@ezacto/db/d1'
+import { createWorkerWebhookTransport } from '@ezacto/integrations'
+import { createQueuedMigrationStore } from '@ezacto/db/queued-migrations'
+import { createInvoiceElevationStore, unlinkElevatedInvoiceTime } from '@ezacto/db/d1'
+import { createEstimateTemplateRepository } from '@ezacto/db/d1'
+import { createWorkerOffsiteBackups } from './offsite-backups.js'
+import { createScheduledRunDispatchService } from '@ezacto/db/d1'
+import { prepareScheduledRunNotifications } from '@ezacto/db/d1'
+import { createD1EmailSuppressionStore } from '@ezacto/db/d1'
+import type { ReminderProcessOptions } from '@ezacto/db/d1'
 import { createRuntimeAppleWeb } from './apple-web.js'
 import { createD1AppleWebCustodyStore } from '@ezacto/db/d1'
-import { captureException } from '@sentry/cloudflare'
-import { createPaymentRunsService } from '@ezacto/db/d1'
+import { reportWorkerError, runtimeTraceId, type WorkerErrorReporter } from './error-reporting.js'
+import { createPaymentRunsService, createScheduledRunsService, createScheduledJobsService, proposeDueScheduledJobs,
+} from '@ezacto/db/d1'
 import { createWisePaymentProvider } from '@ezacto/integrations'
-import { createStaffPaymentStore } from '@ezacto/db/d1'
+import { createContractorReviewStore, createStaffPaymentStore } from '@ezacto/db/d1'
+import { createMyPaymentsStore } from '@ezacto/db/d1'
 import {
   bootstrapInstanceD1,
   createAttachmentStore,
@@ -12,6 +45,7 @@ import {
   createD1Database,
   readUserIdentity,
   readUserTimezone,
+  readEffectiveUserTimezone,
   updateUserTimezone,
   createD1IdentityStore,
   createD1OidcTransactionStore,
@@ -20,10 +54,13 @@ import {
   createD1StaffUserDirectory,
   createD1OutboxService,
   createQuickBooksMirrorSource,
+  createQuickBooksReconciliationSource,
   createQuickBooksStore,
   createGeneralResourceRepository,
+  recoverProjectMissingRates,
   createMoneyResourceRepository,
   listClientAncestors,
+  createClientRateCardRepository,
   listClientDescendants,
   createInvoiceGenerationService,
   createReportRepository,
@@ -39,27 +76,50 @@ import {
   createTimesheetLockPolicyRepository,
   createTeamRepository,
   createD1EmailLogStore,
+  createD1EmailFeedbackLedger,
   createD1EmailConfigurationStore,
   createD1PasswordAuthService,
   createD1SessionStore,
+  lastSeenIntervalFromSeconds,
   createD1SsoProvisioningDomainStore,
+  DrizzleAllocationRepository,
+  createPlaceholderAllocationRepository,
+  DrizzleCalendarProposalRepository,
+  DrizzleWorkItemRepository,
   DrizzleTrackedResourceRepository,
+  allowBackupDownloadRequest,
+  consumeBackupDownloadLink,
+  getBackupRun,
+  latestCompletedBackupRunId,
+  mintBackupDownloadLink,
+  openBackupArchive,
+  r2BackupSource,
+  countBackupRuns,
+  getBackupRunsSnapshot,
   getLatestBackupRuns,
+  pageBackupRuns,
   migrateD1,
   createD1ContactSessionStore,
   createD1MagicLinkStore,
   createMagicLinkService,
   createD1TwoFactorStore,
   backfillBandClaims,
+  backfillCostRates,
   requestAccountDeletion,
   createRecurringInvoiceEngine,
   createD1ReminderScheduler,
   captureActivityEvent,
+  createActivityRoll,
   createTwoFactorService,
+  deriveTwoFactorEmailCodeKey,
   createBillLinkStore,
   createBillMirrorSource,
   createPayoutAccountStore,
+  createPayoutProviderEnablementStore,
+  createPayoutPreferenceStore,
   createWiseDeliveryStore,
+  createDeelSyncSettingsStore,
+  createDeelSyncStore,
   createStripeLinkStore,
   readAttachPreference,
   readFilesPreference,
@@ -83,6 +143,8 @@ import {
   setInvoiceJournalPolicy,
   setOrganizationJournalPolicy,
   readInvoiceHoursReport,
+  readInvoiceHoursReconciliation,
+  releaseInvoiceLineTime,
   readJournalFormatsPreference,
   readOrganizationJournalFormats,
   setInvoiceJournalFormats,
@@ -97,17 +159,41 @@ import {
   createReminderSettings,
   readInvoiceDefaults,
   updateInvoiceDefaults,
+  createInvoiceViewLinkIssuer,
+  createInvoiceViewService,
+  invoiceViewLinkOrigin,
+  readViewReceipts,
   readThankYouPreference,
   readOrganizationThankYouPolicy,
   setInvoiceThankYouPolicy,
   setOrganizationThankYouPolicy,
+  evaluateProjectBudgetAlerts,
+  prepareBudgetAlertMail,
+  prepareTimeReminders,
+  readUserNotifications,
+  updateUserNotifications,
+  readNotificationSettings,
+  updateNotificationSettings,
+  readTimesheetAutoApproval,
+  runTimesheetAutoApproval,
+  createScheduledActionStore,
+  sweepExpiredRuns,
+  updateTimesheetAutoApproval,
   setBillDelivery,
+  createD1IdempotencyStore,
+  createIdempotentD1,
 } from "@ezacto/db/d1";
-import { createPortalSessionService, type BandClaimBackfillPort } from "@ezacto/api";
+import { createPortalSessionService, type BandClaimBackfillPort, type CostRateBackfillPort,
+} from "@ezacto/api";
+import { deriveIdempotencySecret, emailBrandFrom, withEmailBrand } from "@ezacto/api";
 import {
   createApiSessionService,
   createCloudflareAccessSessionResolver,
   createCloudflareAccessVerifier,
+  createBudgetAlertSubscriber,
+  createTimeReminderService,
+  createNotificationSettingsService,
+  createTimesheetAutoApprovalService,
   createInvoiceEmailOutboxSubscriber,
   createInvoiceThankYouSubscriber,
   thankYouInvoiceFromDeliveryContext,
@@ -123,6 +209,7 @@ import type {
 import {
   MailgunMailer,
   SenderIdentityUnavailableError,
+  createMailgunFeedbackService,
   SesMailer,
   configuredEmailSender,
   createRecipientAllowlistQueue,
@@ -130,13 +217,17 @@ import {
   type HttpEmailProvider,
   type MailgunOptions,
   type SesMailerOptions,
+  EMAIL_LOG_KIND_TEMPLATES,
 } from "@ezacto/mailer";
 import { createInvoiceDocumentPort } from './invoice-documents.js';
-import type { RuntimeServices } from "./app.js";
+import type { AppEnv, RuntimeServices } from "./app.js";
+import { workerBrandAssetSurface } from "./brand-assets.js";
+import { workerInstanceThemeSurface } from "./instance-theme.js";
 import {
   cloudflareAccessConfig,
   DEMO_API_TOKEN_MAX_LIFETIME_MS,
   demoDeployment,
+  workItemCredentialConfigured,
   demoMailDomains,
   type WorkerEnv,
 } from "./app.js";
@@ -147,13 +238,17 @@ import {
   createQuickBooksMirrorSubscriber,
   createQuickBooksRuntime,
   createWiseRuntime,
+  createDeelSyncRuntime,
 } from "@ezacto/integrations";
 import {
   createCloudflareEmailQueue,
   createWorkerDeploymentAuthMailer,
   createWorkerAccountDeletionMailer,
+  createWorkerNotificationMailer,
   createWorkerOrganizationMailer,
   createWorkerStaffMagicLinkMailer,
+  createWorkerPortalMagicLinkMailer,
+  createWorkerTwoFactorEmailCodeMailer,
 } from "./email-queue.js";
 import { demoRefusal } from "./demo-lockdown.js";
 
@@ -161,6 +256,7 @@ const cursorSecretPattern = /^[A-Za-z0-9_-]+$/;
 const cursorSecretBytes = 32;
 
 const readyDatabases = new WeakSet<object>();
+const ordinaryDatabases = new WeakSet<object>();
 
 let cachedAccessVerifier:
   | {
@@ -171,8 +267,7 @@ let cachedAccessVerifier:
   | undefined;
 
 const accessVerifier = (
-  config: CloudflareAccessVerifierConfig,
-): CloudflareAccessVerifier => {
+  config: CloudflareAccessVerifierConfig): CloudflareAccessVerifier => {
   if (
     cachedAccessVerifier?.teamDomain === config.teamDomain &&
     cachedAccessVerifier.audience === config.audience
@@ -242,8 +337,7 @@ export const createWorkerMailgunMailer = (
   if (configured.every((value) => value === undefined)) return null;
   if (env.MAILGUN_API_KEY === undefined || env.MAILGUN_DOMAIN === undefined) {
     throw new TypeError(
-      "Mailgun requires MAILGUN_API_KEY and MAILGUN_DOMAIN together",
-    );
+      "Mailgun requires MAILGUN_API_KEY and MAILGUN_DOMAIN together");
   }
   if (
     env.MAILGUN_REGION !== undefined &&
@@ -343,8 +437,7 @@ export const createSesSenderIdentityVerifier = (
   verify: async (identity, signal) => {
     const health = await emailProvider.getIdentityHealth(
       identity.providerIdentity,
-      signal,
-    )
+      signal)
     const identityType = health.type?.toUpperCase()
     if (identityType !== 'EMAIL_ADDRESS' && identityType !== 'DOMAIN') {
       throw new Error('SES returned an unsupported sender identity type')
@@ -409,8 +502,7 @@ export const parseCursorSigningKey = (encoded: string): Uint8Array => {
   const bytes = Uint8Array.from(binary, (character) => character.charCodeAt(0));
   if (bytes.byteLength !== cursorSecretBytes) {
     throw new TypeError(
-      `API_CURSOR_SIGNING_KEY must decode to exactly ${cursorSecretBytes} bytes`,
-    );
+      `API_CURSOR_SIGNING_KEY must decode to exactly ${cursorSecretBytes} bytes`);
   }
   if (encodeBase64Url(bytes) !== encoded) {
     throw new TypeError("API_CURSOR_SIGNING_KEY must be canonical base64url");
@@ -449,8 +541,7 @@ const requireDatabase = (env: WorkerEnv): D1Database => {
  * a failure or canceled request never marks the database ready.
  */
 export const ensureRuntimeDatabaseReady = async (
-  database: D1Database,
-): Promise<void> => {
+  database: D1Database): Promise<void> => {
   const identity = database as object;
   if (readyDatabases.has(identity)) return;
   await migrateD1(database);
@@ -459,14 +550,24 @@ export const ensureRuntimeDatabaseReady = async (
       .prepare('SELECT 1 FROM account_restore_quarantine WHERE id=1 AND quarantined=1')
       .first()
   ) {
-    throw new Error('Restored privacy evidence must be reconciled before this instance serves traffic.');
+    throw new Error('Restored privacy evidence must be reconciled before this instance serves traffic.',
+    );
   }
   readyDatabases.add(identity);
 };
 
+/** Empty destinations are rechecked until a normal instance is irreversibly populated. */
+export const ensureOrdinaryMigrationAccess = async (database: D1Database, cachePopulated = true,
+): Promise<void> => {
+  if (cachePopulated && ordinaryDatabases.has(database)) return;
+  // Both observations belong to one SQL snapshot: an import cannot win between them.
+  const access = await createQueuedMigrationStore(database).access();
+  if (access.blocked) throw new Error("Queued migration target is quarantined.");
+  if (cachePopulated && access.populated) ordinaryDatabases.add(database);
+};
+
 export const createR2AttachmentObjectStore = (
-  bucket: R2Bucket,
-): AttachmentObjectPort => ({
+  bucket: R2Bucket): AttachmentObjectPort => ({
   async put(key, bytes, contentType) {
     // A hash-derived key is immutable. If another request already stored these
     // bytes, retain its metadata instead of letting a conflicting upload rewrite
@@ -507,18 +608,15 @@ export const createD1AttachmentOwnerAuthorizer =
       case "invoice":
         return exists(
           "SELECT 1 AS authorized FROM invoices WHERE id = ?",
-          parentId,
-        );
+          parentId);
       case "recurringInvoice":
         return exists(
           "SELECT 1 AS authorized FROM recurring_invoices WHERE id = ?",
-          parentId,
-        );
+          parentId);
       case "estimate":
         return exists(
           "SELECT 1 AS authorized FROM estimates WHERE id = ?",
-          parentId,
-        );
+          parentId);
       case "expense":
         return exists(
           `SELECT 1 AS authorized FROM expenses
@@ -537,8 +635,7 @@ export const createD1AttachmentOwnerAuthorizer =
         ) {
           return exists(
             "SELECT 1 AS authorized FROM projects WHERE id = ?",
-            parentId,
-          );
+            parentId);
         }
         return exists(
           `SELECT 1 AS authorized FROM projects project
@@ -561,6 +658,8 @@ export const createD1AttachmentOwnerAuthorizer =
 /** The secrets that let this deployment reach a payment or accounting provider. */
 type ProviderCredentials = Pick<
   WorkerEnv,
+  | "MERCURY_BANK_FEED_TOKEN" | "MERCURY_BANK_FEED_ACCOUNT_ID" | "MERCURY_BANK_FEED_CURRENCY" | "WISE_BANK_FEED_TOKEN" | "WISE_BANK_FEED_PROFILE_ID" | "WISE_BANK_FEED_BALANCE_ID" | "WISE_BANK_FEED_CURRENCY" | "BANK_FEED_ENVIRONMENT"
+  | "GOOGLE_CALENDAR_CLIENT_ID" | "GOOGLE_CALENDAR_CLIENT_SECRET" | "MICROSOFT_CALENDAR_CLIENT_ID" | "MICROSOFT_CALENDAR_CLIENT_SECRET" | "MICROSOFT_CALENDAR_TENANT"
   | "QUICKBOOKS_CLIENT_ID"
   | "QUICKBOOKS_CLIENT_SECRET"
   | "QUICKBOOKS_WEBHOOK_VERIFIER_TOKEN"
@@ -574,6 +673,9 @@ type ProviderCredentials = Pick<
   | "BILL_REPLY_TO_USER_ID"
   | "STRIPE_API_KEY"
   | "STRIPE_WEBHOOK_SECRET"
+  | "MAILGUN_WEBHOOK_SIGNING_KEY"
+  | "DEEL_TOKEN"
+  | "DEEL_SYNC_START_DATE"
 >;
 
 /**
@@ -586,8 +688,17 @@ type ProviderCredentials = Pick<
  * see `demo-lockdown.ts` -- but this is the half that holds for code paths
  * nobody thought to list.
  */
-export const providerCredentials = (env: WorkerEnv): ProviderCredentials =>
-  demoDeployment(env) ? {} : env;
+export const providerCredentials = (env: WorkerEnv): ProviderCredentials => {
+  if (demoDeployment(env)) return {};
+  // ACCOUNTING_ENABLED=false (#1217) withholds the accounting keys the same
+  // way, so QuickBooks is not mounted; an invalid value throws at start-up.
+  if (moduleAvailability(env).accounting) return env;
+  const rest = { ...env };
+  delete rest.QUICKBOOKS_CLIENT_ID;
+  delete rest.QUICKBOOKS_CLIENT_SECRET;
+  delete rest.QUICKBOOKS_WEBHOOK_VERIFIER_TOKEN;
+  return rest;
+};
 
 /**
  * Object storage the demo reads and never writes (#931). The upload routes are
@@ -604,16 +715,26 @@ const readOnlyObjects = (objects: AttachmentObjectPort): AttachmentObjectPort =>
 export const createRuntimeServices = async (
   env: WorkerEnv,
   options: {
+    calendarSources?: Parameters<typeof createCalendarSyncService>[0]['sources'];
     emailProvider?: HttpEmailProvider;
     ses?: SesMailerOptions;
     mailgun?: MailgunOptions;
     cloudflareAccessFetch?: CloudflareAccessFetch;
+    /** Scheduled ticks retry only ledger-fenced readiness, never service effects. */
+    retryReadiness?: boolean;
+    /** Trusted error sink for embedded runtimes; never a serialized Worker binding. */
+    reportError?: WorkerErrorReporter;
   } = {},
 ): Promise<RuntimeServices> => {
-  const database = requireDatabase(env);
+  const binding = requireDatabase(env);
+  // Every service below writes through this: in a request that carries an
+  // Idempotency-Key, each write commits with the key's claim (issue 952).
+  // Stable per binding, so the readiness cache below still keys on it.
+  const database = createIdempotentD1(binding);
   const demo = demoDeployment(env);
   const credentials = providerCredentials(env);
   const cursorSigningKey = parseCursorSigningKey(env.API_CURSOR_SIGNING_KEY);
+  const csv = !demo && csvWorkerConfigured(env) ? createCsvWorkerRuntime(binding,env.ATTACHMENTS!,env.CSV_IMPORT_QUEUE!,cursorSigningKey,error=>reportWorkerError(options.reportError,error,{phase:'queue',traceId:runtimeTraceId()})) : undefined;
   // Portal magic-link auth is opt-in on the presence of its key. An install
   // that has not set one does not serve the routes at all, rather than serving
   // them with a weak or absent secret -- the routes hand out sessions, so
@@ -630,10 +751,20 @@ export const createRuntimeServices = async (
     env.PORTAL_MAGIC_LINK_SIGNING_KEY === ""
       ? undefined
       : parseCursorSigningKey(env.PORTAL_MAGIC_LINK_SIGNING_KEY);
-  await ensureRuntimeDatabaseReady(database);
+  if (options.retryReadiness) {
+    await retryTransientD1IdempotentOperation(() => ensureRuntimeDatabaseReady(database));
+  } else {
+    await ensureRuntimeDatabaseReady(database);
+  }
+  // The nightly demo wipe can make a populated database empty again.
+  await ensureOrdinaryMigrationAccess(binding, !demo);
   const drizzle = createD1Database(database);
+  const calendar = await createConfiguredCalendarServices({store:createCalendarConnectionStore(drizzle),oauthStore:createCalendarOAuthStore(drizzle),deploymentKey:cursorSigningKey,environment:credentials,...(env.APP_BASE_URL?{appOrigin:env.APP_BASE_URL}:{}),...(options.calendarSources?{sourceOverrides:options.calendarSources}:{})});
   const timesheetLockPolicy = createTimesheetLockPolicyRepository(drizzle);
-  const sessions = createApiSessionService(createD1SessionStore(database));
+  const trackedResources = new DrizzleTrackedResourceRepository(drizzle, timesheetLockPolicy);
+  const touchIntervalMs = lastSeenIntervalFromSeconds(env.LAST_SEEN_INTERVAL_SECONDS);
+  const sessions = createApiSessionService(
+    createD1SessionStore(database, { touchIntervalMs }));
   const identities = createD1IdentityStore(database);
   const access = cloudflareAccessConfig(env);
   const authenticationSessions =
@@ -650,7 +781,7 @@ export const createRuntimeServices = async (
                   fetch: options.cloudflareAccessFetch,
                 }),
         });
-  const emailLog = createD1EmailLogStore(database);
+  const emailLog = createD1EmailLogStore(database, { kindTemplates: EMAIL_LOG_KIND_TEMPLATES });
   const emailConfiguration = createD1EmailConfigurationStore(database);
   const emailProvider =
     options.emailProvider ??
@@ -679,13 +810,28 @@ export const createRuntimeServices = async (
   const emailQueue: EmailQueue | undefined =
     env.EMAIL_QUEUE === undefined
       ? undefined
-      : mailDomains === null
-        ? createCloudflareEmailQueue(env.EMAIL_QUEUE)
-        : createRecipientAllowlistQueue(
-            createCloudflareEmailQueue(env.EMAIL_QUEUE),
-            emailLog,
-            mailDomains,
-          );
+      : withEmailBrand(
+          mailDomains === null
+            ? createCloudflareEmailQueue(env.EMAIL_QUEUE)
+            : createRecipientAllowlistQueue(
+                createCloudflareEmailQueue(env.EMAIL_QUEUE),
+                emailLog,
+                mailDomains,
+              ),
+          // HTML mail wears the instance header (#1011): read when each
+          // message is queued, so a changed logo or colour reaches the next send.
+          async () =>
+            env.APP_BASE_URL === undefined
+              ? null
+              : emailBrandFrom(
+                  {
+                    assets: await workerBrandAssetSurface.list(env as AppEnv),
+                    palette: (await workerInstanceThemeSurface.read(env as AppEnv))?.palette ?? null,
+                    organizationName: await organizationName(),
+                  },
+                  env.APP_BASE_URL,
+                ),
+        );
   const mailFrom = resolveMailFrom(env);
   const deploymentAuthMailer =
     !emailQueueReady || mailFrom === undefined
@@ -705,8 +851,19 @@ export const createRuntimeServices = async (
           emailQueue!,
           emailLog,
           mailFrom,
-          organizationName,
-        );
+          organizationName);
+  const portalMagicLinkMailer =
+    !emailQueueReady || mailFrom === undefined ? undefined : createWorkerPortalMagicLinkMailer(
+      emailQueue!, emailLog, mailFrom, organizationName, env.APP_BASE_URL!,
+    );
+  const twoFactorEmailCodeMailer =
+    !emailQueueReady || mailFrom === undefined
+      ? undefined
+      : createWorkerTwoFactorEmailCodeMailer(
+          emailQueue!,
+          emailLog,
+          mailFrom,
+          organizationName);
   const accountDeletionMailer =
     !emailQueueReady || mailFrom === undefined
       ? undefined
@@ -714,8 +871,7 @@ export const createRuntimeServices = async (
           emailQueue!,
           emailLog,
           mailFrom,
-          organizationName,
-        );
+          organizationName);
   const organizationMailer =
     !emailTransportReady
       ? undefined
@@ -723,7 +879,30 @@ export const createRuntimeServices = async (
           emailQueue!,
           emailLog,
           emailProvider.name,
-          emailConfiguration,
+          emailConfiguration);
+  // The mail the instance sends its own people (budget alerts, issue 934). On
+  // the deployment sender, so it needs the same From and queue the sign-in mail
+  // does; without them the alert is still recorded and shown in the activity
+  // log, and there is simply nobody to mail it through.
+  const notificationMailer =
+    !emailQueueReady || mailFrom === undefined
+      ? undefined
+      : createWorkerNotificationMailer(emailQueue!, emailLog, mailFrom);
+  // Time reminders and the week-end submission reminders (issue 935): the
+  // same deployment sender, and the instance's own address for the links.
+  const timeReminders =
+    notificationMailer === undefined || env.APP_BASE_URL === undefined
+      ? undefined
+      : createTimeReminderService(
+          {
+            prepare: (now: string) =>
+              prepareTimeReminders(drizzle, {
+                now,
+                from: notificationMailer.from,
+                appUrl: env.APP_BASE_URL!,
+              }),
+          },
+          notificationMailer,
         );
   // One service behind two ports: the password routes take it whole, the
   // add-an-address route takes only `addEmail`.
@@ -753,6 +932,7 @@ export const createRuntimeServices = async (
           },
           store: createQuickBooksStore(drizzle),
           source: createQuickBooksMirrorSource(drizzle, () => new Date()),
+          reconciliation: createQuickBooksReconciliationSource(drizzle),
           fetch: (request: Request) => fetch(request),
           now: () => new Date(),
         });
@@ -760,23 +940,27 @@ export const createRuntimeServices = async (
   // Same gating, and for the same reason: a connect button that cannot connect
   // is worse than no button. `entry-surface.ts` declares it so both halves of
   // the contract guard agree.
+  // Only the exact value opts a token out of payments; a typo must not
+  // silently leave the money-moving path mounted, so any other value fails.
+  const wiseMode = parseWiseMode(env.WISE_MODE)
   const paymentRuns = createPaymentRunsService(
     drizzle,
-    credentials.WISE_TOKEN === undefined
+    credentials.WISE_TOKEN === undefined || wiseMode !== 'full'
       ? null
       : createWisePaymentProvider({
           token: credentials.WISE_TOKEN,
           profileId: credentials.WISE_PROFILE_ID,
           fetch: (input, init) => fetch(input as RequestInfo, init as RequestInit),
         }),
-    (error, context) => {
-      captureException(error, { tags: { component: 'payment-processing', ...context } })
+    (error) => {
+      reportWorkerError(options.reportError, error, { phase: 'payment', traceId: runtimeTraceId() })
     },
   )
   const wise =
     credentials.WISE_TOKEN === undefined
       ? null
       : createWiseRuntime({
+          mode: wiseMode,
           config: {
             token: credentials.WISE_TOKEN,
             profileId: credentials.WISE_PROFILE_ID,
@@ -800,7 +984,8 @@ export const createRuntimeServices = async (
               detach: (id: number, now: string) => store.detach(id, now),
             };
           })(),
-          deliveries: createWiseDeliveryStore(drizzle),
+          // A read-only connection settles nothing, so it receives no deliveries.
+          ...(wiseMode === 'full' ? { deliveries: createWiseDeliveryStore(drizzle) } : {}),
           fetch: (input, init) => fetch(input as RequestInfo, init as RequestInit),
           now: () => new Date(),
         });
@@ -826,13 +1011,15 @@ export const createRuntimeServices = async (
 
   // Stripe. Composed always -- the runtime answers `configured: false` without
   // a key, which is what the route reports, rather than the route disappearing.
-  const stripeLinks = createStripeLinkStore(drizzle)
+  const stripeAlerts = createStripePaymentAlertStore(drizzle)
+    const stripeLinks = createStripeLinkStore(drizzle)
   const stripe = createStripeRuntime({
     config: {
       apiKey: credentials.STRIPE_API_KEY,
       webhookSecret: credentials.STRIPE_WEBHOOK_SECRET,
     },
     source: {
+      recordAlert: (input) => stripeAlerts.record(input, new Date().toISOString()),
       readInvoice: async (invoiceId: number) => {
         const rows = await database
           .prepare(
@@ -884,6 +1071,7 @@ export const createRuntimeServices = async (
           paidOn: new Date().toISOString().slice(0, 10),
           now: new Date().toISOString(),
         })
+        await stripeAlerts.reconcileForPayment(input.paymentIntentId, new Date().toISOString())
       },
     },
     fetch: (request: Request) => fetch(request),
@@ -899,6 +1087,8 @@ export const createRuntimeServices = async (
       : createInvoiceDocumentPort({
           database: drizzle,
           objects: createR2AttachmentObjectStore(env.ATTACHMENTS),
+          accentColor: async () =>
+            (await workerInstanceThemeSurface.read(env as AppEnv))?.palette?.['action'] ?? null,
           now: () => new Date().toISOString(),
           source: {
             documentContext: (invoiceId: number) =>
@@ -944,8 +1134,9 @@ export const createRuntimeServices = async (
     },
     now: () => new Date().toISOString(),
   });
-  const processDueReminders = (now: string) =>
+  const processDueReminders = (now: string, options: ReminderProcessOptions = {}) =>
     reminders.processReminders({
+      ...options,
       now,
       send: async (reminder) => {
         const message = await reminderPort.prepare(reminder);
@@ -994,34 +1185,159 @@ export const createRuntimeServices = async (
       createInvoiceEmailOutboxSubscriber(
         moneyResources,
         organizationMailer,
-        invoiceDocuments,
-      ),
+        invoiceDocuments),
       createInvoiceThankYouSubscriber(thankYou, organizationMailer),
+      ...(notificationMailer === undefined
+        ? []
+        : [
+            createBudgetAlertSubscriber(
+              {
+                prepare: (alertId: number) =>
+                  prepareBudgetAlertMail(drizzle, {
+                    alertId,
+                    from: notificationMailer.from,
+                    now: new Date().toISOString(),
+                  }),
+              },
+              notificationMailer,
+            ),
+          ]),
       reminders.subscriber,
       ...(quickBooks === null ? [] : [createQuickBooksMirrorSubscriber(quickBooks)]),
       createBillMirrorSubscriber(bill),
     ],
   });
+  const twoFactor = createTwoFactorService({
+    store: createD1TwoFactorStore(database),
+    accountName: async (userId) =>
+      (
+        await database
+          .prepare(
+            `SELECT address FROM user_emails
+               WHERE user_id = ? AND invalidated_at IS NULL AND verified_at IS NOT NULL
+               ORDER BY is_primary DESC, id LIMIT 1`,
+          )
+          .bind(userId)
+          .first<{ address: string }>()
+      )?.address ?? `user-${userId}`,
+    issuer: env.BRAND_NAME === undefined || env.BRAND_NAME === "" ? "ezacto" : env.BRAND_NAME,
+    // The emailed second factor (issue 770). Its hash key is derived from the
+    // cursor signing key every deployment already has, so there is no new
+    // secret to provision, and it goes to the person's own verified address.
+    emailCodeKey: await deriveTwoFactorEmailCodeKey(cursorSigningKey),
+    emailAddress: async (userId) =>
+      (
+        await database
+          .prepare(
+            `SELECT address FROM user_emails
+               WHERE user_id = ? AND invalidated_at IS NULL AND verified_at IS NOT NULL
+               ORDER BY is_primary DESC, id LIMIT 1`,
+          )
+          .bind(userId)
+          .first<{ address: string }>()
+      )?.address ?? null,
+  })
+
+  // Off where the platform backs the tenant up (issue 1216): nothing below is
+  // composed, so the routes answer 404 and the cron has no sync to run.
+  const modules = moduleAvailability(env)
+  const offsiteBackupSync = modules.backups ? await createWorkerOffsiteBackups(drizzle,env) : undefined
+  const scheduledObjects = env.ATTACHMENTS === undefined ? undefined : createR2AttachmentObjectStore(env.ATTACHMENTS)
+  const scheduledRunDispatch = scheduledObjects === undefined || organizationMailer?.enqueuePersisted === undefined
+    ? undefined : createScheduledRunDispatchService(drizzle, {
+      sender: async () => {
+        await organizationMailer!.assertAvailable()
+        const sender = await emailConfiguration.resolveSenderIdentity()
+        if (!sender?.evidence) throw new Error('A verified sender identity is required for month-end delivery.')
+        return {
+          senderIdentityId: sender.id, senderIdentityVersion: sender.version, senderEvidenceVersion: sender.evidence.version,
+          from: { email: sender.email, name: sender.displayName },
+          ...(sender.replyToEmail === null ? {} : { replyTo: [{ email: sender.replyToEmail }] }),
+        }
+      },
+      enqueue: organizationMailer.enqueuePersisted.bind(organizationMailer),
+      readBytes: async (key: string) => {
+        const object = await scheduledObjects.get(key)
+        return object === null ? null : new Uint8Array(await new Response(object.body).arrayBuffer())
+      },
+      now: () => new Date().toISOString(),
+    })
+  const githubReader = createGithubReaderService(drizzle, {
+      publicationEnabled: !demoDeployment(env) && env.GITHUB_TIME_PUBLICATION_ENABLED === 'true',
+      ...(!demoDeployment(env) && env.APP_BASE_URL ? {setup:{key:env.GITHUB_APP_ENCRYPTION_KEY,origin:env.APP_BASE_URL}} : {}),
+      credentials: async () =>
+        !demoDeployment(env) &&
+        env.GITHUB_APP_ID &&
+        env.GITHUB_APP_PRIVATE_KEY &&
+        env.GITHUB_APP_WEBHOOK_SECRET
+          ? {
+              appId: env.GITHUB_APP_ID,
+              privateKey: env.GITHUB_APP_PRIVATE_KEY.replaceAll('\\n', '\n'),
+              webhookSecret: env.GITHUB_APP_WEBHOOK_SECRET,
+            }
+          : null,
+      fetch: (request: Request) => fetch(request),
+      now: () => new Date(),
+    })
   return {
+    ...(csv ? {csvImportStaging:csv.staging,csvImportApply:csv.apply} : {}),
     bootstrap: (input) => bootstrapInstanceD1(database, input),
     enrollOwnerPassword: (input) =>
       enrollInstanceOwnerPasswordD1(database, input),
     // The demo hands its credentials to strangers, so a token minted there gets
     // a ceiling; everywhere else a token lives until someone revokes it.
-    tokens: createApiTokenStore(
-      drizzle,
-      demoDeployment(env) ? { maxLifetimeMs: DEMO_API_TOKEN_MAX_LIFETIME_MS } : {},
-    ),
+    tokens: createApiTokenStore(drizzle, {
+      touchIntervalMs,
+      ...(demoDeployment(env) ? { maxLifetimeMs: DEMO_API_TOKEN_MAX_LIFETIME_MS } : {}),
+    }),
+    projectMissingRates: { recover: (input) => recoverProjectMissingRates(drizzle, input, (dates) => timesheetLockPolicy.lockedDates(dates),
+        ),
+    },
     generalResources: createGeneralResourceRepository(drizzle),
     clientTree: {
       ancestors: (clientId) => listClientAncestors(drizzle, clientId),
       descendants: (clientId) => listClientDescendants(drizzle, clientId),
     },
     team: createTeamRepository(drizzle),
+    invoiceElevations: createInvoiceElevationStore(drizzle),
+    invoiceTimeUnlink: (command, elevation, now) => unlinkElevatedInvoiceTime(drizzle, command, elevation, now),
+    webhooks: createWebhookService(drizzle, {
+      vault: !demoDeployment(env) && env.WEBHOOK_ENCRYPTION_KEY ? await createWebhookSecretVault(env.WEBHOOK_ENCRYPTION_KEY) : null,
+      transport: createWorkerWebhookTransport(),
+    }),
+    migrationLoads: createQueuedMigrationStore(binding),
+    estimateTemplates: createEstimateTemplateRepository(drizzle),
+    clientRateCards: createClientRateCardRepository(drizzle),
     moneyResources,
+    harvestInvoices: moneyResources,
+    bankDeposits: createBankDepositReviewService(drizzle),
+    bankFeeds: createConfiguredBankFeedRuntime({store:createBankDepositIngestionService(drizzle),environment:credentials}),
     invoiceGeneration: createInvoiceGenerationService(drizzle),
     recurringInvoices: createRecurringInvoiceEngine(drizzle),
     reminders: { processDue: processDueReminders },
+    budgetAlerts: { evaluate: (now: string) => evaluateProjectBudgetAlerts(drizzle, now) },
+    ...(timeReminders === undefined ? {} : { timeReminders }),
+    timesheetAutoApproval: createTimesheetAutoApprovalService({
+      read: () => readTimesheetAutoApproval(drizzle),
+      update: (actorUserId, patch) =>
+        updateTimesheetAutoApproval(drizzle, actorUserId, patch, new Date().toISOString()),
+    }),
+    timesheetAutoApprovalSweep: {
+      processDue: (now: string) => runTimesheetAutoApproval(drizzle, now),
+    },
+    scheduledActionExpiry: {
+      expireDue: (now: string, report: (error: unknown) => void) =>
+        sweepExpiredRuns(createScheduledActionStore(drizzle), now, report),
+    },
+    profileNotifications: {
+      read: (userId: number) => readUserNotifications(drizzle, userId),
+      update: (userId: number, patch) =>
+        updateUserNotifications(drizzle, userId, patch, new Date().toISOString()),
+    },
+    notificationSettings: createNotificationSettingsService({
+      read: () => readNotificationSettings(drizzle),
+      update: (patch) => updateNotificationSettings(drizzle, patch, new Date().toISOString()),
+    }),
     reminderSettings: createReminderSettings(drizzle, reminders, () => new Date().toISOString()),
     // Invoices › Configure: what every invoice prints and every draft starts with.
     invoiceDefaults: {
@@ -1035,6 +1351,11 @@ export const createRuntimeServices = async (
       backfill: (input: Parameters<BandClaimBackfillPort['backfill']>[0]) =>
         backfillBandClaims(drizzle, input),
     },
+    // #750. Same adaptation, for pricing the cost of hours tracked before a rate.
+    costRateBackfill: {
+      backfill: (input: Parameters<CostRateBackfillPort['backfill']>[0]) =>
+        backfillCostRates(drizzle, input),
+    },
     // Sign-ins, token grants and revocations, exports and restores. Without
     // this the activity log can answer what happened to an invoice and not who
     // signed in and took a copy of the database. The capture result is the
@@ -1044,12 +1365,29 @@ export const createRuntimeServices = async (
         await captureActivityEvent(drizzle, request);
       },
     },
-    trackedResources: new DrizzleTrackedResourceRepository(
-      drizzle,
-      timesheetLockPolicy,
-    ),
+    activityRoll: createActivityRoll(drizzle, () => new Date().toISOString()),
+    trackedResources,
+    calendarOperatorCleanup: createCalendarOperatorCleanupStore(drizzle),
+      calendarConnections: calendar.sync,
+    calendarAuthorization: calendar.authorization,
+    calendarMaintenance: calendar.maintenance,
+    calendarProposals: new DrizzleCalendarProposalRepository(drizzle, trackedResources),
+    placeholderPlanning: createPlaceholderAllocationRepository(drizzle),
+      allocations: new DrizzleAllocationRepository(drizzle),
+      calendarFeeds: createCalendarFeedService(drizzle),
+      resourceCalendar: createResourceCalendarRepository(drizzle),
+      organizationHolidays: createOrganizationHolidayRepository(drizzle),
+    githubReader,
+    workItems: {
+      repository: new DrizzleWorkItemRepository(drizzle),
+      credentialConfigured: (provider) =>
+        provider === 'github'
+          ? githubReader.isConfigured()
+          : workItemCredentialConfigured(env, provider),
+    },
     profile: {
       readTimezone: async (userId) => await readUserTimezone(drizzle, userId),
+      readEffectiveTimezone: async (userId) => await readEffectiveUserTimezone(drizzle, userId),
       readIdentity: async (userId) => await readUserIdentity(drizzle, userId),
       updateTimezone: async (userId, timezone, occurredAt) => {
         await updateUserTimezone(drizzle, userId, timezone, occurredAt);
@@ -1099,6 +1437,15 @@ export const createRuntimeServices = async (
         .first<{ enabled: number | boolean }>();
       return row?.enabled === 1 || row?.enabled === true;
     },
+    isActivityLogModuleEnabled: async () => {
+      const row = await database
+        .prepare(
+          `SELECT COALESCE(json_extract(modules, '$.activity_log'), 1) AS enabled
+           FROM organizations WHERE id = 1`,
+        )
+        .first<{ enabled: number | boolean }>();
+      return row === null || row.enabled === 1 || row.enabled === true;
+    },
     isTeamModuleEnabled: async () => {
       const row = await database
         .prepare(
@@ -1112,34 +1459,30 @@ export const createRuntimeServices = async (
     timesheetLockPolicy,
     reports: createReportRepository(drizzle),
     cursorSigningKey,
+    idempotency: {
+      // The binding itself: the store's own statements never carry a claim.
+      store: createD1IdempotencyStore(binding),
+      secret: await deriveIdempotencySecret(cursorSigningKey),
+    },
     passwordAuth,
     userEmails: passwordAuth,
     sessions,
     authenticationSessions,
     emailLog,
+    emailSuppressions: createD1EmailSuppressionStore(database),
     emailConfiguration,
     // Unlike portal auth, the second factor is opt-in on nothing: it holds no
     // deployment secret to get wrong, and a factor no one can turn on is not a
     // safe default -- it is the feature missing.
-    twoFactor: createTwoFactorService({
-      store: createD1TwoFactorStore(database),
-      accountName: async (userId) =>
-        (
-          await database
-            .prepare(
-              `SELECT address FROM user_emails
-                 WHERE user_id = ? AND invalidated_at IS NULL AND verified_at IS NOT NULL
-                 ORDER BY is_primary DESC, id LIMIT 1`,
-            )
-            .bind(userId)
-            .first<{ address: string }>()
-        )?.address ?? `user-${userId}`,
-      issuer: env.BRAND_NAME === undefined || env.BRAND_NAME === "" ? "ezacto" : env.BRAND_NAME,
-    }),
+    twoFactor,
+    ...(twoFactorEmailCodeMailer === undefined
+      ? {}
+      : { twoFactorEmailCodes: twoFactorEmailCodeMailer }),
     ...(portalMagicLinkSigningKey === undefined
       ? {}
       : {
           portalAuth: {
+            ...(portalMagicLinkMailer === undefined ? {} : {mailer:portalMagicLinkMailer}),
             service: createMagicLinkService({
               database: {
                 all: async (query: { sql: string; params: readonly unknown[] }) =>
@@ -1151,8 +1494,18 @@ export const createRuntimeServices = async (
               store: createD1MagicLinkStore(database),
               signingKey: portalMagicLinkSigningKey,
             }),
-            sessions: createPortalSessionService(createD1ContactSessionStore(database)),
-            sessionStore: createD1ContactSessionStore(database),
+            sessions: createPortalSessionService(
+              createD1ContactSessionStore(database, { touchIntervalMs }),
+            ),
+            sessionStore: createD1ContactSessionStore(database, { touchIntervalMs }),
+            estimates: {
+              list: (clientId: number) => moneyResources.listCustomerEstimates(clientId),
+              get: (clientId: number, estimateId: number) =>
+                moneyResources.getCustomerEstimate(clientId, estimateId),
+              respond: (input) =>
+                moneyResources.respondToEstimate({ ...input, occurredAt: new Date().toISOString(),
+                }),
+            },
           },
         }),
     ...(emailProvider instanceof SesMailer
@@ -1161,14 +1514,45 @@ export const createRuntimeServices = async (
         ? {
             senderIdentityVerifier: createMailgunSenderIdentityVerifier(
               emailProvider,
-              mailFrom,
-            ),
+              mailFrom),
           }
         : {}),
     outbox,
-    backupStatus: {
-      latestRuns: (limit: number) => getLatestBackupRuns(database, limit),
+    // The signed download of a nightly bundle (issue 39). Mounted wherever
+    // backup status is, like it; a deployment with no bucket still answers, and
+    // every download is the same plain refusal because there is no bundle.
+    ...(offsiteBackupSync === undefined ? {} : { backupDownloads: {
+      origin: invoiceViewLinkOrigin(env.APP_BASE_URL),
+      allow: (scope: 'mint' | 'redeem', key: string, now: string) =>
+        allowBackupDownloadRequest(drizzle, scope, key, now),
+      latestCompletedRunId: () => latestCompletedBackupRunId(drizzle),
+      mint: (input: { backupRunId: number; userId: number; now: string }) =>
+        mintBackupDownloadLink(drizzle, input),
+      redeem: (token: string, now: string) => consumeBackupDownloadLink(drizzle, token, now),
+      openArchive: async (backupRunId: number) => {
+        if (env.ATTACHMENTS === undefined) throw new Error('no bucket holds the backups')
+        const run = await getBackupRun(database, backupRunId)
+        if (run === null) throw new Error('backup run not found')
+        return {
+          stream: await openBackupArchive(run, r2BackupSource(env.ATTACHMENTS)),
+          filename: `ezacto-backup-${run.started_at.slice(0, 10)}.zip`,
+        }
+      },
+      secondFactor: {
+        isEnrolled: (userId: number) => twoFactor.isEnrolled(userId),
+        verifyCode: (userId: number, code: string) => twoFactor.verifyCode(userId, code),
+      },
     },
+    offsiteBackupSync,
+    backupStatus: {
+      offsiteStatus: () => offsiteBackupSync.status(),
+      checkOffsite: () => offsiteBackupSync.checkDestination(),
+      latestRuns: (limit: number) => getLatestBackupRuns(database, limit),
+      runsSnapshot: () => getBackupRunsSnapshot(database),
+      pageRuns: (window) => pageBackupRuns(database, window),
+      countRuns: (filter) => countBackupRuns(database, filter),
+    },
+        }),
     // Composed only where the deployment carries Intuit keys. Without them the
     // routes are not mounted, because a connect button that cannot connect is
     // worse than no button -- `entry-surface.ts` declares that gating so both
@@ -1176,8 +1560,44 @@ export const createRuntimeServices = async (
     ...(quickBooks === null ? {} : { quickBooks: quickBooks.service }),
     ...(wise === null ? {} : { wise: wise.service }),
     ...(wise?.webhook === undefined ? {} : { wiseWebhook: wise.webhook }),
+    // Mailgun's event webhook is composed only where the signing key is set.
+    // Without it the route is not mounted and answers 404, so an unsigned post
+    // is never read.
+    ...(credentials.MAILGUN_WEBHOOK_SIGNING_KEY === undefined ||
+    credentials.MAILGUN_WEBHOOK_SIGNING_KEY === ""
+      ? {}
+      : {
+          mailgunFeedback: createMailgunFeedbackService({
+            signingKey: credentials.MAILGUN_WEBHOOK_SIGNING_KEY,
+            log: emailLog,
+            ledger: createD1EmailFeedbackLedger(database),
+          }),
+        }),
     paymentRuns,
+    invoiceProviderAlerts: stripeAlerts,
+    stripeAlertReconciliation: stripeAlerts,
+    stripeAlertNotices: notificationMailer === undefined || env.APP_BASE_URL === undefined ? undefined : createTimeReminderService({ prepare: (now: string) => prepareStripePaymentAlertNotifications(drizzle, { now, from: notificationMailer.from, appUrl: env.APP_BASE_URL! }) }, notificationMailer),
+    scheduledRunNotices: notificationMailer === undefined || env.APP_BASE_URL === undefined
+      ? undefined
+      : createTimeReminderService({
+          prepare: (now: string) => prepareScheduledRunNotifications(drizzle, { reviewLinkSigningKey: cursorSigningKey,
+            now, from: notificationMailer.from, appUrl: env.APP_BASE_URL!,
+          }),
+        }, notificationMailer,
+          ),
+    scheduledJobs: createScheduledJobsService(drizzle),
+    scheduledRunDispatch,
+    scheduledJobProposals: { processDue: (now: string) => proposeDueScheduledJobs(drizzle, now, scheduledObjects ?? {
+      put: async () => { throw new Error('Configure attachment storage before proposing a month-end report.') },
+    },
+        ),
+    },
+    scheduledRuns: createScheduledRunsService(drizzle, {reviewLinkSigningKey:cursorSigningKey}),
     staffPayments: createStaffPaymentStore(drizzle),
+    contractorReview: createContractorReviewStore(drizzle),
+    myPayments: createMyPaymentsStore(drizzle),
+    payoutProviderEnablement: createPayoutProviderEnablementStore(drizzle),
+    payoutPreferences: createPayoutPreferenceStore(drizzle),
     payoutAccounts: (() => {
       const store = createPayoutAccountStore(drizzle)
       return {
@@ -1267,10 +1687,43 @@ export const createRuntimeServices = async (
         countInvoicePreviewsSince(drizzle, invoiceId, since),
     },
     ...(invoiceDocuments === undefined ? {} : { invoiceDocuments }),
+    // The hosted invoice page and its receipts (issue 936). The page is always
+    // mounted -- a link only exists once a send minted one -- and the link is
+    // minted only where there is a configured origin to point it at.
+    invoiceView: createInvoiceViewService({
+      database: drizzle,
+      paymentUrl: invoicePaymentUrlForMail({ bill, stripe }),
+      ...(env.ATTACHMENTS === undefined
+        ? {}
+        : {
+            readDocument: async (key: string) => {
+              const object = await createR2AttachmentObjectStore(env.ATTACHMENTS!).get(key);
+              return object === null
+                ? null
+                : new Uint8Array(await new Response(object.body).arrayBuffer());
+            },
+          }),
+    }),
+    ...(invoiceViewLinkOrigin(env.APP_BASE_URL) === null
+      ? {}
+      : {
+          invoiceViewLinks: createInvoiceViewLinkIssuer(
+            drizzle,
+            invoiceViewLinkOrigin(env.APP_BASE_URL)!,
+          ),
+        }),
+    invoiceViewReceipts: (invoiceMessageIds: readonly number[]) =>
+      readViewReceipts(drizzle, invoiceMessageIds),
     // The same journal as a download (647), from the same store the email
     // reads, so the file an operator checks is the file a client is sent.
     invoiceHoursReport: {
       readHoursReport: (invoiceId: number) => readInvoiceHoursReport(drizzle, invoiceId),
+    },
+    // Billed hours against the entries the invoice claims (issue 924).
+    invoiceHoursReconciliation: {
+      releaseLineTime: (command, actorUserId, now) => releaseInvoiceLineTime(drizzle, command, actorUserId, now),
+      readHoursReconciliation: (invoiceId: number) =>
+        readInvoiceHoursReconciliation(drizzle, invoiceId),
     },
     // Suppressing the thank-you for one invoice, which is the half that has to
     // be reachable before the payment lands: some invoices settle a dispute.
@@ -1300,6 +1753,27 @@ export const createRuntimeServices = async (
       },
     },
     bill,
+    // Always composed; it reports itself unconfigured, and does nothing, until
+    // the deployment carries both a token and a start date. Never on the demo,
+    // whose `credentials` are empty.
+    deelPaymentStatus: createDeelPaymentStatusRuntime({ token: credentials.DEEL_TOKEN, store: createDeelPaymentStatusStore(drizzle), fetch: (request: Request) => fetch(request), now: () => new Date(),
+    }),
+    deelStaging: createDeelStagingRuntime({token:credentials.DEEL_TOKEN,startDate:credentials.DEEL_SYNC_START_DATE,store:createDeelStageStore(drizzle),fetch:(request:Request)=>fetch(request),now:()=>new Date(),reportError:(error)=>reportWorkerError(options.reportError,error,{phase:'api',traceId:runtimeTraceId()}),
+    }),
+    deelSyncAdmin: {
+      settings: createDeelSyncSettingsStore(drizzle),
+      recentRuns: createDeelSyncStore(drizzle).recentRuns,
+    },
+    deelSync: createDeelSyncRuntime({
+      config: {
+        token: credentials.DEEL_TOKEN,
+        startDate: credentials.DEEL_SYNC_START_DATE,
+      },
+      source: createDeelSyncStore(drizzle),
+      settings: createDeelSyncSettingsStore(drizzle),
+      fetch: (request: Request) => fetch(request),
+      now: () => new Date(),
+    }),
     billDelivery: {
       isOptedIn: (clientId: number) =>
         createBillMirrorSource(drizzle, () => new Date()).isOptedIn(clientId),
@@ -1338,3 +1812,4 @@ export const createRuntimeServices = async (
         }),
   };
 };
+import { createResourceCalendarRepository } from '@ezacto/db/d1'

@@ -71,12 +71,12 @@ const liveTextRules: readonly {
   // The calendar's running chip paints an 8% tint of `live` over `ground`,
   // which reads as `ground` for the words-green on it and on its figure.
   {
-    selector: '.cal-entry[data-running]',
+    selector: '.cal-month-entry[data-running]',
     foreground: 'live_text',
     background: 'ground',
   },
   {
-    selector: '.cal-entry[data-running] .cal-entry-time',
+    selector: '.cal-month-entry[data-running] .cal-month-entry-time',
     foreground: 'live_text',
     background: 'ground',
   },

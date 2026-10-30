@@ -29,8 +29,11 @@ test.beforeEach(async ({ page }) => {
 type BrowserFixtureAction =
   | 'banded-invoice-cleanup'
   | 'banded-invoice-seed'
+  | 'end-client-invoice-cleanup'
+  | 'end-client-invoice-seed'
   | 'invoice-generation-cleanup'
   | 'invoice-generation-seed'
+  | 'age-running-timer'
   | 'project-directory-cleanup'
 
 const controlBrowserFixture = (
@@ -50,7 +53,9 @@ test.afterEach(async ({ request }, testInfo) => {
       ? 'invoice-generation-cleanup'
       : testInfo.title.includes('[e2e:invoice-banded]')
         ? 'banded-invoice-cleanup'
-        : null
+        : testInfo.title.includes('[e2e:invoice-end-clients]')
+          ? 'end-client-invoice-cleanup'
+          : null
   if (action === null) return
   const cleaned = await controlBrowserFixture(request, action)
   expect(cleaned.status()).toBe(204)
@@ -207,6 +212,7 @@ test('[e2e:phone-week] renders and operates browser auth at 390px', async ({
           time_format: 'decimal',
           clock: '12h',
           week_start_day: 'monday',
+          time_rounding: { mode: 'exact', minutes: 15 },
         },
         links: { self: '/api/v1/time-entry-settings' },
       })
@@ -413,7 +419,14 @@ test('[e2e:track-week] uses one editor and submits 12-hour UI times as canonical
     }
     if (url.pathname === '/api/v1/time-entry-options') {
       await fulfillJson(route, {
-        data: [{ project_id: 1, task_id: 1, minimum_note_length: 0 }],
+        data: [
+          {
+            project_id: 1,
+            task_id: 1,
+            minimum_note_length: 0,
+            time_rounding: { mode: 'exact', minutes: 15, source: 'organization' },
+          },
+        ],
         links: { self: '/api/v1/time-entry-options' },
       })
       return
@@ -425,6 +438,7 @@ test('[e2e:track-week] uses one editor and submits 12-hour UI times as canonical
           time_format: 'hours_minutes',
           clock: '12h',
           week_start_day: 'monday',
+          time_rounding: { mode: 'exact', minutes: 15 },
         },
         links: { self: '/api/v1/time-entry-settings' },
       })
@@ -522,7 +536,7 @@ test('[e2e:track-week] uses one editor and submits 12-hour UI times as canonical
   expect(updateBody).not.toHaveProperty('seconds')
 })
 
-test('[e2e:track-week] persists start/end editor changes through the real worker and D1', async ({
+test('[e2e:track-week] recovers a lost time-edit response through the real worker and D1', async ({
   context,
   page,
 }) => {
@@ -554,13 +568,34 @@ test('[e2e:track-week] persists start/end editor changes through the real worker
 
     await editor.getByLabel('Start').fill('10:15 PM')
     await editor.getByLabel('End').fill('1:45 AM')
+    const writeKeys: string[] = []
+    let originalReply: string | null = null
+    await page.route('**/api/v1/time-entries/900', async (route) => {
+      if (route.request().method() !== 'PATCH') return route.continue()
+      writeKeys.push(route.request().headers()['idempotency-key'] ?? '')
+      const committed = await route.fetch()
+      expect(committed.status()).toBe(200)
+      expect(committed.headers()['idempotency-key-lifetime']).toBe('86400')
+      if (writeKeys.length === 1) {
+        originalReply = await committed.text()
+        await route.abort('failed')
+      } else {
+        await route.fulfill({ response: committed })
+      }
+    })
     const patched = page.waitForResponse(
       (response) =>
         new URL(response.url()).pathname === '/api/v1/time-entries/900' &&
         response.request().method() === 'PATCH',
     )
     await editor.getByRole('button', { name: 'Save entry' }).click()
-    expect((await patched).ok()).toBe(true)
+    const replayed = await patched
+    expect(replayed.ok()).toBe(true)
+    expect(replayed.headers()['idempotent-replayed']).toBe('true')
+    expect(await replayed.text()).toBe(originalReply)
+    expect(writeKeys).toHaveLength(2)
+    expect(writeKeys[0]).not.toBe('')
+    expect(new Set(writeKeys).size).toBe(1)
     await expect(editor).toBeHidden()
 
     const persisted = await page.evaluate(async () => {
@@ -1029,6 +1064,7 @@ test('[e2e:browser-auth] issues and revokes a real D1-backed browser session', a
   await page.locator('[data-timer-chip]').click()
   const stopRunning = page.locator('[data-stop-timer]')
   await expect(stopRunning).toBeVisible()
+  expect((await controlBrowserFixture(page.request, 'age-running-timer')).status()).toBe(204)
   await stopRunning.click()
   await expect(page.locator('[data-entry-dialog]')).toBeHidden()
 
@@ -1757,6 +1793,7 @@ test('[e2e:expense-categories] [e2e:expense-receipt] manages category availabili
   await expectNoPageOverflow(page)
 
   await page.getByRole('link', { name: 'Back to expenses' }).click()
+  await page.locator('[data-expense-create-open]').click()
   const createExpense = page.locator('[data-expense-create-form]')
   await createExpense
     .getByLabel('Project')
@@ -1821,6 +1858,7 @@ test('[e2e:expense-categories] [e2e:expense-receipt] manages category availabili
 
 const exerciseExpenseReceipt = async (page: Page): Promise<void> => {
   await page.goto('/expenses')
+  await page.locator('[data-expense-create-open]').click()
 
   const create = page.locator('[data-expense-create-form]')
   await expect(create).toBeVisible()
@@ -1929,9 +1967,20 @@ const exerciseExpenseReceipt = async (page: Page): Promise<void> => {
   await page.goto(
     '/expenses?from=2026-08-25&to=2026-08-25&client_id=1&project_id=1&expense_category_id=1&approval_status=unsubmitted&reimbursement_status=none',
   )
-  await expect(
-    page.locator(`[data-expense-list] tbody tr[data-row-key="${expenseId}"]`),
-  ).toContainText('Reviewed detail')
+  // The expense that carries the receipt is still listed with every filter
+  // applied: the form echoes the narrowed query and the row shows the edit.
+  const filteredForm = page.locator('[data-expense-filter-form]')
+  await expect(filteredForm.locator('select[name="client_id"]')).toHaveValue('1')
+  await expect(filteredForm.locator('select[name="project_id"]')).toHaveValue('1')
+  await expect(filteredForm.locator('select[name="expense_category_id"]')).toHaveValue('1')
+  await expect(filteredForm.locator('select[name="approval_status"]')).toHaveValue('unsubmitted')
+  await expect(filteredForm.locator('select[name="reimbursement_status"]')).toHaveValue('none')
+  const receiptRow = page.locator(`[data-expense-list] tbody tr[data-row-key="${expenseId}"]`)
+  await expect(receiptRow).toBeVisible()
+  await expect(receiptRow).toContainText('Reviewed detail')
+  // The row opens the expense, and the receipt is on it.
+  await receiptRow.getByRole('link').click()
+  await expect(page.getByRole('link', { name: 'airport-shuttle.txt' })).toBeVisible()
 }
 
 test('[e2e:invoice-cycle] generates a real draft through the authenticated wizard', async ({
@@ -2179,6 +2228,8 @@ test('[e2e:invoice-cycle] generates a real draft through the authenticated wizar
   await expectNoPageOverflow(page)
   const order: string[] = []
   let deliveryPayload: unknown = null
+  const deliveryKeys: string[] = []
+  const deliveryBodies: string[] = []
   page.on('request', (request) => {
     const path = new URL(request.url()).pathname
     if (request.method() !== 'POST') return
@@ -2188,6 +2239,8 @@ test('[e2e:invoice-cycle] generates a real draft through the authenticated wizar
     else if (/\/deliveries$/u.test(path)) {
       order.push('deliver')
       deliveryPayload = request.postDataJSON()
+      deliveryKeys.push(request.headers()['idempotency-key'] ?? '')
+      deliveryBodies.push(request.postData() ?? '')
     }
   })
   const preferred = page.waitForResponse(
@@ -2224,7 +2277,13 @@ test('[e2e:invoice-cycle] generates a real draft through the authenticated wizar
   await expect(composer.locator('[data-invoice-composer-result]')).toContainText(
     'The sent status was recorded; submit again to retry the email alone.',
   )
-  expect(order).toEqual(['client', 'preference', 'send', 'deliver'])
+  // The real Worker advertises replay support. Unavailable mail retries four
+  // times under one key and body, without repeating the sent transition.
+  expect(order).toEqual(['client', 'preference', 'send', 'deliver', 'deliver', 'deliver', 'deliver'])
+  expect(deliveryKeys).toHaveLength(4)
+  expect(deliveryKeys[0]).not.toBe('')
+  expect(new Set(deliveryKeys).size).toBe(1)
+  expect(new Set(deliveryBodies).size).toBe(1)
   // One email: To accounts payable, Cc the rest, in the words typed -- the
   // server composes the body from them.
   expect(deliveryPayload).toEqual({
@@ -2268,7 +2327,13 @@ test('[e2e:invoice-cycle] generates a real draft through the authenticated wizar
   await expect(page.locator('[data-invoice-payment-status]')).toHaveText(
     'The sent status was already recorded. The email was not sent.',
   )
-  expect(order).toEqual(['client', 'preference', 'send', 'deliver'])
+  // The real Worker advertises replay support. Unavailable mail retries four
+  // times under one key and body, without repeating the sent transition.
+  expect(order).toEqual(['client', 'preference', 'send', 'deliver', 'deliver', 'deliver', 'deliver'])
+  expect(deliveryKeys).toHaveLength(4)
+  expect(deliveryKeys[0]).not.toBe('')
+  expect(new Set(deliveryKeys).size).toBe(1)
+  expect(new Set(deliveryBodies).size).toBe(1)
   // The invoice was sent through the real worker, so D1 carries sent_at and
   // the document says Sent. Open would mean it still has to go out.
   await expect(detail.locator('[data-invoice-detail-state]')).toHaveText('Sent')
@@ -2297,7 +2362,7 @@ test('[e2e:invoice-cycle] generates a real draft through the authenticated wizar
   // The email above was refused before anything was logged -- this worker has
   // no mail transport -- and the table says so rather than failing to load.
   await expect(deliveries.locator('[data-email-log-list]')).toContainText(
-    'No email matches this filter.',
+    'No email has been sent yet.',
   )
 })
 
@@ -3253,7 +3318,7 @@ for (const corrected of ['1', '2.5', '2:30']) {
   })
 }
 
-test('[e2e:timesheet-approval] [e2e:lock-policy] rejects, approves, reopens, policy-locks, and unlocks a real D1 timesheet', async ({
+test('[e2e:approve-lock] [e2e:timesheet-approval] [e2e:lock-policy] rejects, approves, reopens, policy-locks, and unlocks a real D1 timesheet', async ({
   context,
   page,
 }) => {
@@ -3378,7 +3443,10 @@ test('[e2e:timesheet-approval] [e2e:lock-policy] rejects, approves, reopens, pol
       response.request().method() === 'POST',
   )
   await resubmittedCard.getByRole('button', { name: 'Approve' }).click()
-  expect((await approved).ok()).toBe(true)
+  const approvalResponse = await approved
+  expect(approvalResponse.ok()).toBe(true)
+  const approvedAt = (await approvalResponse.json()).data.reviewed_at as string
+  expect(approvedAt).toMatch(/^\d{4}-\d{2}-\d{2}T/u)
   await expect(page.locator('[data-approval-queue]')).toContainText(
     'No timesheets are waiting for review.',
   )
@@ -3646,6 +3714,33 @@ test('[e2e:timesheet-approval] [e2e:lock-policy] rejects, approves, reopens, pol
   expect(editedEntry).toMatchObject({
     data: { seconds: 4500, approval_status: 'unsubmitted', is_locked: false },
   })
+
+  const drained = await context.request.post('/__ezacto_browser_fixture__/drain-outbox', {
+    headers: { 'x-ezacto-browser-fixture-control': 'start-end-round-trip' },
+  })
+  expect(drained.status()).toBe(200)
+  // The audit acceptance is a visible browser result of these real commands,
+  // including the actor and the timestamp returned by approval, not fixture rows.
+  await page.goto('/settings/activity')
+  const activity = page.locator('[data-activity-log-list]')
+  for (const event of ['submitted', 'rejected', 'approved', 'withdrawn', 'locked', 'unlocked']) {
+    const row = activity.locator('tbody tr[data-row]').filter({
+      has: page.getByRole('cell', { name: `Timesheet ${event}`, exact: true }),
+    })
+    await expect(row.first()).toBeVisible()
+    await expect(row.first()).toContainText('Browser Owner')
+  }
+  const approvedRow = activity.locator('tbody tr[data-row]').filter({
+    has: page.getByRole('cell', { name: 'Timesheet approved', exact: true }),
+  })
+  await expect(approvedRow.first().locator('td').first()).toHaveText(approvedAt)
+  await page.locator('[data-activity-entity]').selectOption('timesheet_submission')
+  await expect(activity).not.toContainText('Timesheet unlocked')
+  await expect(approvedRow).toHaveCount(1)
+  await expect(approvedRow.getByRole('link', { name: /timesheet_submission #/u })).toHaveAttribute(
+    'href',
+    '/approvals',
+  )
 })
 
 test('[e2e:timesheet-approval] submits and approves an expense-only week', async ({
@@ -3797,4 +3892,85 @@ test('[e2e:keyboard #861] opens the command bar and the menu ready for the keybo
   await page.keyboard.press('Escape')
   await expect(menu).toBeHidden()
   await expect(menuTrigger).toBeFocused()
+})
+
+test('[e2e:invoice-cycle] [e2e:invoice-end-clients] bills a parent for its end-clients and subtotals each to what it had uninvoiced', async ({
+  page,
+  request,
+}) => {
+  const seeded = await controlBrowserFixture(request, 'end-client-invoice-seed')
+  expect(seeded.status()).toBe(204)
+
+  await page.route('https://fonts.googleapis.com/**', (route) => route.abort())
+  await page.goto('/invoices/new')
+  await page.locator('[data-sign-in-form]').getByLabel('Email').fill(fixtureEmail)
+  await page.getByLabel('Password', { exact: true }).fill(fixturePassword)
+  await page.getByRole('button', { name: 'Sign in', exact: true }).click()
+
+  const wizard = page.locator('[data-invoice-new-dialog]')
+  await expect(wizard).toBeVisible()
+  await wizard.getByLabel('Client').selectOption('9200')
+
+  // The parent's own project and one for each end-client beneath it, in the
+  // tree's order, every one with what it has waiting.
+  const projects = wizard.locator('[data-invoice-projects] label')
+  await expect(projects).toHaveCount(4)
+  await expect(projects.nth(0)).toContainText('Browser F7 Project 1')
+  await expect(projects.nth(1)).toContainText('Browser F7 Project 2')
+  await expect(projects.nth(1)).toContainText('For Browser F7 Alpha')
+  await expect(projects.nth(2)).toContainText('Browser F7 Project 3')
+  await expect(projects.nth(3)).toContainText('Browser F7 Project 4')
+  await expect(projects.nth(3)).toContainText('For Browser F7 Charlie')
+  const uninvoiced: Record<string, string> = {
+    '9200': '$100.00',
+    '9201': '$200.00',
+    '9202': '$150.00',
+    '9203': '$50.00',
+  }
+  for (const [projectId, amount] of Object.entries(uninvoiced)) {
+    await expect(wizard.locator(`[data-project-uninvoiced="${projectId}"]`)).toHaveText(amount)
+  }
+  const expenses = wizard.locator('[data-invoice-expense-summary]')
+  if (await expenses.isEnabled()) await expenses.selectOption('')
+
+  const generated = page.waitForResponse(
+    (response) =>
+      new URL(response.url()).pathname === '/api/v1/invoice-generations' &&
+      response.request().method() === 'POST',
+  )
+  await wizard.getByRole('button', { name: 'Create draft' }).click()
+  const generatedResponse = await generated
+  expect(generatedResponse.status()).toBe(201)
+  expect(generatedResponse.request().postDataJSON()).toMatchObject({
+    kind: 'tracked',
+    client_id: 9200,
+    project_ids: [9200, 9201, 9202, 9203],
+  })
+
+  // The draft: one invoice for the parent, its lines in the tree's order, and
+  // a subtotal for each end-client that equals what it had waiting above.
+  const detail = page.locator('[data-invoice-document]')
+  await expect(detail).toBeVisible()
+  await expect(page).toHaveURL(/\/invoices\/[^/]+$/u)
+  await expect(detail.locator('[data-invoice-detail-total]')).toHaveText('$500.00')
+  const lines = detail.locator('[data-invoice-detail-lines] tr')
+  await expect(lines).toHaveCount(4)
+  for (const [index, code] of ['F71', 'F72', 'F73', 'F74'].entries()) {
+    await expect(lines.nth(index)).toContainText(`[${code}] Browser F7 Project ${String(index + 1)}`)
+  }
+  const subtotals = detail.locator('[data-invoice-end-client-rows] tr')
+  await expect(subtotals).toHaveCount(4)
+  const read = await subtotals.evaluateAll((rows) =>
+    rows.map((row) => [
+      (row as HTMLElement).dataset['endClient'],
+      row.querySelector('th')?.textContent,
+      row.querySelector('td')?.textContent,
+    ]),
+  )
+  expect(read).toEqual([
+    ['9200', 'Browser F7 Parent', uninvoiced['9200']],
+    ['9201', 'Browser F7 Alpha', uninvoiced['9201']],
+    ['9202', 'Browser F7 Bravo', uninvoiced['9202']],
+    ['9203', 'Browser F7 Charlie', uninvoiced['9203']],
+  ])
 })

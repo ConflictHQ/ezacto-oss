@@ -21,13 +21,25 @@ export const QUICKBOOKS_PRODUCTION_BASE_URL = 'https://quickbooks.api.intuit.com
  */
 export const QUICKBOOKS_MINOR_VERSION = '75'
 
+/** Intuit's ceiling for one query page. */
+export const QUICKBOOKS_QUERY_PAGE_SIZE = 1000
+/** A bound on the report's read, so a runaway company cannot exhaust the Worker. */
+export const QUICKBOOKS_MAXIMUM_LISTED_INVOICES = 20_000
+
 export class QuickBooksApiError extends Error {
   readonly status: number
   /** Intuit's own error code, where the Fault carried one. */
   readonly code: string | null
   readonly detail: string | null
+  /** Seconds Intuit asked us to wait, from `Retry-After` on a throttled answer. */
+  readonly retryAfterSeconds: number | null
 
-  constructor(status: number, code: string | null, detail: string | null) {
+  constructor(
+    status: number,
+    code: string | null,
+    detail: string | null,
+    retryAfterSeconds: number | null = null,
+  ) {
     super(
       `QuickBooks request failed with status ${String(status)}${
         code === null ? '' : ` (${code})`
@@ -37,6 +49,7 @@ export class QuickBooksApiError extends Error {
     this.status = status
     this.code = code
     this.detail = detail
+    this.retryAfterSeconds = retryAfterSeconds
   }
 }
 
@@ -114,7 +127,29 @@ export interface QuickBooksPayment {
   readonly CustomerRef?: QuickBooksRef
   readonly Line?: readonly QuickBooksPaymentLine[]
   readonly PaymentRefNum?: string
+  /** QuickBooks voids a payment by zeroing it and replacing this with "Voided". */
+  readonly PrivateNote?: string
+  readonly MetaData?: { readonly CreateTime?: string; readonly LastUpdatedTime?: string }
 }
+
+/**
+ * A payment as change data capture reports it: the whole document, or -- for
+ * one deleted since -- only its id and `status: 'Deleted'`.
+ */
+export type QuickBooksCapturedPayment =
+  | (QuickBooksPayment & { readonly status?: undefined })
+  | { readonly Id: string; readonly status: 'Deleted' }
+
+/** One window of captured payments, and the instant Intuit answered at. */
+export interface QuickBooksPaymentChanges {
+  readonly time: string
+  readonly payments: readonly QuickBooksCapturedPayment[]
+  /** Intuit returns at most this many per window; a full one may have more behind it. */
+  readonly full: boolean
+}
+
+/** Intuit's ceiling for the objects of one entity in one change-data-capture answer. */
+export const QUICKBOOKS_CDC_PAGE_SIZE = 1000
 
 export interface QuickBooksClientOptions {
   readonly realmId: string
@@ -127,6 +162,8 @@ export interface QuickBooksClientOptions {
   readonly accessToken: string
   readonly fetch: (request: Request) => Promise<Response>
   readonly baseUrl?: string
+  /** The caller clock, used to interpret an HTTP-date Retry-After. */
+  readonly now?: () => Date
 }
 
 const object = (value: unknown, field: string): Record<string, unknown> => {
@@ -134,6 +171,24 @@ const object = (value: unknown, field: string): Record<string, unknown> => {
     throw new QuickBooksResponseError(`${field} must be an object`)
   }
   return value as Record<string, unknown>
+}
+
+/** Invalid or unrepresentable retry dates use the caller's provider fallback. */
+const retryDelaySeconds = (value: string | null, now: number): number | null => {
+  if (value === null) return null
+  const raw = value.trim()
+  const seconds = /^\d+$/u.test(raw)
+    ? Number(raw)
+    : /[A-Za-z]/u.test(raw) && Number.isFinite(Date.parse(raw))
+      ? Math.max(0, Math.ceil((Date.parse(raw) - now) / 1000))
+      : null
+  return seconds !== null &&
+    Number.isSafeInteger(seconds) &&
+    seconds >= 0 &&
+    // The durable cursor uses canonical UTC timestamps with four-digit years.
+    now + seconds * 1000 <= 253_402_300_799_999
+    ? seconds
+    : null
 }
 
 /**
@@ -149,6 +204,7 @@ export class QuickBooksClient {
   readonly #accessToken: string
   readonly #fetch: (request: Request) => Promise<Response>
   readonly #baseUrl: string
+  readonly #now: () => Date
 
   constructor(options: Readonly<QuickBooksClientOptions>) {
     if (options.realmId.trim() === '') {
@@ -160,6 +216,7 @@ export class QuickBooksClient {
     this.#realmId = options.realmId
     this.#accessToken = options.accessToken
     this.#fetch = options.fetch
+    this.#now = options.now ?? (() => new Date())
     this.#baseUrl = options.baseUrl ?? QUICKBOOKS_PRODUCTION_BASE_URL
   }
 
@@ -194,7 +251,11 @@ export class QuickBooksClient {
       } catch {
         // A non-JSON error body is itself the diagnosis; the status says the rest.
       }
-      throw new QuickBooksApiError(response.status, code, detail)
+      const retryAfter = retryDelaySeconds(
+        response.headers.get('retry-after'),
+        this.#now().getTime(),
+      )
+      throw new QuickBooksApiError(response.status, code, detail, retryAfter)
     }
     return object(await response.json(), 'response body')
   }
@@ -227,6 +288,43 @@ export class QuickBooksClient {
       throw new QuickBooksResponseError(`QueryResponse.${entity} must be an array`)
     }
     return rows as Entity[]
+  }
+
+  /**
+   * Payments created, changed, voided or deleted since an instant, from
+   * Intuit's change data capture. Read-only. Intuit answers for the last 30
+   * days only; the caller checks the horizon, because an older instant is
+   * refused here rather than answered partially.
+   */
+  async paymentChangesSince(changedSince: string): Promise<QuickBooksPaymentChanges> {
+    const body = await this.#send(
+      this.#request('/cdc', { method: 'GET' }, { entities: 'Payment', changedSince }),
+    )
+    const time = body['time']
+    if (typeof time !== 'string') {
+      throw new QuickBooksResponseError('the change data capture answer carries no time')
+    }
+    const responses = body['CDCResponse']
+    if (!Array.isArray(responses)) {
+      throw new QuickBooksResponseError('CDCResponse must be an array')
+    }
+    const payments: QuickBooksCapturedPayment[] = []
+    for (const response of responses) {
+      const queries = object(response, 'CDCResponse entry')['QueryResponse']
+      if (queries === undefined) continue
+      if (!Array.isArray(queries)) {
+        throw new QuickBooksResponseError('CDCResponse.QueryResponse must be an array')
+      }
+      for (const query of queries) {
+        const rows = object(query, 'QueryResponse entry')['Payment']
+        if (rows === undefined) continue
+        if (!Array.isArray(rows)) {
+          throw new QuickBooksResponseError('QueryResponse.Payment must be an array')
+        }
+        payments.push(...(rows as QuickBooksCapturedPayment[]))
+      }
+    }
+    return { time, payments, full: payments.length >= QUICKBOOKS_CDC_PAGE_SIZE }
   }
 
   async findCustomerByDisplayName(displayName: string): Promise<QuickBooksCustomer | null> {
@@ -283,6 +381,30 @@ export class QuickBooksClient {
       'Invoice',
     )
     return rows[0] ?? null
+  }
+
+  /**
+   * Every invoice the company holds, for the reconciliation report. Read-only:
+   * pages of the query endpoint, `MAXRESULTS` at Intuit's ceiling. A company
+   * past `QUICKBOOKS_MAXIMUM_LISTED_INVOICES` is refused rather than reported
+   * on partially -- a report that silently omits invoices would call them
+   * "missing here".
+   */
+  async listInvoices(): Promise<readonly QuickBooksInvoice[]> {
+    const all: QuickBooksInvoice[] = []
+    for (;;) {
+      const page = await this.query<QuickBooksInvoice>(
+        `SELECT * FROM Invoice STARTPOSITION ${String(all.length + 1)} MAXRESULTS ${String(QUICKBOOKS_QUERY_PAGE_SIZE)}`,
+        'Invoice',
+      )
+      all.push(...page)
+      if (all.length > QUICKBOOKS_MAXIMUM_LISTED_INVOICES) {
+        throw new QuickBooksResponseError(
+          `the company holds more than ${String(QUICKBOOKS_MAXIMUM_LISTED_INVOICES)} invoices; the report cannot read them all`,
+        )
+      }
+      if (page.length < QUICKBOOKS_QUERY_PAGE_SIZE) return all
+    }
   }
 
   async readInvoice(id: string): Promise<QuickBooksInvoice | null> {

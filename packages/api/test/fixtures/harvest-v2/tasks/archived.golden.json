@@ -1,0 +1,10 @@
+{
+  "id": 203,
+  "name": "Sample Legacy Work",
+  "billable_by_default": true,
+  "is_default": false,
+  "default_hourly_rate": 100,
+  "is_active": false,
+  "created_at": "2024-01-05T10:00:00Z",
+  "updated_at": "2024-03-09T16:45:30Z"
+}

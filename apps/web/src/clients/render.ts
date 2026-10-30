@@ -1,3 +1,4 @@
+import { renderClientRateCard } from './rate-card-render.js'
 export const renderClientDirectoryPages = (view?: string): string => `
   <main class="app-content client-workspace page--grid" data-client-list-page${view === 'client-list' ? '' : ' hidden'}>
     <header class="context-row">
@@ -87,6 +88,7 @@ export const renderClientDirectoryPages = (view?: string): string => `
           <button class="primary-action" type="submit" data-client-sending-submit>Save invoice sending</button>
         </form>
       </section>
+      ${renderClientRateCard()}
       <section class="client-360" data-client-360 aria-labelledby="client-360-heading" hidden>
         <header><div><p class="eyebrow">Money</p><h2 id="client-360-heading">This client and everyone under it</h2></div><a data-client-360-report href="/reports?report=client-rollup">Open the rollup report</a></header>
         <p class="hint" data-client-360-scope>—</p>

@@ -1,12 +1,49 @@
+import { createCalendarOperatorCleanupStore } from '@ezacto/db'
+import { createConfiguredCalendarServices } from '@ezacto/integrations'
+import { createCalendarOAuthStore } from '@ezacto/db'
+import { createCalendarConnectionStore } from '@ezacto/db'
+import { createCalendarSyncService } from '@ezacto/integrations'
+import { createStripePaymentAlertStore, prepareStripePaymentAlertNotifications } from '@ezacto/db'
+import { createConfiguredBankFeedRuntime } from '@ezacto/integrations'
+import { createBankDepositIngestionService } from '@ezacto/db'
+import { createBankDepositReviewService } from '@ezacto/db'
+import { createCalendarFeedService } from '@ezacto/db'
+import { createGithubReaderService } from '@ezacto/db'
+import { createDeelPaymentStatusStore } from '@ezacto/db'
+import { createDeelPaymentStatusRuntime } from '@ezacto/integrations'
+import { createDeelStageStore } from '@ezacto/db'
+import { createDeelStagingRuntime } from '@ezacto/integrations'
+import { createCsvImportApply } from './csv-apply-service.js'
+import { createCsvApplyRunStore } from '@ezacto/db'
+import { reportWorkerError, runtimeTraceId, type WorkerErrorReporter } from '../../worker/src/error-reporting.js'
+import { moduleAvailability } from '@ezacto/api'
+import { createOrganizationHolidayRepository } from '@ezacto/db'
+import { demoDeployment } from '../../worker/src/app.js'
+import { createWebhookSecretVault } from '@ezacto/core'
+import { createWebhookService } from '@ezacto/db'
+import { createNodeWebhookTransport } from '@ezacto/integrations/node-webhooks'
+import {migrationLoadStatusProjection} from '@ezacto/db/queued-migrations'
+import type {MigrationLoadStatus} from '@ezacto/core'
+import { createInvoiceElevationStore, unlinkElevatedInvoiceTime } from '@ezacto/db'
+import { createEstimateTemplateRepository } from '@ezacto/db'
+import { createScheduledRunDispatchService } from '@ezacto/db'
+import { prepareScheduledRunNotifications } from '@ezacto/db'
+import { createContainerEmailSuppressionStore } from '@ezacto/db'
+import type { ReminderProcessOptions } from '@ezacto/db'
 import { createRuntimeAppleWeb } from '../../worker/src/apple-web.js'
 import { createContainerAppleWebCustodyStore } from '@ezacto/db'
-import { createPaymentRunsService } from '@ezacto/db'
+import { createPaymentRunsService, createScheduledRunsService, createScheduledJobsService, proposeDueScheduledJobs,
+} from '@ezacto/db'
+import { createContainerBrandAssetStore, createContainerInstanceThemeStore } from '@ezacto/db'
 import { createWisePaymentProvider } from '@ezacto/integrations'
-import { createStaffPaymentStore } from '@ezacto/db'
+import { createContractorReviewStore, createStaffPaymentStore } from '@ezacto/db'
+import { createMyPaymentsStore } from '@ezacto/db'
 import { sql } from 'drizzle-orm'
 import { chmod, lstat, mkdir, realpath, stat } from 'node:fs/promises'
 import { resolve } from 'node:path'
 import BetterSqlite3 from 'better-sqlite3'
+import { createCsvImportStaging } from './csv-staging-service.js'
+import { join } from 'node:path'
 import {
   bootstrapInstanceContainer,
   createApiTokenStore,
@@ -28,12 +65,16 @@ import {
   createContainerSsoProvisioningDomainStore,
   createContainerTwoFactorStore,
   backfillBandClaims,
+  backfillCostRates,
   requestAccountDeletion,
   createRecurringInvoiceEngine,
   createContainerReminderScheduler,
   captureActivityEvent,
+  createActivityRoll,
   createTwoFactorService,
+  deriveTwoFactorEmailCodeKey,
   createGeneralResourceRepository,
+  recoverProjectMissingRates,
   createInvoiceGenerationService,
   createMoneyResourceRepository,
   createReportRepository,
@@ -48,9 +89,14 @@ import {
   createTimesheetApprovalRepository,
   createTimesheetLockPolicyRepository,
   createTeamRepository,
+  DrizzleAllocationRepository,
+  createPlaceholderAllocationRepository,
+  DrizzleCalendarProposalRepository,
+  DrizzleWorkItemRepository,
   DrizzleTrackedResourceRepository,
   enrollInstanceOwnerPasswordContainer,
   listClientAncestors,
+  createClientRateCardRepository,
   listClientDescendants,
   migrateContainer,
   createBillLinkStore,
@@ -80,6 +126,8 @@ import {
   setInvoiceJournalPolicy,
   setOrganizationJournalPolicy,
   readInvoiceHoursReport,
+  readInvoiceHoursReconciliation,
+  releaseInvoiceLineTime,
   readJournalFormatsPreference,
   readOrganizationJournalFormats,
   setInvoiceJournalFormats,
@@ -93,20 +141,45 @@ import {
   createReminderPort,
   createReminderSettings,
   readInvoiceDefaults,
+  createInvoiceViewLinkIssuer,
+  createInvoiceViewService,
+  invoiceViewLinkOrigin,
+  readViewReceipts,
   updateInvoiceDefaults,
   readThankYouPreference,
   readOrganizationThankYouPolicy,
   setInvoiceThankYouPolicy,
   setOrganizationThankYouPolicy,
+  evaluateProjectBudgetAlerts,
+  prepareBudgetAlertMail,
+  prepareTimeReminders,
+  readUserNotifications,
+  updateUserNotifications,
+  readNotificationSettings,
+  readTimesheetAutoApproval,
+  runTimesheetAutoApproval,
+  createScheduledActionStore,
+  sweepExpiredRuns,
+  updateTimesheetAutoApproval,
+  updateNotificationSettings,
   setBillDelivery,
   createQuickBooksMirrorSource,
+  createQuickBooksReconciliationSource,
   createQuickBooksStore,
   readUserIdentity,
   readUserTimezone,
+  readEffectiveUserTimezone,
   updateUserTimezone,
+  createContainerIdempotencyStore,
+  createIdempotentSqlite,
 } from '@ezacto/db'
 import {
   createApiSessionService,
+  createBudgetAlertSubscriber,
+  createTimeReminderService,
+  createNotificationSettingsService,
+  createTimesheetAutoApprovalService,
+  createDeploymentNotificationMailer,
   createInvoiceEmailOutboxSubscriber,
   createInvoiceThankYouSubscriber,
   thankYouInvoiceFromDeliveryContext,
@@ -114,9 +187,14 @@ import {
   createQueuedAccountDeletionMailer,
   createQueuedAuthMailer,
   createQueuedStaffMagicLinkMailer,
+  createQueuedPortalMagicLinkMailer,
+  createQueuedTwoFactorEmailCodeMailer,
   type AttachmentRouteOptions,
   type UserPrincipal,
   invoicePaymentUrlForMail,
+  deriveIdempotencySecret,
+  emailBrandFrom,
+  withEmailBrand,
 } from '@ezacto/api'
 import {
   configuredEmailSender,
@@ -125,14 +203,17 @@ import {
   createSenderBoundQueuedMailer,
   SenderIdentityUnavailableError,
   type HttpEmailProvider,
+  EMAIL_LOG_KIND_TEMPLATES,
 } from '@ezacto/mailer'
 import { SmtpMailer } from '@ezacto/mailer/smtp'
 import type {
   BandClaimBackfillPort,
   BrandAssetSurface,
+  CostRateBackfillPort,
   InstanceThemeSurface,
 } from '@ezacto/api'
-import type { AppEnv, RuntimeServices } from '../../worker/src/app.js'
+import { workItemCredentialConfigured, type AppEnv, type RuntimeServices,
+} from '../../worker/src/app.js'
 import {
   createBillMirrorSubscriber,
   createBillRuntime,
@@ -156,8 +237,7 @@ const exists = (
 ): boolean => database.prepare(query).get(...bindings) !== undefined
 
 export const createContainerAttachmentOwnerAuthorizer = (
-  database: BetterSqlite3.Database,
-): AttachmentRouteOptions['authorizeOwnerAccess'] =>
+  database: BetterSqlite3.Database): AttachmentRouteOptions['authorizeOwnerAccess'] =>
   async ({ owner, parentId, principal }) => {
     switch (owner) {
       case 'invoice':
@@ -166,8 +246,7 @@ export const createContainerAttachmentOwnerAuthorizer = (
         return exists(
           database,
           'SELECT 1 FROM recurring_invoices WHERE id = ?',
-          parentId,
-        )
+          parentId)
       case 'estimate':
         return exists(database, 'SELECT 1 FROM estimates WHERE id = ?', parentId)
       case 'expense':
@@ -228,15 +307,20 @@ const assertPragma = (
 }
 
 export const prepareContainerDatabase = (
-  database: BetterSqlite3.Database,
-): void => {
+  database: BetterSqlite3.Database): void => {
   database.pragma('journal_mode = WAL')
   database.pragma('synchronous = FULL')
   database.pragma('foreign_keys = ON')
   database.pragma('busy_timeout = 5000')
   database.pragma('wal_autocheckpoint = 1000')
   migrateContainer(database)
-  if(database.prepare('SELECT 1 FROM account_restore_quarantine WHERE id=1 AND quarantined=1').get())throw new Error('Restored privacy evidence must be reconciled before this instance serves traffic.')
+  if (database.prepare("SELECT 1 FROM migration_loads WHERE status<>'completed' AND (status<>'cancelled' OR started_at IS NOT NULL) LIMIT 1",
+      ).get()) {
+    throw new Error('Queued migration target is quarantined; finish or recover the import before serving this database.',
+    )
+  }
+  if(database.prepare('SELECT 1 FROM account_restore_quarantine WHERE id=1 AND quarantined=1').get())throw new Error('Restored privacy evidence must be reconciled before this instance serves traffic.',
+    )
 
   assertPragma(database, 'journal_mode', 'wal')
   assertPragma(database, 'synchronous', 2)
@@ -264,6 +348,8 @@ export interface ContainerRuntime {
 }
 
 export interface ContainerRuntimeOptions {
+  reportError?: WorkerErrorReporter
+  calendarSources?: Parameters<typeof createCalendarSyncService>[0]['sources']
   emailProvider?: HttpEmailProvider
   verifyEmailProvider?: () => Promise<void>
 }
@@ -307,8 +393,7 @@ export const createSmtpSenderIdentityVerifier = (
       if (address !== configured.email || providerIdentity !== configured.email) {
         throw new SenderIdentityUnavailableError(
           'sender_identity_binding_mismatch',
-          identity.id,
-        )
+          identity.id)
       }
       return {
         source: 'deployment_config',
@@ -327,8 +412,7 @@ const ensureDataDirectory = async (directory: string): Promise<void> => {
   await mkdir(directory, { recursive: true, mode: 0o700 })
   const [linkMetadata, canonical] = await Promise.all([
     lstat(directory),
-    realpath(directory),
-  ])
+    realpath(directory)])
   if (
     linkMetadata.isSymbolicLink() ||
     !linkMetadata.isDirectory() ||
@@ -373,19 +457,58 @@ export const createContainerRuntime = async (
   await ensureDataDirectory(config.dataDirectory)
   await assertNoIncompletePrivacyRestore(config.dataDirectory)
   await assertDatabasePath(config.databasePath)
-  const database = new BetterSqlite3(config.databasePath, { timeout: 5_000 })
+  const handle = new BetterSqlite3(config.databasePath, { timeout: 5_000 })
+  // Every store below writes through this: in a request that carries an
+  // Idempotency-Key, each write commits with the key's claim (#952).
+  const database = createIdempotentSqlite(handle)
+  let csvStaging: Awaited<ReturnType<typeof createCsvImportStaging>> | undefined
+  let csvSweep: ReturnType<typeof setInterval> | undefined
+  let csvApply: ReturnType<typeof createCsvImportApply> | undefined
+  let csvApplyTimer: ReturnType<typeof setInterval> | undefined
+  const reportCsvFailure=(_cause:unknown)=>{
+    console.error('ezacto: CSV apply work deferred')
+    reportWorkerError(options.reportError,new Error('Private CSV apply failed; inspect safe run status.'),{phase:'queue',traceId:runtimeTraceId()})
+  }
   let queue: ContainerEmailQueue | undefined
   let outboxScheduler: ContainerOutboxScheduler | undefined
   try {
     prepareContainerDatabase(database)
     await chmod(config.databasePath, 0o600)
 
+    const csvRuns=createCsvApplyRunStore(handle)
+    csvStaging = await createCsvImportStaging({database:handle,databasePath:config.databasePath,directory:join(config.dataDirectory,'csv-staging'),verifyApplyBinding:csvRuns.verifyStageBinding})
+    if(!demoDeployment(config.appEnv)){
+      csvApply=createCsvImportApply({database:handle,staging:csvStaging.port,privateStaging:csvStaging.apply,reportError:reportCsvFailure})
+      csvApplyTimer=setInterval(()=>{void csvApply!.tick().catch(reportCsvFailure)},5000)
+      csvApplyTimer.unref()
+    }
+    await csvStaging.sweep()
+    csvSweep=setInterval(()=>{void csvStaging!.sweep().catch(()=>console.error('ezacto: private CSV expiry cleanup deferred'))},60_000)
+    csvSweep.unref()
     const drizzle = createContainerDatabase(database)
+    const githubReader = createGithubReaderService(drizzle, {
+      publicationEnabled: !demoDeployment(config.appEnv) && config.githubTimePublicationEnabled === true,
+      ...(!demoDeployment(config.appEnv) ? {setup:{key: config.githubAppEncryptionKey,origin:config.appBaseUrl}} : {}),
+      credentials: async () =>
+        demoDeployment(config.appEnv) ? null : (config.githubReader ?? null), fetch: (request: Request) => fetch(request), now: () => new Date(),
+    })
+    const calendar = await createConfiguredCalendarServices({store:createCalendarConnectionStore(drizzle),oauthStore:createCalendarOAuthStore(drizzle),deploymentKey:config.cursorSigningKey,environment:demoDeployment(config.appEnv)?{}:config.calendar??{},appOrigin:config.appBaseUrl,...(options.calendarSources?{sourceOverrides:options.calendarSources}:{})})
+    const bankFeeds=createConfiguredBankFeedRuntime({store:createBankDepositIngestionService(drizzle),environment:demoDeployment(config.appEnv)?{}:config.bankFeeds??{}})
+    const deelPaymentStatus = createDeelPaymentStatusRuntime({ token: demoDeployment(config.appEnv) ? undefined : config.deel?.token, store: createDeelPaymentStatusStore(drizzle), fetch: (request: Request) => fetch(request), now: () => new Date() })
+    const webhooks = createWebhookService(drizzle, {
+      vault: !demoDeployment(config.appEnv) && config.webhookEncryptionKey ? await createWebhookSecretVault(config.webhookEncryptionKey) : null,
+      transport: createNodeWebhookTransport(),
+    })
     const timesheetLockPolicy = createTimesheetLockPolicyRepository(drizzle)
+    const trackedResources = new DrizzleTrackedResourceRepository(drizzle, timesheetLockPolicy)
+    const touch =
+      config.lastSeenIntervalMs === undefined
+        ? {}
+        : { touchIntervalMs: config.lastSeenIntervalMs }
     const sessions = createApiSessionService(
-      createContainerSessionStore(database),
-    )
-    const emailLog = createContainerEmailLogStore(database)
+      createContainerSessionStore(database, touch))
+    const emailLog = createContainerEmailLogStore(database, { kindTemplates: EMAIL_LOG_KIND_TEMPLATES,
+    })
     const emailConfiguration = createContainerEmailConfigurationStore(database)
     const smtp =
       options.emailProvider ??
@@ -411,8 +534,35 @@ export const createContainerRuntime = async (
         )
       }
     }
-    queue = new ContainerEmailQueue(emailLog, smtp)
-    const queuedMailer = createQueuedMailer(emailLog, queue)
+    const emailSuppressions = createContainerEmailSuppressionStore(database)
+    const objects = await createDiskAttachmentObjectStore(
+      config.attachmentDirectory)
+    queue = new ContainerEmailQueue(emailLog, smtp, emailSuppressions.lookup, async (reference) => {
+      const object = await objects.get(reference.key)
+      return object === null ? null : new Uint8Array(await new Response(object.body).arrayBuffer())
+    })
+    // HTML mail wears the instance header (#1011): read when each message
+    // is queued, so a changed logo or colour reaches the next send.
+    const brandAssetStore = createContainerBrandAssetStore(database)
+    const instanceThemeStore = createContainerInstanceThemeStore(database)
+    const queuedMailer = createQueuedMailer(
+      emailLog,
+      withEmailBrand(queue, async () =>
+        emailBrandFrom(
+          {
+            assets: await brandAssetStore.list(),
+            palette: (await instanceThemeStore.read())?.palette ?? null,
+            organizationName:
+              (
+                database
+                  .prepare('SELECT name FROM organizations WHERE id = 1')
+                  .get() as { name: string } | undefined
+              )?.name ?? 'Ezacto',
+          },
+          config.appBaseUrl,
+        ),
+      ),
+    )
     // One service behind two ports: the password routes take it whole, the
     // add-an-address route takes only `addEmail`.
     const passwordAuth = createContainerPasswordAuthService(database)
@@ -422,6 +572,32 @@ export const createContainerRuntime = async (
       queuedMailer,
       smtp.name,
       config.smtp.from,
+    )
+    // The mail the instance sends its own people (budget alerts, issue 934):
+    // the deployment sender, on the same queue as the rest. The container
+    // always has one.
+    const notificationMailer = createDeploymentNotificationMailer(config.smtp.from, queuedMailer)
+    // Time reminders and the week-end submission reminders (issue 935), on the
+    // same sender, with the instance's own address for the links.
+    const timeReminders = createTimeReminderService(
+      {
+        prepare: (now: string) =>
+          prepareTimeReminders(drizzle, {
+            now,
+            from: notificationMailer.from,
+            appUrl: config.appBaseUrl,
+          }),
+      },
+      notificationMailer,
+    )
+    const stripeAlertNotices = createTimeReminderService({ prepare: (now: string) => prepareStripePaymentAlertNotifications(drizzle, { now, from: notificationMailer.from, appUrl: config.appBaseUrl }) }, notificationMailer)
+    const scheduledRunNotices = createTimeReminderService(
+      {
+        prepare: (now: string) => prepareScheduledRunNotifications(drizzle, { reviewLinkSigningKey: config.cursorSigningKey,
+          now, from: notificationMailer.from, appUrl: config.appBaseUrl,
+        }),
+      },
+      notificationMailer,
     )
     const reminders = createContainerReminderScheduler(database)
     // The same connection the Worker composes. A self-hoster's QuickBooks is
@@ -440,6 +616,7 @@ export const createContainerRuntime = async (
             },
             store: createQuickBooksStore(drizzle),
             source: createQuickBooksMirrorSource(drizzle, () => new Date()),
+            reconciliation: createQuickBooksReconciliationSource(drizzle),
             fetch: (request: Request) => fetch(request),
             now: () => new Date(),
           })
@@ -499,6 +676,7 @@ export const createContainerRuntime = async (
       now: () => new Date(),
     })
 
+    const stripeAlerts = createStripePaymentAlertStore(drizzle)
     const stripeLinks = createStripeLinkStore(drizzle)
     const stripe = createStripeRuntime({
       config: {
@@ -506,6 +684,7 @@ export const createContainerRuntime = async (
         webhookSecret: config.stripe?.webhookSecret,
       },
       source: {
+        recordAlert: (input) => stripeAlerts.record(input, new Date().toISOString()),
         readInvoice: async (invoiceId: number) => {
           const rows = await drizzle.all<{
             id: number
@@ -557,6 +736,7 @@ export const createContainerRuntime = async (
             paidOn: new Date().toISOString().slice(0, 10),
             now: new Date().toISOString(),
           })
+          await stripeAlerts.reconcileForPayment(input.paymentIntentId, new Date().toISOString())
         },
       },
       fetch: (request: Request) => fetch(request),
@@ -593,8 +773,9 @@ export const createContainerRuntime = async (
       },
       now: () => new Date().toISOString(),
     })
-    const processDueReminders = (now: string) =>
+    const processDueReminders = (now: string, options: ReminderProcessOptions = {}) =>
       reminders.processReminders({
+        ...options,
         now,
         send: async (reminder) => {
           const message = await reminderPort.prepare(reminder)
@@ -639,6 +820,17 @@ export const createContainerRuntime = async (
       additionalSubscribers: [
         createInvoiceEmailOutboxSubscriber(moneyResources, organizationMailer),
         createInvoiceThankYouSubscriber(thankYou, organizationMailer),
+        createBudgetAlertSubscriber(
+          {
+            prepare: (alertId: number) =>
+              prepareBudgetAlertMail(drizzle, {
+                alertId,
+                from: notificationMailer.from,
+                now: new Date().toISOString(),
+              }),
+          },
+          notificationMailer,
+        ),
         reminders.subscriber,
         // Without this the container would connect to QuickBooks and never
         // mirror anything -- the routes would work and no invoice would move.
@@ -662,6 +854,105 @@ export const createContainerRuntime = async (
         console.error('[container] BILL reconciliation failed', error)
       },
     })
+    // Budget alerts (issue 934). The tick is every fifteen seconds and a pass
+    // reads each alerting project's time, so it is held to once a minute, the
+    // Worker's own cadence. A failed pass is reported and never stops the drain.
+    const scheduledRunDispatch = createScheduledRunDispatchService(drizzle, {
+      sender: async () => {
+        await organizationMailer.assertAvailable()
+        const sender = await emailConfiguration.resolveSenderIdentity()
+        if (!sender?.evidence) throw new Error('A verified sender identity is required for month-end delivery.')
+        return {
+          senderIdentityId: sender.id, senderIdentityVersion: sender.version, senderEvidenceVersion: sender.evidence.version,
+          from: { email: sender.email, name: sender.displayName },
+          ...(sender.replyToEmail === null ? {} : { replyTo: [{ email: sender.replyToEmail }] }),
+        }
+      },
+      enqueue: organizationMailer.enqueuePersisted!.bind(organizationMailer),
+      readBytes: async (key: string) => {
+        const object = await objects.get(key)
+        return object === null ? null : new Uint8Array(await new Response(object.body).arrayBuffer())
+      },
+      now: () => new Date().toISOString(),
+    })
+    // The operator's invoices switch (issue 1254): where it is off the invoice
+    // sweeps below do not run, and what they would have touched stays as is.
+    const invoicesOn = moduleAvailability(config.appEnv).invoices
+    let lastMinutePass = 0
+    const minutePasses = async (): Promise<void> => {
+      const at = Date.now()
+      if (at - lastMinutePass < 60_000) return
+      lastMinutePass = at
+      const now = new Date(at).toISOString()
+      try {
+        await webhooks.processDue()
+        await webhooks.purge()
+      } catch {
+        console.error('[container] webhook sweep failed')
+      }
+      try {
+        await evaluateProjectBudgetAlerts(drizzle, now)
+      } catch (error) {
+        console.error('[container] budget alert evaluation failed', error)
+      }
+      // Time reminders (issue 935) are due on each person's own local minute,
+      // so they are looked at every minute too.
+      try {
+        await timeReminders.processDue(now)
+      } catch (error) {
+        console.error('[container] time reminders failed', error)
+      }
+      // Automatic timesheet approval (issue 1009): a bounded batch of weeks the
+      // policy has made due; a no-op while the policy is off.
+      try {
+        const run = await runTimesheetAutoApproval(drizzle, now)
+        for (const failure of run.failed) {
+          console.error('[container] automatic approval failed', failure.submissionId, failure.message,
+          )
+        }
+      } catch (error) {
+        console.error('[container] automatic approval sweep failed', error)
+      }
+      try { await calendar.maintenance.processDue() } catch(error) { reportWorkerError(options.reportError,error,{phase:'scheduled',operation:'calendar sync',traceId:runtimeTraceId()}) }
+      try {
+        await githubReader.tick()
+        await githubReader.publishTimeNotes?.()
+      } catch {
+        console.error('[container] GitHub issue reconciliation failed')
+      }
+      if (!invoicesOn) return
+      try { await stripeAlerts.processDue(now) } catch { console.error('[container] Stripe report reconciliation failed') }
+      try { await bankFeeds.processDue() } catch { console.error('[container] Bank feed reconciliation deferred') }
+      try { await deelPaymentStatus.refresh(null) } catch { console.error('[container] Deel payment status refresh failed') }
+      try {
+        const result = await proposeDueScheduledJobs(drizzle, now, objects)
+        for (const failure of result.failed)
+          console.error('[container] scheduled job proposal failed', failure.jobId, failure.message)
+      } catch (error) {
+        console.error('[container] scheduled job proposal sweep failed', error)
+      }
+      try {
+        await stripeAlertNotices.processDue(now)
+      } catch (error) {
+        console.error('[container] Stripe alert notice failed', error)
+      }
+      try {
+        await scheduledRunNotices.processDue(now)
+      } catch (error) {
+        console.error('[container] scheduled manifest notice failed', error)
+      }
+      try {
+        const result = await scheduledRunDispatch.processDue(now)
+        for (const failure of result.failed) console.error('[container] scheduled run item failed', failure)
+      } catch (error) {
+        console.error('[container] scheduled run dispatch failed', error)
+      }
+      // Proposed month-end runs past their deadline (issue 63); reports its
+      // own failure and never stops the drain.
+      await sweepExpiredRuns(createScheduledActionStore(drizzle), now, (error) => {
+        console.error('[container] scheduled run expiry failed', error)
+      })
+    }
     outboxScheduler = new ContainerOutboxScheduler(outbox, {
       // Reminders that have come due go out on the same tick the outbox
       // drains, before it, so the sends they enqueue are drained in the same
@@ -669,36 +960,62 @@ export const createContainerRuntime = async (
       // it records are drained in the same pass too.
       beforeDrain: async () => {
         await paymentRuns.processDue(new Date().toISOString())
-        await processDueReminders(new Date().toISOString())
+        await minutePasses()
+        if (invoicesOn) await processDueReminders(new Date().toISOString())
         await reconcileBillPayments()
       },
     })
-    const objects = await createDiskAttachmentObjectStore(
-      config.attachmentDirectory,
-    )
     const brandAssets = await createContainerBrandAssetSurface(
       database,
-      config.brandDirectory,
-    )
+      config.brandDirectory)
     const instanceTheme = createContainerInstanceThemeSurface(database)
 
     const services: RuntimeServices = {
+      csvImportStaging:csvStaging.port,
+      ...(csvApply?{csvImportApply:csvApply.port}:{}),
       bootstrap: (input) => bootstrapInstanceContainer(database, input),
       enrollOwnerPassword: (input) =>
         enrollInstanceOwnerPasswordContainer(database, input),
-      tokens: createApiTokenStore(drizzle),
+      tokens: createApiTokenStore(drizzle, touch),
+      projectMissingRates: { recover: (input) => recoverProjectMissingRates(drizzle, input, (dates) => timesheetLockPolicy.lockedDates(dates),
+          ),
+      },
       generalResources: createGeneralResourceRepository(drizzle),
       clientTree: {
         ancestors: (clientId) => listClientAncestors(drizzle, clientId),
         descendants: (clientId) => listClientDescendants(drizzle, clientId),
       },
       team: createTeamRepository(drizzle),
-      trackedResources: new DrizzleTrackedResourceRepository(
-        drizzle,
-        timesheetLockPolicy,
-      ),
+      invoiceElevations: createInvoiceElevationStore(drizzle),
+    invoiceTimeUnlink: (command, elevation, now) => unlinkElevatedInvoiceTime(drizzle, command, elevation, now),
+    webhooks,
+    migrationLoads: {status:async(id:string)=>
+          (database.prepare(`SELECT ${migrationLoadStatusProjection} FROM migration_loads WHERE id=?`).get(id) as MigrationLoadStatus|undefined) ??null,
+      },
+    estimateTemplates: createEstimateTemplateRepository(drizzle),
+    clientRateCards: createClientRateCardRepository(drizzle),
+      trackedResources,
+      calendarOperatorCleanup: createCalendarOperatorCleanupStore(drizzle),
+      calendarConnections: calendar.sync,
+      calendarAuthorization: calendar.authorization,
+      calendarMaintenance: calendar.maintenance,
+      calendarProposals: new DrizzleCalendarProposalRepository(drizzle, trackedResources),
+      placeholderPlanning: createPlaceholderAllocationRepository(drizzle),
+      allocations: new DrizzleAllocationRepository(drizzle),
+      calendarFeeds: createCalendarFeedService(drizzle),
+      resourceCalendar: createResourceCalendarRepository(drizzle),
+      organizationHolidays: createOrganizationHolidayRepository(drizzle),
+      githubReader,
+      workItems: {
+        repository: new DrizzleWorkItemRepository(drizzle),
+        credentialConfigured: (provider) =>
+          provider === 'github'
+            ? githubReader.isConfigured()
+            : workItemCredentialConfigured(config.appEnv, provider),
+      },
       profile: {
         readTimezone: async (userId) => await readUserTimezone(drizzle, userId),
+        readEffectiveTimezone: async (userId) => await readEffectiveUserTimezone(drizzle, userId),
         readIdentity: async (userId) => await readUserIdentity(drizzle, userId),
         updateTimezone: async (userId, timezone, occurredAt) => {
           await updateUserTimezone(drizzle, userId, timezone, occurredAt)
@@ -738,6 +1055,15 @@ export const createContainerRuntime = async (
           .get() as { enabled: number } | undefined
         return row?.enabled === 1
       },
+      isActivityLogModuleEnabled: async () => {
+        const row = database
+          .prepare(
+            `SELECT COALESCE(json_extract(modules, '$.activity_log'), 1) AS enabled
+             FROM organizations WHERE id = 1`,
+          )
+          .get() as { enabled: number } | undefined
+        return row === undefined || row.enabled === 1
+      },
       isTeamModuleEnabled: async () => {
         const row = database
           .prepare(
@@ -748,11 +1074,26 @@ export const createContainerRuntime = async (
         return row?.enabled === 1
       },
       moneyResources,
+      harvestInvoices: moneyResources,
+    bankDeposits: createBankDepositReviewService(drizzle),
+    bankFeeds,
       ...(quickBooks === null ? {} : { quickBooks: quickBooks.service }),
       ...(wise === null ? {} : { wise: wise.service }),
       ...(wise?.webhook === undefined ? {} : { wiseWebhook: wise.webhook }),
       paymentRuns,
+      scheduledRunNotices,
+      scheduledRunDispatch,
+      scheduledJobs: createScheduledJobsService(drizzle),
+      scheduledJobProposals: { processDue: (now: string) => proposeDueScheduledJobs(drizzle, now, objects),
+      },
+      scheduledRuns: createScheduledRunsService(drizzle, {reviewLinkSigningKey:config.cursorSigningKey,
+      }),
       staffPayments: createStaffPaymentStore(drizzle),
+      deelPaymentStatus,
+      deelStaging: createDeelStagingRuntime({token:demoDeployment(config.appEnv)?undefined:config.deel?.token,startDate:config.deel?.startDate,store:createDeelStageStore(drizzle),fetch:(request:Request)=>fetch(request),now:()=>new Date(),
+      }),
+      contractorReview: createContractorReviewStore(drizzle),
+      myPayments: createMyPaymentsStore(drizzle),
       payoutAccounts: (() => {
         const store = createPayoutAccountStore(drizzle)
         return {
@@ -768,6 +1109,8 @@ export const createContainerRuntime = async (
         }
       })(),
       stripe,
+      invoiceProviderAlerts: stripeAlerts,
+      stripeAlertNotices,
       // Turning the document on and off. The preference existed before anything
       // could set it, which is a decision made on the operator's behalf that they
       // could not revisit (issue 626).
@@ -843,6 +1186,12 @@ export const createContainerRuntime = async (
       invoiceHoursReport: {
         readHoursReport: (invoiceId: number) => readInvoiceHoursReport(drizzle, invoiceId),
       },
+      // Billed hours against the entries the invoice claims (issue 924).
+      invoiceHoursReconciliation: {
+        releaseLineTime: (command, actorUserId, now) => releaseInvoiceLineTime(drizzle, command, actorUserId, now),
+      readHoursReconciliation: (invoiceId: number) =>
+          readInvoiceHoursReconciliation(drizzle, invoiceId),
+      },
       // Suppressing the thank-you for one invoice (issue 545), which is the
       // half that has to be reachable before the payment lands: some invoices
       // settle a dispute.
@@ -862,7 +1211,45 @@ export const createContainerRuntime = async (
           setOrganizationThankYouPolicy(drizzle, enabled),
       },
       reminders: { processDue: processDueReminders },
+      budgetAlerts: {
+        evaluate: (now: string) => evaluateProjectBudgetAlerts(drizzle, now),
+      },
+      timeReminders,
+      timesheetAutoApproval: createTimesheetAutoApprovalService({
+        read: () => readTimesheetAutoApproval(drizzle),
+        update: (actorUserId, patch) =>
+          updateTimesheetAutoApproval(drizzle, actorUserId, patch, new Date().toISOString()),
+      }),
+      timesheetAutoApprovalSweep: {
+        processDue: (now: string) => runTimesheetAutoApproval(drizzle, now),
+      },
+      profileNotifications: {
+        read: (userId: number) => readUserNotifications(drizzle, userId),
+        update: (userId: number, patch) =>
+          updateUserNotifications(drizzle, userId, patch, new Date().toISOString()),
+      },
+      notificationSettings: createNotificationSettingsService({
+      read: () => readNotificationSettings(drizzle),
+      update: (patch) => updateNotificationSettings(drizzle, patch, new Date().toISOString()),
+    }),
       reminderSettings: createReminderSettings(drizzle, reminders, () => new Date().toISOString()),
+      // The hosted invoice page and its receipts (issue 936), mounted exactly
+      // where the Worker mounts them. This entry keeps no rendered invoice
+      // documents, so its page offers none to download.
+      invoiceView: createInvoiceViewService({
+        database: drizzle,
+        paymentUrl: invoicePaymentUrlForMail({ bill, stripe }),
+      }),
+      ...(invoiceViewLinkOrigin(config.appBaseUrl) === null
+        ? {}
+        : {
+            invoiceViewLinks: createInvoiceViewLinkIssuer(
+              drizzle,
+              invoiceViewLinkOrigin(config.appBaseUrl)!,
+            ),
+          }),
+      invoiceViewReceipts: (invoiceMessageIds: readonly number[]) =>
+        readViewReceipts(drizzle, invoiceMessageIds),
       // Invoices › Configure: what every invoice prints and every draft starts with.
       invoiceDefaults: {
         read: () => readInvoiceDefaults(drizzle),
@@ -895,11 +1282,17 @@ export const createContainerRuntime = async (
         backfill: (input: Parameters<BandClaimBackfillPort['backfill']>[0]) =>
           backfillBandClaims(drizzle, input),
       },
+      // #750. Carried for the same reason as the claim backfill above.
+      costRateBackfill: {
+        backfill: (input: Parameters<CostRateBackfillPort['backfill']>[0]) =>
+          backfillCostRates(drizzle, input),
+      },
       activity: {
         capture: async (request) => {
           await captureActivityEvent(drizzle, request)
         },
       },
+      activityRoll: createActivityRoll(drizzle, () => new Date().toISOString()),
       reports: createReportRepository(drizzle),
       moduleSettings: createModuleSettingsRepository(drizzle),
       signInMethods: createSignInMethodRepository(drizzle),
@@ -925,14 +1318,37 @@ export const createContainerRuntime = async (
               .get(userId) as { address: string } | undefined
           )?.address ?? `user-${userId}`,
         issuer: config.appEnv.BRAND_NAME ?? 'ezacto',
+        // The emailed second factor (issue 770); see the worker runtime.
+        emailCodeKey: await deriveTwoFactorEmailCodeKey(config.cursorSigningKey),
+        emailAddress: async (userId) =>
+          (
+            database
+              .prepare(
+                `SELECT address FROM user_emails
+                   WHERE user_id = ? AND invalidated_at IS NULL AND verified_at IS NOT NULL
+                   ORDER BY is_primary DESC, id LIMIT 1`,
+              )
+              .get(userId) as { address: string } | undefined
+          )?.address ?? null,
       }),
+      // The container always has a mailer.
+      twoFactorEmailCodes: createQueuedTwoFactorEmailCodeMailer(
+        createDeploymentSenderQueuedMailer(config.smtp.from, queuedMailer),
+        organizationName,
+      ),
       timesheetApprovals: createTimesheetApprovalRepository(drizzle),
       timesheetLockPolicy,
       cursorSigningKey: config.cursorSigningKey,
+      idempotency: {
+        // The handle itself: the store's own statements never carry a claim.
+        store: createContainerIdempotencyStore(handle),
+        secret: await deriveIdempotencySecret(config.cursorSigningKey),
+      },
       passwordAuth,
       userEmails: passwordAuth,
       sessions,
       emailLog,
+      emailSuppressions,
       emailConfiguration,
       senderIdentityVerifier: createSmtpSenderIdentityVerifier(config.smtp.from),
       outbox,
@@ -951,8 +1367,7 @@ export const createContainerRuntime = async (
               mailer: createQueuedStaffMagicLinkMailer(
                 createDeploymentSenderQueuedMailer(
                   config.smtp.from,
-                  queuedMailer,
-                ),
+                  queuedMailer),
                 organizationName,
               ),
               codeKey: config.magicLinkSigningKey,
@@ -966,8 +1381,7 @@ export const createContainerRuntime = async (
       deploymentAuthMailer: createQueuedAuthMailer(
         createDeploymentSenderQueuedMailer(
           config.smtp.from,
-          queuedMailer,
-        ),
+          queuedMailer),
         emailConfiguration,
         organizationName,
         config.appBaseUrl,
@@ -982,6 +1396,9 @@ export const createContainerRuntime = async (
         ? {}
         : {
             portalAuth: {
+              mailer: createQueuedPortalMagicLinkMailer(
+                createDeploymentSenderQueuedMailer(config.smtp.from,queuedMailer),organizationName,config.appBaseUrl,
+              ),
               service: createMagicLinkService({
                 database: {
                   all: async (query: { sql: string; params: readonly unknown[] }) =>
@@ -991,9 +1408,17 @@ export const createContainerRuntime = async (
                 signingKey: config.portalMagicLinkSigningKey,
               }),
               sessions: createPortalSessionService(
-                createContainerContactSessionStore(database),
+                createContainerContactSessionStore(database, touch),
               ),
-              sessionStore: createContainerContactSessionStore(database),
+              sessionStore: createContainerContactSessionStore(database, touch),
+              estimates: {
+                list: (clientId: number) => moneyResources.listCustomerEstimates(clientId),
+                get: (clientId: number, estimateId: number) =>
+                  moneyResources.getCustomerEstimate(clientId, estimateId),
+                respond: (input) =>
+                  moneyResources.respondToEstimate({ ...input, occurredAt: new Date().toISOString(),
+                  }),
+              },
             },
           }),
       attachments: {
@@ -1016,18 +1441,27 @@ export const createContainerRuntime = async (
         if (closed) return
         closed = true
         try {
+          if(csvApplyTimer)clearInterval(csvApplyTimer)
+          await csvApply?.close().catch(reportCsvFailure)
           await outboxScheduler!.close(timeoutMs)
           await queue!.close(timeoutMs)
           database.pragma('wal_checkpoint(TRUNCATE)')
         } finally {
+          if(csvSweep)clearInterval(csvSweep)
+          csvStaging?.close()
           database.close()
         }
       },
     }
   } catch (error) {
+    if(csvApplyTimer)clearInterval(csvApplyTimer)
+    await csvApply?.close().catch(reportCsvFailure)
     await outboxScheduler?.close().catch(() => undefined)
     await queue?.close().catch(() => undefined)
+    if(csvSweep)clearInterval(csvSweep)
+    csvStaging?.close()
     if (database.open) database.close()
     throw error
   }
 }
+import { createResourceCalendarRepository } from '@ezacto/db'

@@ -1,0 +1,29 @@
+{
+  "id": 301,
+  "name": "Sample Website Build",
+  "code": "SMP-1",
+  "is_active": true,
+  "is_billable": true,
+  "is_fixed_fee": false,
+  "bill_by": "Project",
+  "hourly_rate": 150,
+  "budget": 25,
+  "budget_by": "project",
+  "budget_is_monthly": false,
+  "notify_when_over_budget": true,
+  "over_budget_notification_percentage": 80,
+  "show_budget_to_all": true,
+  "created_at": "2024-01-05T10:00:00Z",
+  "updated_at": "2024-03-09T16:45:30Z",
+  "starts_on": "2024-01-01",
+  "ends_on": "2024-06-30",
+  "notes": "Invented note.",
+  "cost_budget": null,
+  "cost_budget_include_expenses": false,
+  "fee": null,
+  "client": {
+    "id": 101,
+    "name": "Sample Widgets Ltd",
+    "currency": "USD"
+  }
+}

@@ -303,6 +303,11 @@ export interface InvoiceEmailDefaults {
   /** The two names the dialog fills the record of the send with. */
   readonly companyName: string
   readonly clientName: string
+  /**
+   * The zone `%send_weekday%` is read in (issue 925), so the record of the send
+   * the dialog writes names the same weekday the email does.
+   */
+  readonly timeZone: string
   readonly templateVersion: number
   readonly subject: string
   readonly message: string
@@ -326,9 +331,15 @@ export const readInvoiceEmailDefaults = async (
   invoiceId: number,
   userId: number,
 ): Promise<InvoiceEmailDefaults | null> => {
-  const invoices = await database.all<{ clientId: number; clientName: string; companyName: string | null }>(
+  const invoices = await database.all<{
+    clientId: number
+    clientName: string
+    companyName: string | null
+    timeZone: string | null
+  }>(
     sql`SELECT invoice.client_id AS clientId, client.name AS clientName,
-               (SELECT name FROM organizations ORDER BY id LIMIT 1) AS companyName
+               (SELECT name FROM organizations ORDER BY id LIMIT 1) AS companyName,
+               (SELECT timezone FROM organizations ORDER BY id LIMIT 1) AS timeZone
         FROM invoices invoice JOIN clients client ON client.id = invoice.client_id
         WHERE invoice.id = ${invoiceId}`,
   )
@@ -347,6 +358,7 @@ export const readInvoiceEmailDefaults = async (
     clientId: invoice.clientId,
     companyName: invoice.companyName ?? '',
     clientName: invoice.clientName,
+    timeZone: invoice.timeZone ?? 'UTC',
     templateVersion: template.version,
     subject: template.subjectTemplate,
     message: template.textTemplate,

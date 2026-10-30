@@ -66,13 +66,14 @@ const snapshot = (entries: readonly DisplayTimeEntry[]): ShellSnapshot => ({
     time_format: 'decimal',
     clock: '12h',
     week_start_day: 'monday',
+    time_rounding: { mode: 'exact' as const, minutes: 15 as const },
   },
   catalog: {
     projects: [project(1, 'Northpeak'), project(2, 'Acme')],
     tasks: [task(1, 'Development'), task(2, 'Design')],
     timeEntryOptions: [
-      { project_id: 1, task_id: 1, minimum_note_length: 0 },
-      { project_id: 2, task_id: 2, minimum_note_length: 0 },
+      { project_id: 1, task_id: 1, minimum_note_length: 0, time_rounding: { mode: 'exact' as const, minutes: 15 as const, source: 'organization' as const } },
+      { project_id: 2, task_id: 2, minimum_note_length: 0, time_rounding: { mode: 'exact' as const, minutes: 15 as const, source: 'organization' as const } },
     ],
   },
 })
@@ -135,14 +136,15 @@ const apiFor = (
     listProjects: vi.fn(),
     listTasks: vi.fn(),
     listTimeEntryOptions: vi.fn(async () => [
-      { project_id: 1, task_id: 1, minimum_note_length: 0 },
-      { project_id: 2, task_id: 2, minimum_note_length: 0 },
+      { project_id: 1, task_id: 1, minimum_note_length: 0, time_rounding: { mode: 'exact' as const, minutes: 15 as const, source: 'organization' as const } },
+      { project_id: 2, task_id: 2, minimum_note_length: 0, time_rounding: { mode: 'exact' as const, minutes: 15 as const, source: 'organization' as const } },
     ]),
     getTimeEntrySettings: vi.fn(async () => ({
       time_entry_mode: 'duration' as const,
       time_format: 'decimal' as const,
       clock: '12h' as const,
       week_start_day: 'monday' as const,
+      time_rounding: { mode: 'exact' as const, minutes: 15 as const },
     })),
     listTimeEntries: vi.fn(),
     stopTimeEntry: vi.fn(),
@@ -237,7 +239,7 @@ describe('timesheet week grid', () => {
       catalog: {
         ...base.catalog,
         timeEntryOptions: [
-          { project_id: 1, task_id: 1, minimum_note_length: 8 },
+          { project_id: 1, task_id: 1, minimum_note_length: 8, time_rounding: { mode: 'exact' as const, minutes: 15 as const, source: 'organization' as const } },
         ],
       },
     }
@@ -385,7 +387,7 @@ describe('timesheet week grid', () => {
     )
     api.listTimeEntries = listTimeEntries
     const listTimeEntryOptions = vi.fn<ShellApi['listTimeEntryOptions']>(async () => [
-      { project_id: 1, task_id: 1, minimum_note_length: 0 },
+      { project_id: 1, task_id: 1, minimum_note_length: 0, time_rounding: { mode: 'exact' as const, minutes: 15 as const, source: 'organization' as const } },
     ])
     api.listTimeEntryOptions = listTimeEntryOptions
 

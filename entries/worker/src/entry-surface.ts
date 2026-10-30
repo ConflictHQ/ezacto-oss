@@ -31,18 +31,38 @@
  * a magic-link key; without one the routes are not mounted at all.
  */
 export const UNDOCUMENTED_ROUTES: readonly string[] = [
+  // A calendar-client Basic credential surface, outside the native API.
+  'get /calendar/planning.ics',
   'get /auth/github',
   'get /auth/github/callback',
   'post /portal/magic-link',
   'get /portal/verify',
+  'post /portal/verify',
   'get /portal/statements',
+  'get /portal/estimates',
+  'get /portal/estimates/:id',
+  'post /portal/estimates/:id/response',
+  'get /portal/estimate-review',
+  // The hosted invoice page behind the link in an emailed invoice (issue 936).
+  // Browser-facing like the portal set above, but unlike it neither gated on a
+  // key nor on a session: the link's token is the authorisation, and both
+  // entries mount all three.
+  'get /portal/invoices/:token',
+  'post /portal/invoices/:token/viewed',
+  'get /portal/invoices/:token/document',
+  // The single-use download of a backup, behind the link an administrator
+  // minted (issue 39). Raw bytes for `curl`, not a generated-client call, and
+  // the token is the authorisation. The Worker mounts it; see
+  // `WORKER_ONLY_ROUTES`.
+  'get /backup-download/:token',
   // Staff magic-link sign-in, the user-facing sibling of the portal set above
-  // and gated on the same key. The verify leg is a browser/app redirect with no
-  // client call; request and exchange are called by the native app over raw
+  // and gated on the same key. The verify leg is a browser confirm page and a form POST that
+  // redirects, with no client call; request and exchange are called by the native app over raw
   // fetch, not a generated client -- so, like the OIDC app-code handoff, they
   // stay out of the generated client and, unlike it, out of the document too.
   'post /auth/magic-link',
   'get /auth/magic-link/verify',
+  'post /auth/magic-link/verify',
   'post /auth/magic-link/exchange',
   // Native Sign in with Apple. The mobile app posts an Apple identity token
   // over raw fetch and gets the ordinary session back -- there is no redirect
@@ -75,6 +95,7 @@ export const QUICKBOOKS_ROUTES: readonly string[] = [
   'post /api/v1/integrations/quickbooks/settings',
   'delete /api/v1/integrations/quickbooks',
   'post /api/v1/integrations/quickbooks/webhook',
+  'get /api/v1/integrations/quickbooks/reconciliation',
   'get /api/v1/invoices/:id/quickbooks',
   'post /api/v1/invoices/:id/quickbooks/sync',
 ]
@@ -91,6 +112,15 @@ export const WISE_ROUTES: readonly string[] = [
   'delete /api/v1/integrations/wise/recipients/:accountId',
 ]
 
+/** Explicit deployment opt-in; reader setup never exposes publication by itself. */
+export const GITHUB_PUBLICATION_ROUTES: readonly string[] = [
+  'get /api/v1/work-items/github/publication',
+  'get /api/v1/work-items/github/publication/preview/:id',
+  'post /api/v1/work-items/github/publication/policy',
+  'post /api/v1/work-items/github/publication/consent',
+  'post /api/v1/work-items/github/publication/:id/actions',
+]
+
 /**
  * Mounted by the Worker and not by the container.
  *
@@ -99,10 +129,41 @@ export const WISE_ROUTES: readonly string[] = [
  * is the contract there — so there is no run history for it to report and the
  * absence is deliberate.
  */
-export const WORKER_ONLY_ROUTES: readonly string[] = ['get /api/v1/backup/status']
+export const WORKER_ONLY_ROUTES: readonly string[] = [
+  'get /api/v1/backup/status',
+  'post /api/v1/backup/offsite/check',
+  'get /api/v1/backup/runs',
+  // The signed download of a nightly bundle (issue 39): the bundle lives in
+  // the Worker's R2 bucket, so the mint and the redemption go together.
+  'post /api/v1/backup/download-links',
+  'get /backup-download/:token',
+  // The Deel time sync (#1102). Only the Worker composes the sync runtime and
+  // its hourly schedule; the container has neither, so it does not answer these.
+  'get /api/v1/deel-sync',
+  'patch /api/v1/deel-sync/settings',
+  'post /api/v1/deel-sync/preview',
+  'post /api/v1/deel-sync/runs',
+]
 
-/** Mounted by the container and not by the Worker. */
-export const CONTAINER_ONLY_ROUTES: readonly string[] = []
+/** CSV routes require the optional native Worker D1/R2/Queue adapter. */
+export const CSV_IMPORT_ROUTES: readonly string[] = [
+  'post /api/v1/csv-imports/:runId/apply',
+  'post /api/v1/csv-imports/:runId/resume',
+  'post /api/v1/csv-imports/:runId/cancel',
+  'get /api/v1/csv-imports/:runId/apply',
+  'post /api/v1/csv-imports',
+  'get /api/v1/csv-imports/:runId',
+  'get /api/v1/csv-imports/:runId/mapping',
+  'patch /api/v1/csv-imports/:runId/mapping',
+  'post /api/v1/csv-imports/:runId/preview',
+  'get /api/v1/csv-imports/:runId/errors',
+  'get /api/v1/csv-imports/:runId/catalog',
+  'get /api/v1/csv-imports/:runId/diagnostics',
+  'delete /api/v1/csv-imports/:runId/input',
+]
+
+/** Unconfigured Workers keep the Container-only CSV surface absent. */
+export const CONTAINER_ONLY_ROUTES = CSV_IMPORT_ROUTES
 
 /**
  * Contact sign-in for the in-app portal, mounted only where
@@ -118,20 +179,25 @@ export const CONTAINER_ONLY_ROUTES: readonly string[] = []
  * Nothing in either repo calls these. They are kept rather than deleted because
  * central portal auth here is still a direction worth having open.
  *
- * Setting the key mounts them; it does not make them work. No runtime composes
- * a `MagicLinkDelivery` mailer, so the request leg answers 503 until one is
- * written -- `staff-magic-link-email.ts` is the model.
+ * Setting the key mounts them. Contact sign-in mail uses the deployment sender
+ * and queue; a Worker without mail configured answers 503 for link requests.
  */
 export const PORTAL_ROUTES: readonly string[] = [
   'post /portal/magic-link',
   'get /portal/verify',
+  'post /portal/verify',
   'get /portal/statements',
+  'get /portal/estimates',
+  'get /portal/estimates/:id',
+  'post /portal/estimates/:id/response',
+  'get /portal/estimate-review',
 ]
 
 /** Staff magic-link sign-in, gated on `MAGIC_LINK_SIGNING_KEY` alone. */
 export const STAFF_MAGIC_LINK_ROUTES: readonly string[] = [
   'post /auth/magic-link',
   'get /auth/magic-link/verify',
+  'post /auth/magic-link/verify',
   'post /auth/magic-link/exchange',
 ]
 
@@ -152,7 +218,8 @@ export const mountedApiRoutes = (
           (route.path.startsWith('/api/v1') ||
             route.path.startsWith('/auth') ||
             route.path.startsWith('/account-deletion') ||
-            route.path.startsWith('/portal')),
+            route.path.startsWith('/portal') ||
+            route.path.startsWith('/backup-download') || route.path.startsWith('/calendar/')),
       )
       .map((route) => `${route.method.toLowerCase()} ${route.path}`),
   )
@@ -175,13 +242,16 @@ export const expectedApiRoutes = (
     readonly portal: boolean
     readonly quickBooks?: boolean
     readonly wise?: boolean
+    readonly csvImport?: boolean
+    readonly githubPublication?: boolean
   },
 ): ReadonlySet<string> => {
   const gatedOff = new Set([
     ...(options.portal ? [] : [...PORTAL_ROUTES, ...STAFF_MAGIC_LINK_ROUTES]),
     ...(options.quickBooks === true ? [] : QUICKBOOKS_ROUTES),
     ...(options.wise === true ? [] : WISE_ROUTES),
-    ...(entry === 'worker' ? CONTAINER_ONLY_ROUTES : WORKER_ONLY_ROUTES),
+    ...(options.githubPublication === true ? [] : GITHUB_PUBLICATION_ROUTES),
+    ...(entry === 'worker' ? options.csvImport ? [] : CONTAINER_ONLY_ROUTES : WORKER_ONLY_ROUTES),
   ])
   return new Set(
     [...documented, ...UNDOCUMENTED_ROUTES].filter((route) => !gatedOff.has(route)),

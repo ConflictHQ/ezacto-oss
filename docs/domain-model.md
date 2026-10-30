@@ -86,8 +86,8 @@ Harvest's `company` + the Preferences/Modules settings surface (UI inventory §3
 | `reminder_policy` | json | Offsets + capacity-threshold %, per UI 30b. |
 | `auto_lock` / `auto_submit` | bool | Harvest "NEW" prefs. |
 | `time_entry_notes_required` | bool | |
-| `time_rounding` | enum `none\|nearest_6\|nearest_15\|nearest_30\|up_6\|up_15\|up_30` | The complete setting set evidenced by [Harvest's Preferences controls](https://support.getharvest.com/hc/en-us/articles/360048179912-Customizing-account-preferences). Drives native `rounded_seconds` (§3.4). |
-| `modules` | json | Feature flags: `expenses, invoices, estimates, approval, team, client_portal, activity_log`. Disabled modules disappear from nav (UI §38 Modules — keep this). |
+| `time_rounding_mode` / `time_rounding_minutes` | enum `exact\|up\|down\|nearest` / int `6\|10\|15\|20\|30\|60` | The organization's rounding rule: a direction and an increment (issue 949). Drives native `rounded_seconds` (§3.4). A project may carry its own pair; the old `time_rounding` enum (`none\|nearest_6\|nearest_15\|nearest_30\|up_6\|up_15\|up_30`, the set [Harvest's Preferences controls](https://support.getharvest.com/hc/en-us/articles/360048179912-Customizing-account-preferences) evidence) was copied into the pair by migration 0112 and is no longer read. |
+| `modules` | json | Feature flags: `expenses, invoices, estimates, approval, team, client_portal, activity_log`. Disabled modules disappear from nav (UI §38 Modules — keep this). The operator can also switch `invoices`, `sso`, `backups` and `accounting` off for the whole instance from the environment; that switch outranks this column and is never stored here (see the [operator guide](operator-guide.md#switch-whole-modules-off)). |
 | `require_2fa` / `require_sso` | bool | Commercial-tier enforcement; columns exist in OSS, enforcement is Identity-seam concern (D4). |
 
 ### 2.2 `user`
@@ -128,6 +128,21 @@ no expenses; otherwise archive.
 
 No update, no delete (matches Harvest: POST-only). A rate correction is a new row.
 These tables are the source that time-entry snapshots (§3.3) resolve against.
+
+### 2.3b `client_rate_card` / `client_rate_card_version` — append-only, effective-dated (issue 34)
+
+A named card attached to one client node (`client_rate_card`: `client_id` unique, `name`),
+so a node has at most one. Its rates live in `client_rate_card_version` rows:
+`start_date` (nullable, null = "all prior"; future dates allowed) and `lines`, a
+JSON array of `{task_id, amount_cents}` where a null `task_id` is the card default
+and a task line wins for that task. The version in force on a date is the latest
+`start_date` on or before it. Versions are appended in strictly increasing
+`start_date` order, never updated or deleted, and cards are never updated or
+deleted: a correction is a later version, and an empty version retires the card.
+Money is integer cents. Only profiles that may see billable rates read or write a
+card. Writing a card changes nothing already priced: no entry, snapshot or invoice
+line is touched, and moving a client under a new parent affects only later
+resolution. Existing entries change only through the audited reprice.
 
 ### 2.4 `role`, `department`
 
@@ -174,7 +189,7 @@ Contacts are reassignable between clients (Harvest parity).
 | `cost_budget_cents` | int nullable | Money budgets. |
 | `budget_is_monthly` | bool | The ↻ resetting budget. |
 | `cost_budget_include_expenses` | bool | |
-| `notify_when_over_budget` / `over_budget_pct` / `over_budget_notified_on` | bool / real / date | |
+| `notify_when_over_budget` / `over_budget_pct` / `over_budget_notified_on` | bool / real / date | Alert when `spent / budget >= over_budget_pct` (100 when unset), read from the same figures the budget report shows; a monthly budget over the current month in the organization's zone, any other over the project's whole history. One alert per crossing (`project_budget_alerts`; usage falling back under the line closes it, the next crossing is a new alert). Mailed to the project's managers, plus administrators when `organizations.budget_alerts_include_admins` is on or when the project has no manager with an address. `over_budget_notified_on` is the local date of the last alert. |
 | `show_budget_to_all` | bool | |
 | `report_visibility` | enum `managers\|everyone` | UI 28 permissions radio. |
 | `starts_on`, `ends_on` | date nullable | Non-blocking (time can be tracked outside range). |
@@ -213,6 +228,34 @@ reproduces Harvest's inconsistency.
 `use_default_rates` (true → resolve via §2.3 tables; false → this row's
 `hourly_rate_cents`), `budget_seconds` (when `budget_by = person`).
 
+### 2.11a `allocation` (resource planning, issue 1007)
+
+Planned hours per week for one person on one project over a range of dates:
+`user_id`, `project_id`, `start_date`, `end_date` (plain local days, both
+included), `planned_seconds_per_week` (1 to 604800). A separate table from
+`user_assignment` (Harvest-shaped, imported) and from `time_entry`: a plan is
+not work, has no rate or money column, and never reaches a report, lock or
+invoice. A range counts its full weekly figure in every week it touches. Two
+ranges for the same person and project may not overlap; different projects may,
+which is what over-allocation is. Every write leaves an `allocation.created`,
+`updated` or `deleted` outbox event in the same transaction, which the activity
+log records. The capacity view (`GET /api/v1/capacity`) sets planned seconds
+beside `users.weekly_capacity` and tracked `rounded_seconds`, by week, and flags
+a week planned beyond capacity; it never blocks one.
+
+### 2.11b `time_off` (resource planning, issue 1007)
+
+Days one person is away: `user_id`, `start_date`, `end_date` (plain local days,
+both included), `kind` (`vacation`, `sick`, `holiday`, `other`), `seconds_per_day`
+(NULL is a whole day, a fifth of the person's weekly capacity). Entered by an
+administrator; there is no request or approval state. Entries for one person may
+not overlap. Only Monday to Friday remove capacity, and the removal in a week is
+capped at that person's weekly capacity. The capacity view holds the plan against
+capacity less time off and still only flags an over-plan. Org-wide holidays and
+self-service requests are not part of this slice. Every write leaves a
+`time_off.created`, `updated` or `deleted` outbox event; account closure erases a
+closed person's rows.
+
 ### 2.12 `time_entry` — the core object
 
 | Field | Type | Notes |
@@ -231,7 +274,7 @@ reproduces Harvest's inconsistency.
 | `approval_status` | enum `unsubmitted\|submitted\|approved` | Axis 1. |
 | `invoice_id` | fk nullable | Axis 2; `is_billed` ⇔ non-null. |
 | `external_ref` | json nullable | `{id, group_id, account_id, permalink}` + derived `{service, service_icon_url}` from a service registry keyed on permalink host. `id` indexed **as text**. |
-| `calendar_event_ref` | json nullable | UI 33/39 "Pull in a calendar event". |
+| `calendar_event_ref` | json nullable | UI 33/39 "Pull in a calendar event". Written by accepting a calendar proposal as `{provider, event_id, calendar_id}` (issue 428); the proposal itself is a separate `calendar_proposals` row, never a time entry. |
 
 `is_locked` and `locked_reason` are **derived, never stored** (§3.2).
 
@@ -345,6 +388,12 @@ Invoice messages additionally carry `attach_pdf`, `thank_you`, `reminder`, and
 `send_reminder_on`. Estimate messages do not grow those invoice-only columns, and
 their recipients are required on native sends, matching the source contract.
 
+A `view` message is the receipt of issue 936: written by the system the first
+time a client opens the hosted invoice page behind the link a `send` message
+carried (`invoice_view_links`, one row per send, token stored only as a hash). It
+repeats that send's To and Cc and says which day the email went; it does not say
+who opened it, because the email is one message to everyone on it.
+
 Writable invoice `event_type`: `send|close|re-open|draft`. Estimate:
 `send|accept|decline|re-open`; `view` and `invoice` are **system-emitted only** and
 rejected on write.
@@ -421,6 +470,51 @@ records those system events. It has none of the invoice-only PDF, thank-you, rem
 or scheduled-reminder fields. Migration `0018_estimates` adds the tables and the real
 nullable `invoice.estimate_id` FK after the invoice foundation without rewriting
 existing invoice rows; cross-client links are rejected.
+
+**Estimate expiry (#1010, migration `0127_estimate_expiry`).** `estimate.expires_on` is
+the last calendar day a customer can answer, set by staff
+(`PATCH /api/v1/estimates/:id/expiry`, draft or sent only); when it is null,
+`organization.estimate_validity_days` counts that many days from the day the estimate
+was first sent (`sent_at`) in the instance timezone, and null there means no expiry.
+The estimate stays open to the end of the expiry day and closes at the next midnight in
+the instance timezone; a customer answer after that is refused with `estimate_expired`
+(HTTP 410). The expiry is not part of the content hash a customer answers, so moving it
+never invalidates the version they were shown. A response already recorded still replays
+after expiry; staff recording an answer on the customer's behalf is not blocked by it.
+
+**Customer estimate review (#1010).** `/portal/estimate-review` reuses this
+instance's contact/client session model (`0033_contact_portal`) and customer
+estimate response store (`0120_estimate_customer_response`). This is the in-app
+contact surface, independent of the separately deployed `ezacto-portal-pvt`
+worker and its authentication. The existing owner-approved contact-session
+choice is preserved; no per-estimate bearer authority or staff-session access
+is introduced.
+
+Set `PORTAL_MAGIC_LINK_SIGNING_KEY` separately from the staff
+`MAGIC_LINK_SIGNING_KEY` to mount this surface. The Worker also needs its normal
+mail provider, queue, deployment sender and `APP_BASE_URL`; the container uses
+its configured SMTP sender and in-process queue. No portal key means the routes
+stay off. With a key but no Worker mail configuration, requesting a link returns
+`mailer_unavailable` (503). Links use the configured HTTPS instance origin
+(`http://localhost` is allowed for local installs).
+
+A contact requests a link with `POST /portal/magic-link` (`email` in JSON). Known,
+unknown and recently mailed addresses receive the same 202 acknowledgement.
+Existing lookup rules refuse ambiguous addresses and archived clients. The
+queued sign-in email carries a single-use, 15-minute token in the page's URL
+fragment. The page removes it before its first request, then exchanges it in a
+same-origin JSON `POST /portal/verify`; no email or token is put in a request
+URL. Legacy direct `GET /portal/verify` callers remain compatible. The contact
+session cookie is HttpOnly, Secure and SameSite=Lax. This page loads no analytics,
+uses no-referrer/no-store, and offers a fresh-link form after sign-out or expiry.
+
+The contact can read and answer only their client's sent quotes. The existing
+version hash, stale/edit/expiry checks, first-response race guard and immutable
+actor/time/version receipt still govern accept/decline. A repeated answer replays
+its receipt; staff see the outcome in the estimate detail. Answering does not
+charge a payment method or create an invoice; conversion remains its existing
+explicit staff command. Optional reusable quote content is tracked separately
+in #1121; invoice email templates do not provide quote-content templates.
 
 ### 2.18 `retainer` — first-class (Harvest's biggest model gap)
 
@@ -504,7 +598,14 @@ a saved report is a named URL state.
 
 Per user (UI 09f): daily reminder `{enabled, time, days[], channels{email, desktop,
 slack}}`, `include_in_team_reminders`, `weekly_digest`, `notify_project_deleted`.
-No pre-checked marketing opt-in — we are not doing that.
+No pre-checked marketing opt-in — we are not doing that. `include_in_team_reminders`
+(the end-of-week submission reminder) is operational rather than marketing and
+starts on, so that opting out is a choice a person can make; nothing is sent until an
+administrator sets the company schedule (`organizations.submission_reminder_day` /
+`_time`, both or neither). Delivered: the daily reminder, the email channel, team
+reminders and the weekly digest (a digest of who has not submitted, for people who
+approve timesheets). Desktop, Slack and `notify_project_deleted` have no delivery and are
+refused rather than stored. `notification_deliveries` is the once-only ledger.
 
 ---
 
@@ -515,6 +616,28 @@ Axes are independent; conflating them is the classic clone mistake.
 1. **Approval**: `approval_status` — `unsubmitted → submitted → approved`
    (module-gated; when approval module is off, everything stays `unsubmitted` and the
    axis is invisible).
+   Optional automatic approval (`organizations.auto_approval_*`, issue 1009): off by
+   default; when on, the sweep approves a `submitted` week once `submitted_at` plus
+   the window (calendar days) has passed, only for weeks submitted on or after
+   `auto_approval_effective_from`, and only through the version-checked bulk
+   approval path. A resubmission rewrites `submitted_at`, so it restarts the clock.
+   Each new automatic decision has an immutable system receipt
+   (`0139_timesheet_automatic_receipts`) in the same transaction as the approval.
+   The receipt pins the policy authority, window, effective date, submitted clock
+   and resulting version. The transaction checks the live policy, authority and
+   active submitter again before writing. Approval events identify the system;
+   `reviewed_by_user_id` is null in the public view and `automatic_approval` carries
+   the authority and policy snapshot. Manual approval events keep their existing
+   shape. No synthetic login-capable administrator account is created.
+   The submitter is mailed a notice (`auto_approval_warning`, in the notification
+   ledger keyed by submission and `submitted_at`) 24 hours before the deadline, or
+   half the window when that is shorter, by the same pass as the time reminders.
+   Reviewers authorized for that person and with email enabled receive a separate
+   warning on the same schedule. A committed automatic receipt also produces a
+   submitter confirmation (`auto_approval_notice`), even if the policy is later
+   disabled. Both use the existing notification ledger and stranded-queue
+   recovery; an approval committed before a process crash remains discoverable
+   and its notification is recorded only once.
 2. **Invoicing**: `invoice_id` nullable. `is_billed` is `invoice_id IS NOT NULL`.
 3. **Editability**: `locked = derived(entry)` — true when invoiced, approved,
    an already-computed policy-lock fact is present, or any parent
@@ -540,20 +663,39 @@ verbatim. Import never re-resolves them.
 
 ### 3.4 Rounding
 
-The supported settings are exactly:
+Rounding is a direction and an increment, chosen for the organization and
+overridable per project (`projects.time_rounding_mode` / `time_rounding_minutes`,
+both null for the organization's rule, otherwise both set).
 
-`none | nearest_6 | nearest_15 | nearest_30 | up_6 | up_15 | up_30`
+- direction: `exact | up | down | nearest`
+- increment: `6 | 10 | 15 | 20 | 30 | 60` minutes
 
 For a non-negative native duration `s` and increment `q = minutes × 60`:
 
-- `none`: `s`
+- `exact`: `s`
 - `up`: `ceil(s / q) × q`
+- `down`: `floor(s / q) × q`
 - `nearest`: `floor((s + q / 2) / q) × q`
 
 At an exact positive midpoint, `nearest` therefore rounds upward. This midpoint
 half-up behavior is the proposed ezacto-native rule; Harvest's official controls
 establish the available modes and increments, not its undocumented tie behavior.
 Tests and documentation must not describe the tie rule as confirmed Harvest parity.
+
+The figure is stored per entry in `rounded_seconds` when the entry is saved: when a
+stopped entry is created, when a timer stops (including the stop-previous trigger),
+and when an edit changes the timing or the project. The rule is the entry's
+project's where it has one, else the organization's. Moving an entry to another
+project, including the report Move action, rounds it by that project's rule.
+
+Changing a setting rewrites nothing. **Recalculate open entries** is the explicit,
+previewed way to apply the current rules to earlier time. "Open" is what a single edit
+allows: stopped, not invoiced, not approved, on an unlocked date, under an active
+client, project and task. Negative entries (imported corrections) are left as
+imported. The preview reports how many entries change, their hours before and after,
+a breakdown by project, the date span and what is left alone; the apply sends back the
+preview's fingerprint and is refused (409 `preview_stale`) if anything has changed
+since.
 
 Imported `rounded_hours` is converted and stored verbatim as `rounded_seconds`; it is
 not recomputed using the native rule. Invoices and summary reports consume the stored
@@ -569,9 +711,20 @@ billable_rate(entry) :=
   bill_by = project → project.hourly_rate
   bill_by = tasks   → task_assignment.hourly_rate
   bill_by = people  → user_assignment.use_default_rates
-                        ? user_billable_rate effective at entry.spent_date
+                        ? (client_rate_card rate, else) user_billable_rate effective at entry.spent_date
                         : user_assignment.hourly_rate
   bill_by = none    → none
+
+client_rate_card rate (issue 34) := walk the project's client, then its ancestors
+  through parent_client_id only (never bill_to_client_id), nearest first; for each
+  card take the version in force at entry.spent_date and use its line for the
+  entry's task, else its default line. A card with no version in force, an empty
+  version, or no matching line is skipped (never zero) and the next ancestor is
+  tried; no card at all falls through to user_billable_rate, byte-identical to
+  the result before cards existed. Only this leg consults cards: bill_by =
+  project and tasks, and an assignment override (use_default_rates = false), are
+  unchanged, so precedence is assignment override > own card > inherited card >
+  person default.
 
 cost_rate(entry) := user_cost_rate effective at entry.spent_date
 budget grain     := budget_by → which of {project.budget_seconds, project.cost_budget_cents,

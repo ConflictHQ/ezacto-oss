@@ -1,3 +1,5 @@
+import type { StaffInvoicesStore } from "./staff-invoices.js";
+import type { AdvanceCreditsStore } from "./contractor-advances.js";
 import type { StaffPaymentReport } from "./staff-payments.js";
 
 export type PaymentItemState =
@@ -10,7 +12,21 @@ export type PaymentItemState =
   | "failed"
   | "attention"
   | "cancelled";
+/** Provider exceptions require review, not an assumed refund or another payment. */
+export const wiseTransferException = (status: string | null): string | null => {
+  if (status === "bounced_back")
+    return "Wise reports that the recipient bank returned this transfer. It may be delivered again or refunded. Review it in Wise; no new payment will be sent automatically.";
+  if (status === "charged_back")
+    return "Wise reports a funding reversal or chargeback. Review the transfer and funding in Wise; no new payment will be sent automatically.";
+  return null;
+};
+
 export interface PaymentSelection {
+  /** Default earnings. An advance creates credit only after confirmed settlement. */
+  purpose?: "earnings" | "advance";
+  currency?: string;
+  advance_project_id?: number | null;
+  advance_reason?: string | null;
   user_id: number;
   month: string;
   amount_cents: number;
@@ -120,6 +136,8 @@ export interface PaymentRunReport {
   runs: PaymentRun[];
 }
 export interface PaymentRunsService {
+  advances?: AdvanceCreditsStore;
+  invoices?: StaffInvoicesStore;
   preview(
     command: PaymentRunCommand,
     actorId: number,

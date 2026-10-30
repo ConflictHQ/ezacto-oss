@@ -224,8 +224,8 @@ export const parseWiseEvent = (body: string): WiseEvent | null => {
  * What a transfer state means for a payout we recorded.
  *
  * `null` is "nothing to do yet" -- a transfer in flight. The two that are not
- * null are the only ones that settle it, and both are final at Wise, which is
- * what makes them safe to write against a log whose sent rows are immutable.
+ * null are the only ones that settle it. Bounce/chargeback statuses retain
+ * the planned reservation until a confirmed refund or cancellation.
  */
 export const payoutOutcomeFor = (
   transferState: WiseTransferState,
@@ -233,9 +233,7 @@ export const payoutOutcomeFor = (
   if (transferState === 'outgoing_payment_sent') return 'sent'
   if (
     transferState === 'cancelled' ||
-    transferState === 'funds_refunded' ||
-    transferState === 'charged_back' ||
-    transferState === 'bounced_back'
+    transferState === 'funds_refunded'
   ) {
     return 'failed'
   }

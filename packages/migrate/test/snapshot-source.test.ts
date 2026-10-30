@@ -3,7 +3,6 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
 import {
-  asSnapshotSource,
   fileSnapshotSource,
   linesFromStream,
   r2SnapshotSource,
@@ -44,7 +43,13 @@ const collect = async (lines: AsyncIterable<string>): Promise<string[]> => {
 }
 
 /** An R2 stand-in that honours a range offset, which is the whole contract. */
-const bucket = (body: string, key = 'snapshots/run-1/raw/clients.jsonl'): SnapshotBucket => ({
+const bucket = (
+  body: string,
+  key = 'snapshots/run-1/raw/clients.jsonl',
+  etag = 'etag-1',
+): SnapshotBucket => ({
+  head: async (requested) =>
+    requested === key ? { size: new TextEncoder().encode(body).length, etag } : null,
   get: async (requested, options) => {
     if (requested !== key) return null
     const bytes = new TextEncoder().encode(body).slice(options?.range?.offset ?? 0)
@@ -64,6 +69,17 @@ const bucket = (body: string, key = 'snapshots/run-1/raw/clients.jsonl'): Snapsh
 })
 
 describe('reading a snapshot from disk (#409)', () => {
+  it('[unit #409] preserves CRLF bytes identically to R2 so checkpoints resume at the same offset', async () => {
+    const body = ROWS.join('\r\n') + '\r\n',
+      source = fileSnapshotSource(await onDisk(body))
+    const remote = r2SnapshotSource(bucket(body), 'snapshots/run-1/')
+    const local = await collect(source.openRaw('clients', 0))
+    expect(local).toEqual(ROWS.map((row) => row + '\r'))
+    expect(await collect(remote.openRaw('clients', 0))).toEqual(local)
+    const offset = Buffer.byteLength(local[0]! + '\n')
+    expect(await collect(source.openRaw('clients', offset))).toEqual(local.slice(1))
+    expect(await collect(remote.openRaw('clients', offset))).toEqual(local.slice(1))
+  })
   it('[unit] yields every row, and resumes from a byte offset', async () => {
     const body = `${ROWS.join('\n')}\n`
     const source = fileSnapshotSource(await onDisk(body))
@@ -71,6 +87,28 @@ describe('reading a snapshot from disk (#409)', () => {
     // Resuming past the first row is what the loader's checkpoint asks for.
     const offset = Buffer.byteLength(`${ROWS[0]!}\n`, 'utf8')
     expect(await collect(source.openRaw('clients', offset))).toEqual(ROWS.slice(1))
+  })
+
+  it('[unit] fingerprints a file by size and modification time, so an edit reads differently', async () => {
+    const body = `${ROWS.join('\n')}\n`
+    const root = await onDisk(body)
+    const source = fileSnapshotSource(root)
+    const before = await source.fingerprint('clients')
+    expect(await source.fingerprint('clients')).toBe(before)
+    // Same length, so only the modification time can tell.
+    await new Promise((resolve) => setTimeout(resolve, 20))
+    await writeFile(
+      join(root, 'raw', 'clients.jsonl'),
+      body.replace('Northpeak', 'Northpeek'),
+      'utf8',
+    )
+    expect(await source.fingerprint('clients')).not.toBe(before)
+  })
+
+  it('[unit] sizes a resource by its bytes, not its characters', async () => {
+    const body = `${JSON.stringify({ id: 1, name: 'Ståle Ærø 日本' })}\n`
+    const source = fileSnapshotSource(await onDisk(body))
+    expect(await source.size('clients')).toBe(Buffer.byteLength(body, 'utf8'))
   })
 
   it('[unit] names the file it was reading, for an error that can be chased', async () => {
@@ -104,6 +142,25 @@ describe('reading the same snapshot from a bucket (#409)', () => {
     )
   })
 
+  it('[unit] sizes an object with head, and refuses a missing one', async () => {
+    const body = `${ROWS.join('\n')}\n`
+    const source = r2SnapshotSource(bucket(body), 'snapshots/run-1')
+    expect(await source.size('clients')).toBe(Buffer.byteLength(body, 'utf8'))
+    await expect(source.size('invoices')).rejects.toThrow(/is not in the snapshot bucket/u)
+  })
+
+  it('[unit] fingerprints an object by its entity tag, so a replaced object reads differently', async () => {
+    const body = `${ROWS.join('\n')}\n`
+    const key = 'snapshots/run-1/raw/clients.jsonl'
+    const first = r2SnapshotSource(bucket(body, key, 'etag-1'), 'snapshots/run-1')
+    const same = r2SnapshotSource(bucket(body, key, 'etag-1'), 'snapshots/run-1')
+    const replaced = r2SnapshotSource(bucket(body, key, 'etag-2'), 'snapshots/run-1')
+    expect(await same.fingerprint('clients')).toBe(await first.fingerprint('clients'))
+    // Same bytes, new upload: the size cannot tell, the entity tag can.
+    expect(await replaced.fingerprint('clients')).not.toBe(await first.fingerprint('clients'))
+    await expect(first.fingerprint('invoices')).rejects.toThrow(/is not in the snapshot bucket/u)
+  })
+
   it('[unit] tolerates a trailing slash on the prefix', async () => {
     const source = r2SnapshotSource(bucket(`${ROWS[0]!}\n`), 'snapshots/run-1/')
     expect(await collect(source.openRaw('clients', 0))).toEqual([ROWS[0]])
@@ -135,14 +192,28 @@ describe('splitting a byte stream into lines (#409)', () => {
   })
 })
 
-describe('the adapter the loader calls through (#409)', () => {
-  it('[unit] treats a string as the filesystem, so existing callers are unchanged', async () => {
-    const source = asSnapshotSource(await onDisk(`${ROWS[0]!}\n`))
-    expect(await collect(source.openRaw('clients', 0))).toEqual([ROWS[0]])
+it('[security] rejects invalid UTF-8 rather than replacing source bytes', async () => {
+  const stream = new ReadableStream<Uint8Array>({
+    start(controller) {
+      controller.enqueue(new Uint8Array([0xff, 0x0a]))
+      controller.close()
+    },
   })
-
-  it('[unit] passes a source through untouched', () => {
-    const given = r2SnapshotSource(bucket(''), 'p')
-    expect(asSnapshotSource(given)).toBe(given)
+  await expect(collect(linesFromStream(stream))).rejects.toThrow()
+})
+it('[unit] cancels the unread R2 response when a bounded chunk stops early', async () => {
+  let cancelled = false
+  const stream = new ReadableStream<Uint8Array>({
+    start(controller) {
+      controller.enqueue(new TextEncoder().encode('first\nsecond\n'))
+    },
+    cancel() {
+      cancelled = true
+    },
   })
+  for await (const line of linesFromStream(stream)) {
+    expect(line).toBe('first')
+    break
+  }
+  expect(cancelled).toBe(true)
 })

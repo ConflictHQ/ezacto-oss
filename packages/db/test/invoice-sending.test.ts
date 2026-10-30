@@ -20,6 +20,7 @@ import { readClientInvoiceExtras, setClientInvoiceExtras } from '../src/invoice-
 import {
   effectiveClientRecipients,
   readClientInvoiceRecipients,
+  readInvoiceEmailDefaults,
   readInvoiceSenderCopy,
   readOrganizationAlwaysCc,
   setClientInvoiceRecipients,
@@ -159,6 +160,21 @@ for (const [name, factory] of [
       expect((await readClientInvoiceRecipients(database.orm, 1))!.saved).toBeNull()
       expect(await readClientInvoiceRecipients(database.orm, 404)).toBeNull()
       expect(await setClientInvoiceRecipients(database.orm, 404, null, at)).toBe(false)
+    })
+
+    it("[unit] carries the organization's zone, which the weekday of a send is read in (issue 925)", async () => {
+      database = await factory()
+      await seed(database)
+      const configuration = {
+        getTemplate: async () =>
+          ({ version: 1, subjectTemplate: 'Invoice', textTemplate: 'Hello' }) as never,
+      }
+      const opened = async () =>
+        (await readInvoiceEmailDefaults(database!.orm, configuration, 1, 1))!.timeZone
+      // The column's own default, until somebody sets the company's zone.
+      expect(await opened()).toBe('UTC')
+      await database.run(`UPDATE organizations SET timezone = 'America/Costa_Rica'`)
+      expect(await opened()).toBe('America/Costa_Rica')
     })
 
     it('[security] refuses an address in both headers, twice in one, or not an address', async () => {

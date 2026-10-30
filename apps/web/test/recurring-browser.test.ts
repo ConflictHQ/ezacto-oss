@@ -348,6 +348,7 @@ describe('Recurring workspace controller', () => {
     document.querySelector<HTMLFormElement>('[data-recurring-confirm-form]')!.dispatchEvent(
       new Event('submit', { cancelable: true }),
     )
+    expect(document.querySelector('[data-recurring-issue-result]')?.getAttribute('aria-busy')).toBe('true')
     await vi.waitFor(() => expect(api.generateRecurringInvoice).toHaveBeenCalled())
     await vi.waitFor(() =>
       expect(document.querySelector('[data-recurring-issue-result]')?.textContent).toContain(
@@ -356,6 +357,7 @@ describe('Recurring workspace controller', () => {
     )
 
     const link = document.querySelector<HTMLAnchorElement>('[data-recurring-issued-link]')!
+    await vi.waitFor(() => expect(document.querySelector('[data-recurring-issue-result]')?.getAttribute('aria-busy')).toBe('false'))
     expect(link.hidden).toBe(false)
     // The invoice's number, not its id: the address every invoice link uses.
     expect(link.getAttribute('href')).toBe('/invoices/0091')

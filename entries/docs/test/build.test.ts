@@ -66,4 +66,11 @@ describe('ezacto.dev build', () => {
     expect(await page('robots.txt')).toContain('Sitemap: https://ezacto.dev/sitemap.xml')
     expect(await page('llms.txt')).toContain('https://ezacto.dev/api/')
   })
+  it('publishes the CSV import guide linked by company settings', async () => {
+    const guide=await page('docs/csv-import/index.html')
+    expect(guide).toContain('import-csv')
+    expect(guide).toContain('--dry-run')
+    expect(guide).toContain('node packages/migrate/dist/cli.js')
+  })
+
 })

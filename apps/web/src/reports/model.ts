@@ -1,3 +1,4 @@
+import { parseSortToken, type TableSort } from '../components/table-sort.js'
 import {
   REPORT_CAPABILITIES,
   canViewMoneyField,
@@ -24,11 +25,13 @@ import type {
   SavedReport,
   SavedReportInput,
   SavedReportUpdate,
+  SavedReportViewInput,
   TimeReport,
   UninvoicedReport,
   Whoami,
 } from '@conflict-hq/ezacto-client'
 import type { TimeEntrySettings } from '../components/time-entry-editor.js'
+import type { ProjectDirectoryApi } from '../projects/model.js'
 
 export type ReportKind = ReportCapabilityId
 
@@ -90,6 +93,8 @@ export type DetailedTimeRequest = DetailedTimeScope & {
   readonly hours?: DetailedTimeHours
   readonly active_projects_only?: boolean
   readonly grain?: DetailedTimeGrain
+  /** Entries whose note contains this text. Part of the export's request too. */
+  readonly notes?: string
 }
 
 /** The files the detailed time report exports as: Harvest's three. */
@@ -134,6 +139,8 @@ export interface DetailedTimeOptions {
   readonly roleId: number | null
   readonly tagId: number | null
   readonly invoiceState: DetailedTimeReport['invoice_state']
+  /** Notes contain (issue 930). Absent and empty both mean no filter. */
+  readonly notes?: string
 }
 
 export interface TimeReportOptions {
@@ -142,8 +149,16 @@ export interface TimeReportOptions {
 
 export type InvoicedReportStatus = 'draft' | 'open' | 'paid' | 'closed'
 
+export type ReceivablesDueState = 'not_due' | 'past_due'
+
+/**
+ * The options of the two invoice-side reports that have any: Invoiced narrows
+ * by status, Receivables by due state (issue 930). They share the field set
+ * because only one is on screen at a time and both live in the address.
+ */
 export interface InvoicedReportOptions {
   readonly status: InvoicedReportStatus | null
+  readonly dueState?: ReceivablesDueState | null
 }
 
 export type ProfitabilityDimension = 'clients' | 'projects' | 'teammates' | 'tasks'
@@ -225,6 +240,16 @@ export const profitabilityDelta = (
   return (current - previous) / Math.abs(previous)
 }
 
+/**
+ * The roles a saved report can be shared with: the ones that can open Reports
+ * at all. Administrators are left out because they see every saved report
+ * already; a member has no Reports section to open it in.
+ */
+export const shareableReportRoles: readonly { readonly profile: string; readonly label: string }[] = [
+  { profile: 'accounting', label: 'Accounting' },
+  { profile: 'executive_manager', label: 'Executive managers' },
+]
+
 export interface ReportCatalogPage {
   readonly data: readonly GeneralResource[]
   readonly page: { readonly next_cursor: string | null }
@@ -234,6 +259,8 @@ export interface ReportWorkspaceApi {
   getReportDefinitionRegistry?(signal?: AbortSignal): Promise<ReportDefinitionRegistry>
   listSavedReports?(filter: { view?: 'all' | 'yours' | 'shared'; q?: string; custom_only?: boolean }, signal?: AbortSignal): Promise<readonly SavedReport[]>
   createSavedReport?(input: SavedReportInput, signal?: AbortSignal): Promise<SavedReport>
+  createReportView?(input: SavedReportViewInput, signal?: AbortSignal): Promise<SavedReport>
+  getSavedReport?(reportId: string, signal?: AbortSignal): Promise<SavedReport>
   previewReportDefinition?(input: SavedReportInput, signal?: AbortSignal): Promise<ReportRunnerResult>
   runSavedReport?(reportId: string, signal?: AbortSignal): Promise<ReportRunnerResult>
   pinSavedReport?(reportId: string, signal?: AbortSignal): Promise<void>
@@ -242,6 +269,11 @@ export interface ReportWorkspaceApi {
   updateSavedReport?(reportId: string, input: SavedReportUpdate, signal?: AbortSignal): Promise<SavedReport>
   deleteSavedReport?(reportId: string, signal?: AbortSignal): Promise<void>
   shareSavedReport?(reportId: string, userId: number, signal?: AbortSignal): Promise<void>
+  unshareSavedReport?(reportId: string, userId: number, signal?: AbortSignal): Promise<void>
+  shareSavedReportWithRole?(reportId: string, profile: string, signal?: AbortSignal): Promise<void>
+  unshareSavedReportWithRole?(reportId: string, profile: string, signal?: AbortSignal): Promise<void>
+  /** The people a report can be shared with by name. */
+  listDirectoryUsers?: ProjectDirectoryApi['listDirectoryUsers']
   executeDetailedTimeAction?(input: ReportTimeActionInput, signal?: AbortSignal): Promise<ReportTimeAction>
   /**
    * Removing one entry from a Detailed time row: an administrator correcting
@@ -342,6 +374,8 @@ export interface ReportWorkspaceApi {
     audience: DetailedTimeNotesAudience,
     signal?: AbortSignal,
   ): Promise<{ readonly blob: Blob; readonly filename: string }>
+  /** False when the Activity log module is off; the kind then leaves the strip. */
+  getActivityLogEnabled?(signal?: AbortSignal): Promise<boolean>
   getActivityLog?(
     range: { readonly from: string; readonly to: string },
     signal?: AbortSignal,
@@ -376,7 +410,7 @@ export interface ReportWorkspaceApi {
     signal?: AbortSignal,
   ): Promise<PaymentsReceivedReport>
   getReceivablesReport?(
-    filter: { readonly as_of: string; readonly client_id?: number },
+    filter: { readonly as_of: string; readonly client_id?: number; readonly due_state?: ReceivablesDueState },
     signal?: AbortSignal,
   ): Promise<ReceivablesReport>
 }
@@ -531,8 +565,16 @@ export const detailedTimeOptionsFromUrl = (url: URL): DetailedTimeOptions => {
     tagId: positiveId(url.searchParams.get('tag_id')),
     invoiceState:
       invoiceState === 'invoiced' || invoiceState === 'uninvoiced' ? invoiceState : 'all',
+    notes: (url.searchParams.get('notes') ?? '').trim().slice(0, 200),
   }
 }
+
+/**
+ * The sort a report's address names (`sort=-hours`), or null. Whether the
+ * column exists on the table drawn is the table's to check, not the address's.
+ */
+export const reportSortFromUrl = (url: URL): TableSort | null =>
+  parseSortToken(url.searchParams.get('sort'))
 
 export const timeReportOptionsFromUrl = (url: URL): TimeReportOptions => ({
   includeFixedFee: url.searchParams.get('include_fixed_fee') === 'true',
@@ -542,11 +584,13 @@ const invoicedStatuses = new Set<InvoicedReportStatus>(['draft', 'open', 'paid',
 
 export const invoicedReportOptionsFromUrl = (url: URL): InvoicedReportOptions => {
   const status = url.searchParams.get('status')
+  const dueState = url.searchParams.get('due_state')
   return {
     status:
       status !== null && invoicedStatuses.has(status as InvoicedReportStatus)
         ? (status as InvoicedReportStatus)
         : null,
+    dueState: dueState === 'not_due' || dueState === 'past_due' ? dueState : null,
   }
 }
 
@@ -648,12 +692,16 @@ export const reportFiltersUrl = (
     if (options.roleId !== null && options.roleId > 0) params.set('role_id', String(options.roleId))
     if (options.tagId !== null && options.tagId > 0) params.set('tag_id', String(options.tagId))
     params.set('invoice_state', options.invoiceState)
+    if (options.notes !== undefined && options.notes !== '') params.set('notes', options.notes)
   }
   if (filters.kind === 'time' && timeOptions?.includeFixedFee === true) {
     params.set('include_fixed_fee', 'true')
   }
   if (filters.kind === 'invoiced' && invoicedOptions?.status != null) {
     params.set('status', invoicedOptions.status)
+  }
+  if (filters.kind === 'receivables' && invoicedOptions?.dueState != null) {
+    params.set('due_state', invoicedOptions.dueState)
   }
   if (filters.kind === 'profitability' && profitabilityOptions !== undefined) {
     params.set('dimension', profitabilityOptions.dimension)

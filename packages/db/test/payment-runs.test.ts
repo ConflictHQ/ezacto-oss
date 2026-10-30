@@ -1,3 +1,4 @@
+import { createWiseDeliveryStore } from '../src/wise-deliveries.js'
 import BetterSqlite3 from 'better-sqlite3'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { createContainerDatabase } from '../src/adapters.js'
@@ -188,6 +189,34 @@ describe('scheduled payment runs', () => {
         now,
       ),
     ).rejects.toThrow(/reserved/)
+  })
+  it('[money #1200] sees signed-ledger wakeups, provider dates and late refunds', async () => {
+    const f = await fixture()
+    const run = await f.approve()
+    await f.service.processDue(now)
+    f.setStatus('outgoing_payment_sent')
+    const store = createWiseDeliveryStore(createContainerDatabase(db))
+    const confirmation = '2026-10-02T12:00:00.000Z'
+    await store.claim({ deliveryId: 'signed-payment-fixture', subscriptionId: 'synthetic',
+      eventType: 'transfers#state-change', transferId: '999', currentState: 'outgoing_payment_sent',
+      occurredAt: '2026-10-01T12:00:00.000Z', now: confirmation })
+    expect(db.prepare('SELECT next_attempt_at FROM payment_run_items WHERE id=?').get(run.items[0]!.id))
+      .toEqual({ next_attempt_at: confirmation })
+    await f.service.processDue(confirmation)
+    expect(db.prepare("SELECT json_extract(command_json,'$.paid_on') AS paid_on FROM staff_payment_events WHERE id=?")
+      .get(`run-payment:${run.items[0]!.id}`)).toEqual({ paid_on: '2026-10-01' })
+    const refund = '2027-01-10T12:00:00.000Z'
+    f.setStatus('funds_refunded')
+    await store.claim({ deliveryId: 'signed-refund-fixture', subscriptionId: 'synthetic',
+      eventType: 'transfers#state-change', transferId: '999', currentState: 'funds_refunded',
+      occurredAt: refund, now: refund })
+    // Older than the normal 90-day paid polling horizon: only the new signed
+    // ledger evidence makes this item eligible again.
+    expect(await f.service.processDue(refund)).toMatchObject({ examined: 1 })
+    expect((await f.ledger.report('2026-08', '2027-01-10')).rows.find((row) => row.user_id === 2))
+      .toMatchObject({ paid_cents: 0, balance_cents: 10000 })
+    expect(db.prepare("SELECT count(*) AS n FROM staff_payment_events WHERE id LIKE 'run-payment:%' OR id LIKE 'run-refund:%'").get())
+      .toEqual({ n: 2 })
   })
   it('processes one durable stage at a time, records once and reverses confirmed refunds', async () => {
     const f = await fixture()

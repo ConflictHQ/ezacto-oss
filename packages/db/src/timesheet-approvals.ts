@@ -23,6 +23,15 @@ export interface TimesheetApprovalActor {
 }
 
 export interface TimesheetSubmissionRecord {
+  automaticApproval?: {
+    actor: 'system'
+    authorized_by_user_id: number
+    window_days: number
+    effective_from: string
+    submitted_at: string
+    approved_at: string
+    command_id: string
+  }
   id: number
   userId: number
   userName: string
@@ -126,6 +135,7 @@ export class TimesheetApprovalError extends Error {
 }
 
 interface RawSubmissionRow {
+  automatic_approval: string | null
   id: number
   user_id: number
   user_name: string
@@ -187,6 +197,7 @@ const submissionProjection = `submission.id,
   submission.source_observed_at,
   submission.submitted_by_user_id,
   submission.submitted_at,
+  (SELECT json_object('actor','system','authorized_by_user_id',automatic.authorized_by_user_id,'window_days',automatic.window_days,'effective_from',automatic.effective_from,'submitted_at',automatic.submitted_at,'approved_at',automatic.approved_at,'command_id',automatic.command_id) FROM timesheet_automatic_approval_receipts automatic WHERE automatic.submission_id=submission.id AND automatic.approved_version=submission.version AND submission.status='approved') AS automatic_approval,
   submission.reviewed_by_user_id,
   submission.reviewed_at,
   submission.rejection_reason,
@@ -337,7 +348,8 @@ const record = (row: RawSubmissionRow): TimesheetSubmissionRecord => ({
   sourceObservedAt: row.source_observed_at,
   submittedByUserId: row.submitted_by_user_id,
   submittedAt: row.submitted_at,
-  reviewedByUserId: row.reviewed_by_user_id,
+  reviewedByUserId: row.automatic_approval ? null : row.reviewed_by_user_id,
+  ...(row.automatic_approval ? {automaticApproval:JSON.parse(row.automatic_approval) as NonNullable<TimesheetSubmissionRecord['automaticApproval']>} : {}),
   reviewedAt: row.reviewed_at,
   rejectionReason: row.rejection_reason,
   version: row.version,
@@ -779,7 +791,9 @@ export class TimesheetApprovalRepository {
     commandId: string,
     selections: readonly TimesheetBulkApprovalSelection[],
     occurredAt: string,
+    automatic?: {windowDays:number; effectiveFrom:string; submittedAt:string},
   ): Promise<readonly TimesheetSubmissionRecord[]> {
+    if (automatic && selections.length !== 1) throw new RangeError('An automatic approval reviews one submission at a time')
     const authorization = approverPredicate(actor)
     const identifiers = selections.map((selection) => selection.submissionId)
     try {
@@ -790,6 +804,36 @@ export class TimesheetApprovalRepository {
             ) VALUES (?, ?, ?, ?) RETURNING command_id`,
           params: [commandId, actor.userId, selections.length, occurredAt],
         },
+        ...(automatic
+          ? [
+              {
+                sql: `INSERT INTO timesheet_automatic_approval_receipts(command_id,submission_id,approved_version,authorized_by_user_id,window_days,effective_from,submitted_at,approved_at)
+                  VALUES(?,(SELECT submission.id FROM timesheet_submissions submission JOIN users person ON person.id=submission.user_id JOIN organizations policy ON policy.id=1 JOIN users authority ON authority.id=policy.auto_approval_actor_user_id
+                    WHERE submission.id=? AND submission.version=? AND submission.status='submitted' AND submission.origin='native' AND person.is_active=1
+                      AND policy.auto_approval_enabled=1 AND policy.auto_approval_window_days=? AND policy.auto_approval_effective_from=? AND policy.auto_approval_actor_user_id=?
+                      AND authority.is_active=1 AND authority.profile IN('administrator','executive_manager') AND ${approvalEnabledSql}
+                      AND submission.submitted_at>=policy.auto_approval_effective_from AND submission.submitted_at=? AND submission.submitted_at<=?),?,?,?,?,?,?) RETURNING submission_id`,
+                params: [
+                  commandId,
+                  selections[0]!.submissionId,
+                  selections[0]!.expectedVersion,
+                  automatic.windowDays,
+                  automatic.effectiveFrom,
+                  actor.userId,
+                  automatic.submittedAt,
+                  new Date(Date.parse(occurredAt) - automatic.windowDays * 86400000).toISOString(),
+                  selections[0]!.expectedVersion + 1,
+                  actor.userId,
+                  automatic.windowDays,
+                  automatic.effectiveFrom,
+                  // Pin the reviewed submission clock in the receipt inside this same transaction.
+                  // The version predicate rejects resubmission/withdrawal before this read.
+                  automatic.submittedAt,
+                  occurredAt,
+                ],
+              },
+            ]
+          : []),
         ...selections.map((selection) => ({
           sql: `INSERT INTO timesheet_bulk_approval_command_items (
               command_id, submission_id, expected_version
@@ -833,6 +877,8 @@ export class TimesheetApprovalRepository {
       const approved = rows.filter((row) => row.status === 'approved')
       if (approved.length === selections.length) return approved.map(record)
     } catch (error) {
+      if (automatic && String(error).includes('timesheet_automatic_approval_receipts.submission_id'))
+        throw new TimesheetApprovalError('state_conflict', 'The automatic approval policy or submission changed before approval.', identifiers)
       return this.#bulkFailure(actor, commandId, selections, error)
     }
     return this.#bulkFailure(actor, commandId, selections, null)

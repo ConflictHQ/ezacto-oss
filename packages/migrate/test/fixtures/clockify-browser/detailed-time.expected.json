@@ -1,0 +1,94 @@
+{
+  "adapterId": "clockify-detailed-browser@2",
+  "provenance": "Invented sanitized fixture, not a live or owned Clockify export. Reserved invalid domains; no credentials or customer data.",
+  "exporterZone": "UTC",
+  "dataRows": 7,
+  "accepted": [
+    {
+      "line": 2,
+      "seconds": 5400,
+      "startedTime": "09:00",
+      "endedTime": "10:30"
+    },
+    {
+      "line": 4,
+      "seconds": 3584,
+      "startedTime": null,
+      "endedTime": null
+    },
+    {
+      "line": 5,
+      "seconds": 3600,
+      "startedTime": null,
+      "endedTime": null
+    },
+    {
+      "line": 6,
+      "seconds": 3240,
+      "startedTime": null,
+      "endedTime": null
+    }
+  ],
+  "acceptedSourceSeconds": 15824,
+  "invalid": [
+    [
+      7,
+      "missing_value"
+    ],
+    [
+      8,
+      "missing_value"
+    ],
+    [
+      9,
+      "missing_value"
+    ]
+  ],
+  "warnings": [
+    [
+      1,
+      "clockify_money_ignored"
+    ],
+    [
+      1,
+      "clockify_money_ignored"
+    ],
+    [
+      1,
+      "clockify_money_ignored"
+    ],
+    [
+      1,
+      "clockify_attachment_ignored"
+    ],
+    [
+      1,
+      "clockify_column_ignored"
+    ],
+    [
+      4,
+      "clockify_timing_dropped"
+    ],
+    [
+      5,
+      "clockify_timing_dropped"
+    ],
+    [
+      6,
+      "clockify_duration_differs_from_clock"
+    ],
+    [
+      6,
+      "clockify_timing_dropped"
+    ]
+  ],
+  "ignoredColumns": [
+    "Billable Rate (USD)",
+    "Billable Amount (USD)",
+    "Currency",
+    "Attachment",
+    "Custom Field: Team"
+  ],
+  "ignoredColumnsAreNotImportedMoneyOrFiles": true,
+  "sha256": "5b68c92bd2eefafb9fadc2a476ab1eae492bc8a39eba23534ca95db715ddbd5a"
+}

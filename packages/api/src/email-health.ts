@@ -2,6 +2,8 @@ import type { Hono } from 'hono'
 import type {
   EmailDeliveryStatus,
   EmailLogStore,
+  EmailReputationSnapshot,
+  EmailSenderStatusCounts,
 } from '@ezacto/mailer'
 import { computeReputationSnapshot } from '@ezacto/mailer'
 import { requireSessionPrincipal } from './auth.js'
@@ -10,7 +12,17 @@ import { ApiError } from './errors.js'
 
 export interface EmailHealthReader {
   countByStatus(): Promise<Record<EmailDeliveryStatus, number>>
+  countByStatusPerSender(): Promise<EmailSenderStatusCounts[]>
 }
+
+const reputationBody = (reputation: EmailReputationSnapshot) => ({
+  sent: reputation.sent,
+  bounced: reputation.bounced,
+  complained: reputation.complained,
+  failed: reputation.failed,
+  bounce_rate_ppm: reputation.bounceRatePpm,
+  complaint_rate_ppm: reputation.complaintRatePpm,
+})
 
 export const installEmailHealthRoutes = <Bindings extends object>(
   api: Hono<ApiContext<Bindings>>,
@@ -25,19 +37,19 @@ export const installEmailHealthRoutes = <Bindings extends object>(
         message: 'Only administrators can view email health.',
       })
     }
-    const counts = await log.countByStatus()
+    const [counts, senders] = await Promise.all([
+      log.countByStatus(),
+      log.countByStatusPerSender(),
+    ])
     const reputation = computeReputationSnapshot(counts)
     return context.json(
       {
         data: {
-          reputation: {
-            sent: reputation.sent,
-            bounced: reputation.bounced,
-            complained: reputation.complained,
-            failed: reputation.failed,
-            bounce_rate_ppm: reputation.bounceRatePpm,
-            complaint_rate_ppm: reputation.complaintRatePpm,
-          },
+          reputation: reputationBody(reputation),
+          identities: senders.map((entry) => ({
+            sender: entry.sender,
+            ...reputationBody(computeReputationSnapshot(entry.counts)),
+          })),
         },
         links: { self: '/api/v1/email-health' },
       },

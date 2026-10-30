@@ -385,6 +385,22 @@ try {
   ]);
 };
 
+/** Inspect the stopped source without copying ephemeral private CSV input. */
+export const physicalSnapshotSourceEntriesHelper = String.raw`
+const fs = require('node:fs')
+const root = '/data'
+const durable = ['db.sqlite', 'attachments', 'brand']
+const names = fs.readdirSync(root)
+for (const name of names) {
+  if (!durable.includes(name) && name !== 'csv-staging') throw new Error('source volume contains an unsupported root entry')
+  const metadata = fs.lstatSync(root + '/' + name)
+  if (metadata.isSymbolicLink()) throw new Error('source volume contains a symbolic link')
+  if (name === 'db.sqlite' ? !metadata.isFile() : !metadata.isDirectory()) throw new Error('source volume contains an invalid root entry')
+}
+if (!names.includes('db.sqlite') || !names.includes('attachments')) throw new Error('source volume is missing durable data')
+process.stdout.write(JSON.stringify(durable.filter(name => names.includes(name))))
+`;
+
 const backup = async ({ container, output }) => {
   if (!dockerName.test(container)) fail("container name is invalid");
   assertSnapshotPath(output, "output");
@@ -440,7 +456,39 @@ const backup = async ({ container, output }) => {
   await assertCanonicalDirectory(dirname(output), "output parent");
   await mkdir(output, { mode: 0o700 });
   try {
-    await docker(["container", "cp", `${container}:/data/.`, output]);
+    const inspected = await docker([
+      "run",
+      "--rm",
+      "--network",
+      "none",
+      "--user",
+      "0:0",
+      "--mount",
+      `type=volume,source=${mounts[0].Name},target=/data,readonly`,
+      "--entrypoint",
+      "node",
+      inspection.Config.Image,
+      "-e",
+      physicalSnapshotSourceEntriesHelper,
+    ]);
+    let entries;
+    try {
+      entries = JSON.parse(inspected.stdout);
+    } catch {
+      fail("source inventory is invalid");
+    }
+    if (
+      !Array.isArray(entries) ||
+      !entries.includes("db.sqlite") ||
+      !entries.includes("attachments") ||
+      new Set(entries).size !== entries.length ||
+      entries.some(
+        (name) => !["db.sqlite", "attachments", "brand"].includes(name),
+      )
+    )
+      fail("source inventory is invalid");
+    for (const entry of entries)
+      await docker(["container", "cp", `${container}:/data/${entry}`, output]);
     await verifySqliteWithImage(output, inspection.Config.Image);
     const metadata = await createPhysicalSnapshotMetadata(output, {
       container,
