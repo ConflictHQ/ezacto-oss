@@ -1733,3 +1733,45 @@ describe('week-grid browser behavior', () => {
     expect(api.entries).toHaveLength(1)
   })
 })
+
+describe('remembered nav gates', () => {
+  const key = 'ezacto:user:1:nav-gates'
+
+  it('[browser] opens with Approvals and Team where this person last saw them', async () => {
+    // Both wait on the server, and that answer landed a beat after the rest
+    // of the nav: the links appeared under a person's eyes on every page and
+    // the items below them shifted. The last answer is the first one shown.
+    renderBrowserShell()
+    globalThis.localStorage.setItem(key, JSON.stringify({ approvals: true, team: true }))
+    // The week never lands here: the fresh answer is still on its way.
+    const api = { ...browserApi(), listTimesheetSubmissions: () => new Promise<never>(() => {}) }
+    void mountShell(api)
+    await vi.waitFor(() =>
+      expect(document.querySelector<HTMLElement>('[data-approvals-nav]')!.hidden).toBe(false),
+    )
+    expect(document.querySelector<HTMLElement>('[data-team-nav]')!.hidden).toBe(false)
+  })
+
+  it('[browser] remembers the answer the server gave, and corrects a stale one', async () => {
+    renderBrowserShell()
+    globalThis.localStorage.setItem(key, JSON.stringify({ approvals: true }))
+    // This api offers no approvals module, so the fresh answer is "hidden".
+    await mountShell(browserApi())
+    await vi.waitFor(() =>
+      expect(document.querySelector<HTMLElement>('[data-approvals-nav]')!.hidden).toBe(true),
+    )
+    expect(JSON.parse(globalThis.localStorage.getItem(key)!)).toEqual({ approvals: false })
+  })
+
+  it('[browser] shows nothing it has not been told, and survives storage that refuses', async () => {
+    renderBrowserShell()
+    globalThis.localStorage.removeItem(key)
+    const api = { ...browserApi(), listTimesheetSubmissions: () => new Promise<never>(() => {}) }
+    void mountShell(api)
+    await vi.waitFor(() =>
+      expect(document.querySelector<HTMLElement>('[data-current-user-id]')!.textContent).toBe('1'),
+    )
+    expect(document.querySelector<HTMLElement>('[data-approvals-nav]')!.hidden).toBe(true)
+    expect(document.querySelector<HTMLElement>('[data-team-nav]')!.hidden).toBe(true)
+  })
+})

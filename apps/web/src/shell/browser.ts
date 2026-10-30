@@ -1210,6 +1210,39 @@ type WeekStartDay = 'saturday' | 'sunday' | 'monday'
 const storageKey = (userId: number, within: string, weekStartDay: WeekStartDay): string =>
   `ezacto:user:${userId}:week-rows:${weekDates(within, weekStartDay)[0]}`
 
+/**
+ * The nav gates the server has to answer (Approvals, Team), remembered per
+ * person so the next page opens with them already settled. Storage can be
+ * refused or empty; then nothing is remembered and the links wait as before.
+ */
+type RememberedNavGates = { readonly approvals?: boolean; readonly team?: boolean }
+
+const navGatesKey = (userId: number): string => `ezacto:user:${userId}:nav-gates`
+
+const rememberedNavGates = (userId: number): RememberedNavGates => {
+  try {
+    const value: unknown = JSON.parse(globalThis.localStorage.getItem(navGatesKey(userId)) ?? '{}')
+    if (typeof value !== 'object' || value === null) return {}
+    const approvals = Reflect.get(value, 'approvals')
+    const team = Reflect.get(value, 'team')
+    return {
+      ...(typeof approvals === 'boolean' ? { approvals } : {}),
+      ...(typeof team === 'boolean' ? { team } : {}),
+    }
+  } catch {
+    return {}
+  }
+}
+
+const rememberNavGate = (userId: number, gate: keyof RememberedNavGates, visible: boolean): void => {
+  try {
+    const next = { ...rememberedNavGates(userId), [gate]: visible }
+    globalThis.localStorage.setItem(navGatesKey(userId), JSON.stringify(next))
+  } catch {
+    // Storage refused: the links wait for the server as they did.
+  }
+}
+
 const loadSupplementalRows = (
   userId: number,
   within: string,
@@ -2296,15 +2329,24 @@ export const mountShell = async (
     // After this returns, so the loader below is defined; the card shows the
     // role until the profile answers.
     queueMicrotask(() => loadIdentityName(operation))
-    for (const link of document.querySelectorAll<HTMLElement>('[data-team-nav]')) {
-      link.hidden = true
-    }
     // Settled on every page, not only the two that show the strip: the company
     // tab is the standing answer to "may this person open company settings",
     // and ⌘K asks it from wherever it is opened.
     revealCompanySettings(identity)
     revealMoneySections(identity)
     revealDirectorySections(identity)
+    // Approvals and Team wait on the server (the module, the team's status),
+    // and that answer lands a beat after the rest of the nav: the links
+    // appeared under a person's eyes on every page, and the items below them
+    // shifted. The last answer this person got is the first one shown; the
+    // fresh answer corrects it when it lands.
+    const remembered = rememberedNavGates(identity.user_id)
+    for (const link of document.querySelectorAll<HTMLElement>('[data-approvals-nav]')) {
+      link.hidden = remembered.approvals !== true
+    }
+    for (const link of document.querySelectorAll<HTMLElement>('[data-team-nav]')) {
+      link.hidden = remembered.team !== true
+    }
     signInResult.textContent = ''
     logoutResult.textContent = ''
     setApplicationAvailability(true)
@@ -2901,6 +2943,7 @@ export const mountShell = async (
       for (const link of document.querySelectorAll<HTMLElement>('[data-team-nav]')) {
         link.hidden = !status.enabled
       }
+      rememberNavGate(identity.user_id, 'team', status.enabled)
     } catch (error) {
       handleSessionFailure(error, operation)
     }
@@ -3140,6 +3183,7 @@ export const mountShell = async (
     for (const link of document.querySelectorAll<HTMLElement>('[data-approvals-nav]')) {
       link.hidden = !visible
     }
+    if (currentIdentity !== null) rememberNavGate(currentIdentity.user_id, 'approvals', visible)
     approvalsPageElement.hidden = !(timesheetApprovalsPage && visible)
   }
 
