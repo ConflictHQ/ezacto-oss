@@ -55,9 +55,28 @@ const liveTextRules: readonly {
     foreground: 'live_text',
     background: 'status_bg',
   },
+  // The notifications list's green tile paints `background: var(--ez-status-bg)`,
+  // the paid band's pairing, and sets its icon in the same words-green.
+  {
+    selector: ".notif-icon[data-tone='green']",
+    foreground: 'live_text',
+    background: 'status_bg',
+  },
   // `.week-cell` paints `background: var(--ez-ground)`.
   {
     selector: '.week-cell[data-cell-state="running"] .cell-status',
+    foreground: 'live_text',
+    background: 'ground',
+  },
+  // The calendar's running chip paints an 8% tint of `live` over `ground`,
+  // which reads as `ground` for the words-green on it and on its figure.
+  {
+    selector: '.cal-month-entry[data-running]',
+    foreground: 'live_text',
+    background: 'ground',
+  },
+  {
+    selector: '.cal-month-entry[data-running] .cal-month-entry-time',
     foreground: 'live_text',
     background: 'ground',
   },

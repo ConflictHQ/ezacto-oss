@@ -154,6 +154,7 @@ describe('worker entry', () => {
       '/settings/company',
       '/settings/templates',
       '/settings/deliveries',
+      '/notifications',
     ]
     for (const path of paths) {
       const res = await app.request(path, {}, branded)
@@ -177,6 +178,21 @@ describe('worker entry', () => {
     const time = await (await app.request('/', {}, env)).text()
     expect(time).toContain('data-app-view="time"')
     expect(time).toMatch(
+      /<a href="\/" aria-current="page"><svg[^>]*>(?:(?!<\/a>)[^])*<span class="nav-label">Time<\/span><\/a>/u,
+    )
+  })
+
+  it('[acceptance] serves Notifications under the bell, outside the primary nav', async () => {
+    // Reached from the bell at the end of the breadcrumb row, not from a nav
+    // item, so no section is marked as the page you are on.
+    const page = await (await app.request('/notifications', {}, env)).text()
+    expect(page).toContain('data-app-view="notifications"')
+    expect(page).toContain('data-notifications-page>')
+    expect(page).toContain('<span class="crumbs-current">Notifications</span>')
+    expect(page).toMatch(
+      /<a class="crumbs-bell" href="\/notifications" aria-label="Notifications" aria-current="page" data-notifications-bell>/u,
+    )
+    expect(page).not.toMatch(
       /<a href="\/" aria-current="page"><svg[^>]*>(?:(?!<\/a>)[^])*<span class="nav-label">Time<\/span><\/a>/u,
     )
   })
@@ -297,9 +313,12 @@ describe('worker entry', () => {
     // were on.
     const html = await (await app.request('/settings/company', {}, env)).text()
     expect(html).toContain('data-app-view="settings-company"')
-    // The Week/Day strip marks itself; what must not be marked is a primary
-    // section, and Time is the one the default would have claimed.
-    expect(html).not.toMatch(/<a href="\/" aria-current="page"><svg/u)
+    // Time's own switches mark themselves (Week, and Timesheet with its icon);
+    // what must not be marked is a primary section, and Time is the one the
+    // default would have claimed.
+    expect(html).not.toMatch(
+      /<a href="\/" aria-current="page"><svg[^>]*>(?:(?!<\/a>)[^])*<span class="nav-label">Time<\/span><\/a>/u,
+    )
     const nav = /<nav class="primary-nav"[^>]*>(.*?)<\/nav>/su.exec(html)?.[1] ?? ''
     expect(nav).not.toContain('aria-current')
   })

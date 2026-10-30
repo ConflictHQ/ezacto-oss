@@ -3544,10 +3544,6 @@ html[data-backups-unavailable] [data-settings-data-backups] {
 .timesheet-lock-card button {
   min-height: 44px;
 }
-.timesheet-status-actions {
-  display: flex;
-  gap: 8px;
-}
 
 @media (max-width: 720px) {
   .invoice-facts {
@@ -3667,8 +3663,7 @@ html[data-backups-unavailable] [data-settings-data-backups] {
     flex-direction: column;
     gap: 4px;
   }
-  .timesheet-lock-policy > header,
-  .timesheet-status-actions {
+  .timesheet-lock-policy > header {
     align-items: stretch;
     flex-direction: column;
   }
@@ -4001,39 +3996,452 @@ a {
  * a joined group, the selected tint and a blue border on the mode you are in. The
  * strip stays a strip: same nav, same links, same aria-current, different paint.
  */
+/* The group is a track with the mode you are in raised on it as a white pill
+   (the ezacto-ui view toggle): one bordered box, the segments inside it. */
 .tabstrip.view-switch {
+  height: auto;
   align-items: center;
-  gap: 0;
+  gap: 2px;
+  padding: 4px;
+  border: 1px solid var(--ez-border);
+  border-radius: 8px;
+  background: var(--ez-surface-2);
+  overflow: visible;
 }
 .tabstrip.view-switch a {
-  height: 28px;
-  padding: 0 16px;
-  border: 1px solid var(--ez-border);
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 30px;
+  padding: 0 14px;
+  border: 0;
+  border-radius: 6px;
+  font-size: 14px;
+  font-weight: 600;
 }
-/* The segments share their edge so the group reads as one control rather than
-   as two buttons that happen to touch. */
-.tabstrip.view-switch a + a {
-  margin-inline-start: -1px;
+.tabstrip.view-switch a .ez-icon {
+  width: 13px;
+  height: 13px;
+  stroke-width: 2;
 }
-.tabstrip.view-switch a:first-child {
-  border-start-start-radius: var(--ez-radius);
-  border-end-start-radius: var(--ez-radius);
-}
-.tabstrip.view-switch a:last-child {
-  border-start-end-radius: var(--ez-radius);
-  border-end-end-radius: var(--ez-radius);
+/* Week and Day choose between the two timesheets; on the calendar there is
+   nothing for them to choose, so the toolbar does not offer them there. */
+html[data-time-view='calendar'] [data-time-views],
+html[data-time-view='month'] [data-time-views] {
+  display: none;
 }
 .tabstrip.view-switch a:hover:not([aria-current="page"]),
 .tabstrip.view-switch a:focus-visible:not([aria-current="page"]) {
-  background: var(--ez-surface-2);
   color: var(--ez-ink);
 }
 .tabstrip.view-switch a[aria-current="page"] {
-  /* Above its neighbour, so the shared edge is the blue one. */
-  position: relative;
+  background: var(--ez-ground);
+  color: var(--ez-data);
+  box-shadow: 0 1px 3px color-mix(in srgb, var(--ez-shadow) 8%, transparent);
+}
+/* The breadcrumb row over every page's title (the ezacto-ui bc-bar): where you
+   are, and the bell at its end. The crumbs stand 36px tall, the bell's height,
+   so the row keeps its height while the bell's count comes and goes. */
+.crumb-bar {
+  display: flex;
+  align-items: center;
+  margin-bottom: 4px;
+  padding: 16px 24px 0;
+}
+/* The running timer's band under the crumbs, as the ezacto-ui timer bar: a
+   blue dot, the project in the blue, the task quiet, the clock bold, and
+   Stop outlined at the right. Absent, not empty, while nothing runs. */
+.timer-band {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-width: 0;
+  padding: 8px 24px;
+  border-bottom: 1px solid var(--ez-blue-light);
   background: var(--ez-orange-tint);
-  border-color: var(--ez-data);
+  font-size: 13px;
+}
+.timer-band[hidden] {
+  display: none;
+}
+.timer-band-dot {
+  flex: none;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--ez-action);
+}
+.timer-band-project {
+  color: var(--ez-data);
+  font-weight: 600;
+}
+.timer-band-task {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--ez-muted);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.timer-band-time {
+  color: var(--ez-data);
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+.timer-band-stop {
+  flex: none;
+  margin-left: auto;
+  padding: 4px 12px;
+  border: 1px solid var(--ez-data);
+  border-radius: 6px;
+  background: transparent;
+  color: var(--ez-data);
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+}
+.timer-band-stop:hover,
+.timer-band-stop:focus-visible {
+  background: var(--ez-action);
+  color: var(--ez-action-fg);
+}
+.crumbs {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  min-height: 36px;
+  color: var(--ez-muted);
+  font-size: 12px;
+}
+.crumbs a {
+  color: inherit;
+  text-decoration: none;
+}
+.crumbs a:hover,
+.crumbs a:focus-visible {
+  color: var(--ez-ink);
+}
+.crumbs-current {
+  color: var(--ez-ink);
+  font-weight: 600;
+}
+.crumbs-sep {
+  color: color-mix(in srgb, var(--ez-border) 85%, var(--ez-muted));
+  font-size: 13px;
+}
+/* Nine 4px squares on a 6px pitch: the grid glyph the reference opens its
+   breadcrumb with. One square drawn, the other eight are its shadows. */
+.crumbs-mark {
+  width: 16px;
+  height: 16px;
+  flex: none;
+  opacity: 0.4;
+}
+.crumbs-mark::before {
+  content: '';
+  display: block;
+  width: 4px;
+  height: 4px;
+  border-radius: 1px;
+  background: currentColor;
+  box-shadow:
+    6px 0 0,
+    12px 0 0,
+    0 6px 0,
+    6px 6px 0,
+    12px 6px 0,
+    0 12px 0,
+    6px 12px 0,
+    12px 12px 0;
+}
+/* The title row's right-hand cluster: the view switch and the primary action
+   at one height, as the reference sets its toggle beside "Send to approval". */
+.context-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: stretch;
+  justify-content: flex-end;
+  gap: 12px;
+}
+/* On a phone the cluster wraps onto two lines rather than squeezing the title
+   block beside it until its "This week" caption breaks across two. */
+[data-app-content] .context-row > div:first-child {
+  flex: none;
+}
+/* The bell at the end of the breadcrumb row (the ezacto-ui bc-notif): the way
+   to Notifications, carrying the count of what you have not seen. */
+.crumbs-bell {
+  position: relative;
+  display: flex;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  width: 36px;
+  height: 36px;
+  margin-left: auto;
+  border: 1px solid var(--ez-border);
+  border-radius: 10px;
+  background: var(--ez-ground);
+  color: var(--ez-ink-2);
+  text-decoration: none;
+  transition:
+    background 0.12s,
+    color 0.12s,
+    border-color 0.12s;
+}
+.crumbs-bell:hover,
+.crumbs-bell:focus-visible {
+  border-color: color-mix(in srgb, var(--ez-border) 85%, var(--ez-muted));
+  background: var(--ez-surface);
+  color: var(--ez-ink);
+}
+.crumbs-bell .ez-icon {
+  width: 19px;
+  height: 19px;
+}
+.crumbs-bell-count {
+  position: absolute;
+  top: -5px;
+  right: -5px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 17px;
+  height: 17px;
+  padding: 0 4px;
+  border: 2px solid var(--ez-ground);
+  border-radius: 9px;
+  background: var(--ez-red);
+  box-shadow: 0 1px 2px color-mix(in srgb, var(--ez-shadow) 15%, transparent);
+  color: var(--ez-action-fg);
+  font-size: 10px;
+  font-weight: 700;
+  line-height: 1;
+}
+.crumbs-bell-count[hidden] {
+  display: none;
+}
+/* The Notifications page (the ezacto-ui Notifications panel): cards, newest
+   first, the ones you have not seen tinted and marked. */
+.notifications-status {
+  margin: 0 0 16px;
+  color: var(--ez-muted);
+  font-size: 13px;
+}
+.notifications-status:empty {
+  display: none;
+}
+.notif-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  max-width: 720px;
+}
+.notif-group-label {
+  margin: 18px 0 10px;
+  color: var(--ez-muted);
+  font-size: var(--ez-label-size);
+  font-weight: var(--ez-label-weight);
+  letter-spacing: var(--ez-label-tracking);
+  text-transform: uppercase;
+}
+.notif-group-label:first-child {
+  margin-top: 0;
+}
+.notif-card {
+  display: flex;
+  align-items: flex-start;
+  gap: 14px;
+  padding: 16px;
+  border: 1px solid var(--ez-border);
+  border-radius: 12px;
+  background: var(--ez-ground);
+  transition:
+    border-color 0.12s,
+    box-shadow 0.12s;
+}
+.notif-card:hover {
+  border-color: color-mix(in srgb, var(--ez-border) 85%, var(--ez-muted));
+  box-shadow: 0 2px 8px color-mix(in srgb, var(--ez-shadow) 5%, transparent);
+}
+.notif-card[data-unread] {
+  border-color: color-mix(in srgb, var(--ez-action) 14%, var(--ez-ground));
+  background: color-mix(in srgb, var(--ez-action) 4%, var(--ez-ground));
+}
+.notif-icon {
+  display: flex;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  width: 40px;
+  height: 40px;
+  border-radius: 10px;
+}
+.notif-icon[data-tone='blue'] {
+  background: var(--ez-orange-tint);
+  color: var(--ez-data);
+}
+/* The green tile is the paid band's pairing (see theme-contrast.test.ts):
+   `live_text` on `status_bg`, the one green-on-tint pair the gate certifies. */
+.notif-icon[data-tone='green'] {
+  background: var(--ez-status-bg);
+  color: var(--ez-live-text);
+}
+.notif-icon[data-tone='amber'] {
+  background: var(--ez-amber-bg);
+  color: var(--ez-amber);
+}
+.notif-icon[data-tone='neutral'] {
+  background: var(--ez-surface-2);
+  color: var(--ez-ink-2);
+}
+.notif-body {
+  flex: 1;
+  min-width: 0;
+}
+.notif-title {
+  margin: 0 0 2px;
+  color: var(--ez-ink);
+  font-size: 14px;
+  font-weight: 600;
+}
+/* Once seen, a card's title drops its weight, so the eye lands on what is
+   new and reads past what is not. */
+.notif-card:not([data-unread]) .notif-title {
+  font-weight: 400;
+}
+.notif-text {
+  margin: 0;
+  color: var(--ez-muted);
+  font-size: 13px;
+  line-height: 1.45;
+}
+.notif-time {
+  flex: none;
+  margin-top: 2px;
+  color: color-mix(in srgb, var(--ez-muted) 70%, var(--ez-ground));
+  font-size: 12px;
+  white-space: nowrap;
+}
+.notif-unread-dot {
+  flex: none;
+  width: 8px;
+  height: 8px;
+  margin-top: 6px;
+  border-radius: 50%;
+  background: var(--ez-action);
+}
+.notif-mark-read {
+  padding: 4px 8px;
+  border: 0;
+  border-radius: 6px;
+  background: none;
+  color: var(--ez-data);
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 0.12s;
+}
+.notif-mark-read:hover,
+.notif-mark-read:focus-visible {
+  background: var(--ez-orange-tint);
+}
+.notif-mark-read[hidden] {
+  display: none;
+}
+.context-actions .primary-action {
+  min-height: 40px;
+  padding: 0 14px;
+  font-size: 14px;
+}
+/* Sending the week for approval: the ezacto-ui split button. One blue box
+   carrying the shadow; inside it the main part and, while there is a second
+   action to offer, the caret that opens it. */
+.approval-split {
+  position: relative;
+  display: inline-flex;
+  align-items: stretch;
+  border-radius: 8px;
+  box-shadow: var(--ez-shadow-primary);
+}
+.approval-split .primary-action {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
   box-shadow: none;
+}
+.approval-split .primary-action[hidden] {
+  display: none;
+}
+.approval-split .primary-action .ez-icon {
+  width: 15px;
+  height: 15px;
+  stroke-width: 1.75;
+}
+.approval-split:has(.approval-more:not([hidden])) .primary-action {
+  border-right: 0;
+  border-radius: 8px 0 0 8px;
+}
+.approval-more {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0 10px;
+  border: 1px solid var(--ez-action-edge);
+  border-left: 1px solid color-mix(in srgb, var(--ez-action-fg) 55%, transparent);
+  border-radius: 0 8px 8px 0;
+  background: var(--ez-action);
+  color: var(--ez-action-fg);
+  cursor: pointer;
+}
+.approval-more[hidden] {
+  display: none;
+}
+.approval-more .ez-icon {
+  width: 14px;
+  height: 14px;
+  stroke-width: 2.25;
+}
+.approval-split .primary-action:hover:not(:disabled),
+.approval-more:hover,
+.approval-more:focus-visible {
+  background: color-mix(in srgb, var(--ez-action-fg) 16%, var(--ez-action));
+}
+.approval-menu {
+  position: absolute;
+  top: calc(100% + 6px);
+  right: 0;
+  z-index: 5;
+  display: flex;
+  flex-direction: column;
+  min-width: 200px;
+  padding: 6px;
+  border: 1px solid var(--ez-border);
+  border-radius: 10px;
+  background: var(--ez-ground);
+  box-shadow: var(--ez-shadow-menu);
+}
+.approval-menu[hidden] {
+  display: none;
+}
+.approval-menu button {
+  min-height: 36px;
+  padding: 0 10px;
+  border: 0;
+  border-radius: 6px;
+  background: none;
+  color: var(--ez-ink);
+  font-size: 13px;
+  font-weight: 500;
+  text-align: left;
+  cursor: pointer;
+}
+.approval-menu button:hover:not(:disabled),
+.approval-menu button:focus-visible {
+  background: var(--ez-surface-2);
+}
+.approval-menu button[hidden] {
+  display: none;
 }
 .app-content {
   padding: 28px clamp(24px, 3vw, 56px) 48px;
@@ -4591,11 +4999,15 @@ button.primary-action.primary-action {
    off until a window narrower than about 1300px beside the sidebar. The
    padding is room for a focused segment's ring, which the scroller would
    otherwise clip; the negative margin keeps the segments where they stood. */
+/* The scroll is restated: the view-switch track (the ezacto-ui toggle) lets its
+   pills overflow, and without this the strip pushed every settings page as
+   wide as its thirteen segments. */
 .tabstrip.settings-sections {
   height: auto;
   margin: -6px -6px 2px;
   padding: 6px;
   border-bottom: 0;
+  overflow-x: auto;
   scrollbar-width: thin;
 }
 .tabstrip.settings-sections a {
@@ -5608,13 +6020,27 @@ button.primary-action.primary-action {
 .nav-collapse,
 .primary-nav .ez-icon,
 .identity-settings .ez-icon,
-.identity-signout .ez-icon {
+.identity-signout .ez-icon,
+.nav-group-label,
+.identity-initials,
+.account-menu-toggle {
   display: none;
+}
+/* The sidebar's groups and account menu are boxes only in the expanded
+   sidebar. Everywhere else they are not boxes at all, so the links and the
+   account's controls lay out in their rows exactly as they did without them. */
+.nav-group,
+.account-menu {
+  display: contents;
 }
 @media (min-width: 900px) {
   [data-ez-nav='sidebar'] .authenticated-shell {
     padding-left: var(--ez-sidebar-width);
   }
+  /* The column is a card standing in a gutter (the ezacto-ui sidebar). The
+     header is still the whole sidebar -- its width is what the shell pads for
+     and what the tests measure -- so the gutter is the header's own ground and
+     the card is drawn inside it, with the links laid over both. */
   [data-ez-nav='sidebar'] .topbar {
     position: fixed;
     z-index: 30;
@@ -5626,28 +6052,116 @@ button.primary-action.primary-action {
     grid-template-rows: auto auto auto auto auto 1fr;
     align-items: start;
     gap: 8px;
-    padding: 12px 10px;
+    padding: 20px;
     overflow-y: auto;
     border-right: 1px solid var(--ez-border);
-    background: var(--ez-surface);
+    background: var(--ez-surface-2);
     color: var(--ez-ink);
   }
-  /* The brand keeps its band. The mark an operator uploads for a dark ground
-     is drawn on it, and on the light sidebar that mark would disappear. */
+  [data-ez-nav='sidebar'] .topbar::before,
+  [data-ez-nav='sidebar'] .topbar::after {
+    content: '';
+    position: absolute;
+    z-index: -1;
+    pointer-events: none;
+  }
+  /* The card, with its foot washed in the action blue: the theme's own blue,
+     so a dark scheme gets its own rather than ours. */
+  [data-ez-nav='sidebar'] .topbar::before {
+    inset: 10px;
+    border: 1px solid var(--ez-border);
+    border-radius: 12px;
+    background:
+      linear-gradient(
+          to top,
+          color-mix(in srgb, var(--ez-action) 15%, transparent),
+          transparent
+        )
+        bottom / 100% 280px no-repeat,
+      var(--ez-ground);
+  }
+  /* A dot grid over the wash, fading out from the card's bottom-left corner.
+     A third of the action blue at the strongest: the dots are texture under
+     the account, not a pattern beside it. The grid starts on the card's own
+     left and bottom edges, a half-dot showing at each, as the drawn grid it
+     follows does. */
+  [data-ez-nav='sidebar'] .topbar::after {
+    inset: auto 11px 11px;
+    height: 280px;
+    border-radius: 0 0 11px 11px;
+    background: radial-gradient(
+        circle,
+        color-mix(in srgb, var(--ez-action) 35%, transparent) 1.1px,
+        transparent 1.5px
+      )
+      -10px -10px / 20px 20px;
+    mask-image: radial-gradient(farthest-corner at 0 100%, black, transparent 67%);
+  }
+  /* The brand is a card of its own, with the mark on a tile of the band. An
+     operator's uploaded mark is drawn for that dark ground and would vanish on
+     the white card, so a brand that has one keeps the whole band instead. */
   [data-ez-nav='sidebar'] .brand {
     grid-column: 1 / -1;
-    min-height: 52px;
+    grid-template-columns: auto minmax(0, 1fr);
+    gap: 10px;
+    min-height: 56px;
     margin: 0 0 4px;
-    padding: 0 52px 0 16px;
+    padding: 0 52px 0 10px;
     place-items: center start;
-    border-radius: calc(var(--ez-radius) * 1.5);
+    border: 1px solid var(--ez-border);
+    border-radius: 12px;
+    background: var(--ez-ground);
+    color: var(--ez-ink);
+    font:
+      700 15px/1.2 var(--ez-font-body),
+      sans-serif;
+    letter-spacing: -0.02em;
+  }
+  [data-ez-nav='sidebar'] .brand-glyph {
+    grid-area: 1 / 1;
+    display: grid;
+    width: 34px;
+    height: 34px;
+    place-items: center;
+    border-radius: 9px;
     background: var(--ez-band);
     color: var(--ez-band-ink);
   }
+  [data-ez-nav='sidebar'] .brand-glyph .brand-logo {
+    width: 20px;
+    height: 20px;
+  }
+  [data-ez-nav='sidebar'] .brand-glyph .ez-icon {
+    width: 18px;
+    height: 18px;
+  }
+  [data-ez-nav='sidebar'] .brand-wordmark {
+    grid-area: 1 / 2;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  /* The tile carries the product's glyph; the lockup's own copy would be a
+     second one beside it. */
+  [data-ez-nav='sidebar'] .brand-wordmark .brand-logo {
+    display: none;
+  }
+  [data-ez-nav='sidebar'] .brand:has(.brand-mark) {
+    border-color: transparent;
+    background: var(--ez-band);
+    color: var(--ez-band-ink);
+  }
+  [data-ez-nav='sidebar'][data-ez-sidebar='expanded'] .brand:has(.brand-mark) .brand-glyph {
+    display: none;
+  }
+  [data-ez-nav='sidebar'][data-ez-sidebar='expanded'] .brand:has(.brand-mark) .brand-wordmark {
+    grid-column: 1 / -1;
+  }
   [data-ez-nav='sidebar'] .nav-collapse {
     position: absolute;
-    top: 16px;
-    right: 20px;
+    top: 32px;
+    right: 32px;
     display: grid;
     width: 44px;
     height: 44px;
@@ -5656,22 +6170,57 @@ button.primary-action.primary-action {
     border: 0;
     border-radius: var(--ez-radius);
     background: transparent;
+    color: var(--ez-muted);
+  }
+  [data-ez-nav='sidebar'] .nav-collapse:hover,
+  [data-ez-nav='sidebar'] .nav-collapse:focus-visible {
+    background: var(--ez-surface-2);
+    color: var(--ez-ink);
+  }
+  [data-ez-nav='sidebar'] .nav-collapse .ez-icon {
+    width: 14px;
+    height: 14px;
+  }
+  [data-ez-nav='sidebar'] .brand:has(.brand-mark) + .nav-collapse {
     color: var(--ez-band-ink);
   }
   [data-ez-nav='sidebar'] .primary-nav {
     grid-column: 1 / -1;
     display: grid;
-    gap: 2px;
+    gap: 8px;
+  }
+  [data-ez-nav='sidebar'] .nav-group {
+    display: grid;
+    gap: 1px;
+  }
+  /* A heading over nothing is worse than no heading: a profile that may open
+     none of a group's sections does not see the group. */
+  [data-ez-nav='sidebar'] .nav-group:not(:has(a:not([hidden]))) {
+    display: none;
+  }
+  [data-ez-nav='sidebar'] .nav-group-label {
+    display: block;
+    padding: 8px 12px 4px;
+    /* A heading, not a label to read: lighter than the muted ink, mixed
+       toward the ground so a dark scheme dims it the same way. */
+    color: color-mix(in srgb, var(--ez-muted) 60%, var(--ez-ground));
+    font:
+      700 10px/1.4 var(--ez-font-body),
+      sans-serif;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
   }
   [data-ez-nav='sidebar'] .primary-nav a {
     grid-template-columns: auto minmax(0, 1fr);
     place-items: center start;
     gap: 12px;
-    min-height: 44px;
-    padding: 0 6px;
-    border-radius: calc(var(--ez-radius) + 2px);
-    color: var(--ez-ink);
+    min-height: 50px;
+    padding: 0 12px;
+    border-radius: 10px;
+    color: var(--ez-ink-2);
+    font-size: 14px;
     font-weight: 600;
+    letter-spacing: -0.1px;
   }
   [data-ez-nav='sidebar'] .primary-nav .ez-icon {
     display: block;
@@ -5684,7 +6233,7 @@ button.primary-action.primary-action {
   }
   [data-ez-nav='sidebar'] .primary-nav a:hover,
   [data-ez-nav='sidebar'] .primary-nav a:focus-visible {
-    background: var(--ez-surface-2);
+    background: var(--ez-surface);
   }
   /* The section you are in: its row on the nested grey and its mark on a tile
      of the action blue. aria-current is what draws it, so what the eye sees
@@ -5698,12 +6247,14 @@ button.primary-action.primary-action {
     box-shadow: inset 0 0 0 1px var(--ez-action-edge);
     color: var(--ez-action-fg);
   }
+  /* These sit inside the glow at the card's foot. On the ground they read as
+     ground; over the wash they let it through, so the glow is one field
+     behind them rather than a field with four white holes in it. */
   [data-ez-nav='sidebar'] .timer-chip,
   [data-ez-nav='sidebar'] .money-toggle,
   [data-ez-nav='sidebar'] .command-trigger,
-  [data-ez-nav='sidebar'] .menu-trigger,
-  [data-ez-nav='sidebar'] .account-identity {
-    background: var(--ez-ground);
+  [data-ez-nav='sidebar'] .menu-trigger {
+    background: color-mix(in srgb, var(--ez-ground) 70%, transparent);
   }
   [data-ez-nav='sidebar'] .timer-chip {
     grid-column: 1 / -1;
@@ -5742,22 +6293,157 @@ button.primary-action.primary-action {
   [data-ez-nav='sidebar'] .account {
     grid-column: 1 / -1;
     align-self: end;
+    padding-top: 8px;
+    border-top: 1px solid var(--ez-border);
   }
+  /* The account is one row -- monogram, name, role -- and its controls fold
+     into a menu over it (the ezacto-ui sidebar), so the name has the whole
+     column rather than sharing it with two buttons. */
   [data-ez-nav='sidebar'] .account-identity {
-    flex-wrap: wrap;
-    padding: 8px;
+    position: relative;
+    padding: 10px 12px;
+    border-color: transparent;
+    border-radius: 10px;
+    background: transparent;
   }
-  /* The name takes the first row beside the avatar, and the two account
-     controls share the second, so neither the name nor a control is squeezed
-     to an ellipsis in a column this narrow. */
+  [data-ez-nav='sidebar'] .account-identity:hover,
+  [data-ez-nav='sidebar'] .account-identity[data-account-menu-open] {
+    background: var(--ez-surface);
+  }
+  [data-ez-nav='sidebar'] .identity-initials {
+    display: grid;
+    flex: none;
+    width: 32px;
+    height: 32px;
+    place-items: center;
+    border-radius: 50%;
+    background: var(--ez-action);
+    color: var(--ez-action-fg);
+    font:
+      700 12px/1 var(--ez-font-body),
+      sans-serif;
+  }
+  [data-ez-nav='sidebar'] .identity-initials:not([hidden]) + .identity-avatar {
+    display: none;
+  }
   [data-ez-nav='sidebar'] .identity-text {
     display: grid;
-    flex: 1 1 calc(100% - 48px);
+    flex: 1;
+    font-size: 13px;
   }
-  [data-ez-nav='sidebar'] .identity-settings,
-  [data-ez-nav='sidebar'] .identity-signout {
-    flex: 1 1 40%;
-    text-align: center;
+  [data-ez-nav='sidebar'] .identity-meta {
+    font-size: 11px;
+    font-weight: 400;
+  }
+  [data-ez-nav='sidebar'][data-ez-sidebar='expanded'] .account-menu-toggle {
+    display: grid;
+    flex: none;
+    width: 24px;
+    height: 24px;
+    place-items: center;
+    padding: 0;
+    border: 0;
+    border-radius: 6px;
+    background: transparent;
+    color: var(--ez-muted);
+  }
+  /* The whole row opens it, as in ezacto-ui, while the toggle stays the one
+     control a keyboard and a screen reader meet. */
+  [data-ez-nav='sidebar'][data-ez-sidebar='expanded'] .account-menu-toggle::after {
+    content: '';
+    position: absolute;
+    inset: 0;
+  }
+  [data-ez-nav='sidebar'][data-ez-sidebar='expanded'] .account-menu-toggle .ez-icon {
+    width: 14px;
+    height: 14px;
+    transition: transform 0.18s ease;
+  }
+  [data-ez-nav='sidebar'][data-ez-sidebar='expanded'] [data-account-menu-open] .account-menu-toggle .ez-icon {
+    transform: rotate(90deg);
+  }
+  /* Hidden by visibility rather than display, so it can ease in, and so a
+     closed menu's links are out of the tab order and the reading order. */
+  [data-ez-nav='sidebar'][data-ez-sidebar='expanded'] .account-menu {
+    position: absolute;
+    z-index: 2;
+    inset: auto 0 calc(100% + 8px);
+    display: grid;
+    gap: 2px;
+    padding: 6px;
+    border: 1px solid var(--ez-border);
+    border-radius: 12px;
+    background: var(--ez-ground);
+    box-shadow:
+      0 12px 32px color-mix(in srgb, var(--ez-shadow) 14%, transparent),
+      0 2px 8px color-mix(in srgb, var(--ez-shadow) 6%, transparent);
+    visibility: hidden;
+    opacity: 0;
+    transform: translateY(6px);
+    transition:
+      opacity 0.16s ease,
+      transform 0.16s ease,
+      visibility 0.16s;
+  }
+  [data-ez-nav='sidebar'][data-ez-sidebar='expanded'] [data-account-menu-open] .account-menu {
+    visibility: visible;
+    opacity: 1;
+    transform: none;
+  }
+  /* Rows drawn 36px, 44px to the pointer (audit 995): 4px of transparent
+     border above and below that the hover ground stops short of, taken back
+     by the margin so the menu keeps its height. */
+  [data-ez-nav='sidebar'][data-ez-sidebar='expanded'] .account-menu .identity-settings,
+  [data-ez-nav='sidebar'][data-ez-sidebar='expanded'] .account-menu .identity-signout {
+    position: relative;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    width: 100%;
+    min-height: 44px;
+    margin-block: -4px;
+    padding: 0 10px;
+    border: solid transparent;
+    border-width: 4px 0;
+    border-radius: 8px / 12px;
+    background: transparent;
+    background-clip: padding-box;
+    color: var(--ez-ink);
+    font:
+      400 13px/1.2 var(--ez-font-body),
+      sans-serif;
+    text-align: left;
+  }
+  [data-ez-nav='sidebar'][data-ez-sidebar='expanded'] .account-menu .identity-settings:hover,
+  [data-ez-nav='sidebar'][data-ez-sidebar='expanded'] .account-menu .identity-settings:focus-visible {
+    background: var(--ez-surface);
+  }
+  [data-ez-nav='sidebar'][data-ez-sidebar='expanded'] .account-menu .ez-icon {
+    display: block;
+    flex: none;
+    width: 16px;
+    height: 16px;
+    color: var(--ez-muted);
+  }
+  /* Sign out is the one control here that ends something, so it is set apart
+     by a rule and drawn in the theme's red. */
+  [data-ez-nav='sidebar'][data-ez-sidebar='expanded'] .account-menu .identity-signout {
+    margin-top: 5px;
+    color: var(--ez-red);
+  }
+  [data-ez-nav='sidebar'][data-ez-sidebar='expanded'] .account-menu .identity-signout .ez-icon {
+    color: currentColor;
+  }
+  [data-ez-nav='sidebar'][data-ez-sidebar='expanded'] .account-menu .identity-signout::before {
+    content: '';
+    position: absolute;
+    inset: -6px 4px auto;
+    height: 1px;
+    background: var(--ez-border);
+  }
+  [data-ez-nav='sidebar'][data-ez-sidebar='expanded'] .account-menu .identity-signout:hover,
+  [data-ez-nav='sidebar'][data-ez-sidebar='expanded'] .account-menu .identity-signout:focus-visible {
+    background: color-mix(in srgb, var(--ez-red) 8%, transparent);
   }
 
   /* Narrowed to its icons. Every label stays in the document and out of
@@ -5765,18 +6451,30 @@ button.primary-action.primary-action {
   [data-ez-nav='sidebar'][data-ez-sidebar='collapsed'] .authenticated-shell {
     padding-left: var(--ez-sidebar-width-collapsed);
   }
+  /* A narrower gutter, so the 48px controls still fit inside the card. */
   [data-ez-nav='sidebar'][data-ez-sidebar='collapsed'] .topbar {
     width: var(--ez-sidebar-width-collapsed);
     grid-template-columns: minmax(0, 1fr);
     grid-template-rows: repeat(7, auto) 1fr;
     justify-items: center;
-    padding: 12px;
+    padding: 14px 10px;
+  }
+  [data-ez-nav='sidebar'][data-ez-sidebar='collapsed'] .topbar::before {
+    inset: 6px;
+  }
+  [data-ez-nav='sidebar'][data-ez-sidebar='collapsed'] .topbar::after {
+    inset: auto 7px 7px;
   }
   [data-ez-nav='sidebar'][data-ez-sidebar='collapsed'] .brand {
     width: 48px;
     min-height: 48px;
+    grid-template-columns: auto;
+    gap: 0;
     padding: 0;
     place-items: center;
+  }
+  [data-ez-nav='sidebar'][data-ez-sidebar='collapsed'] .nav-group-label {
+    display: none;
   }
   [data-ez-nav='sidebar'][data-ez-sidebar='collapsed'] .brand-wordmark {
     display: none;
@@ -5799,8 +6497,10 @@ button.primary-action.primary-action {
     padding: 0 6px;
   }
   [data-ez-nav='sidebar'][data-ez-sidebar='collapsed'] .timer-chip {
-    width: auto;
-    padding: 0 10px;
+    width: 48px;
+    gap: 4px;
+    justify-content: center;
+    padding: 0;
   }
   [data-ez-nav='sidebar'][data-ez-sidebar='collapsed'] .money-toggle,
   [data-ez-nav='sidebar'][data-ez-sidebar='collapsed'] .command-trigger,
@@ -5885,6 +6585,98 @@ button[data-auth-action]:disabled {
   border-color: var(--ez-action);
   color: var(--ez-ink);
 }
+/* While the week loads the band carries a spinner, and the part of the page
+   that is on its way -- the grid, the day list or the month -- waits dimmed
+   under it, so "loading" is seen where the eye already is. */
+.status-spinner {
+  display: none;
+  flex: none;
+  width: 14px;
+  height: 14px;
+  border: 2px solid var(--ez-border);
+  border-top-color: var(--ez-action);
+  border-radius: 50%;
+  animation: auth-spin 0.8s linear infinite;
+}
+.session-status[data-state="loading"] .status-spinner {
+  display: inline-block;
+}
+.session-status[data-state="loading"] [data-session-message] {
+  flex: 1 1 auto;
+}
+[data-app-content][data-loading] .week-grid-table tbody,
+[data-app-content][data-loading] .week-grid-table tfoot,
+[data-app-content][data-loading] .day-rows,
+[data-app-content][data-loading] .cal-month {
+  opacity: 0.45;
+  transition: opacity 0.15s;
+}
+/* Before the first week lands the grid's one row is a skeleton: three bars
+   that shimmer in the rows' place, the loading text kept for the reader. */
+.week-grid-table tbody td.grid-loading {
+  height: 180px;
+  padding: 0 24px;
+  color: transparent;
+  background:
+    linear-gradient(
+        90deg,
+        transparent 0%,
+        color-mix(in srgb, var(--ez-ground) 60%, transparent) 50%,
+        transparent 100%
+      )
+      0 0 / 40% 100% no-repeat,
+    repeating-linear-gradient(
+      to bottom,
+      transparent 0,
+      transparent 18px,
+      var(--ez-surface-2) 18px,
+      var(--ez-surface-2) 42px,
+      transparent 42px,
+      transparent 60px
+    );
+  background-clip: content-box;
+  animation: grid-shimmer 1.4s ease-in-out infinite;
+}
+@keyframes grid-shimmer {
+  from {
+    background-position:
+      -40% 0,
+      0 0;
+  }
+  to {
+    background-position:
+      140% 0,
+      0 0;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .status-spinner,
+  .grid-loading {
+    animation: none;
+  }
+}
+/* The ordinary "connected" state is not a band between the title and the
+   toolbar (the reference page has none there): it is the page's quiet last
+   line, under the grid, the way the reference closes its page with a small
+   centred note. The page lays its parts out as a column so the line can be
+   sent to the end without moving in the markup. */
+.app-content[data-app-content] {
+  display: flex;
+  flex-direction: column;
+}
+[data-app-content] .session-status[data-quiet] {
+  display: flex;
+  order: 10;
+  justify-content: center;
+  margin: 0;
+  padding: 12px 24px;
+  border: 0;
+  border-radius: 0;
+  background: var(--ez-ground);
+  color: var(--ez-muted);
+  font-size: 12px;
+  text-align: center;
+}
 /*
  * A write being sent again after it failed (issue 953). Fixed to the corner, so
  * it reads the same beside the sidebar and under the top bar, and stays in view
@@ -5921,35 +6713,51 @@ button[data-auth-action]:disabled {
     animation: none;
   }
 }
+/* The week is the page, not a card on it (the ezacto-ui Time page): bands
+   divided by hairlines, running the width of the content. */
 .week-surface {
-  border: 1px solid var(--ez-border);
-  border-radius: calc(var(--ez-radius) * 1.5);
+  border: 0;
+  border-radius: 0;
   overflow: hidden;
 }
 .week-toolbar {
-  min-height: 64px;
+  min-height: 52px;
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 20px;
-  padding: 10px 20px;
-  background: var(--ez-surface);
+  gap: 12px;
+  padding: 8px 24px;
+  background: var(--ez-ground);
   border-bottom: 1px solid var(--ez-border);
 }
+/* The week's approval state, one thin line under the toolbar now that the
+   action itself stands in the title row. */
 .timesheet-status {
   display: flex;
   align-items: center;
-  justify-content: space-between;
   gap: 20px;
-  padding: 12px 20px;
+  padding: 8px 24px;
   border-bottom: 1px solid var(--ez-border);
-  background: var(--ez-status-bg);
+  background: var(--ez-ground);
+  color: var(--ez-muted);
+  font-size: 12px;
 }
 .timesheet-status[hidden] {
   display: none;
 }
+.timesheet-status > div {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 2px 10px;
+}
+.timesheet-status .eyebrow,
 .timesheet-status p {
-  margin: 4px 0 0;
+  margin: 0;
+}
+.timesheet-status strong {
+  color: var(--ez-ink);
+  font-weight: 600;
 }
 /* The reason an approver typed is prose about a refusal, and it sits on the
    status band's tint. It is written in red, which the gate holds to the 4.5:1
@@ -5957,10 +6765,6 @@ button[data-auth-action]:disabled {
 .timesheet-status [data-timesheet-rejection-reason] {
   color: var(--ez-red);
   white-space: pre-wrap;
-}
-.timesheet-status button {
-  min-height: 44px;
-  flex: 0 0 auto;
 }
 .week-surface h2 {
   font-size: 18px;
@@ -5970,8 +6774,10 @@ button[data-auth-action]:disabled {
  * ellipsize rather than wrap: the toolbar is one band and a second line here is
  * how a band becomes two.
  */
+/* Sized to its words, so the stepper is one compact box with "This week"
+   beside it, and the actions take the rest of the band. */
 .week-period {
-  flex: 1 1 auto;
+  flex: 0 1 auto;
   min-width: 0;
 }
 /*
@@ -5991,9 +6797,88 @@ button[data-auth-action]:disabled {
   white-space: nowrap;
   border: 0;
 }
+/* The stepper is one boxed control -- arrow, period, arrow -- and the period
+   is the blue the reference sets its dates in. */
+.week-period .period-row {
+  display: inline-flex;
+  gap: 6px;
+  padding: 4px 8px;
+  border: 1px solid var(--ez-border);
+  border-radius: 8px;
+  background: var(--ez-ground);
+}
+/* Drawn 28px, 44px tall to the finger (audit 995): the extra height is a
+   transparent border the background stops short of, the edge is an inset
+   ring, and the negative margin keeps the box the height of what it draws. */
+.week-period .period-step {
+  width: 28px;
+  min-height: 44px;
+  margin-block: -8px;
+  border-width: 8px 0;
+  border-color: transparent;
+  border-radius: 6px / 14px;
+  background-clip: padding-box;
+  box-shadow: inset 0 0 0 1px var(--ez-border);
+  color: var(--ez-muted);
+}
+.week-period .period-row {
+  position: relative;
+}
 .week-period .period-summary {
-  font-size: 18px;
+  flex: 0 1 auto;
+  padding: 0;
+  color: var(--ez-data);
+  font-size: 16px;
   font-weight: 600;
+}
+/* The dates as the way to any other week (the ezacto-ui period button): a
+   calendar mark, the dates, a chevron, the browser's picker behind them. */
+.period-jump {
+  display: inline-flex;
+  flex: 0 1 auto;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  min-width: 240px;
+  padding: 3px 6px;
+  border: 0;
+  border-radius: 6px;
+  background: none;
+  color: inherit;
+  font: inherit;
+  white-space: nowrap;
+  cursor: pointer;
+}
+.period-jump:hover:not(:disabled),
+.period-jump:focus-visible {
+  background: var(--ez-surface);
+}
+.period-jump .ez-icon {
+  color: var(--ez-muted);
+}
+.period-jump > .ez-icon:first-child {
+  width: 13px;
+  height: 13px;
+  stroke-width: 2;
+}
+.period-jump > .ez-icon:last-child {
+  width: 12px;
+  height: 12px;
+  stroke-width: 2.25;
+}
+/* Rendered, so the picker can open from it, but out of sight: the button is
+   what people see and press. */
+.period-jump-date {
+  position: absolute;
+  bottom: 0;
+  left: 50%;
+  width: 1px;
+  height: 1px;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  opacity: 0;
+  pointer-events: none;
 }
 .week-surface [data-week-total] {
   font-family: var(--ez-font-body), sans-serif;
@@ -6001,11 +6886,35 @@ button[data-auth-action]:disabled {
   font-weight: 600;
 }
 .week-actions {
+  flex: 1 1 auto;
   display: flex;
   align-items: center;
   justify-content: flex-end;
-  gap: 6px;
+  gap: 8px;
   flex-wrap: wrap;
+}
+/* "This week" is the reference's "Today": a link beside the stepper, not a
+   third button. Its calendar glyph went with the box. */
+.week-actions [data-week-current] {
+  min-height: 28px;
+  margin-right: auto;
+  padding: 0 4px;
+  border: 0;
+  background: none;
+  color: var(--ez-data);
+  font-size: 13px;
+  font-weight: 500;
+}
+.week-actions [data-week-current]:hover,
+.week-actions [data-week-current]:focus-visible {
+  text-decoration: underline;
+}
+/* Faded while you are already on today (the reference link), still a link. */
+.week-actions [data-week-current][data-on-today] {
+  opacity: 0.4;
+}
+.week-actions [data-week-current] .ez-icon {
+  display: none;
 }
 .week-actions button,
 .day-switcher button {
@@ -6016,43 +6925,134 @@ button[data-auth-action]:disabled {
   background: var(--ez-ground);
   color: var(--ez-ink);
 }
-.week-actions [data-add-row-trigger] {
+/* The line under the grid that grows it (the ezacto-ui add-row line): two
+   blue text actions, as the reference draws its "Add time entry". */
+.week-grid-foot {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 20px;
+  padding: 10px 24px;
+  border-bottom: 1px solid var(--ez-border);
+}
+/* 44px to the finger (audit 995) in the 28px line they are drawn on. */
+.week-grid-foot button {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 44px;
+  margin-block: -8px;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--ez-data);
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+}
+.week-grid-foot button:hover:not(:disabled),
+.week-grid-foot button:focus-visible {
+  text-decoration: underline;
+}
+.week-grid-foot button:disabled {
+  color: var(--ez-muted);
+  cursor: default;
+}
+.week-grid-foot .ez-icon {
+  width: 14px;
+  height: 14px;
+  stroke-width: 2;
+}
+html[data-time-view='calendar'] .week-grid-foot,
+html[data-time-view='month'] .week-grid-foot {
+  display: none;
+}
+/* Log time as the toolbar's square "+" (the ezacto-ui add button); the
+   control keeps its name for the reader and the tooltip. */
+.week-actions [data-time-log-time] {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  min-height: 32px;
+  padding: 0;
   border-color: var(--ez-action-edge);
+  border-radius: 8px;
   background: var(--ez-action);
+  box-shadow: var(--ez-shadow-primary);
   color: var(--ez-action-fg);
-  font-weight: 600;
 }
-/* The week's total is the one number the whole screen is for, and it read at
-   the same size as the buttons beside it. §6 of the old-UI analysis puts the
-   landmark figure at 40px; nothing in the app reached 20. It clamps so a
-   decimal account's wider figure still fits beside the controls. */
-.week-actions [data-week-total] {
-  min-width: 72px;
-  padding-left: 14px;
-  font-size: clamp(24px, 3vw, 40px);
-  line-height: 1.05;
-  font-weight: 700;
-  letter-spacing: -0.01em;
-  text-align: right;
+.week-actions [data-time-log-time][hidden] {
+  display: none;
 }
+/* Drawn 32px, a 44px square to the pointer (audit 995): 6px of padding the
+   ground stops short of, the edge drawn as an outline on the square you see
+   (the border keeps its colour at no width, so the edge stays the button's),
+   --ez-shadow-primary pulled 6px in to fall from that square, and the focus
+   ring moved in to sit where it did around it. */
+@media (min-width: 721px) {
+  .week-actions button[data-time-log-time] {
+    width: 44px;
+    min-height: 44px;
+    margin: -6px;
+    padding: 6px;
+    border-width: 0;
+    border-radius: 14px;
+    background-clip: content-box;
+    outline: 1px solid var(--ez-action-edge);
+    outline-offset: -7px;
+    box-shadow: 0 2px 8px -6px color-mix(in srgb, var(--ez-action) 35%, transparent);
+  }
+  .week-actions button[data-time-log-time]:disabled {
+    box-shadow: none;
+  }
+  .week-actions button[data-time-log-time]:focus-visible {
+    outline: 3px solid var(--ez-data);
+    outline-offset: -4px;
+  }
+}
+.week-actions [data-time-log-time] .ez-icon {
+  width: 16px;
+  height: 16px;
+  stroke-width: 2.25;
+}
+/* The week's total reads in the blue the reference gives its grand total,
+   at the toolbar's own size: the footer below carries it large. */
 /* The seven-day strip: the week's shape before you read a row. Seven equal
    columns so the eye compares heights, not positions. */
+/* The week bar as the reference draws it: seven cells on a grey ground with
+   a rule between them, the day you are on raised white-blue under a blue
+   rule, the weekend and the empty days greyed, and the week's total in a
+   column of its own at the end. */
+.day-strip {
+  display: flex;
+  border-bottom: 2px solid var(--ez-border);
+}
+
 .day-totals {
   display: grid;
+  flex: 1 1 auto;
   grid-template-columns: repeat(7, minmax(0, 1fr));
-  gap: 1px;
-  margin: 0 0 12px;
+  gap: 0;
+  min-width: 0;
+  margin: 0;
   padding: 0;
-  border: 1px solid var(--ez-border);
-  border-radius: var(--ez-radius);
+  border: 0;
   overflow: hidden;
-  background: var(--ez-border);
   list-style: none;
 }
 
 .day-totals li {
   display: grid;
+  min-width: 0;
+  border-right: 1px solid var(--ez-border);
   background: var(--ez-ground);
+}
+
+/* A day with nothing on it sits on the grey ground; a day with hours is
+   white, as the reference bar tells the two apart. */
+.day-totals li:has(strong[data-empty]) {
+  background: var(--ez-surface);
 }
 
 /* The padding moves onto the control so the whole tile is the hit target,
@@ -6060,7 +7060,8 @@ button[data-auth-action]:disabled {
 .day-totals li > button {
   display: grid;
   gap: 2px;
-  padding: 8px 10px;
+  min-width: 0;
+  padding: 10px 12px 8px;
   border: 0;
   border-radius: 0;
   background: none;
@@ -6071,7 +7072,7 @@ button[data-auth-action]:disabled {
 }
 
 .day-totals li > button:hover {
-  background: var(--ez-surface);
+  background: color-mix(in srgb, var(--ez-action) 3%, var(--ez-ground));
 }
 
 .day-totals li > button:focus-visible {
@@ -6079,28 +7080,76 @@ button[data-auth-action]:disabled {
   outline-offset: -2px;
 }
 
-.day-totals li[data-today] {
-  background: var(--ez-surface);
-  box-shadow: inset 0 -3px var(--ez-data);
+/* The day you are looking at is the tinted cell under the blue rule (the
+   reference strip); today is named in blue wherever it stands. */
+.day-totals li[data-selected],
+.day-totals li[data-selected]:has(strong[data-empty]) {
+  background: color-mix(in srgb, var(--ez-action) 5%, var(--ez-ground));
+  box-shadow: inset 0 -2px var(--ez-data);
 }
 
-.day-totals li[data-selected] {
-  background: var(--ez-surface);
+/* The reference's greys, mixed from the muted token: the day name a step
+   lighter than body captions, the date beside it lighter still. */
+.day-totals span,
+.day-strip-total span {
+  overflow: hidden;
+  color: color-mix(in srgb, var(--ez-muted) 90%, var(--ez-ground));
+  font: 600 12px/normal var(--ez-font-body), sans-serif;
+  letter-spacing: 0.04em;
+  text-overflow: ellipsis;
+  text-transform: uppercase;
+  white-space: nowrap;
 }
 
-.day-totals span {
-  color: var(--ez-muted);
-  font-size: 13px;
+.day-totals span small {
+  color: color-mix(in srgb, var(--ez-muted) 62%, var(--ez-ground));
+  font-size: inherit;
+  font-weight: 500;
+  letter-spacing: 0;
+  text-transform: none;
 }
 
-.day-totals strong {
-  font: 700 20px/1.2 var(--ez-font-body), sans-serif;
+.day-totals li[data-today] span,
+.day-totals li[data-selected] span,
+.day-totals li[data-selected] strong {
+  color: var(--ez-data);
+}
+
+.day-totals strong,
+.day-strip-total strong,
+.day-strip-total [data-week-total] {
+  font: 700 18px/normal var(--ez-font-body), sans-serif;
   font-variant-numeric: tabular-nums;
+  letter-spacing: -0.5px;
 }
 
-.day-totals strong[data-empty] {
-  color: var(--ez-muted);
-  font-weight: 400;
+.day-totals strong[data-empty],
+.day-totals li[data-weekend]:not([data-selected]):not([data-today]) span,
+.day-totals li[data-weekend]:not([data-selected]):not([data-today]) span small {
+  color: color-mix(in srgb, var(--ez-muted) 28%, var(--ez-ground));
+}
+
+.day-totals li[data-selected] strong[data-empty] {
+  color: color-mix(in srgb, var(--ez-data) 45%, var(--ez-ground));
+}
+
+.day-strip-total {
+  display: grid;
+  flex: none;
+  gap: 2px;
+  align-content: start;
+  width: 120px;
+  padding: 10px 16px 8px;
+  text-align: right;
+}
+
+/* The week's state under the toolbar says nothing the title row's button
+   does not, so the band shows only when it has more to say: a reason the
+   week came back, or how a submission is going. */
+.timesheet-status:not(
+    :has([data-timesheet-rejection-reason]:not([hidden]), [data-timesheet-result]:not(:empty))
+  ) {
+  display: none;
 }
 
 .day-row-start {
@@ -6119,12 +7168,23 @@ button[data-auth-action]:disabled {
   color: var(--ez-data);
 }
 
-/* The row label is a sticky header cell in a dense grid, so Start sits inline
-   with the task and appears on hover or focus rather than adding a control to
-   every row at rest. Keyboard reaches it the same way: focus-within. */
+/* The row label is a sticky header cell in a dense grid, so Start sits at the
+   cell's right edge, centred on the row, and appears on hover or focus rather
+   than adding a control to every row at rest. It is taken out of the flow:
+   the name and the task are blocks, so an inline button fell to a third line
+   and made every row that could start a timer taller than the reference's
+   two-line row, hidden or not. The cell keeps room for it on the right so a
+   long name ellipsizes before the button rather than under it. Keyboard
+   reaches it the same way: focus-within. */
+.week-grid-table tbody th:has(.grid-row-start) {
+  padding-right: 80px;
+}
 .grid-row-start {
+  position: absolute;
+  top: 50%;
+  right: 16px;
   min-height: 28px;
-  margin-left: 8px;
+  translate: 0 -50%;
   padding: 0 10px;
   border: 1px solid var(--ez-border);
   border-radius: var(--ez-radius);
@@ -6163,35 +7223,43 @@ button[data-auth-action]:disabled {
 }
 .week-grid-table th,
 .week-grid-table td {
-  height: 58px;
+  height: 60px;
   border-bottom: 1px solid var(--ez-border);
   text-align: left;
   white-space: nowrap;
 }
 .week-grid-table thead th {
-  height: 44px;
+  height: 56px;
   padding: 0 8px;
-  background: var(--ez-surface);
+  background: var(--ez-ground);
   color: var(--ez-muted);
-  font-size: 13px;
-  font-weight: 500;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.03em;
   text-align: center;
 }
 
-/* Weekday over date: the eye runs across the weekdays and drops to the date
-   only to place the week. On one line the two compete. */
+/* Weekday over date (the reference grid): the weekday small and quiet, the
+   date the line the eye lands on, and today's column in the blue. */
 .week-grid-table thead th [data-weekday] {
   display: block;
-  color: var(--ez-ink);
-  font-weight: 600;
   line-height: 1.2;
 }
 
 .week-grid-table thead th [data-date] {
   display: block;
-  font-size: 11px;
+  margin-top: 2px;
+  color: var(--ez-ink);
+  font-size: 13px;
+  font-weight: 700;
+  letter-spacing: 0;
   font-variant-numeric: tabular-nums;
   line-height: 1.2;
+}
+
+.week-grid-table thead th[data-today] [data-weekday],
+.week-grid-table thead th[data-today] [data-date] {
+  color: var(--ez-data);
 }
 
 .week-grid-table thead th:first-child [data-weekday],
@@ -6206,12 +7274,43 @@ button[data-auth-action]:disabled {
   position: sticky;
   left: 0;
   z-index: 1;
-  padding: 0 16px 0 20px;
+  padding: 0 16px 0 24px;
   background: var(--ez-ground);
   text-align: left;
 }
 .week-grid-table thead th:first-child {
   z-index: 2;
+}
+/* The project's mark leads its row (see markProject in browser.ts): the
+   initials on a tile, drawn from the attribute so the cell's text is still
+   the name. The hue is the project's own, set on the row; the lightness is
+   fixed so the letters read on every hue. */
+.week-grid-table tbody th[data-mark] {
+  padding-left: 65px;
+}
+.week-grid-table tbody th[data-mark]::before,
+.day-row-label[data-mark]::before {
+  content: attr(data-mark) / '';
+  position: absolute;
+  top: 50%;
+  left: 24px;
+  display: grid;
+  width: 30px;
+  height: 30px;
+  place-items: center;
+  translate: 0 -50%;
+  border-radius: 8px;
+  background: hsl(var(--mark-hue) 58% 40%);
+  color: var(--ez-action-fg);
+  font: 700 11px/1 var(--ez-font-body), sans-serif;
+  letter-spacing: 0.01em;
+}
+.week-grid-table tbody th strong {
+  font-size: 14px;
+  font-weight: 600;
+}
+.week-grid-table tbody tr:hover th,
+.week-grid-table tbody tr:hover td {
   background: var(--ez-surface);
 }
 /* A project's name gives way rather than widening the grid. The cell is
@@ -6233,14 +7332,21 @@ button[data-auth-action]:disabled {
 .day-row-label span {
   margin-top: 2px;
   color: var(--ez-muted);
-  font-size: 13px;
+  font-size: 12px;
   font-weight: 400;
 }
+/* No vertical rules: the reference grid is rows divided by hairlines, with
+   the cells' own boxes drawing the columns. */
 .week-grid-table tbody td {
   width: 112px;
   min-width: 112px;
   padding: 0;
-  border-left: 1px solid var(--ez-border);
+}
+/* A row is the reference's: a 30px mark with 12px above and below it, so a
+   38px box sits in 8px of air on each side. */
+.week-grid-table tbody th,
+.week-grid-table tbody td {
+  height: 54px;
 }
 .week-grid-table tbody tr:last-child th,
 .week-grid-table tbody tr:last-child td {
@@ -6252,17 +7358,37 @@ button[data-auth-action]:disabled {
 .week-grid-table .row-total,
 .week-grid-table tfoot td {
   padding: 0 12px;
-  color: var(--ez-muted);
+  color: var(--ez-ink);
   font-family: var(--ez-font-body), sans-serif;
-  text-align: right;
+  font-size: 14px;
+  font-weight: 700;
+  text-align: center;
 }
+/* The footer is the reference's WEEK TOTAL row: a heavier rule over it, the
+   label small and spaced, the figures bold, the week's total in the blue. */
 .week-grid-table tfoot th,
 .week-grid-table tfoot td {
-  height: 44px;
-  border-top: 1px solid var(--ez-border);
+  height: 48px;
+  border-top: 2px solid var(--ez-border);
   border-bottom: 0;
-  background: var(--ez-surface);
-  font-weight: 600;
+  background: var(--ez-ground);
+  font-weight: 700;
+}
+.week-grid-table tfoot th {
+  color: var(--ez-muted);
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+}
+.week-grid-table tfoot td:last-child {
+  color: var(--ez-data);
+}
+/* A sum of nothing is set in the placeholder's grey, as the reference greys
+   its empty totals: the figures that carry time are the ones that read. */
+.week-grid-table .row-total[data-zero],
+.week-grid-table tfoot td[data-zero] {
+  color: color-mix(in srgb, var(--ez-muted) 45%, var(--ez-ground));
 }
 .week-grid-table .grid-empty {
   padding: 24px 20px;
@@ -6270,46 +7396,101 @@ button[data-auth-action]:disabled {
   text-align: center;
 }
 .week-cell {
-  min-height: 57px;
+  min-height: 59px;
   display: grid;
   grid-template-columns: minmax(0, 1fr) 24px;
-  grid-template-rows: 36px minmax(12px, auto) minmax(0, auto);
+  grid-template-rows: 38px minmax(12px, auto) minmax(0, auto);
   align-items: center;
   padding: 2px 4px 0;
-  background: var(--ez-ground);
+  background: transparent;
 }
-/* Today's column, marked its full height. The old grid used a rule under the
-   header; a tinted column reads at a glance without adding a line to a table
-   whose whole discipline is hairlines. */
-.week-grid-table th[data-today] {
-  box-shadow: inset 0 -3px var(--ez-data);
-}
-
-.week-grid-table td[data-today],
-.week-grid-table th[data-today] {
+/* Today's column, marked its full height: a tinted column reads at a glance
+   without adding a line to a table whose whole discipline is hairlines. The
+   heading keeps the white ground and says it in the blue, as the reference. */
+.week-grid-table tbody td[data-today] {
   background: var(--ez-surface);
 }
+/* In the week grid the box stands centred under its heading, as the
+   reference draws it, and the pencil waits inside the box's right edge
+   rather than in a column of its own that pushed every box off centre. The
+   caption lines (saving, saved, a note wanted) take no room until they have
+   something to say, so a quiet row is the reference's 54px. */
+.week-grid-table .week-cell {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  min-height: 0;
+  padding: 8px 4px;
+}
+.week-grid-table .week-cell input {
+  width: 78px;
+  max-width: 100%;
+}
+.week-grid-table .week-cell .cell-note {
+  position: absolute;
+  top: 12px;
+  left: calc(50% + 15px);
+  width: 20px;
+  height: 30px;
+}
+.week-grid-table .cell-status:empty {
+  display: none;
+}
+.week-grid-table .cell-status,
+.week-grid-table .cell-lock-reason {
+  margin-top: 2px;
+  text-align: center;
+}
+/* A locked cell is the reference's disabled one: the figure alone, no box,
+   set in the muted grey. The reason stays in the field's title and behind the
+   mark that opens the entry to be read; Day view still prints it in full. */
+.week-grid-table .week-cell[data-cell-state='locked'] input {
+  border-color: transparent;
+  background: transparent;
+}
+.week-grid-table .week-cell[data-cell-state='locked'] .cell-status,
+.week-grid-table .week-cell[data-cell-state='locked'] .cell-lock-reason {
+  display: none;
+}
+/* The mark on a locked cell says "locked", not "has a note", so it waits for
+   the row's hover like the pencil does; a cell with a note of its own keeps
+   its mark at rest, as the rule above says. */
+.week-grid-table .week-cell[data-cell-state='locked'] .cell-note {
+  opacity: 0;
+  transition: opacity 0.12s;
+}
 
+/* A cell is the reference's box: a rounded field the hours sit in the middle
+   of, the resting border a shade heavier than a hairline so the row reads as
+   seven boxes before you touch it. */
 .week-cell input {
   width: 100%;
-  height: 34px;
-  padding: 0 7px;
-  /* A resting border: the old grid read as cells you could type into before you
-     touched it, rather than revealing itself one cell at a time on hover. */
-  border: 1px solid var(--ez-border);
-  border-radius: var(--ez-radius);
-  background: transparent;
+  max-width: 78px;
+  height: 38px;
+  justify-self: end;
+  padding: 0 6px;
+  border: 1.5px solid var(--ez-border);
+  border-radius: 9px;
+  background: var(--ez-ground);
   color: var(--ez-ink);
   font-family: var(--ez-font-body), sans-serif;
+  font-size: 15px;
+  font-weight: 600;
   font-variant-numeric: tabular-nums;
-  text-align: right;
+  text-align: center;
+}
+.week-cell input::placeholder {
+  color: color-mix(in srgb, var(--ez-muted) 45%, var(--ez-ground));
+  font-weight: 400;
 }
 .week-cell input:hover:not(:disabled) {
-  border-color: var(--ez-border);
+  border-color: color-mix(in srgb, var(--ez-muted) 40%, var(--ez-border));
 }
 .week-cell input:focus {
   border-color: var(--ez-data);
-  background: var(--ez-surface);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--ez-action) 12%, transparent);
+  background: var(--ez-ground);
 }
 .week-cell input:disabled {
   color: var(--ez-muted);
@@ -6358,10 +7539,160 @@ button[data-auth-action]:disabled {
     padding: 0 8px;
   }
   .week-grid-table .week-cell {
-    padding: 2px 2px 0;
+    padding: 8px 2px;
   }
   .week-grid-table .week-cell input {
     padding: 0 5px;
+  }
+}
+/*
+ * The Time page, laid out as the ezacto-ui Time page: no gutter around a
+ * card, the title row and the status line as bands of their own, and the
+ * breadcrumb row above them. Desktop and tablet only -- the phone layout is
+ * its own, measured by its own browser tests, and keeps the card it had.
+ */
+@media (min-width: 721px) {
+  .app-content[data-app-content] {
+    padding: 0 0 48px;
+  }
+  [data-app-content] .context-row {
+    align-items: center;
+    margin: 0;
+    padding: 14px 24px;
+    border-bottom: 1px solid var(--ez-border);
+  }
+  /* The title says Time; a "This week" caption over it said what the stepper
+     under it already does. */
+  [data-app-content] .context-row .eyebrow {
+    display: none;
+  }
+  [data-app-content] .time-person {
+    flex-direction: row;
+    align-items: center;
+    gap: 8px;
+  }
+  [data-app-content] .session-status {
+    margin: 0;
+    padding: 6px 24px;
+    border: 0;
+    border-bottom: 1px solid var(--ez-border);
+    border-radius: 0;
+    background: var(--ez-ground);
+    color: var(--ez-muted);
+    font-size: 12px;
+  }
+  [data-app-content] .session-status[data-state='ready'] {
+    border-color: var(--ez-border);
+  }
+  [data-app-content] .session-status button {
+    min-height: 28px;
+    font-size: 12px;
+  }
+  [data-app-content] .time-person-banner {
+    margin: 0;
+    border-radius: 0;
+  }
+  /* Notifications stands under the same breadcrumb row as Time and keeps its
+     title row: a flat band, the list in the page's own gutter below it. */
+  .notifications-page[data-notifications-page] {
+    padding: 0 0 48px;
+  }
+  .notifications-page .context-row {
+    align-items: center;
+    margin: 0;
+    padding: 14px 24px;
+    border-bottom: 1px solid var(--ez-border);
+  }
+  .notifications-page .context-row .eyebrow {
+    display: none;
+  }
+  .notifications-page .notifications-status {
+    margin: 0;
+    padding: 10px 24px;
+    border-bottom: 1px solid var(--ez-border);
+    font-size: 12px;
+  }
+  .notifications-page .notif-list {
+    padding: 24px;
+  }
+  /* The keyboard route into a cell is in the cell's own tooltip and the
+     command bar; a sentence over the grid was the one line the reference
+     does without. */
+  .week-hint {
+    display: none;
+  }
+  /* In Day view the day stands in the week's box and the week's box steps
+     aside; in the other views there is no day to step. (Named with the
+     toolbar: the stepper's own rule comes later in the file.) */
+  .week-toolbar .day-switcher {
+    display: none;
+  }
+  html[data-time-view='day'] .week-toolbar .day-switcher {
+    position: relative;
+    display: inline-flex;
+    flex: 0 1 auto;
+    gap: 6px;
+    min-height: 0;
+    padding: 4px 8px;
+    border: 1px solid var(--ez-border);
+    border-radius: 8px;
+    background: var(--ez-ground);
+  }
+  html[data-time-view='day'] .week-period {
+    display: none;
+  }
+  /* The reference shows the week bar only beside a single day: in Week view
+     the grid's own header names the days and its total row carries the
+     sums, so the bar would say everything twice. The phone keeps it, where
+     it is the way to pick the day the list below shows. */
+  html[data-time-view='week'] .day-strip {
+    display: none;
+  }
+  /* The reference week bar opens with the calendar's 64px ruler column, so
+     Monday never sits flush against the page edge. */
+  .day-strip::before {
+    content: '';
+    flex: none;
+    width: 64px;
+    border-right: 1px solid var(--ez-border);
+  }
+  .day-switcher button:not(.day-switcher-label) {
+    width: 28px;
+    min-height: 28px;
+    padding: 0;
+    border-radius: 6px;
+    color: color-mix(in srgb, var(--ez-muted) 90%, var(--ez-ground));
+  }
+  .day-switcher .day-switcher-label {
+    min-width: 240px;
+    min-height: 0;
+    padding: 3px 6px;
+    border: 0;
+    color: var(--ez-data);
+  }
+  .day-row {
+    padding: 10px 24px;
+  }
+  .day-row-label {
+    position: relative;
+  }
+  .day-row-label[data-mark] {
+    padding-left: 38px;
+  }
+  .day-row-label[data-mark]::before {
+    left: 0;
+    top: 14px;
+    translate: none;
+  }
+  .day-row-label strong {
+    font-size: 15px;
+    font-weight: 700;
+  }
+  .day-row-label span {
+    font-size: 14px;
+  }
+  .build-stamp {
+    padding: 16px 24px 24px;
   }
 }
 .week-hint {
@@ -6461,6 +7792,27 @@ button[data-auth-action]:disabled {
   color: var(--ez-border);
   cursor: default;
 }
+/* The pencil on a cell with nothing in it waits for its row (the reference
+   grid draws no marks in its cells): it is still the way in, and the row's
+   hover or focus brings it up. A cell that carries a note keeps its blue mark
+   at rest, as the rule above says, so an entry worth opening is still told
+   from an empty day at a glance. Touch has no hover, so there every mark
+   stays, as the row's Start button does. */
+.week-cell .cell-note[data-has-note='false'] {
+  opacity: 0;
+  transition: opacity 0.12s;
+}
+.week-grid-table tbody tr:hover .cell-note,
+.day-row:hover .cell-note,
+.week-cell:focus-within .cell-note,
+.week-cell .cell-note:focus-visible {
+  opacity: 1;
+}
+@media (hover: none) {
+  .week-cell .cell-note[data-has-note='false'] {
+    opacity: 1;
+  }
+}
 .cell-status {
   grid-column: 1 / -1;
   min-width: 0;
@@ -6499,16 +7851,78 @@ button[data-auth-action]:disabled {
 .day-list {
   display: none;
 }
+/* The day stepper: on a phone a row of the toolbar, under the week's; on a
+   desktop the box the week stepper has, shown in Day view in its place. */
 .day-switcher {
   min-height: 52px;
   display: grid;
+  flex: 1 1 100%;
   grid-template-columns: 44px 1fr 44px;
   align-items: center;
   gap: 8px;
-  padding: 4px 12px;
-  border-bottom: 1px solid var(--ez-border);
-  background: var(--ez-ground);
+  padding: 4px 0;
   text-align: center;
+}
+.day-switcher-label {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  min-width: 0;
+  padding: 3px 6px;
+  border: 0;
+  border-radius: 6px;
+  background: none;
+  color: var(--ez-data);
+  font: inherit;
+  font-size: 16px;
+  font-weight: 600;
+  white-space: nowrap;
+  cursor: pointer;
+}
+.day-switcher-label:hover:not(:disabled),
+.day-switcher-label:focus-visible {
+  background: var(--ez-surface);
+}
+.day-switcher-label .ez-icon {
+  flex: none;
+  width: 13px;
+  height: 13px;
+  color: var(--ez-muted);
+  stroke-width: 2;
+}
+.day-switcher-label > .ez-icon:last-child {
+  width: 12px;
+  height: 12px;
+  stroke-width: 2.25;
+}
+.day-switcher-label strong {
+  overflow: hidden;
+  font-weight: inherit;
+  text-overflow: ellipsis;
+}
+/* The arrows' marks at the reference's 14px, in its lighter grey. */
+.day-switcher button:not(.day-switcher-label) {
+  color: color-mix(in srgb, var(--ez-muted) 90%, var(--ez-ground));
+}
+.day-switcher button:not(.day-switcher-label) .ez-icon,
+.week-period .period-step .ez-icon {
+  width: 14px;
+  height: 14px;
+  stroke-width: 2;
+}
+.day-jump-date {
+  position: absolute;
+  bottom: 0;
+  left: 50%;
+  width: 1px;
+  height: 1px;
+  min-height: 0;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  opacity: 0;
+  pointer-events: none;
 }
 .day-row {
   min-height: 72px;
@@ -6523,7 +7937,17 @@ button[data-auth-action]:disabled {
   box-shadow: inset 3px 0 var(--ez-live);
 }
 .day-row-label {
+  position: relative;
   min-width: 0;
+}
+/* The project mark sits inside its own row on every width. Without a
+   positioned label the absolute tile climbs to the section's corner and
+   lands on the toolbar's first arrow. */
+.day-row-label[data-mark] {
+  padding-left: 38px;
+}
+.day-row-label[data-mark]::before {
+  left: 0;
 }
 .day-entry-note {
   margin: 8px 0 0;
@@ -6545,7 +7969,9 @@ button[data-auth-action]:disabled {
 }
 html[data-time-view="day"] .week-grid-wrap,
 html[data-time-view="calendar"] .week-grid-wrap,
-html[data-time-view="calendar"] .day-list {
+html[data-time-view="calendar"] .day-list,
+html[data-time-view="month"] .week-grid-wrap,
+html[data-time-view="month"] .day-list {
   display: none;
 }
 /* The calendar is its own panel rather than a restyled grid: the two answer
@@ -6557,6 +7983,12 @@ html[data-time-view="calendar"] .day-list {
 html[data-time-view="calendar"] .calendar-week {
   display: block;
 }
+.calendar-month {
+  display: none;
+}
+html[data-time-view="month"] .calendar-month {
+  display: block;
+}
 html[data-time-view="day"] .day-list {
   display: block;
 }
@@ -6566,18 +7998,6 @@ html[data-time-view="day"] .day-list {
    markup was being rendered at phone density on a screen with room to spare --
    a 52px switcher, 14px hours, and rows sized for a thumb. */
 @media (min-width: 721px) {
-  html[data-time-view="day"] .day-switcher {
-    min-height: 72px;
-    grid-template-columns: 44px 1fr 44px;
-    padding: 8px 20px;
-  }
-
-  html[data-time-view="day"] .day-switcher [data-day-label] {
-    font-size: 28px;
-    font-weight: 600;
-    line-height: 44px;
-  }
-
   html[data-time-view="day"] .day-row {
     min-height: 88px;
     grid-template-columns: minmax(0, 1fr) 180px;
@@ -6722,6 +8142,300 @@ dialog textarea {
 [data-entry-duration][hidden],
 [data-entry-running][hidden] {
   display: none;
+}
+/*
+ * The time entry editor as the ezacto-ui Track time card: 460px at the top
+ * right of the page, the description first, the assignment as rows, the
+ * timing in a section of its own over a blue glow, and the action as a bar
+ * across the foot.
+ */
+.entry-dialog {
+  width: min(460px, calc((100vw - 32px) / var(--ez-zoom, 1)));
+  max-height: calc(100vh - 32px);
+  overflow: auto;
+  border-radius: 16px;
+  box-shadow:
+    0 8px 32px color-mix(in srgb, var(--ez-shadow) 14%, transparent),
+    0 2px 8px color-mix(in srgb, var(--ez-shadow) 8%, transparent);
+}
+@media (min-width: 721px) {
+  .entry-dialog {
+    inset: 150px 24px auto auto;
+    margin: 0;
+    max-height: calc(100vh - 174px);
+  }
+}
+.entry-dialog form {
+  position: relative;
+  display: block;
+  padding: 0;
+}
+.entry-dialog form::after {
+  content: '';
+  position: absolute;
+  inset: auto 0 0;
+  height: 96px;
+  border-radius: 0 0 16px 16px;
+  background: linear-gradient(
+    to top,
+    color-mix(in srgb, var(--ez-action) 15%, var(--ez-ground)),
+    transparent
+  );
+  pointer-events: none;
+}
+.entry-dialog form > * {
+  position: relative;
+  z-index: 1;
+}
+.entry-head {
+  align-items: center;
+  padding: 12px 16px;
+  border-bottom: 1px solid var(--ez-border);
+}
+.entry-head-title {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--ez-muted);
+}
+.entry-head-title .ez-icon {
+  width: 13px;
+  height: 13px;
+  stroke-width: 2;
+}
+.entry-head-title .eyebrow {
+  display: none;
+}
+.entry-head h2 {
+  margin: 0;
+  color: var(--ez-muted);
+  font: 700 11px/1.3 var(--ez-font-body), sans-serif;
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
+}
+.entry-head button[aria-label^='Close'] {
+  width: 26px;
+  height: 26px;
+  border-radius: 7px;
+  font-size: 15px;
+}
+.entry-description textarea {
+  display: block;
+  min-height: 0;
+  padding: 22px 20px;
+  border: 0;
+  border-radius: 0;
+  background: var(--ez-ground);
+  font-size: 16px;
+  line-height: 1.3;
+  resize: none;
+}
+.entry-description textarea::placeholder {
+  color: color-mix(in srgb, var(--ez-muted) 55%, var(--ez-ground));
+}
+.entry-description .hint {
+  margin: 0;
+  padding: 0 20px 12px;
+  font-size: 12px;
+}
+.entry-fields {
+  border-top: 1px solid var(--ez-border);
+  border-bottom: 1px solid var(--ez-border);
+}
+.entry-field {
+  display: flex;
+  align-items: center;
+  gap: 0;
+  padding: 16px 20px;
+  border-bottom: 1px solid var(--ez-border);
+  color: var(--ez-muted);
+  font-size: 13px;
+}
+.entry-field:last-child {
+  border-bottom: 0;
+}
+.entry-field > .ez-icon:first-child {
+  width: 16px;
+  height: 16px;
+  margin-right: 14px;
+  color: color-mix(in srgb, var(--ez-muted) 70%, var(--ez-ground));
+}
+.entry-field-label {
+  flex: none;
+  width: 76px;
+}
+.entry-field select {
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  padding: 2px 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  color: var(--ez-data);
+  font-size: 14px;
+  font-weight: 500;
+  appearance: none;
+  cursor: pointer;
+}
+.entry-field select:disabled {
+  color: var(--ez-muted);
+  cursor: default;
+}
+.entry-field > .ez-icon:last-child {
+  flex: none;
+  width: 14px;
+  height: 14px;
+  color: var(--ez-muted);
+}
+.entry-timing {
+  display: flex;
+  flex-direction: column;
+  gap: 13px;
+  padding: 18px 20px 22px;
+}
+.entry-date {
+  position: relative;
+}
+.entry-date-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--ez-muted);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.03em;
+  cursor: pointer;
+}
+.entry-date-chip:disabled {
+  cursor: default;
+}
+.entry-date-chip .ez-icon {
+  width: 12px;
+  height: 12px;
+  stroke-width: 2;
+}
+.entry-date-input {
+  position: absolute;
+  bottom: 0;
+  left: 0;
+  width: 1px;
+  height: 1px;
+  min-height: 0;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  opacity: 0;
+  pointer-events: none;
+}
+.entry-time-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+.entry-times {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.entry-times label,
+.entry-duration {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.entry-time-row input {
+  width: 120px;
+  min-height: 0;
+  padding: 7px 14px;
+  border: 1.5px solid var(--ez-border);
+  border-radius: 8px;
+  background: var(--ez-ground);
+  color: var(--ez-ink);
+  font-size: 16px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  text-align: center;
+}
+.entry-time-row input:focus {
+  border-color: var(--ez-action);
+  outline: none;
+}
+.entry-time-row input::placeholder {
+  color: color-mix(in srgb, var(--ez-muted) 40%, var(--ez-ground));
+  font-weight: 400;
+}
+.entry-time-arrow {
+  color: var(--ez-muted);
+}
+.entry-duration .ez-icon {
+  width: 14px;
+  height: 14px;
+  color: var(--ez-muted);
+}
+.entry-timing .form-result {
+  margin: 0;
+  font-size: 12px;
+}
+.entry-timing .form-result:empty {
+  display: none;
+}
+.entry-secondary {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.entry-secondary:not(:has(button:not([hidden]))) {
+  display: none;
+}
+.entry-secondary button {
+  min-height: 32px;
+  padding: 0 12px;
+  border-radius: 8px;
+  font-size: 13px;
+}
+.entry-submit {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  width: 100%;
+  min-height: 0;
+  padding: 14px 20px;
+  border: 0;
+  border-radius: 0 0 16px 16px;
+  background: var(--ez-action);
+  color: var(--ez-action-fg);
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: opacity 0.15s;
+}
+.entry-submit:hover:not(:disabled) {
+  opacity: 0.88;
+}
+.entry-submit:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+.entry-submit[hidden] {
+  display: none;
+}
+.entry-submit-duration::before {
+  content: '· ';
+}
+.entry-submit-duration[hidden] {
+  display: none;
+}
+.entry-submit kbd {
+  padding: 1px 5px;
+  border-radius: 4px;
+  background: color-mix(in srgb, var(--ez-action-fg) 22%, transparent);
+  font: 600 11px/1.3 var(--ez-font-body), sans-serif;
 }
 .hint,
 .form-result {
@@ -7563,22 +9277,47 @@ dialog textarea {
   .week-period {
     flex-basis: 100%;
   }
+  /* The title row's cluster -- the mode switch and Send to approval -- is
+     wider than a phone leaves beside the title, so it takes a row of its
+     own under it rather than pushing the page sideways. */
+  [data-app-content] .context-row {
+    flex-wrap: wrap;
+  }
+  [data-app-content] .context-actions {
+    flex: 1 1 100%;
+  }
   .timesheet-status {
     align-items: stretch;
     flex-direction: column;
     padding: 14px 16px;
   }
+  /* Its own row under the period: Today at the left, the Day/Week switch and
+     the "+" at the right, as one line rather than a 220px column of three. */
   .week-actions {
-    max-width: 220px;
+    flex: 1 1 100%;
+    max-width: none;
+  }
+  .week-actions [data-time-log-time] {
+    width: 44px;
+    min-height: 44px;
   }
   .week-actions button,
   .day-switcher button {
     min-height: 44px;
   }
-  .week-actions [data-week-total] {
-    width: 100%;
-    padding: 4px 0 0;
-    text-align: right;
+  /* The day stepper under the week stepper, each a row of its own. */
+  .week-period {
+    order: 1;
+  }
+  .day-switcher {
+    order: 2;
+  }
+  .week-actions {
+    order: 3;
+  }
+  .day-strip-total {
+    width: 84px;
+    padding: 10px 10px 8px;
   }
   .week-grid-wrap {
     display: none;
@@ -7594,6 +9333,16 @@ dialog textarea {
     max-width: none;
     margin: auto 0 0;
     border-radius: var(--ez-radius) var(--ez-radius) 0 0;
+  }
+  /* The Track time card is a sheet here like every other dialog: full width,
+     rounded at the top, its action bar flush with the bottom edge. */
+  .entry-dialog {
+    width: calc(100vw / var(--ez-zoom, 1));
+    border-radius: 16px 16px 0 0;
+  }
+  .entry-dialog form::after,
+  .entry-submit {
+    border-radius: 0;
   }
   .timer-actions {
     flex-direction: column;
@@ -8020,6 +9769,7 @@ th[aria-sort="descending"] .table-sort [data-part="ascending"] { opacity: 0.15; 
   .filter-bar,
   .report-entry-actions,
   .topbar,
+  .crumb-bar,
   .tabstrip,
   .build-stamp,
   .data-quality,
@@ -9525,6 +11275,187 @@ th[aria-sort="descending"] .table-sort [data-part="ascending"] { opacity: 0.15; 
 .calendar-surface[data-dragging] {
   user-select: none;
   cursor: grabbing;
+}
+
+
+/* The month, as the ezacto-ui Month view draws it: a band naming the
+   month with its total at the right, then a grid of weeks in a rounded frame,
+   a cell a day with its number and a chip an entry, today's number on a blue
+   disc, the neighbouring months' days greyed. */
+[data-calendar-month-status]:empty {
+  display: none;
+}
+/* A month has no week bar, no day to step and no cells to edit: the strip,
+   the phone's day stepper and the grid's keyboard hint stay off it. */
+html[data-time-view='month'] .day-strip,
+html[data-time-view='month'] .day-switcher,
+html[data-time-view='month'] .week-hint {
+  display: none;
+}
+.cal-month-band {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  border-bottom: 1px solid var(--ez-border);
+}
+.cal-month-band-title {
+  margin: 0;
+  padding: 24px 20px;
+  color: var(--ez-muted);
+  font-size: 13px;
+}
+.cal-month-band-total {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  align-self: stretch;
+  justify-content: center;
+  min-width: 120px;
+  padding: 10px 16px 8px;
+  border-left: 1px solid var(--ez-border);
+  text-align: right;
+}
+.cal-month-band-total-label {
+  color: var(--ez-muted);
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+.cal-month-band-total-figure {
+  color: var(--ez-ink);
+  font-size: 18px;
+  font-weight: 700;
+  letter-spacing: -0.5px;
+  font-variant-numeric: tabular-nums;
+}
+.calendar-month [data-calendar-month-grid] {
+  overflow-x: auto;
+}
+.cal-month {
+  position: relative;
+  min-width: 700px;
+  margin: 24px;
+  overflow: hidden;
+  border: 1px solid var(--ez-border);
+  border-radius: 12px;
+}
+.cal-month-head,
+.cal-month-week {
+  display: grid;
+  grid-template-columns: repeat(7, minmax(0, 1fr));
+}
+.cal-month-heading {
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--ez-border);
+  background: var(--ez-surface);
+  color: var(--ez-muted);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-align: center;
+  text-transform: uppercase;
+}
+.cal-month-cell {
+  min-width: 0;
+  min-height: 110px;
+  padding: 8px;
+  border-right: 1px solid var(--ez-border);
+  border-bottom: 1px solid var(--ez-border);
+  background: var(--ez-ground);
+}
+.cal-month-cell:nth-child(7n) {
+  border-right: 0;
+}
+.cal-month-week:last-child .cal-month-cell {
+  border-bottom: 0;
+}
+.cal-month-cell[data-outside] {
+  background: var(--ez-surface);
+}
+.cal-month-cell[data-today] {
+  background: var(--ez-orange-tint);
+}
+.cal-month-day-num {
+  display: block;
+  margin-bottom: 6px;
+  color: var(--ez-muted);
+  font-size: 12px;
+  font-weight: 600;
+}
+.cal-month-cell[data-today] .cal-month-day-num {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  background: var(--ez-action);
+  color: var(--ez-action-fg);
+  font-size: 11px;
+}
+/* A chip an entry: the project and the time, one line, the rest in the tip. */
+.cal-month-entry {
+  display: block;
+  width: 100%;
+  margin-bottom: 4px;
+  padding: 4px 8px;
+  overflow: hidden;
+  border: 1px solid var(--ez-blue-light);
+  border-radius: 6px;
+  background: var(--ez-orange-tint);
+  color: var(--ez-ink);
+  font-family: inherit;
+  font-size: 11px;
+  font-weight: 600;
+  line-height: normal;
+  text-align: left;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  cursor: pointer;
+  transition:
+    box-shadow 0.1s,
+    border-color 0.1s;
+}
+.cal-month-entry:hover,
+.cal-month-entry:focus-visible {
+  border-color: color-mix(in srgb, var(--ez-data) 40%, var(--ez-blue-light));
+  box-shadow: 0 2px 8px color-mix(in srgb, var(--ez-action) 10%, transparent);
+}
+.cal-month-entry-time {
+  color: var(--ez-data);
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+/* The running entry in the live green, as the reference: a tint of the hue
+   under the chip and its words in the words-green (theme-contrast.test.ts). */
+.cal-month-entry[data-running] {
+  border-color: color-mix(in srgb, var(--ez-live) 30%, var(--ez-ground));
+  background: color-mix(in srgb, var(--ez-live) 8%, var(--ez-ground));
+  color: var(--ez-live-text);
+}
+.cal-month-entry[data-running] .cal-month-entry-time {
+  color: var(--ez-live-text);
+}
+/* The tip over a chip under the pointer or the keyboard: the whole entry,
+   project, task and time, for the chips too narrow to read it off. */
+.cal-month-tip {
+  position: absolute;
+  z-index: 6;
+  max-width: 260px;
+  padding: 6px 9px;
+  border-radius: 6px;
+  background: var(--ez-ink);
+  color: var(--ez-ground);
+  font-size: 11px;
+  line-height: 1.4;
+  white-space: pre-line;
+  pointer-events: none;
+  box-shadow: 0 4px 12px var(--ez-shadow);
+}
+.cal-month-tip[hidden] {
+  display: none;
 }
 
 /* Issue 757. The organization timezone is its own setting rather than a field on

@@ -1015,7 +1015,7 @@ export const runningElapsedSeconds = (
 const labels = (resources: readonly GeneralResource[]): Map<number, string> =>
   new Map(resources.map((resource) => [resource.id, resourceLabel(resource)]))
 
-const displayEntries = (
+export const displayEntries = (
   entries: readonly TimeEntry[],
   resources: {
     projects: readonly GeneralResource[]

@@ -33,6 +33,7 @@
 
 export type IconName =
   | 'banknote'
+  | 'bell'
   | 'calendar'
   | 'card'
   | 'chart'
@@ -51,6 +52,8 @@ export type IconName =
   | 'paperclip'
   | 'people'
   | 'person'
+  | 'plus'
+  | 'send'
   | 'sidebar'
   | 'sign-out'
   | 'sliders'
@@ -80,6 +83,11 @@ const iconGeometry: Readonly<Record<IconName, readonly IconShape[]>> = {
     { element: 'rect', attributes: { x: '2.25', y: '5.25', width: '15.5', height: '9.5', rx: '1.5' } },
     { element: 'circle', attributes: { cx: '10', cy: '10', r: '2.25' } },
     { element: 'path', attributes: { d: 'M5 8v4M15 8v4' } },
+  ],
+  // The breadcrumb row's way to Notifications (the ezacto-ui bc-notif bell).
+  bell: [
+    { element: 'path', attributes: { d: 'M15 6.75a5 5 0 0 0-10 0c0 5.75-2.5 7.5-2.5 7.5h15s-2.5-1.75-2.5-7.5' } },
+    { element: 'path', attributes: { d: 'M11.42 17.5a1.67 1.67 0 0 1-2.83 0' } },
   ],
   calendar: [
     { element: 'rect', attributes: { x: '2.75', y: '4.25', width: '14.5', height: '13', rx: '2' } },
@@ -178,6 +186,13 @@ const iconGeometry: Readonly<Record<IconName, readonly IconShape[]>> = {
         d: 'M17.87 9.21l-7.66 7.66a5 5 0 0 1-7.08-7.08l7.66-7.66a3.33 3.33 0 0 1 4.72 4.72l-7.67 7.66a1.67 1.67 0 0 1-2.36-2.36l7.08-7.07',
       },
     },
+  ],
+  // Log time, as the toolbar's square "+" (the ezacto-ui add button).
+  plus: [{ element: 'path', attributes: { d: 'M10 4.25v11.5M4.25 10h11.5' } }],
+  // Send to approval: the paper plane the reference puts on that button.
+  send: [
+    { element: 'path', attributes: { d: 'M18.33 1.67 9.17 10.83' } },
+    { element: 'path', attributes: { d: 'M18.33 1.67 12.5 18.33l-3.33-7.5-7.5-3.33 16.67-5.83z' } },
   ],
   sidebar: [
     { element: 'rect', attributes: { x: '2.75', y: '3.75', width: '14.5', height: '12.5', rx: '2' } },

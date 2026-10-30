@@ -47,6 +47,7 @@ import {
   renderInvoiceOverflowMenu,
   renderInvoiceTransitionDialog,
 } from '../invoices/render.js'
+import { renderNotificationsPage } from '../notifications/render.js'
 
 export interface ShellTab {
   readonly label: string
@@ -99,6 +100,9 @@ export interface AppShellOptions {
     // on; naming a section outside the primary nav marks nothing, which is the
     // truth.
     | 'Settings'
+    // Reached from the bell on the breadcrumb row, not from the nav, so it too
+    // marks nothing.
+    | 'Notifications'
     | 'Home'
     | 'Time'
     | 'Approvals'
@@ -141,6 +145,7 @@ export interface AppShellOptions {
     | 'settings-roles'
     | 'team-list'
     | 'team-person'
+    | 'notifications'
     | 'capacity'
     | 'my-payments'
     | 'scheduled-run'
@@ -224,27 +229,42 @@ export const renderDataQualityBanner = (options: DataQualityBannerOptions): stri
  * data-time-views because the browser rewrites aria-current on them from the
  * ?view= parameter -- a rule that is right for Time and wrong for every other
  * section, which does not navigate by that parameter and would have its current
- * tab stripped on load.
+ * tab stripped on load. That strip is rendered by renderTimeViews, in the Time
+ * page's own title row.
  *
- * It also carries view-switch, because Week and Day are two ways of looking at
- * one screen rather than two sections of the app; the level-2 underline now
- * says "you are in this part of ezacto" for Invoices and Reports, and a signal
- * that means two things means neither.
+ * Above whichever strip a section has stands the breadcrumb row (the ezacto-ui
+ * bc-bar), on every page: where you are, and at its end the bell that leads to
+ * Notifications and carries the count of what you have not seen.
  */
 const renderTabStrip = (options: AppShellOptions): string => {
   const view = options.view ?? 'time'
-  if (options.tabs === undefined) {
-    return (
-      `<nav class="tabstrip view-switch" aria-label="Time views" data-time-views${view === 'time' ? '' : ' hidden'}>` +
-      `<a href="/" aria-current="page">Week</a><a href="/?view=day">Day</a>` +
-      // Restored now that it leads somewhere. It was deleted in issue 296's first
-      // stage precisely because a tab that does nothing is worse than a missing
-      // feature, and putting it back without the panel would repeat that.
-      `<a href="/?view=calendar">Calendar</a>` +
-      `</nav>`
-    )
-  }
-  if (options.tabs.length === 0) return ''
+  const b = resolveDeploymentBrand(options.brand)
+  const here = view === 'notifications' ? 'Notifications' : (options.activeSection ?? 'Time')
+  const crumbs =
+    `<div class="crumb-bar">` +
+    `<nav class="crumbs" aria-label="Breadcrumb">` +
+    `<span class="crumbs-mark" aria-hidden="true"></span>` +
+    `<span class="crumbs-sep" aria-hidden="true">›</span>` +
+    `<a href="/dashboard">${escapeHtml(b.name)}</a>` +
+    `<span class="crumbs-sep" aria-hidden="true">›</span>` +
+    `<span class="crumbs-current">${escapeHtml(here)}</span>` +
+    `</nav>` +
+    `<a class="crumbs-bell" href="/notifications" aria-label="Notifications"${view === 'notifications' ? ' aria-current="page"' : ''} data-notifications-bell>` +
+    `${iconMarkup('bell')}` +
+    `<span class="crumbs-bell-count" data-notifications-count hidden></span>` +
+    `</a>` +
+    `</div>` +
+    // The running timer's band under the crumbs (the ezacto-ui timer bar):
+    // the project, the task, the clock and Stop, shown only while one runs.
+    `<div class="timer-band" data-timer-band hidden>` +
+    `<span class="timer-band-dot" aria-hidden="true"></span>` +
+    `<strong class="timer-band-project" data-timer-band-project></strong>` +
+    `<span class="timer-band-task" data-timer-band-task></span>` +
+    `<span class="timer-band-time" data-timer-band-elapsed>0:00:00</span>` +
+    `<button type="button" class="timer-band-stop" data-timer-band-stop>Stop</button>` +
+    `</div>`
+  // A section that declares no tabs gets no strip, rather than an empty bar.
+  if (options.tabs === undefined || options.tabs.length === 0) return crumbs
   const links = options.tabs
     .map(
       (tab) =>
@@ -252,7 +272,50 @@ const renderTabStrip = (options: AppShellOptions): string => {
         `${escapeHtml(tab.label)}</a>`,
     )
     .join('')
-  return `<nav class="tabstrip" aria-label="${escapeHtml(options.activeSection ?? 'Section')} views">${links}</nav>`
+  return (
+    crumbs +
+    `<nav class="tabstrip" aria-label="${escapeHtml(options.activeSection ?? 'Section')} views">${links}</nav>`
+  )
+}
+
+/**
+ * Time's two switches, as the ezacto-ui Timesheet screen splits them: in the
+ * title row, Timesheet or Calendar (the week and the day are both the
+ * timesheet; the month is the calendar); in the week toolbar, Week or Day.
+ *
+ * Their links are marked data-time-views and data-time-modes because the
+ * browser rewrites aria-current on them from the ?view= parameter (see
+ * renderTabStrip), and both carry view-switch because these are ways of
+ * looking at one screen rather than sections of the app; the level-2 underline
+ * now says "you are in this part of ezacto" for Invoices and Reports, and a
+ * signal that means two things means neither. Only on a page that declares no
+ * tabs: a section with its own strip must not carry Time's, hidden or not, or
+ * the ?view= rewrite would reach it.
+ */
+const renderTimeViews = (options: AppShellOptions): string => {
+  if (options.tabs !== undefined) return ''
+  const view = options.view ?? 'time'
+  return (
+    `<nav class="tabstrip view-switch" aria-label="Time views" data-time-views${view === 'time' ? '' : ' hidden'}>` +
+    `<a href="/?view=day">Day</a><a href="/" aria-current="page">Week</a>` +
+    `</nav>`
+  )
+}
+
+const renderTimeModes = (options: AppShellOptions): string => {
+  if (options.tabs !== undefined) return ''
+  const view = options.view ?? 'time'
+  return (
+    `<nav class="tabstrip view-switch" aria-label="Time modes" data-time-modes${view === 'time' ? '' : ' hidden'}>` +
+    `<a href="/" aria-current="page">${iconMarkup('list')}Timesheet</a>` +
+    // Calendar was restored once it led somewhere. It was deleted in issue
+    // 296's first stage precisely because a tab that does nothing is worse than
+    // a missing feature, and putting it back without the panel would repeat that.
+    `<a href="/?view=calendar">${iconMarkup('calendar')}Calendar</a>` +
+    // The month (the ezacto-ui Month view): the weeks as cells, a chip an entry.
+    `<a href="/?view=month">${iconMarkup('calendar')}Month</a>` +
+    `</nav>`
+  )
 }
 
 /**
@@ -371,11 +434,25 @@ const sections = [
   'Approvals',
   'Expenses',
   'Projects',
+  'Reports',
   'Clients',
   'Invoices',
   'Payments',
-  'Reports',
 ] as const
+
+/**
+ * The sidebar's headings (the ezacto-ui sidebar). The same links in the same
+ * order as `sections`, under a label each; the top bar has no room for a
+ * heading, so there the groups dissolve and the links sit in one row as before.
+ */
+const navGroups = [
+  { label: 'Main', sections: ['Time', 'Approvals', 'Expenses', 'Projects'] },
+  { label: 'Insights', sections: ['Reports'] },
+  { label: 'Other', sections: ['Clients', 'Invoices', 'Payments'] },
+] as const satisfies readonly {
+  readonly label: string
+  readonly sections: readonly (typeof sections)[number][]
+}[]
 
 /**
  * The sections that browse the firm's directories rather than the reader's own
@@ -565,7 +642,15 @@ export const renderAppShell = (options: AppShellOptions): string => {
     `<a href="${hrefFor(section)}"${section === 'Approvals' ? ' data-approvals-nav hidden' : ''}${section === 'Team' ? ' data-team-nav hidden' : ''}${section === 'Payments' ? ' data-staff-payments-nav hidden' : ''}${section === 'Expenses' ? ' data-expenses-nav' : ''}${section === 'Invoices' ? ' data-money-nav hidden' : ''}${directorySections.has(section) ? ' data-directory-nav hidden' : ''}${section === active ? ' aria-current="page"' : ''}>${iconMarkup(sectionIcons[section])}<span class="nav-label">${section}</span></a>`
   // The operator's invoices switch takes the section out of every strip (issue 1254).
   const offered = sections.filter((section) => section !== 'Invoices' || options.invoicesAvailable !== false)
-  const navigation = offered.map(navLink).join('')
+  const navigation = navGroups
+    .map(
+      (group) =>
+        `<div class="nav-group" role="group" aria-labelledby="nav-group-${group.label.toLowerCase()}">` +
+        `<span class="nav-group-label" id="nav-group-${group.label.toLowerCase()}">${group.label}</span>` +
+        group.sections.filter((section) => offered.includes(section)).map(navLink).join('') +
+        `</div>`,
+    )
+    .join('')
   // The Menu's cards are their own component: the sidebar's links shrink to
   // marks when it is collapsed, and the Menu must never inherit that. Same
   // gates and same current-page mark as the links, so permissions and the
@@ -714,16 +799,25 @@ ${instancePalette ? `  <link rel="stylesheet" href="${INSTANCE_THEME_STYLESHEET_
     <button class="menu-trigger" type="button" data-menu-trigger aria-label="Open navigation" aria-haspopup="dialog">Menu</button>
     <div class="account" data-auth-shell data-state="loading">
       <div class="account-identity" data-current-identity hidden>
+        <span class="identity-initials" data-current-initials aria-hidden="true" hidden></span>
         <svg class="identity-avatar" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><circle cx="12" cy="8.5" r="3.25"/><path d="M5.75 19a6.25 6.25 0 0 1 12.5 0"/></svg>
         <span class="identity-text">
           <span class="visually-hidden">Signed in as </span><span class="identity-name" data-current-name hidden></span>
           <span class="identity-meta identity-role" data-current-profile>—</span>
           <span class="visually-hidden">User <span data-current-user-id>—</span></span>
         </span>
-        <a class="identity-settings" href="/settings/user" data-settings-link>${iconMarkup('sliders')}<span class="identity-action-label">Settings</span></a>
-        ${(options.signInProviders ?? []).includes('apple') ? '<a class="identity-settings" href="/auth/apple/disconnect">Disconnect Apple</a>' : ''}
+        <!--
+          The expanded sidebar folds the account's controls under this toggle,
+          the way the ezacto-ui sidebar does. Everywhere else the toggle is not
+          drawn and the menu dissolves, so the controls sit in the row as before.
+        -->
+        <button type="button" class="account-menu-toggle" data-account-menu-toggle aria-expanded="false" aria-controls="ez-account-menu" aria-label="Account menu">${iconMarkup('chevron', { direction: 'up' })}</button>
+        <div class="account-menu" id="ez-account-menu" data-account-menu>
+          <a class="identity-settings" href="/settings/user" data-settings-link>${iconMarkup('sliders')}<span class="identity-action-label">Settings</span></a>
+          ${(options.signInProviders ?? []).includes('apple') ? '<a class="identity-settings" href="/auth/apple/disconnect">Disconnect Apple</a>' : ''}
         <button type="button" class="identity-settings" data-first-run-help aria-label="Help: setup guide" title="Help: setup guide" hidden>${iconMarkup('list')}<span class="identity-action-label">Help</span></button>
-        <button type="button" class="identity-signout" data-logout>${iconMarkup('sign-out')}<span class="identity-action-label">Sign out</span></button>
+          <button type="button" class="identity-signout" data-logout>${iconMarkup('sign-out')}<span class="identity-action-label">Sign out</span></button>
+        </div>
         <p class="auth-result visually-hidden" data-logout-result role="status" aria-live="polite"></p>
       </div>
     </div>
@@ -742,13 +836,29 @@ ${instancePalette ? `  <link rel="stylesheet" href="${INSTANCE_THEME_STYLESHEET_
           <option value="">Yours</option>
         </select>
       </label>
-      <button class="primary-action" type="button" data-command-trigger data-auth-action data-time-log-time disabled>Log time</button>
+      <div class="context-actions">
+        ${renderTimeModes(options)}
+        <!--
+          Sending the week for approval, as the ezacto-ui split button. The
+          caret is drawn only while there is a second action to offer: taking
+          a submitted week back, or reopening an approved one.
+        -->
+        <div class="approval-split" data-approval-split>
+          <button class="primary-action" type="button" data-submit-timesheet data-auth-action disabled>${iconMarkup('send')}<span data-submit-timesheet-label>Send to approval</span></button>
+          <button class="approval-more" type="button" data-approval-more aria-expanded="false" aria-controls="ez-approval-menu" aria-label="More approval actions" hidden>${iconMarkup('chevron', { direction: 'down' })}</button>
+          <div class="approval-menu" id="ez-approval-menu" data-approval-menu hidden>
+            <button type="button" data-unsubmit-timesheet data-auth-action hidden disabled>Unsubmit week</button>
+            <button type="button" data-withdraw-timesheet data-auth-action hidden disabled>Reopen week</button>
+          </div>
+        </div>
+      </div>
     </header>
     <aside class="time-person-banner" data-time-person-banner role="status" aria-live="polite" hidden>
       <strong data-time-person-banner-text></strong>
       <button type="button" data-time-person-reset>Back to your timesheet</button>
     </aside>
     <aside class="session-status" data-session-status role="status">
+      <span class="status-spinner" aria-hidden="true"></span>
       <span data-session-message>Connecting to your ${escapeHtml(brand)} session…</span>
       <button type="button" data-retry-week hidden>Retry week</button>
     </aside>
@@ -767,14 +877,25 @@ ${instancePalette ? `  <link rel="stylesheet" href="${INSTANCE_THEME_STYLESHEET_
           the reader can also operate, and naming the week twice on one row is
           the noise §6 asks screens to stop making.
         -->
+        <!--
+          The day stepper, which in Day view stands in the box the week stepper
+          has in Week view (the ezacto-ui toolbar names the day you are on
+          there). On a phone both show: the week to move weeks, the day to
+          move within one.
+        -->
+        <div class="day-switcher" data-day-switcher>
+          <button type="button" data-day-previous data-auth-action disabled aria-label="Previous day">${iconMarkup('chevron', { direction: 'left' })}</button>
+          <button type="button" class="day-switcher-label" data-day-jump title="Choose a date">${iconMarkup('calendar')}<strong data-day-label>—</strong>${iconMarkup('chevron', { direction: 'down' })}</button>
+          <input class="day-jump-date" data-day-jump-date type="date" aria-label="Jump to date" tabindex="-1">
+          <button type="button" data-day-next data-auth-action disabled aria-label="Next day">${iconMarkup('chevron')}</button>
+        </div>
         <div class="week-period" data-week-period>
           <h2 class="visually-hidden" id="week-heading">Timesheet week</h2>
         </div>
         <div class="week-actions">
-          <button type="button" data-week-current data-auth-action disabled>${iconMarkup('calendar')}This week</button>
-          <button type="button" data-copy-last-week data-auth-action disabled>Copy last week</button>
-          <button type="button" data-add-row-trigger data-auth-action disabled>Add row</button>
-          <strong data-week-total>—</strong>
+          <button type="button" data-week-current data-auth-action disabled>${iconMarkup('calendar')}Today</button>
+          ${renderTimeViews(options)}
+          <button class="primary-action" type="button" data-track-time-trigger data-auth-action data-time-log-time aria-label="Log time" title="Log time" disabled>${iconMarkup('plus')}</button>
         </div>
       </header>
       <p class="week-hint" data-week-hint>Open any cell with its <span aria-hidden="true">✎</span> button, or <kbd>Alt</kbd>+<kbd>Enter</kbd> while it has focus, to edit the note or delete the entry. Clearing a cell to zero removes its entry.</p>
@@ -786,17 +907,19 @@ ${instancePalette ? `  <link rel="stylesheet" href="${INSTANCE_THEME_STYLESHEET_
           <p data-timesheet-rejection-reason hidden></p>
           <p class="form-result" data-timesheet-result role="status"></p>
         </div>
-        <div class="timesheet-status-actions">
-          <button type="button" data-unsubmit-timesheet data-auth-action hidden disabled>Unsubmit week</button>
-          <button type="button" data-withdraw-timesheet data-auth-action hidden disabled>Reopen week</button>
-          <button class="primary-action" type="button" data-submit-timesheet data-auth-action disabled>Submit week</button>
-        </div>
       </aside>
-      <ol class="day-totals" data-day-totals aria-label="Hours by day"></ol>
+      <!--
+        The week's shape before you read a row (the ezacto-ui week bar): seven
+        days, and the week's total at the end of the same line.
+      -->
+      <div class="day-strip">
+        <ol class="day-totals" data-day-totals aria-label="Hours by day"></ol>
+        <div class="day-strip-total"><span>Week total</span><strong data-week-total>—</strong></div>
+      </div>
       <div class="week-grid-wrap" data-week-grid data-view="desktop">
         <table class="week-grid-table">
-          <thead data-week-grid-head><tr><th>Project / task</th><th colspan="8">Loading week…</th></tr></thead>
-          <tbody data-week-grid-rows><tr><td colspan="9">Loading time entries…</td></tr></tbody>
+          <thead data-week-grid-head><tr><th>Project</th><th colspan="8">Loading week…</th></tr></thead>
+          <tbody data-week-grid-rows><tr><td colspan="9" class="grid-loading">Loading time entries…</td></tr></tbody>
           <tfoot data-week-grid-totals></tfoot>
         </table>
       </div>
@@ -826,13 +949,25 @@ ${instancePalette ? `  <link rel="stylesheet" href="${INSTANCE_THEME_STYLESHEET_
         </aside>
         <div class="calendar-surface" data-calendar-grid></div>
       </section>
+      <!--
+        The month, as the ezacto-ui Month view draws it: a band naming the month
+        with its total, then the weeks as cells, a chip an entry. Drawn from its
+        own fetch, a month being more than the week the grid holds.
+      -->
+      <section class="calendar-month" data-calendar-month-view aria-label="Month">
+        <p class="form-result" data-calendar-month-status role="status" aria-live="polite">Loading calendar…</p>
+        <div data-calendar-month-grid></div>
+      </section>
       <div class="day-list" data-day-list data-view="phone">
-        <header class="day-switcher">
-          <button type="button" data-day-previous data-auth-action disabled aria-label="Previous day">${iconMarkup('chevron', { direction: 'left' })}</button>
-          <strong data-day-label>—</strong>
-          <button type="button" data-day-next data-auth-action disabled aria-label="Next day">${iconMarkup('chevron')}</button>
-        </header>
         <div data-day-rows><p class="day-empty">Loading time entries…</p></div>
+      </div>
+      <!--
+        The grid's own line for growing it (the ezacto-ui add-row line under
+        its grid): a row for a project and task, or last week's rows again.
+      -->
+      <div class="week-grid-foot" data-week-grid-foot>
+        <button type="button" data-add-row-trigger data-auth-action disabled>${iconMarkup('plus')}Add row</button>
+        <button type="button" data-copy-last-week data-auth-action disabled>Copy last week</button>
       </div>
     </section>
   </main>
@@ -1151,6 +1286,7 @@ ${instancePalette ? `  <link rel="stylesheet" href="${INSTANCE_THEME_STYLESHEET_
   ${renderExpenseCategoriesPage(view)}
   ${renderModuleSettingsPage(view, options.accountingProviders)}
   ${renderActivityLogPage(view)}
+  ${renderNotificationsPage(view)}
   ${renderDeliveriesPage(view)}
   ${renderRoleAdminPage(view)}
   ${renderNotFoundPage(view)}
@@ -1176,26 +1312,51 @@ ${instancePalette ? `  <link rel="stylesheet" href="${INSTANCE_THEME_STYLESHEET_
       </div>
     </form>
   </dialog>
+  <!--
+    The time entry editor, laid out as the ezacto-ui Track time card: the
+    description first, the assignment as labelled rows, the timing in a
+    section of its own under a date chip, and the action as a bar across the
+    foot. One editor for every way in -- a cell, the day list, the timer chip,
+    the toolbar's "+" -- so the fields keep their marks and the browser code
+    its handles. Tags and a billable switch are not here because an entry has
+    neither: billable follows the task assignment, and tags do not exist.
+  -->
   <dialog class="entry-dialog" data-entry-dialog data-timer-dialog data-note-dialog aria-labelledby="entry-title">
     <form data-timer-form novalidate data-entry-form data-note-form>
-      <header><div><p class="eyebrow" data-entry-context>Time entry</p><h2 id="entry-title" data-entry-title data-note-title>Log time</h2></div><button type="button" data-dialog-close aria-label="Close">×</button></header>
+      <header class="entry-head">
+        <div class="entry-head-title">${iconMarkup('clock')}<p class="eyebrow" data-entry-context>Time entry</p><h2 id="entry-title" data-entry-title data-note-title>Log time</h2></div>
+        <button type="button" data-dialog-close aria-label="Close">×</button>
+      </header>
       <p class="hint" data-entry-proposal-source hidden></p>
-      <div class="entry-assignment">
-        <label>Project<select name="project" data-entry-project data-entry-project-options required></select></label>
-        <label>Task<select name="task" data-entry-task data-entry-task-options required></select></label>
+      <div class="entry-description">
+        <label for="ez-entry-note" class="visually-hidden">Note</label>
+        <textarea id="ez-entry-note" name="notes" data-entry-note-input data-timer-note data-note-input rows="1" maxlength="10000" placeholder="Add description…" aria-describedby="note-hint note-result"></textarea>
+        <p class="hint" id="note-hint" data-entry-note-hint data-timer-note-hint data-note-hint>Optional. Up to 10,000 characters.</p>
       </div>
-      <label>Date<input name="spent_date" data-entry-date type="date" required></label>
-      <label data-entry-duration>Duration<input name="duration" data-entry-duration-input inputmode="decimal" autocomplete="off"></label>
-      <div class="entry-times" data-entry-times hidden>
-        <label>Start<input name="started_time" data-entry-start autocomplete="off" placeholder="9:00 AM"></label>
-        <label>End<input name="ended_time" data-entry-end autocomplete="off" placeholder="5:00 PM"></label>
+      <div class="entry-fields">
+        <label class="entry-field">${iconMarkup('folder')}<span class="entry-field-label">Project</span><select name="project" data-entry-project data-entry-project-options required></select>${iconMarkup('chevron', { direction: 'down' })}</label>
+        <label class="entry-field">${iconMarkup('list')}<span class="entry-field-label">Task</span><select name="task" data-entry-task data-entry-task-options required></select>${iconMarkup('chevron', { direction: 'down' })}</label>
       </div>
-      <p class="hint" data-entry-billing aria-live="polite" hidden></p>
-      <p class="hint" data-entry-running hidden>This entry is running. Stop it before changing its assignment or timing.</p>
-      <label for="ez-entry-note">Note<textarea id="ez-entry-note" name="notes" data-entry-note-input data-timer-note data-note-input rows="5" maxlength="10000" aria-describedby="note-hint note-result"></textarea></label>
-      <p class="hint" id="note-hint" data-entry-note-hint data-timer-note-hint data-note-hint>Optional. Up to 10,000 characters.</p>
-      <p class="form-result" id="note-result" data-entry-result data-timer-result data-note-result role="status"></p>
-      <div class="timer-actions"><button class="primary-action" type="submit" data-entry-submit>Save entry</button><button type="button" data-proposal-discard hidden>Discard proposal</button><button type="button" data-proposal-check hidden>Check proposal status</button><button type="button" data-stop-timer hidden>Stop running timer</button><button type="button" class="danger-action" data-entry-delete hidden>Delete entry</button></div>
+      <div class="entry-timing">
+        <div class="entry-date">
+          <button type="button" class="entry-date-chip" data-entry-date-chip title="Choose a date">${iconMarkup('calendar')}<span data-entry-date-label>—</span></button>
+          <label for="ez-entry-date" class="visually-hidden">Date</label>
+          <input id="ez-entry-date" class="entry-date-input" name="spent_date" data-entry-date type="date" required tabindex="-1">
+        </div>
+        <p class="hint" data-entry-billing aria-live="polite" hidden></p>
+        <p class="hint" data-entry-running hidden>This entry is running. Stop it before changing its assignment or timing.</p>
+        <div class="entry-time-row">
+          <div class="entry-times" data-entry-times hidden>
+            <label><span class="visually-hidden">Start</span><input name="started_time" data-entry-start autocomplete="off" placeholder="9:00 AM"></label>
+            <span class="entry-time-arrow" aria-hidden="true">${iconMarkup('chevron')}</span>
+            <label><span class="visually-hidden">End</span><input name="ended_time" data-entry-end autocomplete="off" placeholder="5:00 PM"></label>
+          </div>
+          <label class="entry-duration" data-entry-duration>${iconMarkup('clock')}<span class="visually-hidden">Duration</span><input name="duration" data-entry-duration-input inputmode="decimal" autocomplete="off"></label>
+        </div>
+        <p class="form-result" id="note-result" data-entry-result data-timer-result data-note-result role="status"></p>
+        <div class="entry-secondary"><button type="button" data-proposal-discard hidden>Discard proposal</button><button type="button" data-proposal-check hidden>Check proposal status</button><button type="button" data-stop-timer hidden>Stop running timer</button><button type="button" class="danger-action" data-entry-delete hidden>Delete entry</button></div>
+      </div>
+      <button class="entry-submit" type="submit" data-entry-submit><span data-entry-submit-label>Save entry</span><span class="entry-submit-duration" data-entry-submit-duration aria-hidden="true" hidden></span><kbd aria-hidden="true">↵</kbd></button>
     </form>
   </dialog>
   <dialog class="menu-dialog" data-menu-dialog aria-labelledby="menu-title">

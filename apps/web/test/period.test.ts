@@ -20,6 +20,8 @@ const mount = (
     readonly today?: string
     readonly weekStartDay?: WeekStartDay
     readonly kinds?: readonly PeriodKind[]
+    readonly summary?: 'named' | 'days' | 'compact'
+    readonly jump?: boolean
   } = {},
 ) => {
   document.body.replaceChildren()
@@ -29,6 +31,8 @@ const mount = (
     today: () => options.today ?? '2026-09-10',
     ...(options.weekStartDay === undefined ? {} : { weekStartDay: options.weekStartDay }),
     ...(options.kinds === undefined ? {} : { kinds: options.kinds }),
+    ...(options.summary === undefined ? {} : { summary: options.summary }),
+    ...(options.jump === undefined ? {} : { jump: options.jump }),
     onChange,
   })
   document.body.appendChild(control.element)
@@ -353,6 +357,63 @@ describe('period control', () => {
     ui.previous.click()
     expect(ui.control.range()).toEqual(range('2025-04-05', '2025-04-11'))
     expect(ui.summary.textContent).toBe('5 – 11 Apr 2025')
+  })
+
+  it('[browser] can say a week by its days, as the timesheet toolbar does', () => {
+    // "This week:" is the link beside the control there, so the summary says
+    // the days themselves, and a week that straddles a year says both years.
+    const ui = mount({ today: '2026-09-10', kinds: ['week', 'month'], summary: 'days' })
+    ui.control.setRange(range('2026-09-07', '2026-09-13'))
+    expect(ui.summary.textContent).toBe('Mon 7 Sep – Sun 13 Sep 2026')
+    ui.control.setRange(range('2025-12-29', '2026-01-04'))
+    expect(ui.summary.textContent).toBe('Mon 29 Dec 2025 – Sun 4 Jan 2026')
+    // A month is still named as a month: the days are a week's way of saying it.
+    ui.control.setRange(range('2026-09-01', '2026-09-30'))
+    expect(ui.summary.textContent).toBe('This month: September 2026')
+  })
+
+  it('[browser] can say a week shorter still, as the calendar toolbar does', () => {
+    // "Mon 14 – Sun 20 Sep": the month once when both ends share it, twice
+    // when they do not, and no year on the calendar's own toolbar.
+    const ui = mount({ today: '2026-09-10', kinds: ['week', 'month'], summary: 'compact' })
+    ui.control.setRange(range('2026-09-07', '2026-09-13'))
+    expect(ui.summary.textContent).toBe('Mon 7 – Sun 13 Sep')
+    ui.control.setRange(range('2026-10-26', '2026-11-01'))
+    expect(ui.summary.textContent).toBe('Mon 26 Oct – Sun 1 Nov')
+    // A month is the calendar's own period, named plainly: "Today" is the
+    // link beside the control, so "This month" would say it twice.
+    ui.control.setRange(range('2026-09-01', '2026-09-30'))
+    expect(ui.summary.textContent).toBe('September 2026')
+  })
+
+  it('[browser] names no month before it has a range, however the week starts', () => {
+    // The organisation's week start lands before the first range does on a
+    // restored session, and the month-only calendar control took that as a
+    // month to name -- and threw on the empty date, which took the week down
+    // with it. It says what the other summaries say until a range arrives.
+    const ui = mount({ today: '2026-09-10', kinds: ['month', 'week'], summary: 'compact' })
+    expect(() => ui.control.setWeekStartDay('sunday')).not.toThrow()
+    expect(ui.summary.textContent).toBe('Choose a range')
+    ui.control.setRange(range('2026-09-01', '2026-09-30'))
+    expect(ui.summary.textContent).toBe('September 2026')
+  })
+
+  it('[browser] jumps to the period that holds a chosen day', () => {
+    // The summary is a button with the browser's date picker behind it; the
+    // week that holds the chosen day becomes the range, through the same
+    // `apply` a step takes, so the screen hears about it.
+    const ui = mount({ today: '2026-09-10', kinds: ['week', 'month'], jump: true })
+    ui.control.setRange(range('2026-09-07', '2026-09-13'))
+    const button = ui.element.querySelector<HTMLButtonElement>('[data-period-jump]')!
+    expect(button.textContent).toBe('This week: 7 – 13 Sep 2026')
+    const picker = ui.element.querySelector<HTMLInputElement>('[data-period-jump-date]')!
+    picker.value = '2026-10-21'
+    picker.dispatchEvent(new Event('change', { bubbles: true }))
+    expect(ui.control.range()).toEqual(range('2026-10-19', '2026-10-25'))
+    expect(ui.onChange).toHaveBeenCalledWith(range('2026-10-19', '2026-10-25'), 'week')
+    expect(ui.summary.textContent).toBe('19 – 25 Oct 2026')
+    ui.control.setDisabled(true)
+    expect(button.disabled).toBe(true)
   })
 
   it('[browser] jumps to the current period when a named kind is chosen', () => {

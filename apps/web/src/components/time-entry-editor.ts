@@ -15,9 +15,18 @@ export type OrganizationClock = '12h' | '24h'
 /**
  * Where the editor was opened from. `calendar` is a new entry drawn on the
  * calendar (issue 943): it opens with its times already set and the note
- * waiting, and Enter in the note saves it.
+ * waiting, and Enter in the note saves it. `track` is the toolbar's "+": a
+ * fresh entry on today, no cell behind it.
  */
-export type EntryEditorContext = 'week-cell' | 'day' | 'quick-add' | 'edit' | 'timer' | 'calendar' | 'proposal'
+export type EntryEditorContext =
+  | 'week-cell'
+  | 'day'
+  | 'quick-add'
+  | 'edit'
+  | 'timer'
+  | 'calendar'
+  | 'proposal'
+  | 'track'
 
 export interface TimeEntrySettings {
   readonly time_entry_mode: TimeEntryMode
@@ -91,6 +100,7 @@ export const modeForEntryDraft = (
 export const contextLabel = (context: EntryEditorContext, editing: boolean): string => {
   if (context === 'proposal') return 'Review calendar proposal'
   if (context === 'timer') return editing ? 'Running timer' : 'Start a timer'
+  if (context === 'track' && !editing) return 'Track time'
   return editing ? 'Edit time entry' : 'Add time entry'
 }
 

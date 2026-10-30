@@ -91,15 +91,18 @@ import {
   type EntryEditorContext,
   type TimeEntryMode,
 } from '../components/time-entry-editor.js'
-import { createPeriodControl, isCalendarDay } from '../components/period.js'
+import { createPeriodControl, isCalendarDay, periodRange } from '../components/period.js'
 import { createClientDirectoryController } from '../clients/browser.js'
 import { createProjectDirectoryController } from '../projects/browser.js'
 import { createActivityController } from '../activity/browser.js'
+import { createNotificationsController } from '../notifications/browser.js'
 import { createCapacityController } from '../capacity/browser.js'
 import { createMyPaymentsController } from '../my-payments/browser.js'
 import { focusSortHeader, setSortPreferenceOwner } from '../components/table-sort.js'
 import { createDeliveriesController } from '../deliveries/browser.js'
 import { createCalendarController, type CalendarPlacement } from '../calendar/browser.js'
+import { createCalendarMonthController } from '../calendar/month-browser.js'
+import { calendarMonthRange, monthStart } from '../calendar/month-model.js'
 import {
   CALENDAR_LAYOUT_COOKIE,
   type CalendarLayout,
@@ -168,6 +171,7 @@ import {
 } from '../week-grid/model.js'
 import { canManageTeammateTime, canProfileUseApiScope, isApiScope } from '@ezacto/core'
 import {
+  displayEntries,
   canBrowseDirectories,
   commandShortcutModifier,
   createSameOriginShellApi,
@@ -381,6 +385,30 @@ const dayLabel = (value: string, compact = false): string =>
     day: 'numeric',
     timeZone: 'UTC',
   }).format(parseDate(value))
+
+const weekdayName = (value: string): string =>
+  new Intl.DateTimeFormat('en-US', { weekday: 'long', timeZone: 'UTC' }).format(parseDate(value))
+
+/** "14th", "22nd": the day of the month as the ezacto-ui week bar writes it. */
+const ordinalDay = (value: string): string => {
+  const day = parseDate(value).getUTCDate()
+  const tens = day % 100
+  const suffix =
+    tens >= 11 && tens <= 13 ? 'th' : (['th', 'st', 'nd', 'rd'][day % 10] ?? 'th')
+  return `${day}${suffix}`
+}
+
+const isWeekend = (value: string): boolean => {
+  const weekday = parseDate(value).getUTCDay()
+  return weekday === 0 || weekday === 6
+}
+
+/** "Thursday, 17 Sep 2026": the day as the ezacto-ui toolbar names it in Day view. */
+const switcherLabel = (value: string): string => {
+  const date = parseDate(value)
+  const month = new Intl.DateTimeFormat('en-US', { month: 'short', timeZone: 'UTC' }).format(date)
+  return `${weekdayName(value)}, ${date.getUTCDate()} ${month} ${date.getUTCFullYear()}`
+}
 
 /**
  * A column header is scanned down a row of seven, not read as a sentence.
@@ -640,7 +668,9 @@ const cellInput = (
   input.dataset.view = view
   input.value = state?.rawValue ?? input.dataset.savedValue
   input.ariaLabel = `${dayLabel(cell.date)} hours`
-  input.placeholder = '0'
+  // The empty box shows the shape of what goes in it, in the account's own
+  // format: the reference grid's "0:00", or "0" on a decimal account.
+  input.placeholder = organizationTimeFormat === 'decimal' ? '0' : '0:00'
   if (state?.state === 'invalid') input.setAttribute('aria-invalid', 'true')
   const mode = modeForEntryDraft(cell.entries[0] ?? null, organizationMode)
   input.disabled = cell.isLocked || cell.isRunning || mode === 'start_end'
@@ -872,12 +902,32 @@ const rowStopButton = (entryId: number, label: string, className: string, handle
   return button
 }
 
+/**
+ * The mark beside a project's name (the ezacto-ui grid): its initials on a
+ * tile whose hue follows the project, so one project wears one colour on
+ * every row and every day. The stylesheet draws it from the attribute rather
+ * than the cell holding the letters, so the label's text stays the name.
+ */
+const projectMarkHues = [222, 262, 18, 158, 332, 194, 282, 10] as const
+const markProject = (element: HTMLElement, label: string, projectId: unknown): void => {
+  const initials = label
+    .split(/[\s/]+/u)
+    .filter((part) => part !== '')
+    .slice(0, 2)
+    .map((part) => part[0]!.toLocaleUpperCase('en-US'))
+    .join('')
+  element.dataset.mark = initials
+  const id = Number(projectId)
+  const hue = projectMarkHues[(Number.isFinite(id) ? Math.abs(id) : 0) % projectMarkHues.length]!
+  element.style.setProperty('--mark-hue', String(hue))
+}
+
 const renderGridHead = (dates: readonly string[], today: string): void => {
   const head = required<HTMLTableSectionElement>('[data-week-grid-head]')
   const heading = document.createElement('tr')
   const projectHeading = document.createElement('th')
   projectHeading.scope = 'col'
-  projectHeading.textContent = 'Project / task'
+  projectHeading.textContent = 'Project'
   heading.append(projectHeading)
   // Which column is today is the first thing you look for in a week grid, and
   // nothing said. The cells carry it too, so the marker runs the column's
@@ -929,6 +979,7 @@ const renderDesktopGrid = (grid: WeekGrid, handlers: GridHandlers, today: string
         if (row.isRunning) tr.dataset.running = 'true'
         const label = document.createElement('th')
         label.scope = 'row'
+        markProject(label, row.projectLabel, row.projectId)
         const project = document.createElement('strong')
         project.textContent = row.projectLabel
         const task = document.createElement('span')
@@ -1027,6 +1078,9 @@ const renderDesktopGrid = (grid: WeekGrid, handlers: GridHandlers, today: string
         const total = document.createElement('td')
         total.className = 'row-total'
         total.textContent = formatSeconds(row.totalSeconds)
+        // A zero total is set quiet, as the reference greys its empty sums,
+        // so the figures that carry time are the ones the eye lands on.
+        if (row.totalSeconds === 0) total.dataset.zero = ''
         tr.append(total)
         return tr
       }),
@@ -1037,11 +1091,12 @@ const renderDesktopGrid = (grid: WeekGrid, handlers: GridHandlers, today: string
   const totalRow = document.createElement('tr')
   const totalLabel = document.createElement('th')
   totalLabel.scope = 'row'
-  totalLabel.textContent = 'Total'
+  totalLabel.textContent = 'Week total'
   totalRow.append(totalLabel)
   for (const seconds of grid.dayTotals) {
     const td = document.createElement('td')
     td.textContent = formatSeconds(seconds)
+    if (seconds === 0) td.dataset.zero = ''
     totalRow.append(td)
   }
   const grandTotal = document.createElement('td')
@@ -1069,6 +1124,8 @@ const renderDayTotals = (
       item.dataset.dayTotal = date
       if (date === today) item.dataset.today = ''
       if (index === selectedDay) item.dataset.selected = ''
+      // The reference greys the weekend: a day nobody expects hours on.
+      if (isWeekend(date)) item.dataset.weekend = ''
       // The strip already answers "which day am I short on"; making it the way
       // to go there closes the loop, rather than reading the answer here and
       // then hunting for it in a separate pair of arrows.
@@ -1076,8 +1133,12 @@ const renderDayTotals = (
       control.type = 'button'
       control.dataset.daySelect = String(index)
       control.setAttribute('aria-pressed', index === selectedDay ? 'true' : 'false')
+      // "MONDAY 14th", the weekday carrying the line and the date set small
+      // beside it, as the reference week bar names its days.
       const label = document.createElement('span')
-      label.textContent = dayLabel(date, true)
+      const ordinal = document.createElement('small')
+      ordinal.textContent = ordinalDay(date)
+      label.append(`${weekdayName(date)} `, ordinal)
       const hours = document.createElement('strong')
       const seconds = grid.dayTotals[index] ?? 0
       hours.textContent = formatSeconds(seconds)
@@ -1094,7 +1155,7 @@ const renderDayTotals = (
 
 const renderPhoneDay = (grid: WeekGrid, selectedDay: number, handlers: GridHandlers): void => {
   const date = grid.dates[selectedDay]!
-  required<HTMLElement>('[data-day-label]').textContent = dayLabel(date)
+  required<HTMLElement>('[data-day-label]').textContent = switcherLabel(date)
   const rows = required<HTMLElement>('[data-day-rows]')
   if (grid.rows.length === 0) {
     const empty = document.createElement('p')
@@ -1133,6 +1194,7 @@ const renderPhoneDay = (grid: WeekGrid, selectedDay: number, handlers: GridHandl
       if (cell.isRunning) item.dataset.running = 'true'
       const label = document.createElement('div')
       label.className = 'day-row-label'
+      markProject(label, row.projectLabel, row.projectId)
       const project = document.createElement('strong')
       project.textContent = row.projectLabel
       const task = document.createElement('span')
@@ -1188,22 +1250,38 @@ const renderPhoneDay = (grid: WeekGrid, selectedDay: number, handlers: GridHandl
 
 let timerInterval: ReturnType<typeof globalThis.setInterval> | undefined
 
-// Whole minutes elapsed, floored: a clock never reads ahead of the time passed,
-// and 20m32s is 0:20 on the app.
-const clockElapsed = (seconds: number): string =>
-  formatDuration(Math.floor(seconds / 60) * 60, 'hours_minutes')
+/**
+ * A running timer reads as a clock, "3:42:19", the way the ezacto-ui timer
+ * does: seconds are what show it is alive. The totals keep the organization's
+ * format; this is the one figure on the page that is a clock and not a sum.
+ */
+const formatElapsed = (seconds: number): string => {
+  const whole = Math.max(0, Math.floor(seconds))
+  const hours = Math.floor(whole / 3_600)
+  const minutes = String(Math.floor((whole % 3_600) / 60)).padStart(2, '0')
+  const rest = String(whole % 60).padStart(2, '0')
+  return `${hours}:${minutes}:${rest}`
+}
 
 const renderTimer = (running: DisplayTimeEntry | null): void => {
   const chip = required<HTMLButtonElement>('[data-timer-chip]')
   const label = required<HTMLElement>('[data-timer-label]')
   const elapsed = required<HTMLElement>('[data-timer-elapsed]')
+  // The band under the crumbs says the same thing where the page is read
+  // (the ezacto-ui timer bar), and is only there while a timer runs.
+  const band = document.querySelector<HTMLElement>('[data-timer-band]')
+  const bandElapsed = band?.querySelector<HTMLElement>('[data-timer-band-elapsed]') ?? null
   if (timerInterval !== undefined) globalThis.clearInterval(timerInterval)
   if (running === null) {
     chip.dataset.state = 'stopped'
     chip.setAttribute('aria-label', 'Start timer')
     chip.title = 'Start timer'
     label.textContent = 'Start timer'
-    elapsed.textContent = formatDuration(0, 'hours_minutes')
+    // The idle placeholder is the clock at zero whatever the organization's
+    // time format: the chip is a clock, not a total (issue 1003), so 0.00
+    // beside it would promise a decimal that never ticks.
+    elapsed.textContent = formatElapsed(0)
+    if (band !== null) band.hidden = true
     return
   }
   chip.dataset.state = 'running'
@@ -1211,11 +1289,15 @@ const renderTimer = (running: DisplayTimeEntry | null): void => {
   chip.setAttribute('aria-label', accessibleLabel)
   chip.title = accessibleLabel
   label.textContent = `${running.project_label} / ${running.task_label}`
+  if (band !== null) {
+    band.querySelector<HTMLElement>('[data-timer-band-project]')!.textContent = running.project_label
+    band.querySelector<HTMLElement>('[data-timer-band-task]')!.textContent = running.task_label
+    band.hidden = false
+  }
   const update = (): void => {
-    // A running clock reads as a clock on every client, whatever the
-    // organization's time format: 0.3422 ticking up is unreadable and looks
-    // like the app and the web disagree (issue 1003). Totals still follow it.
-    elapsed.textContent = clockElapsed(runningElapsedSeconds(running))
+    const clock = formatElapsed(runningElapsedSeconds(running))
+    elapsed.textContent = clock
+    if (bandElapsed !== null) bandElapsed.textContent = clock
   }
   update()
   timerInterval = globalThis.setInterval(update, 1_000)
@@ -1232,6 +1314,39 @@ type WeekStartDay = 'saturday' | 'sunday' | 'monday'
 
 const storageKey = (userId: number, within: string, weekStartDay: WeekStartDay): string =>
   `ezacto:user:${userId}:week-rows:${weekDates(within, weekStartDay)[0]}`
+
+/**
+ * The nav gates the server has to answer (Approvals, Team), remembered per
+ * person so the next page opens with them already settled. Storage can be
+ * refused or empty; then nothing is remembered and the links wait as before.
+ */
+type RememberedNavGates = { readonly approvals?: boolean; readonly team?: boolean }
+
+const navGatesKey = (userId: number): string => `ezacto:user:${userId}:nav-gates`
+
+const rememberedNavGates = (userId: number): RememberedNavGates => {
+  try {
+    const value: unknown = JSON.parse(globalThis.localStorage.getItem(navGatesKey(userId)) ?? '{}')
+    if (typeof value !== 'object' || value === null) return {}
+    const approvals = Reflect.get(value, 'approvals')
+    const team = Reflect.get(value, 'team')
+    return {
+      ...(typeof approvals === 'boolean' ? { approvals } : {}),
+      ...(typeof team === 'boolean' ? { team } : {}),
+    }
+  } catch {
+    return {}
+  }
+}
+
+const rememberNavGate = (userId: number, gate: keyof RememberedNavGates, visible: boolean): void => {
+  try {
+    const next = { ...rememberedNavGates(userId), [gate]: visible }
+    globalThis.localStorage.setItem(navGatesKey(userId), JSON.stringify(next))
+  } catch {
+    // Storage refused: the links wait for the server as they did.
+  }
+}
 
 const loadSupplementalRows = (
   userId: number,
@@ -1329,10 +1444,22 @@ const focusCell = (target: FocusTarget | undefined): boolean => {
  * every tab in every other strip on load.
  */
 const markTimeViewTab = (): void => {
+  const current = document.documentElement.dataset.timeView
   for (const link of document.querySelectorAll<HTMLAnchorElement>('[data-time-views] a')) {
     const linkView = new URL(link.href).searchParams.get('view') ?? 'week'
-    if (linkView === document.documentElement.dataset.timeView)
-      link.setAttribute('aria-current', 'page')
+    if (linkView === current) link.setAttribute('aria-current', 'page')
+    else link.removeAttribute('aria-current')
+  }
+  // The title row's trio: Timesheet is the week and the day alike, Calendar
+  // the clock and Month the month. Week and Day choose between the two
+  // timesheets in the toolbar.
+  for (const link of document.querySelectorAll<HTMLAnchorElement>('[data-time-modes] a')) {
+    const linkView = new URL(link.href).searchParams.get('view') ?? 'week'
+    const isCurrent =
+      linkView === 'calendar' || linkView === 'month'
+        ? linkView === current
+        : current !== 'calendar' && current !== 'month'
+    if (isCurrent) link.setAttribute('aria-current', 'page')
     else link.removeAttribute('aria-current')
   }
 }
@@ -1425,6 +1552,7 @@ export const mountShell = async (
   const teamListPage = document.documentElement.dataset.appView === 'team-list'
   const teamPersonPage = document.documentElement.dataset.appView === 'team-person'
   const dashboardPage = document.documentElement.dataset.appView === 'dashboard'
+  const notificationsPage = document.documentElement.dataset.appView === 'notifications'
   const reportsPage = document.documentElement.dataset.appView === 'reports'
   const expenseListPage = document.documentElement.dataset.appView === 'expense-list'
   const expenseDetailPage = document.documentElement.dataset.appView === 'expense-detail'
@@ -1535,6 +1663,44 @@ export const mountShell = async (
   const entryNoteHint = required<HTMLElement>('[data-entry-note-hint]')
   const entryResult = required<HTMLElement>('[data-entry-result]')
   const entrySubmit = required<HTMLButtonElement>('[data-entry-submit]')
+  const entrySubmitLabel = required<HTMLElement>('[data-entry-submit-label]')
+  const entrySubmitDuration = required<HTMLElement>('[data-entry-submit-duration]')
+  const entryDateChip = required<HTMLButtonElement>('[data-entry-date-chip]')
+  const entryDateLabel = required<HTMLElement>('[data-entry-date-label]')
+  // The date as the ezacto-ui chip says it, "Thu, 18 Sep", over the native
+  // input that holds the value and opens the browser's own picker.
+  const chipDate = (value: string): string => {
+    if (!isCalendarDay(value)) return '—'
+    const date = new Date(`${value}T00:00:00.000Z`)
+    const weekday = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'][date.getUTCDay()] ?? ''
+    const month =
+      ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'][
+        date.getUTCMonth()
+      ] ?? ''
+    return `${weekday}, ${date.getUTCDate()} ${month}`
+  }
+  const syncEntryDateLabel = (): void => {
+    entryDateLabel.textContent = chipDate(entryDate.value)
+  }
+  // The action bar echoes the duration ("Track time · 1h") while the duration
+  // is what is being entered; start and end say their own sum on the grid.
+  const syncSubmitDuration = (): void => {
+    const text = entryDuration.hidden ? '' : entryDurationInput.value.trim()
+    entrySubmitDuration.textContent = text
+    entrySubmitDuration.hidden = text === ''
+  }
+  entryDate.addEventListener('change', syncEntryDateLabel)
+  entryDurationInput.addEventListener('input', syncSubmitDuration)
+  entryDateChip.addEventListener('click', () => {
+    if (entryDate.disabled) return
+    const picker = entryDate as HTMLInputElement & { showPicker?: () => void }
+    try {
+      if (typeof picker.showPicker === 'function') picker.showPicker()
+      else entryDate.focus()
+    } catch {
+      entryDate.focus()
+    }
+  })
   const proposalSource = required<HTMLElement>('[data-entry-proposal-source]')
   const proposalDiscard = required<HTMLButtonElement>('[data-proposal-discard]')
   const proposalCheck = required<HTMLButtonElement>('[data-proposal-check]')
@@ -1617,6 +1783,7 @@ export const mountShell = async (
     ),
     target: document.documentElement,
   })
+  const monthView = createCalendarMonthController()
   const calendar = createCalendarController({
     openEntry: (entryId) => openCalendarEntry(entryId),
     reviewProposal: (id, anchor) => openCalendarProposal(id, anchor),
@@ -1698,6 +1865,9 @@ export const mountShell = async (
       return api.getMyPayments(month, signal)
     },
   })
+  // Reads only the sources the signed-in person may read, which it decides by
+  // profile; an install missing an endpoint simply has that source absent.
+  const notifications = createNotificationsController(api)
   // Same shape as the activity controller above: an install whose api does not
   // offer these still serves the page and says it cannot load, rather than the
   // shell failing to construct.
@@ -1742,6 +1912,40 @@ export const mountShell = async (
   const timesheetRejectionReason = required<HTMLElement>('[data-timesheet-rejection-reason]')
   const timesheetResult = required<HTMLElement>('[data-timesheet-result]')
   const submitTimesheet = required<HTMLButtonElement>('[data-submit-timesheet]')
+  const submitTimesheetLabel = required<HTMLElement>('[data-submit-timesheet-label]')
+  // The split button's caret and the menu it opens (the ezacto-ui "Send to
+  // approval"): a disclosure holding the week's second action, taking a
+  // submitted week back or reopening an approved one, drawn only while there
+  // is one. It closes on a choice, on Escape and on any click outside it.
+  const approvalMore = required<HTMLButtonElement>('[data-approval-more]')
+  const approvalMenu = required<HTMLElement>('[data-approval-menu]')
+  const setApprovalMenu = (open: boolean): void => {
+    approvalMore.setAttribute('aria-expanded', String(open))
+    approvalMenu.hidden = !open
+  }
+  approvalMore.addEventListener('click', () => {
+    setApprovalMenu(approvalMenu.hidden)
+  })
+  document.addEventListener('click', (event) => {
+    if (approvalMenu.hidden) return
+    const split = approvalMore.closest('[data-approval-split]')
+    if (!(event.target instanceof Node) || split === null || !split.contains(event.target)) {
+      setApprovalMenu(false)
+      return
+    }
+    if (
+      event.target instanceof Element &&
+      event.target.closest('[data-approval-menu] button') !== null
+    ) {
+      setApprovalMenu(false)
+    }
+  })
+  approvalMenu.addEventListener('keydown', (event) => {
+    if (event.key !== 'Escape') return
+    event.preventDefault()
+    setApprovalMenu(false)
+    approvalMore.focus()
+  })
   const withdrawTimesheet = required<HTMLButtonElement>('[data-withdraw-timesheet]')
   const unsubmitTimesheet = required<HTMLButtonElement>('[data-unsubmit-timesheet]')
   const approvalsPageElement = required<HTMLElement>('[data-timesheet-approvals-page]')
@@ -1791,7 +1995,9 @@ export const mountShell = async (
   }
   const requestedView = new URL(globalThis.location.href).searchParams.get('view')
   document.documentElement.dataset.timeView =
-    requestedView === 'day' || requestedView === 'calendar' ? requestedView : 'week'
+    requestedView === 'day' || requestedView === 'calendar' || requestedView === 'month'
+      ? requestedView
+      : 'week'
   markTimeViewTab()
   const cellStates = new Map<string, CellSaveState>()
   let within = initialWithin()
@@ -1817,15 +2023,28 @@ export const mountShell = async (
    * the one screen where the period was already navigation rather than a filter
    * waiting on a button.
    */
+  // The Month view is a month (the ezacto-ui Month view), so its toolbar steps
+  // months and names one, "October 2026"; the timesheets and the calendar step weeks.
+  const isMonthView = (): boolean => document.documentElement.dataset.timeView === 'month'
   const weekPeriod = createPeriodControl({
-    label: 'Week',
-    kinds: ['week'],
+    label: isMonthView() ? 'Month' : 'Week',
+    kinds: isMonthView() ? ['month'] : ['week'],
+    // The ezacto-ui toolbar: the week by its days, "Today" as the link beside
+    // it, and the dates themselves the way to any other week.
+    summary: isMonthView() ? 'compact' : 'days',
+    jump: true,
     today: localDate,
     onChange: (range) => {
       moveWeekTo(range.from)
     },
   })
   required<HTMLElement>('[data-week-period]').appendChild(weekPeriod.element)
+  /** The control shows the month on the calendar and the week elsewhere, both around `within`. */
+  const syncWeekPeriod = (): void => {
+    weekPeriod.setRange(
+      isMonthView() ? periodRange('month', within) : weekRange(within, weekStartDay),
+    )
+  }
   let supplementalRows: WeekRowSeed[] = []
   let selectedDay = Math.max(0, weekDates(within, weekStartDay).indexOf(localDate()))
   let effectiveProposalZone: string | null = null
@@ -1977,9 +2196,17 @@ export const mountShell = async (
     message: string,
     state: 'ready' | 'signed-out' | 'loading' | 'error',
     retry = false,
+    // Said to the reader and kept for whoever asks, but not drawn as a band:
+    // "connected" is the page's normal state, and the reference page has no
+    // line for it. A notice, a loading line or an error still takes the band.
+    quiet = false,
   ): void => {
     statusMessage.textContent = message
     status.dataset.state = state
+    status.toggleAttribute('data-quiet', quiet)
+    // The page says it is loading where the eye is: the spinner in the band,
+    // and the week, the day list or the month dimmed under it until it lands.
+    document.querySelector('[data-app-content]')?.toggleAttribute('data-loading', state === 'loading')
     retryWeek.hidden = !retry
     retryWeek.disabled = false
   }
@@ -2131,7 +2358,15 @@ export const mountShell = async (
     required<HTMLElement>('[data-timer-elapsed]').textContent = '—'
     endWeekLoading()
     required<HTMLElement>('[data-week-total]').textContent = '—'
-    required<HTMLElement>('[data-week-grid-rows]').replaceChildren()
+    // The served skeleton again, not an empty table: the next week lands on
+    // the shimmer the page opened with rather than on nothing.
+    const loadingRow = document.createElement('tr')
+    const loadingCell = document.createElement('td')
+    loadingCell.colSpan = 9
+    loadingCell.className = 'grid-loading'
+    loadingCell.textContent = 'Loading time entries…'
+    loadingRow.append(loadingCell)
+    required<HTMLElement>('[data-week-grid-rows]').replaceChildren(loadingRow)
     required<HTMLElement>('[data-week-grid-totals]').replaceChildren()
     required<HTMLElement>('[data-day-rows]').replaceChildren()
     calendarProposals.clear()
@@ -2141,6 +2376,8 @@ export const mountShell = async (
     proposalDiscard.hidden = true
     proposalCheck.hidden = true
     calendar.clear()
+    monthView.clear()
+    monthShown = ''
     invoiceClient.replaceChildren()
     invoiceProjects.replaceChildren()
     invoiceResult.textContent = ''
@@ -2186,6 +2423,8 @@ export const mountShell = async (
     timesheetLockList.replaceChildren()
     withdrawTimesheet.hidden = true
     unsubmitTimesheet.hidden = true
+    approvalMore.hidden = true
+    setApprovalMenu(false)
     approvalModuleAvailable = false
     lockPolicyAvailable = false
     currentSubmission = null
@@ -2245,7 +2484,7 @@ export const mountShell = async (
     required<HTMLElement>('[data-timer-label]').textContent = 'Sign in required'
     required<HTMLElement>('[data-timer-elapsed]').textContent = '—'
     endWeekLoading()
-    weekPeriod.setRange(weekRange(within, weekStartDay))
+    syncWeekPeriod()
     required<HTMLElement>('[data-week-total]').textContent = '—'
     const unavailable = document.createElement('tr')
     const cell = document.createElement('td')
@@ -2327,7 +2566,7 @@ export const mountShell = async (
     snapshot = null
     grid = null
     cellStates.clear()
-    weekPeriod.setRange(weekRange(within, weekStartDay))
+    syncWeekPeriod()
     required<HTMLElement>('[data-week-total]').textContent = '—'
     const unavailable = document.createElement('tr')
     const cell = document.createElement('td')
@@ -2383,6 +2622,15 @@ export const mountShell = async (
     const name = fullName !== '' ? fullName : (profile?.email ?? '')
     nameElement.textContent = name
     nameElement.hidden = name === ''
+    // Initials only from a real name: an address's first letters are not a
+    // monogram, so without one the outline avatar stays.
+    const initialsElement = required<HTMLElement>('[data-current-initials]')
+    const initials = [profile?.first_name, profile?.last_name]
+      .map((part) => (typeof part === 'string' ? (part.trim()[0] ?? '') : ''))
+      .join('')
+      .toLocaleUpperCase()
+    initialsElement.textContent = initials
+    initialsElement.hidden = initials === ''
     const card = nameElement.closest<HTMLElement>('[data-current-identity]')
     if (card !== null) {
       if (typeof profile?.email === 'string' && profile.email !== '') card.title = profile.email
@@ -2408,15 +2656,24 @@ export const mountShell = async (
     // After this returns, so the loader below is defined; the card shows the
     // role until the profile answers.
     queueMicrotask(() => loadIdentityName(operation))
-    for (const link of document.querySelectorAll<HTMLElement>('[data-team-nav]')) {
-      link.hidden = true
-    }
     // Settled on every page, not only the two that show the strip: the company
     // tab is the standing answer to "may this person open company settings",
     // and ⌘K asks it from wherever it is opened.
     revealCompanySettings(identity)
     revealMoneySections(identity)
     revealDirectorySections(identity)
+    // Approvals and Team wait on the server (the module, the team's status),
+    // and that answer lands a beat after the rest of the nav: the links
+    // appeared under a person's eyes on every page, and the items below them
+    // shifted. The last answer this person got is the first one shown; the
+    // fresh answer corrects it when it lands.
+    const remembered = rememberedNavGates(identity.user_id)
+    for (const link of document.querySelectorAll<HTMLElement>('[data-approvals-nav]')) {
+      link.hidden = remembered.approvals !== true
+    }
+    for (const link of document.querySelectorAll<HTMLElement>('[data-team-nav]')) {
+      link.hidden = remembered.team !== true
+    }
     signInResult.textContent = ''
     logoutResult.textContent = ''
     setApplicationAvailability(true)
@@ -3192,6 +3449,7 @@ export const mountShell = async (
       for (const link of document.querySelectorAll<HTMLElement>('[data-team-nav]')) {
         link.hidden = !status.enabled
       }
+      rememberNavGate(identity.user_id, 'team', status.enabled)
     } catch (error) {
       handleSessionFailure(error, operation)
     }
@@ -3464,6 +3722,7 @@ export const mountShell = async (
     for (const link of document.querySelectorAll<HTMLElement>('[data-approvals-nav]')) {
       link.hidden = !visible
     }
+    if (currentIdentity !== null) rememberNavGate(currentIdentity.user_id, 'approvals', visible)
     approvalsPageElement.hidden = !(timesheetApprovalsPage && visible)
   }
 
@@ -3472,7 +3731,12 @@ export const mountShell = async (
     // submission loaded beside it is the signed-in person's: on a teammate's
     // week (issue 917) none of it applies.
     timesheetStatus.hidden = !approvalModuleAvailable || viewedPerson !== null
-    if (timesheetStatus.hidden) return
+    submitTimesheet.hidden = timesheetStatus.hidden
+    if (timesheetStatus.hidden) {
+      approvalMore.hidden = true
+      setApprovalMenu(false)
+      return
+    }
     const status = currentSubmission?.status ?? 'unsubmitted'
     timesheetStatus.dataset.status = status
     // A week the person took back themselves carries the same three columns a
@@ -3494,7 +3758,7 @@ export const mountShell = async (
       : currentSubmission?.rejection_reason?.trim() ?? ''
     timesheetRejectionReason.hidden = reason === ''
     timesheetRejectionReason.textContent = reason === '' ? '' : `Needs changes: ${reason}`
-    submitTimesheet.textContent =
+    submitTimesheetLabel.textContent =
       status === 'approved'
         ? 'Approved'
         : status === 'submitted'
@@ -3502,8 +3766,8 @@ export const mountShell = async (
           : selfWithdrawn ||
               currentSubmission?.rejection_reason === null ||
               currentSubmission?.rejection_reason === undefined
-            ? 'Submit week'
-            : 'Resubmit week'
+            ? 'Send to approval'
+            : 'Resend to approval'
     submitTimesheet.disabled =
       timesheetTransitionPending ||
       status !== 'unsubmitted' ||
@@ -3518,6 +3782,9 @@ export const mountShell = async (
     unsubmitTimesheet.hidden =
       status !== 'submitted' || api.unsubmitTimesheetSubmission === undefined
     unsubmitTimesheet.disabled = timesheetTransitionPending || unsubmitTimesheet.hidden
+    // The caret, only while the menu behind it has something in it.
+    approvalMore.hidden = unsubmitTimesheet.hidden && withdrawTimesheet.hidden
+    if (approvalMore.hidden) setApprovalMenu(false)
   }
 
   const renderLockPolicy = (): void => {
@@ -3821,7 +4088,7 @@ export const mountShell = async (
     grid = buildWeekGrid(snapshot, within, supplementalRows)
     // Off the grid's own dates rather than recomputed: a label that disagreed
     // with the columns beneath it is the failure this control exists to end.
-    weekPeriod.setRange({ from: grid.dates[0]!, to: grid.dates.at(-1)! })
+    syncWeekPeriod()
     required<HTMLElement>('[data-week-total]').textContent = formatSeconds(grid.totalSeconds)
     const handlers: GridHandlers = {
       cellStates,
@@ -3898,8 +4165,23 @@ export const mountShell = async (
       formatSeconds,
     })
     renderDayTotals(grid, selectedDay, selectDay, today)
+    // "Today" fades while you are already there (the reference link): on
+    // today's day in Day view, in today's week otherwise.
+    required<HTMLElement>('[data-week-current]').toggleAttribute(
+      'data-on-today',
+      document.documentElement.dataset.timeView === 'day'
+        ? grid.dates[selectedDay] === today
+        : isMonthView()
+          ? // `today` can be empty while the zones that decide it are still
+            // unknown; an empty day is in no month rather than an error.
+            isCalendarDay(today) && monthStart(within) === monthStart(today)
+          : grid.dates.includes(today),
+    )
     renderDesktopGrid(grid, handlers, today)
     renderPhoneDay(grid, selectedDay, handlers)
+    // The Month view is the month around the same date, drawn from its own
+    // fetch: a month is more than the week the grid holds.
+    if (isMonthView()) loadMonth(today)
     renderTimer(snapshot.running)
     updateRowOptions()
     renderApprovalNavigation()
@@ -4020,6 +4302,76 @@ export const mountShell = async (
     }
   }
 
+  /**
+   * A Month view chip opens its entry, as a cell's mark does on the grid: the
+   * same editor, with the same lock message said on arrival, and a teammate's
+   * entry written as theirs (issue 917).
+   */
+  const openMonthEntry = (entry: DisplayTimeEntry): void => {
+    if (currentIdentity === null || snapshot === null) return
+    configureEntryEditor(
+      {
+        context: 'edit',
+        entry,
+        projectId: entry.project_id,
+        taskId: entry.task_id,
+        spentDate: entry.spent_date,
+        seconds: entry.seconds,
+        notes: entry.notes ?? null,
+        mode: modeForEntryDraft(entry, snapshot.timeEntrySettings.time_entry_mode),
+        timer: false,
+        minimumNoteLength: entry.minimum_note_length,
+        ...(viewedPerson === null
+          ? {}
+          : {
+              owner: {
+                userId: viewedPerson.id,
+                options: snapshot.catalog.timeEntryOptions,
+              },
+            }),
+      },
+      entry.is_locked === true
+        ? `This entry cannot be changed: ${entry.locked_reason ?? 'it is locked'}.`
+        : '',
+    )
+  }
+
+  /**
+   * The month on the calendar, fetched for its own range: whole weeks around
+   * the month `within` falls in. Fetched once per month and person, and again
+   * after the week reloads, which is how a save or a timer reaches it.
+   */
+  let monthShown = ''
+  const loadMonth = (today: string): void => {
+    const operation = sessionOperation()
+    if (operation === null || operation.userId === null || snapshot === null) return
+    const range = calendarMonthRange(within, weekStartDay)
+    const key = `${range.from}:${range.to}:${weekPersonId(operation)}`
+    if (monthShown === key) return
+    monthShown = key
+    const shown = within
+    monthView.loading(shown)
+    void api
+      .listTimeEntries(
+        viewedPerson === null ? range : { ...range, user_id: viewedPerson.id },
+        operation.signal,
+      )
+      .then((entries) => {
+        if (!isSessionCurrent(operation) || monthShown !== key || snapshot === null) return
+        monthView.render(shown, displayEntries(entries, snapshot.catalog), {
+          timeFormat: snapshot.timeEntrySettings.time_format,
+          weekStartDay,
+          today,
+          open: openMonthEntry,
+        })
+      })
+      .catch((error: unknown) => {
+        if (handleSessionFailure(error, operation)) return
+        monthShown = ''
+        monthView.failed('The calendar could not load. Check the connection and retry.')
+      })
+  }
+
   const stoppingTimers = new Set<number>()
   const stopRowTimer = async (entryId: number): Promise<void> => {
     const operation = sessionOperation()
@@ -4112,6 +4464,9 @@ export const mountShell = async (
     }
     weekStartDay = loadedWeekStartDay
     weekPeriod.setWeekStartDay(loadedWeekStartDay)
+    // A fresh week means fresh entries: the month is drawn again from them,
+    // so a save made from a calendar chip shows on the chip.
+    monthShown = ''
     // The generation wizard offers Week too, and was computing Monday-Sunday
     // regardless of the setting -- so on a Saturday-start organisation a draft
     // claimed work across two of its weeks, and the wizard's own label
@@ -4173,7 +4528,7 @@ export const mountShell = async (
     setSessionStatus('Loading your week…', 'loading')
     try {
       if (!(await refresh(operation))) return
-      setSessionStatus(`Connected. Changes save directly to ${brandName}.`, 'ready')
+      setSessionStatus(`Connected. Changes save directly to ${brandName}.`, 'ready', false, true)
     } catch (error) {
       if (handleSessionFailure(error, operation)) return
       renderWeekLoadFailure()
@@ -4845,6 +5200,11 @@ export const mountShell = async (
       handleSessionFailure(error, authenticated),
     )
     void loadTeamNavigation(identity, authenticated)
+    // The bell's count, on every page that carries the breadcrumb row. The
+    // Notifications page loads the same list below and is not asked twice.
+    if (!notificationsPage && document.querySelector('[data-notifications-bell]') !== null) {
+      void notifications.activate(identity, authenticated.signal)
+    }
     hideActivityLogWhenOff(identity, authenticated)
     if (invoiceGenerationPage) {
       openInvoiceDialog(authenticated)
@@ -4923,6 +5283,11 @@ export const mountShell = async (
           authenticated.signal,
           (error) => handleSessionFailure(error, authenticated),
         ),
+        loadWeek(authenticated),
+      ])
+    } else if (notificationsPage) {
+      await Promise.all([
+        notifications.activate(identity, authenticated.signal),
         loadWeek(authenticated),
       ])
     } else if (document.querySelector('[data-activity-log-page]:not([hidden])') !== null) {
@@ -5700,6 +6065,7 @@ export const mountShell = async (
       task: task === undefined ? String(next.taskId) : resourceLabel(task),
     })
     entryDate.value = next.spentDate
+    syncEntryDateLabel()
     entryDurationInput.value = initialDurationValue
     const shownStart = next.entry?.started_time ?? next.times?.started ?? null
     const shownEnd = next.entry?.ended_time ?? next.times?.ended ?? null
@@ -5715,6 +6081,7 @@ export const mountShell = async (
     entryDuration.hidden = next.mode !== 'duration' || next.timer || running
     entryTimes.hidden = next.mode !== 'start_end' || next.timer || running
     entryRunning.hidden = !running
+    syncSubmitDuration()
     const immutable = running || next.entry?.is_locked === true
     for (const field of [
       entryProject,
@@ -5724,14 +6091,17 @@ export const mountShell = async (
       entryStart,
       entryEnd,
     ]) field.disabled = immutable
+    entryDateChip.disabled = immutable
     entryNoteInput.disabled = next.entry?.is_locked === true
     entrySubmit.hidden = next.entry?.is_locked === true
-    entrySubmit.textContent = reviewingProposal ? 'Accept proposal' : running
+    entrySubmitLabel.textContent = reviewingProposal ? 'Accept proposal' : running
       ? 'Save note'
       : next.timer
         ? 'Start timer'
         : next.entry === null
-          ? 'Log time'
+          ? next.context === 'track'
+            ? 'Track time'
+            : 'Log time'
           : 'Save entry'
     stopTimer.hidden = !running
     // Only where there is something to delete, and never on a running timer --
@@ -5886,6 +6256,44 @@ export const mountShell = async (
       if (currentIdentity !== null) openCommandPalette()
     })
   }
+  // The toolbar's "+" (the ezacto-ui add button): Track time on today, with
+  // the assignment you logged on most recently already chosen. The entry it
+  // saves puts its own row on the grid, so no row has to be added first.
+  required<HTMLButtonElement>('[data-track-time-trigger]').addEventListener('click', () => {
+    if (currentIdentity === null || snapshot === null) return
+    // A teammate's week (issue 917) is theirs; the "+" logs your own time.
+    if (viewedPerson !== null) {
+      setSessionStatus('Go back to your own timesheet to track time.', 'ready')
+      return
+    }
+    const latest = [...snapshot.entries].sort((left, right) =>
+      right.updated_at.localeCompare(left.updated_at),
+    )[0]
+    const option =
+      snapshot.catalog.timeEntryOptions.find(
+        (candidate) =>
+          latest !== undefined &&
+          candidate.project_id === latest.project_id &&
+          candidate.task_id === latest.task_id,
+      ) ?? snapshot.catalog.timeEntryOptions[0]
+    configureEntryEditor({
+      context: 'track',
+      entry: null,
+      projectId: option?.project_id ?? 0,
+      taskId: option?.task_id ?? 0,
+      spentDate: localDate(),
+      seconds: 0,
+      notes: null,
+      mode: snapshot.timeEntrySettings.time_entry_mode,
+      timer: false,
+      minimumNoteLength: option?.minimum_note_length ?? 0,
+    })
+  })
+  // The band's Stop stops the timer it names, as the row's Stop does.
+  document.querySelector<HTMLButtonElement>('[data-timer-band-stop]')?.addEventListener('click', () => {
+    if (snapshot?.running === null || snapshot?.running === undefined) return
+    void stopRowTimer(snapshot.running.id)
+  })
   required<HTMLButtonElement>('[data-timer-chip]').addEventListener('click', () => {
     void openTimerEditor()
   })
@@ -7065,7 +7473,7 @@ export const mountShell = async (
         if (token !== weekLoadSeq) return
         endWeekLoading()
         if (!loaded || !isSessionCurrent(operation)) return
-        setSessionStatus(`Connected. Changes save directly to ${brandName}.`, 'ready')
+        setSessionStatus(`Connected. Changes save directly to ${brandName}.`, 'ready', false, true)
       })
       .catch((error: unknown) => {
         if (token !== weekLoadSeq) return
@@ -7149,6 +7557,43 @@ export const mountShell = async (
   }
   required<HTMLButtonElement>('[data-day-previous]').addEventListener('click', () => moveDay(-1))
   required<HTMLButtonElement>('[data-day-next]').addEventListener('click', () => moveDay(1))
+  // The day's name is also the way to any other day (the ezacto-ui period
+  // button): the browser's own picker behind it, and the chosen day's week
+  // loads with that day selected.
+  const dayJump = required<HTMLButtonElement>('[data-day-jump]')
+  const dayJumpDate = required<HTMLInputElement>('[data-day-jump-date]')
+  dayJump.addEventListener('click', () => {
+    if (currentIdentity === null || grid === null) return
+    dayJumpDate.value = grid.dates[selectedDay] ?? localDate()
+    const picker = dayJumpDate as HTMLInputElement & { showPicker?: () => void }
+    try {
+      if (typeof picker.showPicker === 'function') picker.showPicker()
+      else dayJumpDate.focus()
+    } catch {
+      dayJumpDate.focus()
+    }
+  })
+  dayJumpDate.addEventListener('change', () => {
+    const chosen = dayJumpDate.value
+    const operation = sessionOperation()
+    if (!isCalendarDay(chosen) || operation === null || operation.userId === null) return
+    const index = grid?.dates.indexOf(chosen) ?? -1
+    if (index >= 0) {
+      selectDay(index)
+      return
+    }
+    within = chosen
+    supplementalRows = loadSupplementalRows(weekPersonId(operation), within, weekStartDay)
+    cellStates.clear()
+    setWeekUrl(within, weekStartDay)
+    // The load keeps the day you had selected when the new week holds it and
+    // falls back to today; the chosen day is neither, so it is selected once
+    // the week is on screen.
+    void loadWeek(operation).then(() => {
+      const landed = grid?.dates.indexOf(chosen) ?? -1
+      if (landed >= 0) selectDay(landed)
+    })
+  })
   required<HTMLButtonElement>('[data-copy-last-week]').addEventListener('click', () => {
     const operation = sessionOperation()
     if (operation === null || operation.userId === null || grid === null) return
@@ -7863,6 +8308,37 @@ export const mountShell = async (
     syncSidebarToggle(
       sidebarState.set(sidebarState.current() === 'collapsed' ? 'expanded' : 'collapsed'),
     )
+  })
+  // The expanded sidebar's account menu: a disclosure, not an ARIA menu, so
+  // Tab walks its links as it walks every other link. It closes on a choice,
+  // on Escape and on any click outside it. Where the toggle is not drawn the
+  // attribute changes nothing, because the menu is not a box there.
+  const accountMenuToggle = document.querySelector<HTMLButtonElement>(
+    '[data-account-menu-toggle]',
+  )
+  const accountPanel = accountMenuToggle?.closest<HTMLElement>('[data-current-identity]') ?? null
+  const setAccountMenu = (open: boolean): void => {
+    accountMenuToggle?.setAttribute('aria-expanded', String(open))
+    accountPanel?.toggleAttribute('data-account-menu-open', open)
+  }
+  accountMenuToggle?.addEventListener('click', () => {
+    setAccountMenu(accountMenuToggle.getAttribute('aria-expanded') !== 'true')
+  })
+  document.addEventListener('click', (event) => {
+    if (accountPanel === null || !accountPanel.hasAttribute('data-account-menu-open')) return
+    if (!(event.target instanceof Node) || !accountPanel.contains(event.target)) {
+      setAccountMenu(false)
+      return
+    }
+    if (event.target instanceof Element && event.target.closest('[data-account-menu] a, [data-account-menu] button') !== null) {
+      setAccountMenu(false)
+    }
+  })
+  accountPanel?.addEventListener('keydown', (event) => {
+    if (event.key !== 'Escape' || !accountPanel.hasAttribute('data-account-menu-open')) return
+    event.preventDefault()
+    setAccountMenu(false)
+    accountMenuToggle?.focus()
   })
   for (const button of document.querySelectorAll<HTMLButtonElement>('[data-density-choice]')) {
     button.addEventListener('click', () => {

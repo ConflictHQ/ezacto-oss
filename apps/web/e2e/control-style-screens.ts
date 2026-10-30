@@ -24,6 +24,7 @@ export const controlAuditScreens = [
   ['expense-categories', '/expense-categories'],
   ['team-list', '/team'],
   ['team-person', '/team/1'],
+  ['notifications', '/notifications'],
   ['capacity', '/capacity'],
   ['scheduled-run', '/scheduled-runs/999999'],
   ['settings-user', '/settings/user'],

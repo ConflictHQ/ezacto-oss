@@ -426,7 +426,7 @@ describe('week-grid browser behavior', () => {
     expect(toolbar.querySelectorAll('.period-step')).toHaveLength(2)
     const summary = toolbar.querySelector<HTMLElement>('[data-period-summary]')!
     // 2026-08-28 is a Friday; the organisation's week starts on Monday.
-    await vi.waitFor(() => expect(summary.textContent).toBe('24 – 30 Aug 2026'))
+    await vi.waitFor(() => expect(summary.textContent).toBe('Mon 24 Aug – Sun 30 Aug 2026'))
     // No kind menu, because there is no month-shaped grid to put one on.
     expect(toolbar.querySelectorAll('[data-period-kind]')).toHaveLength(0)
 
@@ -434,11 +434,11 @@ describe('week-grid browser behavior', () => {
     toolbar.querySelector<HTMLButtonElement>('[data-period-previous]')!.click()
     await vi.waitFor(() => expect(week()).toBe('2026-08-17'))
     // The label follows the week that loaded, not the one that was asked for.
-    expect(summary.textContent).toBe('17 – 23 Aug 2026')
+    expect(summary.textContent).toBe('Mon 17 Aug – Sun 23 Aug 2026')
 
     toolbar.querySelector<HTMLButtonElement>('[data-period-next]')!.click()
     await vi.waitFor(() => expect(week()).toBe('2026-08-24'))
-    expect(summary.textContent).toBe('24 – 30 Aug 2026')
+    expect(summary.textContent).toBe('Mon 24 Aug – Sun 30 Aug 2026')
   })
 
   it('[browser] keeps the timesheet period on the organisation week, not on Monday', async () => {
@@ -461,13 +461,13 @@ describe('week-grid browser behavior', () => {
     expect(toolbar.querySelectorAll('.period-step')).toHaveLength(2)
     const summary = toolbar.querySelector<HTMLElement>('[data-period-summary]')!
     // 2026-08-28 is a Friday, so a Saturday week holds it from the 22nd.
-    await vi.waitFor(() => expect(summary.textContent).toBe('22 – 28 Aug 2026'))
+    await vi.waitFor(() => expect(summary.textContent).toBe('Sat 22 Aug – Fri 28 Aug 2026'))
 
     toolbar.querySelector<HTMLButtonElement>('[data-period-previous]')!.click()
     await vi.waitFor(() =>
       expect(new URL(globalThis.location.href).searchParams.get('week')).toBe('2026-08-15'),
     )
-    expect(summary.textContent).toBe('15 – 21 Aug 2026')
+    expect(summary.textContent).toBe('Sat 15 Aug – Fri 21 Aug 2026')
   })
 
   it('[browser] opens the add-row dialog on Enter with a modifier, from inside a cell', async () => {
@@ -1025,13 +1025,14 @@ describe('week-grid browser behavior', () => {
       '0',
       '2.2583',
     ])
-    // The timer chip is a clock, not a total: it reads H:MM whatever the setting.
-    expect(durations.timerElapsed).toBe('0:00')
+    // The timer chip is a clock, not a total: it reads H:MM:SS whatever the setting.
+    expect(durations.timerElapsed).toBe('0:00:00')
   })
 
   it('[browser] shows a running timer as a clock even when the organisation tracks decimal hours', async () => {
     // 1,232s is 0.3422 hours; the chip read that and kept incrementing it while
-    // the app showed 0:20 (issue 1003). Totals around it stay decimal.
+    // the app showed 0:20 (issue 1003); the web reads it as a clock with its
+    // seconds. Totals around it stay decimal.
     renderBrowserShell()
     vi.useFakeTimers({ toFake: ['Date'] })
     vi.setSystemTime(new Date('2026-08-28T12:00:00Z'))
@@ -1047,7 +1048,7 @@ describe('week-grid browser behavior', () => {
     await vi.waitFor(() =>
       expect(document.querySelector('[data-timer-chip]')!.getAttribute('data-state')).toBe('running'),
     )
-    expect(document.querySelector('[data-timer-elapsed]')!.textContent).toBe('0:20')
+    expect(document.querySelector('[data-timer-elapsed]')!.textContent).toBe('0:20:32')
   })
 
   it('[browser] agrees with itself on the roundest hour a timesheet carries', async () => {
@@ -1107,7 +1108,9 @@ describe('week-grid browser behavior', () => {
       '0:00',
       '2:16',
     ])
-    expect(durations.timerElapsed).toBe('0:00')
+    // The idle chip is the clock at zero: the timer reads with seconds while
+    // it runs, as the reference timer does, so its zero has them too.
+    expect(durations.timerElapsed).toBe('0:00:00')
   })
 
   it('[e2e:track-week] displays 12-hour times and submits canonical start/end values', async () => {
@@ -1566,6 +1569,42 @@ describe('week-grid browser behavior', () => {
     expect(document.querySelector('[data-row-result]')?.textContent).toContain('already on this week')
   })
 
+  it('[browser] tracks time from the toolbar\'s plus, and the entry brings its own row', async () => {
+    // The ezacto-ui "+" opens Track time on today with the assignment you
+    // logged on last. The entry it saves is what puts a row on the grid, so
+    // "Add row" is only for a row you want before there is time on it.
+    vi.useFakeTimers({ toFake: ['Date'] })
+    vi.setSystemTime(new Date('2026-09-16T12:00:00'))
+    renderBrowserShell()
+    const api = browserApi()
+    await mountShell(api)
+
+    document.querySelector<HTMLButtonElement>('[data-time-log-time]')!.click()
+    const dialog = document.querySelector<HTMLDialogElement>('[data-entry-dialog]')!
+    expect(dialog.open).toBe(true)
+    expect(dialog.dataset.entryContext).toBe('track')
+    expect(document.querySelector('[data-entry-title]')?.textContent).toBe('Track time')
+    expect(document.querySelector('[data-entry-submit-label]')?.textContent).toBe('Track time')
+    expect(document.querySelector<HTMLInputElement>('[data-entry-date]')!.value).toBe('2026-09-16')
+    expect(document.querySelector('[data-entry-date-label]')?.textContent).toBe('Wed, 16 Sep')
+    expect(document.querySelector<HTMLSelectElement>('[data-entry-project]')!.value).not.toBe('')
+
+    const duration = document.querySelector<HTMLInputElement>('[data-entry-duration-input]')!
+    duration.value = '1.5'
+    duration.dispatchEvent(new Event('input', { bubbles: true }))
+    // The action bar echoes what is being entered, as the reference's does.
+    expect(document.querySelector('[data-entry-submit-duration]')?.textContent).toBe('1.5')
+    document
+      .querySelector<HTMLFormElement>('[data-entry-form]')!
+      .dispatchEvent(new SubmitEvent('submit', { bubbles: true, cancelable: true }))
+    await vi.waitFor(() => expect(api.createTimeEntry).toHaveBeenCalledTimes(1))
+    expect(vi.mocked(api.createTimeEntry).mock.lastCall?.[0]).toMatchObject({
+      spent_date: '2026-09-16',
+      seconds: 5_400,
+    })
+    await vi.waitFor(() => expect(dialog.open).toBe(false))
+  })
+
   describe('a week cell two entries share (issue 904)', () => {
     // Two sessions on one task on one day is ordinary, not a conflict. The cell
     // used to be a disabled input labelled "Split" with its only explanation in
@@ -1602,7 +1641,7 @@ describe('week-grid browser behavior', () => {
       expect(document.documentElement.dataset.timeView).toBe('day')
       expect(new URL(globalThis.location.href).searchParams.get('view')).toBe('day')
       expect(new URL(globalThis.location.href).searchParams.get('week')).toBe('2026-08-28')
-      expect(document.querySelector('[data-day-label]')?.textContent).toBe('Wednesday, Aug 26')
+      expect(document.querySelector('[data-day-label]')?.textContent).toBe('Wednesday, 26 Aug 2026')
       const rows = [...document.querySelectorAll<HTMLElement>('[data-day-rows] .day-row')]
       expect(rows.map((row) => row.querySelector('[data-entry-note]')?.textContent)).toEqual([
         'Morning session',
@@ -1936,5 +1975,47 @@ describe('week-grid browser behavior', () => {
       expect(surface.getAttribute('aria-busy')).toBe('false')
       expect(surface.hasAttribute('inert')).toBe(false)
     }
+  })
+})
+
+describe('remembered nav gates', () => {
+  const key = 'ezacto:user:1:nav-gates'
+
+  it('[browser] opens with Approvals and Team where this person last saw them', async () => {
+    // Both wait on the server, and that answer landed a beat after the rest
+    // of the nav: the links appeared under a person's eyes on every page and
+    // the items below them shifted. The last answer is the first one shown.
+    renderBrowserShell()
+    globalThis.localStorage.setItem(key, JSON.stringify({ approvals: true, team: true }))
+    // The week never lands here: the fresh answer is still on its way.
+    const api = { ...browserApi(), listTimesheetSubmissions: () => new Promise<never>(() => {}) }
+    void mountShell(api)
+    await vi.waitFor(() =>
+      expect(document.querySelector<HTMLElement>('[data-approvals-nav]')!.hidden).toBe(false),
+    )
+    expect(document.querySelector<HTMLElement>('[data-team-nav]')!.hidden).toBe(false)
+  })
+
+  it('[browser] remembers the answer the server gave, and corrects a stale one', async () => {
+    renderBrowserShell()
+    globalThis.localStorage.setItem(key, JSON.stringify({ approvals: true }))
+    // This api offers no approvals module, so the fresh answer is "hidden".
+    await mountShell(browserApi())
+    await vi.waitFor(() =>
+      expect(document.querySelector<HTMLElement>('[data-approvals-nav]')!.hidden).toBe(true),
+    )
+    expect(JSON.parse(globalThis.localStorage.getItem(key)!)).toEqual({ approvals: false })
+  })
+
+  it('[browser] shows nothing it has not been told, and survives storage that refuses', async () => {
+    renderBrowserShell()
+    globalThis.localStorage.removeItem(key)
+    const api = { ...browserApi(), listTimesheetSubmissions: () => new Promise<never>(() => {}) }
+    void mountShell(api)
+    await vi.waitFor(() =>
+      expect(document.querySelector<HTMLElement>('[data-current-user-id]')!.textContent).toBe('1'),
+    )
+    expect(document.querySelector<HTMLElement>('[data-approvals-nav]')!.hidden).toBe(true)
+    expect(document.querySelector<HTMLElement>('[data-team-nav]')!.hidden).toBe(true)
   })
 })

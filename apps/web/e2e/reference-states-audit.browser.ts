@@ -101,6 +101,8 @@ for (const width of [390, 1280]) {
         await capture('populated-week')
 
         await page.locator('[data-submit-timesheet]').click()
+        // Unsubmit sits behind the send button's caret (the ezacto-ui split button).
+        await page.locator('[data-approval-more]').click()
         await expect(page.locator('[data-unsubmit-timesheet]')).toBeVisible()
         submitted = true
         await page.goto('/approvals')
@@ -151,6 +153,7 @@ for (const width of [390, 1280]) {
         await page.unroute(expenses, failExpenseRead)
         if (submitted) {
           await page.goto(weekPath)
+          await page.locator('[data-approval-more]').click()
           await expect(page.locator('[data-unsubmit-timesheet]')).toBeVisible()
           await page.locator('[data-unsubmit-timesheet]').click()
           await expect(page.locator('[data-unsubmit-timesheet]')).toBeHidden()

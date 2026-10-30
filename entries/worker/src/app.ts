@@ -2382,6 +2382,30 @@ export const createApp = (
         ),
       )
 
+      // What happened that concerns you, under the bell on the breadcrumb row.
+      // Outside the primary nav, so no section is marked as the page you are on.
+      app.get('/notifications', async (context) =>
+        context.html(
+          renderAppShell({
+            environment: context.env.ENVIRONMENT,
+            release: context.env.RELEASE,
+            ...(await shellChrome(context.env, context.req.raw)),
+            activeSection: 'Notifications',
+            view: 'notifications',
+            demoAccounts: publishedDemoAccounts(context.env),
+            sessionCookiePresent: hasSessionCookie(context.req.raw),
+          }),
+          200,
+          {
+            'cache-control': 'no-store',
+            'content-security-policy': shellContentSecurityPolicy,
+            'permissions-policy': 'camera=(), microphone=(), geolocation=()',
+            'referrer-policy': 'same-origin',
+            'x-content-type-options': 'nosniff',
+          },
+        ),
+      )
+
       // The page shipped (issue 485) and the Settings strip and the palette
       // linked here, but no route served it, so the link answered "That page
       // does not exist".

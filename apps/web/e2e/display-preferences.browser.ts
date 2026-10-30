@@ -504,9 +504,9 @@ test('[e2e:nav] gives search a row of its own in the sidebar, ring and all', asy
       menu: rect('[data-menu-trigger]'),
     }
   })
-  // The column's whole width, less its 10px padding each side, and $ and Menu
-  // together on the row under it.
-  expect(searchBox.width).toBeCloseTo(248 - 1 - 20, 0)
+  // The column's whole width, less the 10px gutter and the card's own 10px
+  // padding on each side, and $ and Menu together on the row under it.
+  expect(searchBox.width).toBeCloseTo(248 - 1 - 40, 0)
   expect(money.y).toBeGreaterThan(searchBox.y + searchBox.height - 1)
   expect(Math.abs(money.y - menu.y)).toBeLessThan(1)
   // The chip says which key: the command key on a Mac, Ctrl elsewhere.
@@ -603,7 +603,19 @@ test('[e2e:text-size] keeps the drawer and the command bar inside the window at 
   await page.keyboard.press('Escape')
 
   await page.setViewportSize({ width: 1280, height: 720 })
+  // The toolbar's "+" opens Track time (the entry editor); the command bar
+  // keeps its shortcut. It is enabled with the session and does nothing until
+  // the week has loaded, so wait for the week first.
+  await expect(page.locator('[data-week-total]')).not.toHaveText('—')
   await page.locator('[data-time-log-time]').click()
+  const editor = page.locator('[data-entry-dialog]')
+  await expect(editor).toBeVisible()
+  await page.waitForTimeout(250)
+  const editorBox = await box(page, '[data-entry-dialog]')
+  expect(editorBox.y + editorBox.height).toBeLessThanOrEqual(720)
+  expect(editorBox.x + editorBox.width).toBeLessThanOrEqual(1280)
+  await page.keyboard.press('Escape')
+  await page.keyboard.press('ControlOrMeta+k')
   const command = page.locator('[data-command-dialog]')
   await expect(command).toBeVisible()
   await page.waitForTimeout(250)
