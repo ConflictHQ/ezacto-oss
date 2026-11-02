@@ -31,12 +31,20 @@ export function reviewSecrets(env) {
       "REVIEW_OWNER_PASSWORD must contain 24–128 non-whitespace characters",
     );
   }
-  // Whitelist review-specific credentials; never inherit prod integrations.
+  // Whitelist: the deploy workflow exposes only app-review environment values,
+  // so nothing from dev or prod reaches this payload. Apple and Google sign-in
+  // are wired the same way as dev, with the review's own credentials.
   return deploySecretPayload({
     API_CURSOR_SIGNING_KEY: env.REVIEW_CURSOR_SIGNING_KEY,
     EZACTO_BOOTSTRAP_TOKEN: bootstrap,
-    // Fixed public audience for the official app, never inherited credentials.
-    APPLE_CLIENT_ID: "com.ezacto.app",
+    APPLE_CLIENT_ID: env.APPLE_CLIENT_ID,
+    APPLE_WEB_ENABLED: env.APPLE_WEB_ENABLED,
+    APPLE_WEB_SERVICES_ID: env.APPLE_WEB_SERVICES_ID,
+    APPLE_WEB_CAPABILITY_KEYS: env.APPLE_WEB_CAPABILITY_KEYS,
+    APPLE_WEB_ACTIVE_KEY_ID: env.APPLE_WEB_ACTIVE_KEY_ID,
+    APPLE_WEB_ROUTING_SECRET: env.APPLE_WEB_ROUTING_SECRET,
+    OIDC_GOOGLE_CLIENT_ID: env.OIDC_GOOGLE_CLIENT_ID,
+    OIDC_GOOGLE_CLIENT_SECRET: env.OIDC_GOOGLE_CLIENT_SECRET,
   });
 }
 
