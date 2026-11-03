@@ -23,16 +23,19 @@ The dev and normal prod workflows/configuration retain their existing targets.
 
 The database, bucket, queues, passwords and signing key must be separate from
 both real books and the public demo. Use fictional records only. Authentication
-is required for business records and attachments. No email, OIDC, payment
-integration, or Sentry credentials are inherited from other environments.
+is required for business records and attachments. No email, payment integration,
+or Sentry credentials are inherited from other environments.
 
-The review payload explicitly sets the official native app audience
-`APPLE_CLIENT_ID=com.ezacto.app`. This public identifier cannot be overridden by
-inherited environment values. It does not enable browser Apple sign-in or install
-an Apple private key. The canonical instance origin remains
-`https://review.ezacto.io`; Apple credential custody stays in the separate
-first-party service. The workspace's normal sign-in and provisioning policies
-still apply, with one opt-in exception below.
+Apple and Google sign-in are wired on the review instance as they are on prod,
+with the review's own values held in the `app-review` environment: the Google
+OIDC client, `APPLE_CLIENT_ID` (native audience), and the Apple web settings
+(`APPLE_WEB_ENABLED`, `APPLE_WEB_SERVICES_ID`, capability keys, active key ID,
+routing secret). The deploy workflow exposes only these names; the payload
+validation in `render-deploy-secrets.mjs` still applies. The Google OAuth client
+and the Apple Services ID must list `https://review.ezacto.io` as an allowed
+return origin. The canonical instance origin remains `https://review.ezacto.io`.
+The workspace's normal sign-in and provisioning policies still apply, with one
+opt-in exception below.
 
 ## Apple self sign-up
 

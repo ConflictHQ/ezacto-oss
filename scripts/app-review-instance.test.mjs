@@ -24,36 +24,40 @@ const env = {
   REVIEW_OWNER_PASSWORD: "private-test-password-24-characters",
 };
 
-test("secrets only use review keys, ignoring inherited production integrations", () => {
+test("secrets carry review values only; unrelated production keys never reach the payload", () => {
   const payload = reviewSecrets({
     ...env,
     API_CURSOR_SIGNING_KEY: "wrong",
     AWS_ACCESS_KEY_ID: "prod",
     STRIPE_API_KEY: "prod",
-    APPLE_CLIENT_ID: "unrelated.app",
-    APPLE_WEB_ENABLED: "true",
-    APPLE_WEB_SERVICES_ID: "unrelated.web",
     APPLE_SIGN_IN_PRIVATE_KEY: "must-not-inherit",
-    OIDC_GOOGLE_CLIENT_SECRET: "prod",
     SENTRY_DSN: "prod",
   });
   assert.equal(payload.API_CURSOR_SIGNING_KEY, env.REVIEW_CURSOR_SIGNING_KEY);
   assert.equal(payload.EZACTO_BOOTSTRAP_TOKEN, env.REVIEW_BOOTSTRAP_TOKEN);
-  assert.equal(payload.APPLE_CLIENT_ID, "com.ezacto.app");
-  assert.equal(reviewSecrets(env).APPLE_CLIENT_ID, "com.ezacto.app");
   assert.equal("APPLE_SIGN_IN_PRIVATE_KEY" in payload, false);
   for (const [key, value] of Object.entries(payload)) {
-    if (
-      ![
-        "API_CURSOR_SIGNING_KEY",
-        "EZACTO_BOOTSTRAP_TOKEN",
-        "APPLE_CLIENT_ID",
-      ].includes(key)
-    )
+    if (!["API_CURSOR_SIGNING_KEY", "EZACTO_BOOTSTRAP_TOKEN"].includes(key))
       assert.equal(value, null, key);
   }
   for (const key of Object.keys(env))
     assert.throws(() => reviewSecrets({ ...env, [key]: "" }));
+});
+
+test("Apple native and Google sign-in pass through from the review environment", () => {
+  const payload = reviewSecrets({
+    ...env,
+    APPLE_CLIENT_ID: "com.ezacto.app",
+    OIDC_GOOGLE_CLIENT_ID: "review-client.apps.googleusercontent.com",
+    OIDC_GOOGLE_CLIENT_SECRET: "review-google-secret",
+  });
+  assert.equal(payload.APPLE_CLIENT_ID, "com.ezacto.app");
+  assert.equal(
+    payload.OIDC_GOOGLE_CLIENT_ID,
+    "review-client.apps.googleusercontent.com",
+  );
+  assert.equal(payload.OIDC_GOOGLE_CLIENT_SECRET, "review-google-secret");
+  assert.equal(reviewSecrets(env).OIDC_GOOGLE_CLIENT_ID, null);
 });
 
 test("database resolution uses one exact name and never picks production or a prefix", async () => {
