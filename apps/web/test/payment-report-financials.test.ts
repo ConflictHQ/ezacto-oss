@@ -1,5 +1,5 @@
 /** @vitest-environment happy-dom */
-import { describe, expect, it, vi } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import {
   summarizeStaffPayments,
   type StaffInvoice,
@@ -172,6 +172,9 @@ const report: PaymentRunReport = {
 }
 
 describe('payment report invoice and credit evidence', () => {
+  afterEach(() => {
+    vi.useRealTimers()
+  })
   it('uses only current received versions and retains independent invoice currencies and source links', () => {
     const sections = paymentFinancialSections(sources(), filters, [row])
     expect(sections[0]!.rows.map((r) => [r.Currency, r['Received cents']])).toEqual([
@@ -248,6 +251,9 @@ describe('payment report invoice and credit evidence', () => {
     )
   })
   it('loads sources for the selected range, renders them and clears private facts on abort', async () => {
+    // The report defaults to the previous payment month of today's date; pin it so the fixture's September holds.
+    vi.useFakeTimers({ toFake: ['Date'] })
+    vi.setSystemTime(new Date('2026-10-15T12:00:00Z'))
     history.replaceState({}, '', '/payments/report')
     document.body.innerHTML = renderStaffPayments('staff-payments')
     const source = sources()
