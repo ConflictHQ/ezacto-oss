@@ -17,6 +17,20 @@ const uuid = /^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/
 const safeName = /^[A-Za-z0-9][A-Za-z0-9._-]{0,252}$/
 let preparationStage = 'configuration'
 
+export const classifyWranglerFailure = error => {
+  const output = `${error?.stderr ?? ''} ${error?.stdout ?? ''}`.replace(/\x1b\[[0-9;]*m/g, '')
+  const match = /\[code: (\d{3,8})\]/.exec(output)
+  const providerCode = match ? Number(match[1]) : undefined
+  const category = /authentication error|unauthorized|not authorized|forbidden/i.test(output) ? 'authentication'
+    : /ECONNRESET|ETIMEDOUT|ENOTFOUND|fetch failed|network error/i.test(output) ? 'network'
+      : error?.code === 'ENOENT' ? 'command_missing' : 'provider_command'
+  return { category, ...(providerCode ? { provider_code: providerCode } : {}) }
+}
+const wrangler = async (args, options) => {
+  try { return await execute('wrangler', args, options) }
+  catch (error) { error.safeProviderFailure = classifyWranglerFailure(error); throw error }
+}
+
 export const selectCompletedCapture = (response, now = new Date()) => {
   const rows = response?.[0]?.results
   if (response?.length !== 1 || response[0].success !== true || !Array.isArray(rows) || rows.length !== 1)
@@ -121,12 +135,12 @@ async function main() {
   await mkdir(workDirectory, { recursive: false, mode: 0o700 })
   // Keep private provider output in memory, never in workflow logs.
   preparationStage = 'completion_lookup'
-  const receipt = await execute('wrangler', ['d1', 'execute', database, '--remote', '--json', '--command',
+  const receipt = await wrangler(['d1', 'execute', database, '--remote', '--json', '--command',
     "SELECT id,r2_prefix,manifest_json FROM backup_runs WHERE status='completed' AND trigger='nightly' AND r2_prefix IS NOT NULL ORDER BY started_at DESC,id DESC LIMIT 1"], { maxBuffer: 16 * 1024 * 1024 })
   preparationStage = 'completion_receipt'
   const capture = selectCompletedCapture(JSON.parse(receipt.stdout))
   const result = await prepareWorkerArtifacts({ capture, workDirectory, onStage: stage => { preparationStage = stage },
-    readObject: async (key, target) => { await execute('wrangler', ['r2', 'object', 'get', `${bucket}/${key}`, '--remote', '--file', target]) },
+    readObject: async (key, target) => { await wrangler(['r2', 'object', 'get', `${bucket}/${key}`, '--remote', '--file', target]) },
   })
   preparationStage = 'local_publication'
   // Existing deposit steps operate in the checkout; only publish finished files.
@@ -140,7 +154,7 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
     // Provider/SQLite errors can contain private output. Report a bounded stage
     // and exit class, never their message, SQL, arguments or captured stdout.
     const commandExit = Number.isInteger(error?.code) && error.code > 0 && error.code < 256 ? error.code : undefined
-    console.error(JSON.stringify({ error: 'worker_backup_preparation_failed', stage: preparationStage, ...(commandExit ? { command_exit: commandExit } : {}) }))
+    console.error(JSON.stringify({ error: 'worker_backup_preparation_failed', stage: preparationStage, ...(commandExit ? { command_exit: commandExit } : {}), ...(error.safeProviderFailure ? { provider: error.safeProviderFailure } : {}) }))
     process.exitCode = 1
   })
 }

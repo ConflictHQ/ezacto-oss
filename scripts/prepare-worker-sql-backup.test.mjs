@@ -6,7 +6,7 @@ import { join } from 'node:path'
 import { test } from 'node:test'
 import { execFile } from 'node:child_process'
 import { promisify } from 'node:util'
-import { downloadCompletedCapture, selectCompletedCapture } from './prepare-worker-sql-backup.mjs'
+import { classifyWranglerFailure, downloadCompletedCapture, selectCompletedCapture } from './prepare-worker-sql-backup.mjs'
 const stamp = '2026-11-09T03:10:00.000Z', now = new Date('2026-11-09T04:00:00.000Z')
 const prefix = 'backups/2026-11-09/12345678-1234-1234-1234-123456789abc/'
 const bytes = { 'schema.json': Buffer.from('{}'), 'rows/sample/000000.json': Buffer.from('[]') }
@@ -102,5 +102,11 @@ test('provider failure reports a bounded stage without leaking captured output o
   assert.equal(error.code, 1)
   assert.ok(!error.stdout.includes('PRIVATE-PROVIDER-SENTINEL'))
   assert.ok(!error.stderr.includes('PRIVATE-PROVIDER-SENTINEL'))
-  assert.deepEqual(JSON.parse(error.stderr.trim()), { error: 'worker_backup_preparation_failed', stage: 'completion_lookup', command_exit: 7 })
+  assert.deepEqual(JSON.parse(error.stderr.trim()), { error: 'worker_backup_preparation_failed', stage: 'completion_lookup', command_exit: 7, provider: { category: 'provider_command' } })
 }))
+
+test('provider diagnostics keep only transport category and numeric provider code', () => {
+  assert.deepEqual(classifyWranglerFailure({ stderr: 'Authentication error [code: 10000] PRIVATE-CREDENTIAL-SENTINEL', stdout: 'PRIVATE-CUSTOMER-SENTINEL' }), { category: 'authentication', provider_code: 10000 })
+  assert.deepEqual(classifyWranglerFailure({ stderr: 'fetch failed ECONNRESET PRIVATE-SENTINEL' }), { category: 'network' })
+  assert.deepEqual(classifyWranglerFailure({ code: 'ENOENT' }), { category: 'command_missing' })
+})
