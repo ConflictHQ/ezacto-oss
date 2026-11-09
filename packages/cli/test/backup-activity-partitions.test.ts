@@ -1,8 +1,8 @@
 import BetterSqlite3 from 'better-sqlite3'
-import { mkdtemp, readFile, rm } from 'node:fs/promises'
+import { copyFile, mkdtemp, readFile, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest'
 import { activityRollStatements, migrateContainer } from '@ezacto/db'
 import { createBackup, restoreBackup } from '../src/backup.js'
 
@@ -15,32 +15,48 @@ import { createBackup, restoreBackup } from '../src/backup.js'
 describe('ez backup covers rolled activity log years', () => {
   let directory: string
   let databasePath: string
+  let templateDirectory: string
+  let templatePath: string
+
+  // Full migrations are integration setup. Each case gets its own copied book,
+  // without rebuilding hundreds of tables inside every ten-second hook.
+  beforeAll(async () => {
+    templateDirectory = await mkdtemp(join(tmpdir(), 'ezacto-cli-activity-template-'))
+    templatePath = join(templateDirectory, 'template.sqlite')
+    const database = new BetterSqlite3(templatePath)
+    try {
+      migrateContainer(database)
+      const seed = (id: string, sequence: number, at: string): void => {
+        database
+          .prepare(
+            `INSERT INTO event_outbox (
+               id, aggregate_type, aggregate_id, aggregate_sequence, event_type,
+               payload_json, occurred_at, available_at
+             ) VALUES (?, 'user_authentication', 1, ?, 'auth.signed_in', '{}', ?, ?)`,
+          )
+          .run(id, sequence, at, at)
+        database.prepare(`INSERT INTO activity_log (event_id, recorded_at) VALUES (?, ?)`).run(id, at)
+      }
+      seed('e-2026-a', 1, '2026-03-01T09:00:00.000Z')
+      seed('e-2026-b', 2, '2026-04-01T09:00:00.000Z')
+      for (const statement of activityRollStatements(2026)) database.prepare(statement).run()
+      seed('e-2027', 3, '2027-01-05T09:00:00.000Z')
+    } finally {
+      database.close()
+    }
+  }, 120_000)
 
   beforeEach(async () => {
     directory = await mkdtemp(join(tmpdir(), 'ezacto-cli-activity-'))
     databasePath = join(directory, 'db.sqlite')
-    const database = new BetterSqlite3(databasePath)
-    migrateContainer(database)
-    const seed = (id: string, sequence: number, at: string): void => {
-      database
-        .prepare(
-          `INSERT INTO event_outbox (
-             id, aggregate_type, aggregate_id, aggregate_sequence, event_type,
-             payload_json, occurred_at, available_at
-           ) VALUES (?, 'user_authentication', 1, ?, 'auth.signed_in', '{}', ?, ?)`,
-        )
-        .run(id, sequence, at, at)
-      database.prepare(`INSERT INTO activity_log (event_id, recorded_at) VALUES (?, ?)`).run(id, at)
-    }
-    seed('e-2026-a', 1, '2026-03-01T09:00:00.000Z')
-    seed('e-2026-b', 2, '2026-04-01T09:00:00.000Z')
-    for (const statement of activityRollStatements(2026)) database.prepare(statement).run()
-    seed('e-2027', 3, '2027-01-05T09:00:00.000Z')
-    database.close()
+    await copyFile(templatePath, databasePath)
   })
 
   afterEach(async () => {
-    await rm(directory, { recursive: true, force: true })
+    if (directory !== undefined) await rm(directory, { recursive: true, force: true })
+  })
+  afterAll(async () => {
+    if (templateDirectory !== undefined) await rm(templateDirectory, { recursive: true, force: true })
   })
 
   it('[unit] the bundle holds the archived year as a table and a CSV', async () => {
