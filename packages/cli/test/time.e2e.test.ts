@@ -58,6 +58,8 @@ describe('ez time commands against the native API', () => {
   let configPath: string
   let baseUrl: string
   let instant = `${spentDate}T08:00:00.000Z`
+  let authenticatedUserId = 1
+  let authenticatedProfile: 'member' | 'administrator' = 'member'
 
   beforeAll(async () => {
     sqlite = new BetterSqlite3(':memory:')
@@ -73,7 +75,8 @@ describe('ez time commands against the native API', () => {
       ) VALUES ('Test organization', 'duration', 'nearest', 6, '{}', '${now}', '${now}');
       INSERT INTO users (
         id, first_name, last_name, profile, manager_grants, created_at, updated_at
-      ) VALUES (1, 'CLI', 'User', 'member', '[]', '${now}', '${now}');
+      ) VALUES (1, 'CLI', 'User', 'member', '[]', '${now}', '${now}'),
+               (2, 'CLI', 'Administrator', 'administrator', '[]', '${now}', '${now}');
       INSERT INTO clients (id, name, currency, created_at, updated_at)
       VALUES (1, 'North Peak', 'USD', '${now}', '${now}');
       INSERT INTO projects (id, client_id, name, code, created_at, updated_at)
@@ -84,7 +87,7 @@ describe('ez time commands against the native API', () => {
              (2, 'Retainer', '${now}', '${now}'),
              (3, 'Legal', '${now}', '${now}');
       INSERT INTO user_assignments (id, project_id, user_id, created_at, updated_at)
-      VALUES (1, 1, 1, '${now}', '${now}');
+      VALUES (1, 1, 1, '${now}', '${now}'), (2, 1, 2, '${now}', '${now}');
       INSERT INTO task_assignments (
         id, project_id, task_id, billable, created_at, updated_at
       ) VALUES (1, 1, 1, 1, '${now}', '${now}'),
@@ -104,8 +107,8 @@ describe('ez time commands against the native API', () => {
             presented === token
               ? {
                   tokenId: 1,
-                  userId: 1,
-                  profile: 'member',
+                  userId: authenticatedUserId,
+                  profile: authenticatedProfile,
                   scopes: [
                     'projects:read',
                     'time_entries:read',
@@ -373,5 +376,33 @@ describe('ez time commands against the native API', () => {
     expect(result.code).not.toBe(0)
     expect(sqlite.prepare('SELECT * FROM time_entries ORDER BY id').all()).toEqual(before)
   })
+
+  it('[security:cli-notes] an administrator edits and stops only their own timer while another user is running', async () => {
+    instant = `${spentDate}T14:00:00.000Z`
+    const colleague = await runEz(['timer', 'start', 'northpeak', 'devops', '-m', 'colleague timer', '--date', spentDate, '--json'], configPath)
+    expect(colleague.code, colleague.stderr).toBe(0)
+    const foreign = JSON.parse(colleague.stdout) as { id: number }
+    const before = sqlite.prepare('SELECT * FROM time_entries WHERE id=?').get(foreign.id)
+    authenticatedUserId = 2
+    authenticatedProfile = 'administrator'
+    try {
+      const mine = await runEz(['timer', 'start', 'northpeak', 'devops', '-m', 'my timer', '--date', spentDate, '--json'], configPath)
+      expect(mine.code, mine.stderr).toBe(0)
+      const own = JSON.parse(mine.stdout) as { id: number }
+      expect(own.id).not.toBe(foreign.id)
+      expect(sqlite.prepare('SELECT count(*) AS n FROM time_entries WHERE timer_started_at IS NOT NULL').get()).toEqual({ n: 2 })
+      const note = await runEz(['timer', 'note', '-m', 'my update', '--json'], configPath)
+      expect(note.code, note.stderr).toBe(0)
+      expect(JSON.parse(note.stdout)).toMatchObject({ id: own.id, user_id: 2, notes: 'my update', is_running: true })
+      instant = `${spentDate}T14:30:00.000Z`
+      const stop = await runEz(['timer', 'stop', '-m', 'my final note', '--json'], configPath)
+      expect(stop.code, stop.stderr).toBe(0)
+      expect(JSON.parse(stop.stdout)).toMatchObject({ id: own.id, user_id: 2, notes: 'my final note', is_running: false, seconds: 1800 })
+      expect(sqlite.prepare('SELECT * FROM time_entries WHERE id=?').get(foreign.id)).toEqual(before)
+    } finally {
+      authenticatedUserId = 1
+      authenticatedProfile = 'member'
+    }
+  }, 30_000)
 
 })
