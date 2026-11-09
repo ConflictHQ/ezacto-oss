@@ -172,6 +172,56 @@ for (const [runtime, factory] of factories) {
     afterEach(async () => database?.close())
 
     if (runtime === 'container') {
+      it.each(['before', 'after'] as const)('[regression] finalizes once after a lost %s-commit completion response', async (when) => {
+        database = await factory()
+        await installFixture(database)
+        await sendInvoice(database)
+        const failure = new Error('D1_ERROR: Network connection lost.')
+        let injected = false
+        let activityWrites = 0
+        const prepare = BetterSqlite3.prototype.prepare
+        const transaction = BetterSqlite3.prototype.transaction
+        vi.spyOn(BetterSqlite3.prototype, 'prepare').mockImplementation(function (
+            this: BetterSqlite3.Database, query: string,
+          ) {
+            if (/INSERT INTO activity_log/u.test(query)) activityWrites++
+            if (when === 'before' && !injected && /UPDATE outbox_delivery_receipts\s+SET status = 'delivered'/u.test(query)) {
+              injected = true
+              throw failure
+            }
+            return prepare.call(this, query)
+          } as typeof prepare)
+        if (when === 'after') {
+          vi.spyOn(BetterSqlite3.prototype, 'transaction').mockImplementation(function (
+            this: BetterSqlite3.Database, fn: () => unknown,
+          ) {
+            const commit = transaction.call(this, fn as never) as () => unknown
+            return (() => {
+              const result = commit()
+              const receipt = this.prepare("SELECT status FROM outbox_delivery_receipts WHERE event_id='outbox-event-sent'").get() as { status: string } | undefined
+              if (!injected && receipt?.status === 'delivered') {
+                injected = true
+                throw failure
+              }
+              return result
+            }) as never
+          } as never)
+        }
+        try {
+          const service = database.outbox({ now: () => drainAt, createAttemptId: () => 'lost-completion' })
+          await expect(service.drain()).resolves.toMatchObject({ examined: 1, failed: 0 })
+          expect(injected).toBe(true)
+          expect(await service.listActivity()).toHaveLength(1)
+          expect(await service.listDeliveries()).toEqual([expect.objectContaining({ status: 'delivered', attemptCount: 1 })])
+          expect(await database.rows('SELECT id FROM event_outbox WHERE published_at IS NOT NULL')).toHaveLength(1)
+          await expect(service.drain()).resolves.toMatchObject({ examined: 0 })
+          expect(await service.listActivity()).toHaveLength(1)
+          expect(activityWrites).toBe(1)
+        } finally {
+          vi.restoreAllMocks()
+        }
+      })
+
       it('[unit] a database failure while claiming ends the tick, reports it, and leaves the event for the next tick', async () => {
         database = await factory()
         await installFixture(database)

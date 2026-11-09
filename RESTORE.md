@@ -245,14 +245,39 @@ path. New 0038+ bundles restore to quarantined SQLite as described above; D1 Tim
 Travel and the operational SQL dump remain separate recovery options. A Harvest migration snapshot is
 a different input format and must not be presented as an Ezacto backup.
 
-### The nightly SQL dump (operational foundation)
+### Nightly SQL and typed-bundle deposits
 
-`.github/workflows/backup-sql.yml` is a separate, operator-specific path (#773).
-It exports the whole D1 database as SQL, writes a sha256 manifest, uploads to R2,
-and deposits to S3 and GCS from GitHub Actions (gpg-encrypted when
-`BACKUP_PASSPHRASE` is set; see [docs/security.md](docs/security.md)). It runs in
-the prod environment only and has no resume beyond a rerun. It stays as it is: the
-S3 sync below does not replace it.
+`.github/workflows/backup-sql.yml` copies today's completed Worker 0038 capture.
+It queries D1 only for the completion receipt, matches the R2 manifest to that
+receipt, verifies every schema/typed-row/attachment checksum, and performs the
+supported offline restore in private scratch. A missing, stale, partial or corrupt
+capture fails the deposit; it never falls back to a live SQL export.
+
+The job retains two artifacts in R2 and the configured S3/GCS destinations:
+
+- `backup-*.worker.tar.gz`: the original authoritative Worker manifest, schema,
+  typed rows and attachment bytes. CSV inspection views are omitted. Verify the
+  archive against its manifest checksum (after decryption if applicable), then extract into
+  a new private directory and use `ez restore` as above; never start the restored
+  database without the current privacy-evidence and reviewed release procedure.
+- `backup-*.sql.gz`: SQL derived from the verified **quarantined** SQLite restore,
+  including schema, indexes, triggers and ledger rows. Auth/ephemeral handling is
+  the supported restore policy, not an exact raw production credential snapshot.
+  The normal SQL manifest/sealing and monthly offline restore drill still apply.
+
+The manifest records `source.capture_kind`, capture ID/export time, and the
+original archive key/checksum/size. The SQL and archive share the Worker's capture
+path: they are independently stored copies, not independent database captures.
+D1 Time Travel and older retained raw SQL exports remain separate recovery paths.
+No retained backups are deleted. When `BACKUP_PASSPHRASE` is set, both artifacts
+are GPG-encrypted offsite; failed encryption never falls back to plaintext.
+
+An independent raw D1 SQL export remains available through manual dispatch with
+`allow_live_sql_export=true`. Use an agreed maintenance window: Cloudflare makes
+D1 unavailable for queries while an export runs. Scheduled runs cannot select it.
+That maintenance path retains the prior raw SQL manifest/deposit behavior and
+does not generate a Worker archive. Normal nightly runs make no production
+restore or row/configuration change.
 
 ## Copying a container bundle off-platform
 

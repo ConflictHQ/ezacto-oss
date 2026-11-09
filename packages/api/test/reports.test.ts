@@ -2693,7 +2693,7 @@ for (const [runtime, factory] of factories) {
       ]);
     });
 
-    it("[api] emits time_entry_id and notes at entry grain only, and refuses an unknown grain", async () => {
+    it("[api] emits notes at both grains, keeps entry identity at entry grain, and refuses an unknown grain", async () => {
       harness = await factory();
       await seedDetailedDay(harness);
       await harness.run(`UPDATE time_entries SET notes = 'wrote the thing' WHERE id = 111`, []);
@@ -2715,7 +2715,7 @@ for (const [runtime, factory] of factories) {
       expect(dayBody.data.grain).toBe("day");
       expect(dayBody.data.rows).toHaveLength(1);
       expect(dayBody.data.rows[0]).not.toHaveProperty("time_entry_id");
-      expect(dayBody.data.rows[0]).not.toHaveProperty("notes");
+      expect(dayBody.data.rows[0]).toHaveProperty("notes", "wrote the thing");
 
       expect((await harness.request(`${base}&grain=week`)).status).toBe(422);
     });
@@ -2735,8 +2735,8 @@ for (const [runtime, factory] of factories) {
         [],
       );
       const base = "/reports/detailed-time?from=2026-08-10&to=2026-08-10&project_id=1&grain=entry";
-      const notes = async (query: string) =>
-        ((await (await reader.request(`${base}${query}`)).json()) as {
+      const notes = async (query: string, grain: "entry" | "day" = "entry") =>
+        ((await (await reader.request(`${base.replace("grain=entry", `grain=${grain}`)}${query}`)).json()) as {
           data: { rows: Array<{ notes: string | null }> };
         }).data.rows.map((row) => row.notes);
 
@@ -2751,9 +2751,12 @@ for (const [runtime, factory] of factories) {
         null,
         "follows the organization",
       ]);
+      expect(await notes("", "day")).toEqual(["shown to the client · internal: margin is thin · follows the organization"]);
+      expect(await notes("&audience=client", "day")).toEqual(["shown to the client · follows the organization"]);
       // An organization that defaults to internal withholds the unmarked one too.
       await reader.run(`UPDATE organizations SET report_notes_client_visible_default = 0`, []);
       expect(await notes("&audience=client")).toEqual(["shown to the client", null, null]);
+      expect(await notes("&audience=client", "day")).toEqual(["shown to the client"]);
       expect((await reader.request(`${base}&audience=everyone`)).status).toBe(422);
     });
 
@@ -3190,6 +3193,17 @@ describe("detailed time serialization", () => {
       },
     ],
   };
+
+  it("[unit:daily-notes] preserves folded daily notes without exposing entry-only identity or money", () => {
+    const result = serializeDetailedTime({ ...record, grain: "day" }, {
+      type: "user", userId: 9, profile: "project_manager", managerGrants: [],
+      authentication: { kind: "session", sessionId: "daily-notes" },
+    });
+    expect(result.rows[0]).toMatchObject({ notes: "wrote the thing", seconds: 3600 });
+    for (const field of ["time_entry_id", "invoice_id", "invoice_number", "project_active", "billable_amount_cents"]) {
+      expect(result.rows[0]).not.toHaveProperty(field);
+    }
+  });
 
   it("[security] withholds billable amounts from a viewer without billable-rate rights", () => {
     const redacted = serializeDetailedTime(record, {

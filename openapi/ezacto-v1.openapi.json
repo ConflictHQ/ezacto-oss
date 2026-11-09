@@ -62864,7 +62864,8 @@
               {
                 "type": "null"
               }
-            ]
+            ],
+            "description": "Entry notes, or distinct audience-visible notes joined with · at daily grain."
           },
           "project_active": {
             "type": "boolean"

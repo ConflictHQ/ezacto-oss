@@ -1301,6 +1301,8 @@ const clientTree = `WITH RECURSIVE tree(id) AS (
           SELECT child.id FROM clients child JOIN tree ON child.parent_client_id = tree.id
         ) SELECT id FROM tree`
 
+// The independent ID list bounds row lookups before correlated snapshot checks.
+// Without it SQLite scans every uninvoiced row for each client's month.
 const timeClaim = (
   invoiceId: number,
   commandId: string,
@@ -1311,6 +1313,9 @@ const timeClaim = (
 ): SqlStatement => ({
   text: `UPDATE time_entries SET invoice_id = ?
     WHERE id IN (
+      SELECT CAST(json_extract(member.value, '$.id') AS INTEGER)
+      FROM json_each(?, '$.time_entries') member
+    ) AND id IN (
       SELECT CAST(json_extract(member.value, '$.id') AS INTEGER)
       FROM json_each(?, '$.time_entries') member
       WHERE time_entries.project_id = json_extract(member.value, '$.project_id')
@@ -1333,6 +1338,7 @@ const timeClaim = (
   params: [
     invoiceId,
     sourceManifestJson,
+    sourceManifestJson,
     clientId,
     currency,
     invoiceId,
@@ -1353,6 +1359,9 @@ const expenseClaim = (
     WHERE id IN (
       SELECT CAST(json_extract(member.value, '$.id') AS INTEGER)
       FROM json_each(?, '$.expenses') member
+    ) AND id IN (
+      SELECT CAST(json_extract(member.value, '$.id') AS INTEGER)
+      FROM json_each(?, '$.expenses') member
       WHERE expenses.project_id = json_extract(member.value, '$.project_id')
         AND expenses.spent_date = json_extract(member.value, '$.spent_date')
         AND expenses.total_cost_cents = json_extract(member.value, '$.total_cost_cents')
@@ -1370,6 +1379,7 @@ const expenseClaim = (
       )`,
   params: [
     invoiceId,
+    sourceManifestJson,
     sourceManifestJson,
     clientId,
     currency,

@@ -236,3 +236,41 @@ it('never reads a plain cause or child stack and prefers a nested initiating Err
   expect(captured[0]?.stack).toBe(primary.stack)
   expect(JSON.stringify(scrubWorkerEvent({}, { originalException: captured[0] }))).not.toContain('SECRET')
 })
+
+
+it.each([
+  ['D1_ERROR: D1 DB is overloaded. Requests queued for too long.', 'd1_overloaded'],
+  ['D1_ERROR: D1 DB is overloaded. Too many requests queued.', 'd1_overloaded'],
+  ['D1_ERROR: D1 DB storage operation exceeded timeout which caused object to be reset.', 'd1_timeout'],
+  ["D1_ERROR: D1 DB's isolate exceeded its memory limit and was reset.", 'd1_resource_limit'],
+  ['D1_ERROR: D1 DB exceeded its CPU time limit and was reset.', 'd1_resource_limit'],
+  ['D1_ERROR: D1 query result exceeded the maximum response size limit of 50 MB', 'd1_resource_limit'],
+  ['Too many API requests by single Worker invocation', 'worker_request_limit'],
+])('keeps a static category for %s through query and aggregate wrappers', (message, code) => {
+  const captured: Error[] = []
+  vi.mocked(Sentry.captureException).mockImplementation(error => { captured.push(error as Error); return 'e'.repeat(32) })
+  const cause = new Error(message + ' SECRET')
+  const query = new Error('Failed query: SELECT SECRET params: SECRET', { cause })
+  captureWorkerError(new AggregateError([query], 'SECRET', { cause: query }), { phase: 'scheduled', operation: 'demo maintenance' })
+  const clean = scrubWorkerEvent({}, { originalException: captured[0] })!
+  expect(clean.tags?.failure_code).toBe(code)
+  expect(JSON.stringify(clean)).not.toContain('SECRET')
+  expect(JSON.stringify(clean)).not.toContain('SELECT')
+  expect(scrubWorkerEvent({}, { originalException: cause })!.tags?.failure_code).toBe(code)
+  expect(scrubWorkerEvent({}, { originalException: new Error('Failed query: SELECT ? params: ' + message) })!.tags?.failure_code).toBe('database_query_failed')
+})
+
+
+it('classifies the observed readiness exec overload without parsing arbitrary SQL', () => {
+  const platform = 'D1 DB is overloaded. Too many resources consumed within a 10 second window'
+  for (const pragma of ['PRAGMA foreign_keys = ON', 'PRAGMA foreign_keys=ON']) {
+    const message = `D1_EXEC_ERROR: Error in line 1: ${pragma}: ${platform}`
+    const error = new Error(message, { cause: new Error(message.slice('D1_EXEC_ERROR: '.length)) })
+    const clean = scrubWorkerEvent({}, { originalException: error })!
+    expect(clean.tags?.failure_code).toBe('d1_overloaded')
+    expect(JSON.stringify(clean)).not.toContain('PRAGMA')
+    expect(JSON.stringify(clean)).not.toContain('resources consumed')
+  }
+  const query = new Error(`D1_EXEC_ERROR: Error in line 1: SELECT '${platform}': syntax error`)
+  expect(scrubWorkerEvent({}, { originalException: query })!.tags?.failure_code).toBe('unknown')
+})
