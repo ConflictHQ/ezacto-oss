@@ -89,6 +89,11 @@ test('deployed demo signs in, navigates, persists a client and signs out', async
       }
     }
     if (primaryFailure) throw failure
+    const accountMenu = page.getByRole('button', { name: 'Account menu', exact: true })
+    if (await accountMenu.isVisible() && await accountMenu.getAttribute('aria-expanded') !== 'true') {
+      await accountMenu.click()
+      await expect(accountMenu).toHaveAttribute('aria-expanded', 'true')
+    }
     await page.locator('[data-logout]').click()
     await expect(page.locator('[data-auth-gateway]')).toBeVisible()
     const signedOut = await page.evaluate(async () => (await fetch('/api/v1/whoami')).status)
