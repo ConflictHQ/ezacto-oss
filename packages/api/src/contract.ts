@@ -9184,7 +9184,7 @@ export const apiContractSchemas: Readonly<Record<string, JsonSchema>> = {
       // (/invoices/<number>), beside its internal id. Null where nothing has
       // claimed the entry.
       invoice_number: nullable(stringSchema),
-      notes: nullable(stringSchema),
+      notes: { ...nullable(stringSchema), description: "Entry notes, or distinct audience-visible notes joined with · at daily grain." },
       project_active: booleanSchema,
     },
     additionalProperties: false,

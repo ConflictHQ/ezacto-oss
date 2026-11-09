@@ -259,3 +259,18 @@ it.each([
   expect(scrubWorkerEvent({}, { originalException: cause })!.tags?.failure_code).toBe(code)
   expect(scrubWorkerEvent({}, { originalException: new Error('Failed query: SELECT ? params: ' + message) })!.tags?.failure_code).toBe('database_query_failed')
 })
+
+
+it('classifies the observed readiness exec overload without parsing arbitrary SQL', () => {
+  const platform = 'D1 DB is overloaded. Too many resources consumed within a 10 second window'
+  for (const pragma of ['PRAGMA foreign_keys = ON', 'PRAGMA foreign_keys=ON']) {
+    const message = `D1_EXEC_ERROR: Error in line 1: ${pragma}: ${platform}`
+    const error = new Error(message, { cause: new Error(message.slice('D1_EXEC_ERROR: '.length)) })
+    const clean = scrubWorkerEvent({}, { originalException: error })!
+    expect(clean.tags?.failure_code).toBe('d1_overloaded')
+    expect(JSON.stringify(clean)).not.toContain('PRAGMA')
+    expect(JSON.stringify(clean)).not.toContain('resources consumed')
+  }
+  const query = new Error(`D1_EXEC_ERROR: Error in line 1: SELECT '${platform}': syntax error`)
+  expect(scrubWorkerEvent({}, { originalException: query })!.tags?.failure_code).toBe('unknown')
+})

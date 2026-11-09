@@ -1,4 +1,5 @@
 import type BetterSqlite3 from 'better-sqlite3'
+import { retryTransientD1IdempotentOperation } from './d1-idempotent-retry.js'
 
 export const ACTIVITY_LOG_SUBSCRIBER_ID = 'activity_log'
 
@@ -602,7 +603,9 @@ const finalizeDelivered = async (
   at: string,
 ): Promise<boolean> => {
   const placeholders = subscriberIds.map(() => '?').join(',')
-  const results = await database.atomic([
+  // Only repeat this fenced completion, never the subscriber or an arbitrary
+  // write. Both updates converge if the first commit lost its response.
+  const results = await retryTransientD1IdempotentOperation(() => database.atomic([
     {
       query: `UPDATE outbox_delivery_receipts
         SET status = 'delivered', active_attempt_id = NULL,
@@ -623,7 +626,7 @@ const finalizeDelivered = async (
               AND receipt.status = 'delivered') = ?`,
       bindings: [at, eventId, ...subscriberIds, subscriberIds.length],
     },
-  ])
+  ]))
   return results[0]?.[0]?.eventId === eventId
 }
 
@@ -642,7 +645,8 @@ const finalizeFailure = async (
   const nextAttemptAt = terminal
     ? null
     : safeAddSeconds(at, retryDelaySeconds[attemptCount - 1]!)
-  const results = await database.atomic([
+  // Repeat only this attempt-fenced disposition, never the failed subscriber.
+  const results = await retryTransientD1IdempotentOperation(() => database.atomic([
     {
       query: `UPDATE outbox_delivery_receipts
         SET status = ?, next_attempt_at = ?, active_attempt_id = NULL,
@@ -671,7 +675,7 @@ const finalizeFailure = async (
         )`,
       bindings: [failureCode, eventId, subscriberId, failureCode, at],
     },
-  ])
+  ]))
   const status = results[0]?.[0]?.status
   return status === 'failed' ? 'failed' : status === 'pending' ? 'retry' : 'stale'
 }
@@ -759,8 +763,8 @@ const createService = (
             maxAttempts,
           )
         } catch (error) {
-          // The claim is one atomic batch, so a failure here wrote nothing. Stop
-          // this tick rather than throw, so the caller reports it once.
+          // A lost reply may have committed the claim, but no handler ran.
+          // End this tick; its durable attempt lease fences later recovery.
           summary.interrupted = error instanceof Error ? error : new Error(String(error))
           break
         }

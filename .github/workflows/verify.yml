@@ -240,7 +240,13 @@ jobs:
       - uses: ./.github/actions/node-workspace
       - name: gitleaks (E12 — secrets never in git)
         run: |
-          curl -sSfL https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz | tar -xz gitleaks
+          # Release downloads can return transient HTTP504 before the scan runs.
+          # Retry the download into a file, never concatenate partial archives.
+          archive="${RUNNER_TEMP}/gitleaks.tar.gz"
+          curl --fail --show-error --silent --location --retry 3 --retry-max-time 120 \
+            --connect-timeout 15 --max-time 60 --output "$archive" \
+            "https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz"
+          tar -xzf "$archive" gitleaks
 
           # Self-test: a gate that cannot detect this repo's own secret shape is
           # decoration. gitleaks' default ruleset has no keyword for "PAT", so

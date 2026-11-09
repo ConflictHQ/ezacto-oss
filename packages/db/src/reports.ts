@@ -591,7 +591,7 @@ export interface DetailedTimeRowRecord {
    * (issue 939); null wherever `invoiceId` is.
    */
   invoiceNumber: string | null
-  /** The entry's notes at `entry` grain; null at `day` grain. */
+  /** Entry notes, or distinct audience-visible notes folded at daily grain. */
   notes: string | null
   projectActive: boolean
 }

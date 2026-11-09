@@ -1672,10 +1672,10 @@ const serializeDetailedTime = (
       entries_without_billable_rate: row.entriesWithoutBillableRate,
       claimed: row.claimed,
       ...(money ? { billable_amount_cents: row.billableAmountCents } : {}),
+      notes: row.notes,
       ...(report.grain === "entry"
         ? {
             time_entry_id: row.timeEntryId,
-            notes: row.notes,
             invoice_id: row.invoiceId,
             invoice_number: row.invoiceNumber,
             project_active: row.projectActive,

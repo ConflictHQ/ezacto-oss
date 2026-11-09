@@ -27,7 +27,10 @@ ez config
 ez log 2h northpeak devops -m 'release work'
 ez timer start northpeak devops -m 'incident follow-up'
 ez timer status
-ez timer stop
+ez timer note -m 'investigating the export failure'
+ez timer note --append -m 'verified the recovery'
+ez timer stop -m 'completed incident investigation'
+ez entry edit 123 --note 'corrected work description'
 ez week
 ez logout
 ```
@@ -51,13 +54,35 @@ date in the Monday–Sunday week to render. Starting a timer relies on the same 
 invariant as the web app: the previous running timer is stopped atomically before
 the new one starts.
 
+## Edit time-entry notes
+
+`ez timer note -m 'text'` replaces the running entry's note and leaves it running.
+`ez entry edit <id> --note 'text'` replaces a running or stopped entry's note.
+An empty replacement (`--note ''` or `-m ''`) clears it, subject to the server's
+minimum-note policy. Both commands change only notes; dates, durations, projects,
+invoice links and running state are preserved. The existing server permissions,
+approval and invoice locks still apply, using `time_entries:write`.
+
+Add `--append` to join the existing note and supplied text with a newline.
+Append also requires read access and uses a read followed by a write; concurrent
+note edits can overwrite each other. It is not an atomic append. Review the
+returned note before repeating an interrupted append, since retrying could add
+the text twice.
+
+`ez timer stop -m 'final note'` updates the same running entry's note before
+stopping it; `--append` works here too. A refused note update leaves the timer
+running. These are two server operations: if stopping fails after the note was
+saved, the note remains saved and the command reports the failure. Inspect
+`ez timer status` before deciding what to retry.
+
 ## Packaging
 
 The CLI bundles the shared report capability inventory into `dist/money.js`.
 `@ezacto/core` is a build dependency only; it must never appear in the published
-runtime dependencies. Build before packing, and publish version 0.1.3 through the
-existing `npm-v0.1.3` release workflow after the fix is merged. Version 0.1.2
-cannot be repaired in place; pin 0.1.1 until the patch is published.
+runtime dependencies. Build before packing. Client, CLI and migrate package
+versions must agree with the `npm-v<version>` tag used by the existing release
+workflow. Version 0.1.7 adds time-entry note editing; earlier published versions
+cannot be repaired in place.
 
 Run `npm run test:package -w @conflict-hq/ezacto-cli` from the repository root
 after building the workspaces. It packs both release candidates, globally installs
