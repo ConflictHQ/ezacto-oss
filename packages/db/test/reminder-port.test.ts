@@ -107,21 +107,22 @@ const sendTo = (
   orm: Awaited<ReturnType<typeof fixture>>['orm'],
   people: readonly { name: string; email: string }[],
   sendReminderOn: string | null = null,
+  options: { messageId?: number; expectedVersion?: number; cc?: readonly { name: string; email: string }[] } = {},
 ) =>
   executeInvoiceLifecycleCommand(orm, {
     invoiceId: 1,
-    commandId: 'send-1',
+    commandId: `send-${options.messageId ?? 70}`,
     command: 'send',
     actor: { type: 'user', id: 1 },
     authorize: async () => true,
-    expectedVersion: 0,
+    expectedVersion: options.expectedVersion ?? 0,
     occurredAt: sentAt,
-    messageId: 70,
-    eventId: 'evt-70',
+    messageId: options.messageId ?? 70,
+    eventId: `evt-${options.messageId ?? 70}`,
     message: {
       sentBy: 'Operator One', sentByEmail: null,
       sentFrom: 'Finance team - CONFLICT', sentFromEmail: 'billing@example.test',
-      recipients: people, subject: 'Invoice 1293', body: 'Attached.',
+      recipients: people, cc: options.cc ?? [], subject: 'Invoice 1293', body: 'Attached.',
       attachPdf: false, sendMeACopy: false, thankYou: false,
       reminder: sendReminderOn !== null, sendReminderOn,
     },
@@ -130,8 +131,8 @@ const sendTo = (
       senderEvidenceVersion: 1, fromName: 'Finance team - CONFLICT',
       fromEmail: 'billing@example.test', replyToEmail: null,
       subject: 'Invoice 1293', textBody: 'Attached.', htmlBody: null,
-      deliveryId: 700,
-      recipients: people.map((person) => ({ ...person, role: 'to' as const })),
+      deliveryId: (options.messageId ?? 70) * 10,
+      recipients: [...people.map((person) => ({ ...person, role: 'to' as const })), ...(options.cc ?? []).map((person) => ({ ...person, role: 'cc' as const }))],
     },
   })
 
@@ -222,6 +223,47 @@ describe('an overdue invoice is reminded', () => {
     await outbox.drain()
     expect(await scheduler.listPending(1)).toHaveLength(0)
     expect(await port.prepare(next[0]!)).toBeNull()
+  })
+
+  it('[money #1352] preserves delivery Cc and sender copies despite random IDs and a later planned reminder', async () => {
+    const { database, orm, scheduler, outbox, port } = await fixture()
+    await sendTo(orm, [{ name: 'Old AP', email: 'old@example.test' }])
+    const copies = [
+      { name: 'Client colleague', email: 'colleague@example.test' },
+      { name: 'Operator copy', email: 'operator@example.test' },
+      { name: 'Organization copy', email: 'finance@example.test' },
+    ]
+    // Same timestamp, smaller random message id, but a later lifecycle sequence.
+    await sendTo(orm, [{ name: 'Correct AP', email: 'correct@example.test' }], null, {
+      messageId: 2, expectedVersion: 1, cc: copies,
+    })
+    // The legacy message/transition route records a date without sending an
+    // email. This row is history, not authority for a delivery's recipients.
+    await executeInvoiceLifecycleCommand(orm, {
+      invoiceId: 1, commandId: 'plan-reminder', command: 'send',
+      actor: { type: 'user', id: 1 }, authorize: async () => true,
+      expectedVersion: 2, occurredAt: sentAt, messageId: 9000, eventId: 'evt-plan',
+      message: {
+        sentBy: 'Operator One', sentByEmail: 'operator@example.test',
+        sentFrom: 'Finance team - CONFLICT', sentFromEmail: 'billing@example.test',
+        recipients: [{ name: 'Correct AP', email: 'correct@example.test' }],
+        subject: null, body: null, attachPdf: false, sendMeACopy: false,
+        thankYou: false, reminder: true, sendReminderOn: '2026-08-05',
+      },
+    })
+    // Later directory/default changes must not add a new audience to an old bill.
+    database.prepare('UPDATE organizations SET invoice_always_cc = ?').run(JSON.stringify([{ name: 'New colleague', email: 'new@example.test' }]))
+    await outbox.drain()
+    const pending = await scheduler.listPending(1)
+    expect(pending).not.toHaveLength(0)
+    const message = await port.prepare(pending[0]!)
+    expect(message).not.toBeNull()
+    expect(message!.to).toEqual([{ name: 'Correct AP', email: 'correct@example.test' }])
+    expect(message!.cc).toEqual(copies)
+    const log = database.prepare('SELECT to_json, cc_json FROM email_log WHERE id = ?').get(message!.deliveryId) as { to_json: string; cc_json: string }
+    expect(JSON.parse(log.cc_json)).toEqual(copies)
+    expect(await port.prepare(pending[0]!)).toBeNull()
+    expect(await listReminderDeliveries(orm, 1)).toHaveLength(1)
   })
 
   it('[unit] the date named on the send wins over the policy offset', async () => {

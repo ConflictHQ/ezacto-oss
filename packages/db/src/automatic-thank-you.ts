@@ -284,8 +284,13 @@ export const recordThankYouDelivery = async (
  * also the only answer that cannot surprise anybody: every address here already
  * got mail about this invoice.
  *
- * The most recent send, because an invoice re-sent to a corrected address must
- * not thank the address that was wrong.
+ * The most recent confirmed email delivery, because an invoice re-sent to a
+ * corrected address must not thank the address that was wrong. A planned
+ * reminder recorded through the legacy message route has no delivery intent.
+ * Message IDs are opaque/random and timestamps can tie; the invoice's durable
+ * event sequence orders actual sends. The immutable recipient snapshot already
+ * includes operator and organization copies; never resolve today's directory
+ * or copy settings for an older delivery.
  */
 export const readThankYouRecipients = async (
   database: InvoiceStateDatabase,
@@ -296,8 +301,10 @@ export const readThankYouRecipients = async (
         FROM invoice_email_recipients recipient
         WHERE recipient.invoice_message_id = (
           SELECT message.id FROM invoice_messages message
+          JOIN invoice_email_intents intent ON intent.invoice_message_id = message.id
+          JOIN event_outbox event ON event.id = intent.event_id
           WHERE message.invoice_id = ${invoiceId} AND message.event_type = 'send'
-          ORDER BY message.id DESC LIMIT 1
+          ORDER BY event.aggregate_sequence DESC LIMIT 1
         )
         ORDER BY recipient.recipient_index`,
   )

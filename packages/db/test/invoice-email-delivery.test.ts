@@ -5,6 +5,7 @@ import { createContainerDatabase, createD1Database } from '../src/adapters.js'
 import { executeInvoiceLifecycleCommand, type InvoiceStateDatabase } from '../src/invoice-state.js'
 import { migrateContainer, migrateD1 } from '../src/migrate.js'
 import { createMoneyResourceRepository } from '../src/money-resources.js'
+import { readThankYouRecipients } from '../src/automatic-thank-you.js'
 
 interface Harness {
   orm: InvoiceStateDatabase
@@ -215,6 +216,25 @@ for (const [name, factory] of [['SQLite', container], ['real D1', d1]] as const)
       await expect(
         command(database, 1, [{ name: 'Pat Example', email: 'pat@example.net' }]),
       ).rejects.toMatchObject({ code: 'command_id_reused' })
+
+      // #1352: a planned date records a later message but sends no email.
+      // Run the real audience query on both SQLite and D1; that history row
+      // must never replace the immutable To/Cc delivery snapshot.
+      await executeInvoiceLifecycleCommand(database.orm, {
+        invoiceId: 1, commandId: 'planned-reminder', command: 'send',
+        actor: { type: 'user', id: 1 }, authorize: async () => true,
+        expectedVersion: 1, occurredAt: at, messageId: 9000, eventId: 'evt-planned',
+        message: {
+          sentBy: 'Avery Ng', sentByEmail: null, sentFrom: 'Delivery Org', sentFromEmail: 'billing@example.com',
+          recipients: [{ name: 'Client', email: 'client@example.net' }],
+          subject: null, body: null, attachPdf: false, sendMeACopy: false,
+          thankYou: false, reminder: true, sendReminderOn: '2026-10-15',
+        },
+      })
+      expect(await readThankYouRecipients(database.orm, 1)).toEqual([
+        { name: 'Client', email: 'client@example.net', role: 'to' },
+        ...cc.map(person => ({ ...person, role: 'cc' })),
+      ])
     })
 
     it('persists the intent for a deployment-attested Mailgun sender', async () => {
