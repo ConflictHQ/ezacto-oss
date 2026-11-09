@@ -4,7 +4,7 @@ import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { Miniflare } from 'miniflare'
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import { calculateInvoiceLineAmountCents } from '@ezacto/core'
 import { createContainerDatabase, createD1Database } from '../src/adapters.js'
 import {
@@ -221,6 +221,39 @@ for (const [runtime, factory] of factories) {
       active = await factory()
       await seed(active)
       return active
+    }
+
+    if (runtime === 'container') {
+      it('[regression] claims selected sources by primary key without scanning unrelated work', async () => {
+        const database = await setup()
+        const prepare = BetterSqlite3.prototype.prepare
+        const plans: Record<string, string[]> = {}
+        const spy = vi.spyOn(BetterSqlite3.prototype, 'prepare').mockImplementation(function (
+          this: BetterSqlite3.Database, statement: string,
+        ) {
+          const table = /^UPDATE (time_entries|expenses) SET invoice_id =/u.exec(statement)?.[1]
+          if (table) {
+            const rows = prepare.call(this, `EXPLAIN QUERY PLAN ${statement}`).all(
+              Array.from({ length: statement.match(/\?/gu)?.length ?? 0 }, () => null),
+            ) as { detail: string }[]
+            plans[table] = rows.map((row) => row.detail)
+          }
+          return prepare.call(this, statement)
+        } as typeof prepare)
+        try {
+          const invoice = await generator(database).generate(command('bounded-source-claim'))
+          expect(invoice.amount_cents).toBe(7_834)
+          for (const table of ['time_entries', 'expenses']) {
+            expect(plans[table]).toEqual(expect.arrayContaining([
+              expect.stringMatching(new RegExp(`SEARCH ${table} .*\\browid=\\?`)),
+            ]))
+          }
+          expect(await database.rows('SELECT id FROM time_entries WHERE invoice_id = ?', invoice.id)).toHaveLength(2)
+          expect(await database.rows('SELECT id FROM expenses WHERE invoice_id = ?', invoice.id)).toHaveLength(1)
+        } finally {
+          spy.mockRestore()
+        }
+      })
     }
 
     it('[money] names the project and exact missing-rate cause before any invoice is created', async () => {

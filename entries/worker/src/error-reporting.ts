@@ -13,7 +13,7 @@ export const workerScheduledOperations = [
   'demo maintenance', 'demo sender seed', 'outbox drain',
 ] as const
 export type WorkerScheduledOperation = (typeof workerScheduledOperations)[number]
-type WorkerFailureCode = 'd1_network_lost' | 'database_query_failed' | 'unknown'
+type WorkerFailureCode = 'd1_network_lost' | 'd1_overloaded' | 'd1_timeout' | 'd1_resource_limit' | 'worker_request_limit' | 'database_query_failed' | 'unknown'
 const operations = new Set<unknown>(workerScheduledOperations)
 const isScheduledOperation = (value: unknown): value is WorkerScheduledOperation => operations.has(value)
 
@@ -87,6 +87,18 @@ const failureCode = (error: unknown): WorkerFailureCode => {
     const message = ownValue(current, 'message')
     if (typeof message === 'string') {
       if (message.startsWith('D1_ERROR: Network connection lost')) return 'd1_network_lost'
+      // Match platform prefixes only, never text embedded in SQL/parameters.
+      // Static categories distinguish capacity failures from transport loss
+      // without sending SQL, identifiers or provider messages to telemetry.
+      // exec() embeds its statement in the wrapper/cause. Recognize only the
+      // fixed readiness PRAGMA, never a platform phrase inside arbitrary SQL.
+      if (/^D1_EXEC_ERROR: Error in line 1: PRAGMA foreign_keys ?= ?ON: D1 DB is overloaded\./u.test(message)) return 'd1_overloaded'
+      if (message.startsWith('D1_ERROR: D1 DB is overloaded.')) return 'd1_overloaded'
+      if (message.startsWith('D1_ERROR: D1 DB storage operation exceeded timeout')) return 'd1_timeout'
+      if (message.startsWith("D1_ERROR: D1 DB's isolate exceeded its memory limit") ||
+          message.startsWith('D1_ERROR: D1 DB exceeded its CPU time limit') ||
+          message.startsWith('D1_ERROR: D1 query result exceeded the maximum response size limit')) return 'd1_resource_limit'
+      if (message.startsWith('Too many API requests by single Worker invocation')) return 'worker_request_limit'
       if (message.startsWith('Failed query:')) databaseQuery = true
     }
   }
