@@ -154,14 +154,14 @@ describe('ez time commands against the native API', () => {
       token,
     )
     expect(login.code, login.stderr).toBe(0)
-  })
+  }, 120_000) // Full schema migration and real CLI process startup, not a unit-test hook.
 
   afterAll(async () => {
-    await new Promise<void>((resolve, reject) => {
+    if (server !== undefined) await new Promise<void>((resolve, reject) => {
       server.close((error) => (error === undefined ? resolve() : reject(error)))
     })
-    sqlite.close()
-    await rm(directory, { recursive: true, force: true })
+    sqlite?.close()
+    if (directory !== undefined) await rm(directory, { recursive: true, force: true })
   })
 
   it('[e2e:cli-log] ez log writes an entry visible through the same native API', async () => {
@@ -314,4 +314,64 @@ describe('ez time commands against the native API', () => {
     expect(refused.code).not.toBe(0)
     expect(refused.stderr).toContain('task not found: legal')
   })
+  it('[e2e:cli-notes] edits running and past notes without changing tracked time', async () => {
+    instant = `${spentDate}T12:00:00.000Z`
+    const started = await runEz(
+      ['timer', 'start', 'northpeak', 'devops', '-m', 'original', '--date', spentDate, '--json'],
+      configPath,
+    )
+    expect(started.code, started.stderr).toBe(0)
+    const { id } = JSON.parse(started.stdout) as { id: number }
+    const tracked = () => sqlite.prepare(
+      'SELECT seconds, rounded_seconds, timer_started_at, project_id, task_id, spent_date FROM time_entries WHERE id = ?',
+    ).get(id)
+    const before = tracked()
+    const replaced = await runEz(['timer', 'note', '-m', 'replacement', '--json'], configPath)
+    expect(replaced.code, replaced.stderr).toBe(0)
+    expect(JSON.parse(replaced.stdout)).toMatchObject({ id, notes: 'replacement', is_running: true })
+    expect(tracked()).toEqual(before)
+
+    const appended = await runEz(['timer', 'note', '-m', 'next line', '--append', '--json'], configPath)
+    expect(appended.code, appended.stderr).toBe(0)
+    expect(JSON.parse(appended.stdout)).toMatchObject({ id, notes: 'replacement\nnext line', is_running: true })
+    expect(tracked()).toEqual(before)
+
+    const cleared = await runEz(['entry', 'edit', String(id), '--note', '', '--json'], configPath)
+    expect(cleared.code, cleared.stderr).toBe(0)
+    expect(JSON.parse(cleared.stdout)).toMatchObject({ id, notes: '', is_running: true })
+    expect(tracked()).toEqual(before)
+
+    instant = `${spentDate}T12:30:00.000Z`
+    const stopped = await runEz(['timer', 'stop', '-m', 'final note', '--json'], configPath)
+    expect(stopped.code, stopped.stderr).toBe(0)
+    expect(JSON.parse(stopped.stdout)).toMatchObject({ id, notes: 'final note', seconds: 1800, is_running: false })
+    const stoppedTime = tracked()
+    const edited = await runEz(['entry', 'edit', String(id), '--note', 'correction', '--append', '--json'], configPath)
+    expect(edited.code, edited.stderr).toBe(0)
+    expect(JSON.parse(edited.stdout)).toMatchObject({ id, notes: 'final note\ncorrection', is_running: false })
+    expect(tracked()).toEqual(stoppedTime)
+
+    const absent = await runEz(['timer', 'note', '-m', 'no timer'], configPath)
+    expect(absent.code).not.toBe(0)
+    expect(absent.stderr).toContain('no timer is running')
+  }, 30_000)
+
+  it.each([
+    ['entry', 'edit', '0', '--note', 'bad'],
+    ['entry', 'edit', '1oops', '--note', 'bad'],
+    ['entry', 'edit', '1'],
+    ['entry', 'edit', '1', '--note', 'bad', '--date', spentDate],
+    ['timer', 'note'],
+    ['timer', 'note', '-m', 'bad', '--date', spentDate],
+    ['timer', 'status', '-m', 'bad'],
+    ['timer', 'stop', '--append'],
+    ['week', '--append'],
+    ['log', '1h', 'northpeak', 'devops', '--note', 'bad'],
+  ])('[e2e:cli-notes-validation] refuses invalid note command %j', async (...args) => {
+    const before = sqlite.prepare('SELECT * FROM time_entries ORDER BY id').all()
+    const result = await runEz(args, configPath)
+    expect(result.code).not.toBe(0)
+    expect(sqlite.prepare('SELECT * FROM time_entries ORDER BY id').all()).toEqual(before)
+  })
+
 })

@@ -47,6 +47,8 @@ import {
 } from './money.js'
 import {
   logTime,
+  editEntryNote,
+  editTimerNote,
   showWeek,
   startTimer,
   stopTimer,
@@ -65,7 +67,8 @@ Commands:
   config       Show the active organization config with the token redacted
   logout       Remove the stored credential for an organization
   log          Log a duration: ez log 2h northpeak devops -m "note"
-  timer        Start, stop, or inspect the one running timer
+  timer        Start, stop, inspect, or edit the note on the running timer
+  entry        Edit a time-entry note: ez entry edit <id> --note "text"
   week         Show the Monday–Sunday time grid
   uninvoiced   Show uninvoiced amounts (requires reports:read)
   invoice      Generate, send, list, or edit invoices; edits and unlink-time require sudo
@@ -90,7 +93,9 @@ Options:
   --token <token>           API token to store; prefer --token-stdin or EZACTO_TOKEN
   --token-stdin             Read the API token from stdin
   --config <path>           Override the config file (or set EZACTO_CONFIG)
-  --message, -m <text>      Notes for ez log or ez timer start
+  --message, -m <text>      Notes for ez log or ez timer start/note/stop
+  --note <text>            Replace notes with ez entry edit (empty text clears)
+  --append                 Append a new line instead of replacing a note
   --date <yyyy-mm-dd>       Spent date for ez log or ez timer start (default: today)
   --week <yyyy-mm-dd>       A date in the week to show (default: today)
   --from <yyyy-mm-dd>       Start date for reports and exports
@@ -436,6 +441,8 @@ const executeCli = async (
       'reauth-stdin': { type: 'boolean', default: false },
       config: { type: 'string' },
       message: { type: 'string', short: 'm' },
+      note: { type: 'string' },
+      append: { type: 'boolean', default: false },
       date: { type: 'string' },
       week: { type: 'string' },
       from: { type: 'string' },
@@ -494,6 +501,23 @@ const executeCli = async (
     ...(values.org === undefined ? {} : { org: values.org }),
     configPath,
     json: values.json,
+  }
+
+  const entryEdit = command === 'entry' && commandArguments[0] === 'edit'
+  const timerNoteEdit = command === 'timer' && ['note', 'stop'].includes(commandArguments[0] ?? '')
+  if (values.note !== undefined && !entryEdit) {
+    throw new Error('--note is valid only with ez entry edit')
+  }
+  if (values.append && !entryEdit && !timerNoteEdit) {
+    throw new Error('--append is valid only with ez entry edit or ez timer note/stop')
+  }
+  if (entryEdit || (command === 'timer' && commandArguments[0] === 'note')) {
+    const allowed = new Set(['org', 'config', 'json', 'append', entryEdit ? 'note' : 'message'])
+    for (const token of tokens) {
+      if (token.kind === 'option' && !allowed.has(token.name)) {
+        throw new Error(`--${token.name} is not valid with ez ${entryEdit ? 'entry edit' : 'timer note'}`)
+      }
+    }
   }
 
   if (command === 'login') {
@@ -628,8 +652,34 @@ if (command === 'sudo') {
       runtime,
     )
   }
+  if (command === 'entry') {
+    const id = commandArguments[1]
+    if (!entryEdit || commandArguments.length !== 2 || id === undefined ||
+        !/^[1-9]\d*$/.test(id) || !Number.isSafeInteger(Number(id)) || values.note === undefined) {
+      throw new Error('usage: ez entry edit <positive-id> --note <text> [--append]')
+    }
+    const selected = await selectedClient(configPath, values.org)
+    requireStoredScope(selected.organization, 'time_entries:write')
+    return printTimeResult(
+      await editEntryNote(selected.client, Number(id), { note: values.note, append: values.append }),
+      values.json,
+      runtime,
+    )
+  }
   if (command === 'timer') {
     const action = commandArguments[0]
+    if (action === 'note') {
+      if (commandArguments.length !== 1 || values.message === undefined) {
+        throw new Error('usage: ez timer note -m <text> [--append]')
+      }
+      const selected = await selectedClient(configPath, values.org)
+      requireStoredScope(selected.organization, 'time_entries:write')
+      return printTimeResult(
+        await editTimerNote(selected.client, { note: values.message, append: values.append }),
+        values.json,
+        runtime,
+      )
+    }
     const selected = await selectedClient(configPath, values.org)
     if (action === 'start') {
       if (commandArguments.length !== 3) {
@@ -648,16 +698,19 @@ if (command === 'sudo') {
       )
     }
     if (action !== 'stop' && action !== 'status') {
-      throw new Error('usage: ez timer <start|stop|status>')
+      throw new Error('usage: ez timer <start|stop|status|note>')
     }
     if (commandArguments.length !== 1) {
       throw new Error(`ez timer ${action} accepts no additional arguments`)
     }
-    if (values.message !== undefined || values.date !== undefined || values.week !== undefined) {
+    if ((action === 'status' && values.message !== undefined) || values.date !== undefined || values.week !== undefined) {
       throw new Error(`message/date/week options are not valid with ez timer ${action}`)
     }
+    if (values.append && values.message === undefined) throw new Error('--append requires -m <text>')
     return printTimeResult(
-      await (action === 'stop' ? stopTimer(selected.client) : timerStatus(selected.client)),
+      await (action === 'stop'
+        ? stopTimer(selected.client, values.message === undefined ? undefined : { note: values.message, append: values.append })
+        : timerStatus(selected.client)),
       values.json,
       runtime,
     )

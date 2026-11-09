@@ -254,11 +254,41 @@ export const timerStatus = async (
   }
 }
 
+export interface NoteEdit {
+  note: string
+  append?: boolean
+}
+
+export const editEntryNote = async (
+  client: EzactoClient,
+  id: number,
+  input: NoteEdit,
+): Promise<TimeCommandResult> => {
+  if (!Number.isSafeInteger(id) || id < 1) throw new Error('entry id must be a positive integer')
+  // Send only notes: a fetched entry may carry stale timer or billing state.
+  // Append is explicitly a read/modify/write, not an atomic server operation.
+  const previous = input.append ? (await client.getTimeEntry({ id })).data.notes : null
+  const notes = input.append && previous ? `${previous}\n${input.note}` : input.note
+  const entry = (await client.updateTimeEntry({ id, body: { notes } })).data
+  return { json: entry, human: `note updated #${entry.id}${entry.notes ? ` — ${entry.notes}` : ''}` }
+}
+
+export const editTimerNote = async (
+  client: EzactoClient,
+  input: NoteEdit,
+): Promise<TimeCommandResult> => {
+  const running = exactlyOneRunning(await runningEntries(client))
+  return editEntryNote(client, running.id, input)
+}
+
 export const stopTimer = async (
   client: EzactoClient,
+  input?: NoteEdit,
 ): Promise<TimeCommandResult> => {
   const running = exactlyOneRunning(await runningEntries(client))
   const resources = await catalog(client)
+  // A refused note update leaves the timer running; never hide that failure.
+  if (input !== undefined) await editEntryNote(client, running.id, input)
   const entry = (await client.stopTimeEntry({ id: running.id })).data
   const output = entryOutput(entry, resources)
   return {
