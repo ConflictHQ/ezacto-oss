@@ -124,6 +124,62 @@ describe('a manifest is items, never a count (#63)', () => {
 })
 
 describe('nothing expires into action (#63)', () => {
+  it.each(['before', 'after'] as const)('[money:expiry-recovery] recovers a lost %s-commit reply without executing or changing settled work', async (phase) => {
+    const { sqlite: client, store } = await fixture()
+    const proposed = await propose(store)
+    const confirmed = await propose(store, { occurrenceKey: '2026-09' })
+    if (proposed.outcome !== 'proposed' || confirmed.outcome !== 'proposed') throw new Error('fixture proposals failed')
+    expect(await store.confirm(confirmed.run.id, 1, t(10))).toMatchObject({ outcome: 'confirmed' })
+    const settledBefore = await store.read(confirmed.run.id)
+    const itemsBefore = client.prepare('SELECT * FROM run_items WHERE run_id=? ORDER BY id').all(proposed.run.id)
+    const database = createContainerDatabase(client)
+    const failure = new Error('Failed query: expiry', { cause: new Error('D1_ERROR: Network connection lost') })
+    let attempts = 0
+    const interrupted = new Proxy(database, {
+      get(target, key) {
+        const value = Reflect.get(target, key)
+        if (key === 'all') return (...args: unknown[]) => {
+          attempts++
+          if (attempts === 1) {
+            if (phase === 'after') Reflect.apply(value, target, args)
+            throw failure
+          }
+          return Reflect.apply(value, target, args)
+        }
+        return typeof value === 'function' ? value.bind(target) : value
+      },
+    })
+    const recovered = createScheduledActionStore(interrupted)
+    expect(await recovered.expire(t(22))).toEqual(phase === 'before' ? [proposed.run.id] : [])
+    expect(attempts).toBe(2)
+    expect(client.prepare('SELECT state,settled_at,updated_at FROM proposed_runs WHERE id=?').get(proposed.run.id))
+      .toEqual({ state: 'expired', settled_at: t(22), updated_at: t(22) })
+    expect(await store.read(confirmed.run.id)).toEqual(settledBefore)
+    expect(client.prepare('SELECT * FROM run_items WHERE run_id=? ORDER BY id').all(proposed.run.id)).toEqual(itemsBefore)
+    expect(await store.expire(t(23))).toEqual([])
+    expect(await store.confirm(proposed.run.id, 1, t(10))).toEqual({ outcome: 'not_proposed' })
+    expect(client.prepare('SELECT updated_at FROM proposed_runs WHERE id=?').get(proposed.run.id)).toEqual({ updated_at: t(22) })
+  })
+
+  it('[money:expiry-recovery] propagates a permanent expiry failure without retry or state changes', async () => {
+    const { sqlite: client, store } = await fixture()
+    const proposed = await propose(store)
+    if (proposed.outcome !== 'proposed') throw new Error('fixture proposal failed')
+    const database = createContainerDatabase(client)
+    const failure = new Error('SQLITE_CONSTRAINT: permanent fixture failure')
+    let attempts = 0
+    const broken = new Proxy(database, {
+      get(target, key) {
+        const value = Reflect.get(target, key)
+        if (key === 'all') return () => { attempts++; throw failure }
+        return typeof value === 'function' ? value.bind(target) : value
+      },
+    })
+    await expect(createScheduledActionStore(broken).expire(t(22))).rejects.toBe(failure)
+    expect(attempts).toBe(1)
+    expect((await store.read(proposed.run.id))?.state).toBe('proposed')
+  })
+
   it('[money] refuses to confirm past the deadline, sweep or no sweep', async () => {
     // Checked at confirmation rather than trusted to have been swept. A run
     // whose expiry passed a minute ago is not confirmable because nothing has

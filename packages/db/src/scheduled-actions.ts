@@ -20,6 +20,7 @@ import { sql } from 'drizzle-orm'
 import type { BetterSQLite3Database } from 'drizzle-orm/better-sqlite3'
 import type { DrizzleD1Database } from 'drizzle-orm/d1'
 import type * as schema from './schema.js'
+import { retryTransientD1IdempotentOperation } from './d1-idempotent-retry.js'
 
 type Database = BetterSQLite3Database<typeof schema> | DrizzleD1Database<typeof schema>
 
@@ -325,15 +326,17 @@ export const createScheduledActionStore = (database: Database): ScheduledActionS
     return rows.length > 0
   },
 
+  // Only this proposed -> expired update is repeat-safe; never repeat the
+  // scheduled action. A lost committed reply returns no newly expired IDs.
   expire: async (now) =>
     (
-      await database.all<{ id: number }>(sql`
+      await retryTransientD1IdempotentOperation(async () => database.all<{ id: number }>(sql`
         UPDATE proposed_runs
         SET state = 'expired', settled_at = ${now},
             settled_reason = 'nobody confirmed it before the deadline',
             updated_at = ${now}
         WHERE state = 'proposed' AND expires_at <= ${now}
-        RETURNING id`)
+        RETURNING id`))
     ).map((row) => row.id),
 
   outstanding: async (runId) =>
