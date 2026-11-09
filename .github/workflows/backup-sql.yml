@@ -1,32 +1,21 @@
-# A full SQL dump of the database — schema, indexes, triggers and every row —
-# taken nightly and kept forever.
-#
-# This exists beside the Worker's nightly CSV bundle rather than replacing it,
-# because the two fail differently and neither is sufficient alone:
-#
-#   - The CSV bundle carries rows and no schema. It is portable (open a table in
-#     any spreadsheet) and it needs no credentials, because the Worker writes it
-#     from its own R2 binding. Restoring from it means rebuilding the schema from
-#     the ezacto source first.
-#   - This dump is the whole database as SQL, restorable with
-#     `wrangler d1 execute --file`. It cannot come from the Worker: D1's export
-#     is an account-level API call and no Worker holds an API token.
-#
-# So: same data, two formats, two code paths, two schedules. A bug in one is
-# unlikely to be a bug in the other, which is the only property that makes a
-# second backup worth its cost.
-#
-# Nothing here ever deletes. There is no retention step and no lifecycle rule to
-# add one: a day's dump is a few megabytes, a year is a few gigabytes, and the
-# storage costs less per month than the time spent deciding what to throw away.
+# Nightly SQL and complete typed-bundle deposits, derived from the completed
+# Worker capture. This shares that capture path; it is not an independent live
+# database snapshot. No scheduled step invokes D1 export, which blocks queries.
+# The typed archive preserves original schema/rows/assets; derived SQL comes from
+# a supported quarantined offline restore. Keep existing retained objects forever.
 name: backup-sql
 
 on:
   schedule:
-    # An hour after the Worker's own 03:00 export, so the two never contend for
-    # the same database and a bad night is obvious in the ordering.
+    # Copy the completed 03:00 Worker backup; refuse a stale/incomplete capture.
     - cron: '0 4 * * *'
-  workflow_dispatch: {}
+  workflow_dispatch:
+    inputs:
+      allow_live_sql_export:
+        description: "Maintenance only: block live D1 queries while taking an independent raw SQL export"
+        type: boolean
+        required: false
+        default: false
 
 permissions:
   contents: read
@@ -44,11 +33,13 @@ concurrency:
 jobs:
   dump:
     runs-on: ubuntu-latest
+    timeout-minutes: 45
     # Prod only. The dev environment carries none of these variables, and a
     # choice that cannot work is worse than no choice.
     environment: prod
     env:
       ENVIRONMENT: prod
+      WORKER_BACKUP_SCRATCH: /tmp/ezacto-worker-backup-${{ github.run_id }}-${{ github.run_attempt }}
       CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
       CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
       D1_DATABASE_NAME: ${{ vars.PROD_D1_DATABASE_NAME }}
@@ -68,6 +59,7 @@ jobs:
       - uses: actions/checkout@v4
 
       - uses: actions/setup-node@v4
+        if: ${{ github.event_name == 'workflow_dispatch' && inputs.allow_live_sql_export }}
         with:
           node-version-file: .nvmrc
 
@@ -81,8 +73,33 @@ jobs:
           fi
           echo "dumping $D1_DATABASE_NAME into $R2_BUCKET"
 
-      - name: export — the whole database as SQL
+      - name: Install the supported offline restore tools
+        if: ${{ !(github.event_name == 'workflow_dispatch' && inputs.allow_live_sql_export) }}
+        uses: ./.github/actions/node-workspace
+        env:
+          CLOUDFLARE_API_TOKEN: ''
+          CLOUDFLARE_ACCOUNT_ID: ''
+          BACKUP_PASSPHRASE: ''
+
+      - name: Build the offline restore tools
+        if: ${{ !(github.event_name == 'workflow_dispatch' && inputs.allow_live_sql_export) }}
+        env:
+          CLOUDFLARE_API_TOKEN: ''
+          CLOUDFLARE_ACCOUNT_ID: ''
+          BACKUP_PASSPHRASE: ''
+        run: npm run build -w @ezacto/core -w @conflict-hq/ezacto-client -w @conflict-hq/ezacto-cli
+
+      - name: Copy today's completed Worker backup and verify an offline restore
+        if: ${{ !(github.event_name == 'workflow_dispatch' && inputs.allow_live_sql_export) }}
         run: |
+          umask 077
+          npx --yes --package=wrangler@4.131.1 -- node scripts/prepare-worker-sql-backup.mjs
+
+      - name: Maintenance only — independent live SQL export with query downtime
+        if: ${{ github.event_name == 'workflow_dispatch' && inputs.allow_live_sql_export }}
+        run: |
+          umask 077
+          echo "::warning::explicit maintenance export: D1 cannot serve queries during this step"
           npx --yes wrangler@4.131.1 d1 export "$D1_DATABASE_NAME" \
             --remote --output dump.sql -y
 
@@ -102,7 +119,7 @@ jobs:
             echo "::error::only $tables CREATE TABLE statements; the schema is incomplete"
             exit 1
           fi
-          # The schema is the whole reason this dump exists beside the CSV one.
+          # Both raw maintenance and derived SQL must contain a complete schema.
           if [ "$indexes" -lt 1 ]; then
             echo "::error::no indexes or triggers; this is not a full dump"
             exit 1
@@ -117,6 +134,7 @@ jobs:
       - name: compress and checksum
         id: compress
         run: |
+          umask 077
           set -euo pipefail
           gzip -9 -c dump.sql > dump.sql.gz
           sha256sum dump.sql.gz | cut -d' ' -f1 > dump.sql.gz.sha256
@@ -146,11 +164,18 @@ jobs:
         id: encrypt
         if: env.BACKUP_PASSPHRASE != ''
         run: |
+          umask 077
           set -euo pipefail
           printf '%s' "$BACKUP_PASSPHRASE" | gpg --batch --yes --quiet \
             --passphrase-fd 0 --symmetric --cipher-algo AES256 \
             --output dump.sql.gz.gpg dump.sql.gz
           test -s dump.sql.gz.gpg
+          if [ -f worker-bundle.tar.gz ]; then
+            printf '%s' "$BACKUP_PASSPHRASE" | gpg --batch --yes --quiet \
+              --passphrase-fd 0 --symmetric --cipher-algo AES256 \
+              --output worker-bundle.tar.gz.gpg worker-bundle.tar.gz
+            test -s worker-bundle.tar.gz.gpg
+          fi
           echo "encrypted_bytes=$(wc -c < dump.sql.gz.gpg | tr -d ' ')" >> "$GITHUB_ENV"
           echo "::notice::encrypted for off-site ($(wc -c < dump.sql.gz.gpg | tr -d ' ') bytes)"
 
@@ -159,7 +184,9 @@ jobs:
       # artifact is a second copy in a third place with its own retention and its
       # own access list.
       - name: upload — to R2, under this run's date
+        if: always() && steps.compress.outcome == 'success'
         run: |
+          umask 077
           set -euo pipefail
           stamp=$(date -u +%Y-%m-%dT%H:%M:%SZ)
           prefix="${key_prefix}"
@@ -181,8 +208,21 @@ jobs:
             "restore_anywhere": "gunzip -c dump.sql.gz | sqlite3 restored.sqlite"
           }
           JSON
+          # Preserve capture provenance and the original typed snapshot receipt.
+          node --input-type=module <<'JS'
+          import { readFileSync, writeFileSync, existsSync } from 'node:fs';
+          const manifest = JSON.parse(readFileSync('manifest.json', 'utf8'));
+          manifest.source = existsSync('worker-source.json')
+            ? JSON.parse(readFileSync('worker-source.json', 'utf8'))
+            : { capture_kind: 'live-d1-locking' };
+          if (manifest.source.capture_kind === 'worker-derived-quarantined') {
+            manifest.source.archive_key = manifest.key + '.worker.tar.gz';
+            manifest.restore_warning = 'Derived SQL is already quarantined. Follow RESTORE.md before any service startup; original lossless schema, typed rows and assets are in the Worker archive.';
+          }
+          writeFileSync('manifest.json', JSON.stringify(manifest, null, 2) + '\n', { mode: 0o600 });
+          JS
           # Independent monthly drills compare every restored table to these counts.
-          # A validation failure must not discard a newly captured raw backup.
+          # A validation failure retains dated artifacts without promoting the latest pointer.
           sealed=false
           if node scripts/seal-sql-backup.mjs dump.sql.gz manifest.json; then
             sealed=true
@@ -191,6 +231,10 @@ jobs:
           fi
           npx --yes wrangler@4.131.1 r2 object put "${R2_BUCKET}/${prefix}/${key_name}.sql.gz" \
             --file dump.sql.gz --content-type application/gzip --remote
+          if [ -f worker-bundle.tar.gz ]; then
+            npx --yes wrangler@4.131.1 r2 object put "${R2_BUCKET}/${prefix}/${key_name}.worker.tar.gz" \
+              --file worker-bundle.tar.gz --content-type application/gzip --remote
+          fi
           npx --yes wrangler@4.131.1 r2 object put "${R2_BUCKET}/${prefix}/${key_name}.manifest.json" \
             --file manifest.json --content-type application/json --remote
           # Publish last: a pointer always names a complete, verified pair.
@@ -211,7 +255,7 @@ jobs:
       # which is the moment an off-site copy is worth most -- skipping it there
       # would turn one failure into no backup at all.
       - name: off-site — assume the S3 deposit role
-        if: always() && steps.compress.outcome == 'success' && env.AWS_BACKUP_ROLE_ARN != '' && env.AWS_BACKUP_BUCKET != ''
+        if: always() && steps.compress.outcome == 'success' && (env.BACKUP_PASSPHRASE == '' || steps.encrypt.outcome == 'success') && env.AWS_BACKUP_ROLE_ARN != '' && env.AWS_BACKUP_BUCKET != ''
         uses: aws-actions/configure-aws-credentials@v4
         with:
           role-to-assume: ${{ env.AWS_BACKUP_ROLE_ARN }}
@@ -219,7 +263,7 @@ jobs:
           role-session-name: ezacto-backup-${{ github.run_id }}
 
       - name: off-site — upload to S3
-        if: always() && steps.compress.outcome == 'success' && env.AWS_BACKUP_ROLE_ARN != '' && env.AWS_BACKUP_BUCKET != ''
+        if: always() && steps.compress.outcome == 'success' && (env.BACKUP_PASSPHRASE == '' || steps.encrypt.outcome == 'success') && env.AWS_BACKUP_ROLE_ARN != '' && env.AWS_BACKUP_BUCKET != ''
         run: |
           set -euo pipefail
           # The role holds s3:PutObject and nothing else -- no read, no delete,
@@ -230,13 +274,19 @@ jobs:
           # Encrypted where one exists. Refusing to deposit an unencrypted copy
           # would trade a real backup for a tidy rule; saying which went is the
           # honest middle.
-          if [ -f dump.sql.gz.gpg ]; then
-            body=dump.sql.gz.gpg; suffix=.sql.gz.gpg
-          else
-            body=dump.sql.gz; suffix=.sql.gz
-            echo "::warning::no BACKUP_PASSPHRASE; the off-site copy is plaintext"
-          fi
-          aws s3 cp "$body" "s3://${AWS_BACKUP_BUCKET}/${key_prefix}/${key_name}${suffix}"
+          for item in dump.sql.gz worker-bundle.tar.gz; do
+            [ -f "$item" ] || continue
+            body="$item"
+            suffix=.sql.gz
+            if [ "$item" = worker-bundle.tar.gz ]; then suffix=.worker.tar.gz; fi
+            if [ -n "$BACKUP_PASSPHRASE" ]; then
+              test -s "$item.gpg" || { echo "::error::encrypted backup missing; refusing plaintext fallback"; exit 1; }
+              body="$item.gpg"; suffix="${suffix}.gpg"
+            else
+              echo "::warning::no BACKUP_PASSPHRASE; the off-site copy is plaintext"
+            fi
+            aws s3 cp "$body" "s3://${AWS_BACKUP_BUCKET}/${key_prefix}/${key_name}${suffix}"
+          done
           # Written by the R2 step. If that died first the dump still goes; a
           # copy without its manifest beats no copy.
           if [ -f manifest.json ]; then
@@ -251,26 +301,32 @@ jobs:
       # worked. Skipped entirely until GCS_BACKUP_BUCKET and a service-account
       # key exist, so the workflow is complete before the infrastructure is.
       - name: off-site — authenticate to GCS
-        if: always() && steps.compress.outcome == 'success' && env.GCS_BACKUP_BUCKET != '' && env.HAS_GCS_KEY == 'true'
+        if: always() && steps.compress.outcome == 'success' && (env.BACKUP_PASSPHRASE == '' || steps.encrypt.outcome == 'success') && env.GCS_BACKUP_BUCKET != '' && env.HAS_GCS_KEY == 'true'
         uses: google-github-actions/auth@v2
         with:
           credentials_json: ${{ secrets.GCS_BACKUP_KEY }}
 
       - name: off-site — the gcloud CLI
-        if: always() && steps.compress.outcome == 'success' && env.GCS_BACKUP_BUCKET != '' && env.HAS_GCS_KEY == 'true'
+        if: always() && steps.compress.outcome == 'success' && (env.BACKUP_PASSPHRASE == '' || steps.encrypt.outcome == 'success') && env.GCS_BACKUP_BUCKET != '' && env.HAS_GCS_KEY == 'true'
         uses: google-github-actions/setup-gcloud@v2
 
       - name: off-site — upload to GCS
-        if: always() && steps.compress.outcome == 'success' && env.GCS_BACKUP_BUCKET != '' && env.HAS_GCS_KEY == 'true'
+        if: always() && steps.compress.outcome == 'success' && (env.BACKUP_PASSPHRASE == '' || steps.encrypt.outcome == 'success') && env.GCS_BACKUP_BUCKET != '' && env.HAS_GCS_KEY == 'true'
         run: |
           set -euo pipefail
-          if [ -f dump.sql.gz.gpg ]; then
-            body=dump.sql.gz.gpg; suffix=.sql.gz.gpg
-          else
-            body=dump.sql.gz; suffix=.sql.gz
-            echo "::warning::no BACKUP_PASSPHRASE; the GCS copy is plaintext"
-          fi
-          gcloud storage cp "$body" "gs://${GCS_BACKUP_BUCKET}/${key_prefix}/${key_name}${suffix}"
+          for item in dump.sql.gz worker-bundle.tar.gz; do
+            [ -f "$item" ] || continue
+            body="$item"
+            suffix=.sql.gz
+            if [ "$item" = worker-bundle.tar.gz ]; then suffix=.worker.tar.gz; fi
+            if [ -n "$BACKUP_PASSPHRASE" ]; then
+              test -s "$item.gpg" || { echo "::error::encrypted backup missing; refusing plaintext fallback"; exit 1; }
+              body="$item.gpg"; suffix="${suffix}.gpg"
+            else
+              echo "::warning::no BACKUP_PASSPHRASE; the GCS copy is plaintext"
+            fi
+            gcloud storage cp "$body" "gs://${GCS_BACKUP_BUCKET}/${key_prefix}/${key_name}${suffix}"
+          done
           if [ -f manifest.json ]; then
             gcloud storage cp manifest.json "gs://${GCS_BACKUP_BUCKET}/${key_prefix}/${key_name}.manifest.json"
           fi
@@ -285,11 +341,15 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: backup-${{ env.key_name }}
-          path: dump.sql.gz.gpg
+          path: |
+            dump.sql.gz.gpg
+            worker-bundle.tar.gz.gpg
           retention-days: 14
           if-no-files-found: error
 
       # The dump outlives the runner; nothing of it should.
       - name: shred the local copies
         if: always()
-        run: rm -f dump.sql dump.sql.gz dump.sql.gz.gpg dump.sql.gz.sha256 manifest.json
+        run: |
+          rm -f dump.sql dump.sql.gz dump.sql.gz.gpg dump.sql.gz.sha256 manifest.json worker-source.json worker-bundle.tar.gz worker-bundle.tar.gz.gpg
+          rm -rf -- "$WORKER_BACKUP_SCRATCH"

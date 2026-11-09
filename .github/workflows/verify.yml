@@ -81,6 +81,8 @@ jobs:
       - name: contract is what the code emits
         run: npm run contract:check
       - run: npm run build
+      - name: completed Worker capture and nonblocking SQL deposit safety
+        run: node --test scripts/prepare-worker-sql-backup.test.mjs
       - name: install and exercise the packed public CLI outside the workspace
         run: npm run test:package -w @conflict-hq/ezacto-cli
       - name: install and exercise the packed migrate CLI outside the workspace
