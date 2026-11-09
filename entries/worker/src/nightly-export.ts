@@ -102,8 +102,16 @@ export const runNightlyExport = async (
       new Date().toISOString(),
     );
   } catch (error) {
-    await discardWorkerSnapshot(database, "", prefix);
+    // Recording a failed run must not turn the scheduled job into a success.
+    // Attempt both cleanup steps, retaining the export failure if either fails.
+    const failures: unknown[] = [error];
+    try { await discardWorkerSnapshot(database, "", prefix); }
+    catch (cleanup) { failures.push(cleanup); }
     const message = error instanceof Error ? error.message : String(error);
-    await failBackupRun(database, runId, message, new Date().toISOString());
+    try { await failBackupRun(database, runId, message, new Date().toISOString()); }
+    catch (cleanup) { failures.push(cleanup); }
+    if (failures.length > 1)
+      throw new AggregateError(failures, "Nightly export failed during cleanup", { cause: error });
+    throw error;
   }
 };
