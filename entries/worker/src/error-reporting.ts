@@ -90,6 +90,9 @@ const failureCode = (error: unknown): WorkerFailureCode => {
       // Match platform prefixes only, never text embedded in SQL/parameters.
       // Static categories distinguish capacity failures from transport loss
       // without sending SQL, identifiers or provider messages to telemetry.
+      // exec() embeds its statement in the wrapper/cause. Recognize only the
+      // fixed readiness PRAGMA, never a platform phrase inside arbitrary SQL.
+      if (/^D1_EXEC_ERROR: Error in line 1: PRAGMA foreign_keys ?= ?ON: D1 DB is overloaded\./u.test(message)) return 'd1_overloaded'
       if (message.startsWith('D1_ERROR: D1 DB is overloaded.')) return 'd1_overloaded'
       if (message.startsWith('D1_ERROR: D1 DB storage operation exceeded timeout')) return 'd1_timeout'
       if (message.startsWith("D1_ERROR: D1 DB's isolate exceeded its memory limit") ||
