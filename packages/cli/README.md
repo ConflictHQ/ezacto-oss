@@ -79,9 +79,10 @@ saved, the note remains saved and the command reports the failure. Inspect
 
 The CLI bundles the shared report capability inventory into `dist/money.js`.
 `@ezacto/core` is a build dependency only; it must never appear in the published
-runtime dependencies. Build before packing, and publish version 0.1.3 through the
-existing `npm-v0.1.3` release workflow after the fix is merged. Version 0.1.2
-cannot be repaired in place; pin 0.1.1 until the patch is published.
+runtime dependencies. Build before packing. Client, CLI and migrate package
+versions must agree with the `npm-v<version>` tag used by the existing release
+workflow. Version 0.1.7 adds time-entry note editing; earlier published versions
+cannot be repaired in place.
 
 Run `npm run test:package -w @conflict-hq/ezacto-cli` from the repository root
 after building the workspaces. It packs both release candidates, globally installs
