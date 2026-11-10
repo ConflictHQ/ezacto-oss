@@ -1,4 +1,4 @@
-import type { QuickBooksRuntime, ManagedWiseRuntime } from '@ezacto/integrations'
+import type { QuickBooksRuntime, ManagedWiseRuntime, ManagedBillRuntime } from '@ezacto/integrations'
 import { moduleAvailability } from '@ezacto/api'
 import { demoDeployment, type AppEnv } from './app.js'
 
@@ -32,5 +32,17 @@ export interface WorkerManagedWise {
 }
 export const managedWiseAvailable = (
   port: WorkerManagedWise, env: AppEnv, scope: object | undefined,
+): boolean => scope !== undefined && !demoDeployment(env) &&
+  moduleAvailability(env).accounting && port.configured(scope) === true
+
+/** Tenant-owned BILL custody over the existing mirror/reconciliation engine.
+ * Provider login/effects must stay outside replayable host SQL transactions.
+ */
+export interface WorkerManagedBill {
+  configured(scope: object): boolean
+  compose(input: { readonly scope: object; readonly database: D1Database }): Promise<ManagedBillRuntime | null>
+}
+export const managedBillAvailable = (
+  port: WorkerManagedBill, env: AppEnv, scope: object | undefined,
 ): boolean => scope !== undefined && !demoDeployment(env) &&
   moduleAvailability(env).accounting && port.configured(scope) === true
