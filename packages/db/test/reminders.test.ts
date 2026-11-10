@@ -200,6 +200,25 @@ for (const [runtime, factory] of factories) {
       })
     })
 
+    it('[money #1352] uses the triggering send date rather than a later message with a higher ID', async () => {
+      database = await factory()
+      await installFixture(database)
+      const send = async (id: number, expectedVersion: number, date: string) => executeInvoiceLifecycleCommand(database!.orm, {
+        invoiceId: 1, commandId: `date-send-${id}`, command: 'send', actor: { type: 'user', id: 1 },
+        authorize, expectedVersion, occurredAt: sentAt, messageId: id, eventId: `date-event-${id}`,
+        message: { sentBy: 'Casey', sentByEmail: null, sentFrom: 'Billing', sentFromEmail: 'billing@example.test',
+          recipients: [{ name: 'AP', email: 'ap@example.test' }], subject: null, body: null, attachPdf: false,
+          sendMeACopy: false, thankYou: false, reminder: true, sendReminderOn: date },
+      })
+      await send(2, 0, '2026-09-22')
+      await send(201, 1, '2026-09-29')
+      const scheduler = database.reminder()
+      const service = database.outbox({ subscribers: [scheduler.subscriber], now: () => drainAt,
+        createAttemptId: () => 'date-schedule-attempt' })
+      await service.drain()
+      expect((await scheduler.listPending(1))[0]!.scheduledAt).toBe('2026-09-22T00:00:00.000Z')
+    })
+
     it('[unit #850] an invoice that asked for no reminders is not scheduled, whatever the policy says', async () => {
       database = await factory()
       await installFixture(database)

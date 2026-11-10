@@ -1,3 +1,10 @@
+import { quickBooksRevocationRecoveryIndexMigration } from './migrations/0187_quickbooks_revocation_recovery_index.js'
+import { quickBooksOutboxGrantsMigration } from './migrations/0186_quickbooks_outbox_grants.js'
+import { quickBooksWriteIntentsMigration } from './migrations/0185_quickbooks_write_intents.js'
+import { quickBooksRefreshOwnershipMigration } from './migrations/0184_quickbooks_refresh_ownership.js'
+import { managedWiseConnectionMigration } from './migrations/0183_managed_wise_connection.js'
+import { quickBooksReconnectFenceMigration } from './migrations/0182_quickbooks_reconnect_fence.js'
+import { reminderReconciliationMigration } from './migrations/0181_reminder_reconciliation.js'
 import { githubPublicationMigration } from './migrations/0180_github_publication.js'
 import { githubReaderMigration } from './migrations/0179_github_reader.js'
 import { calendarOperatorCleanupMigration } from './migrations/0178_calendar_operator_cleanup.js'
@@ -1719,6 +1726,13 @@ const migrations = [
   { id: '0178_calendar_operator_cleanup', statements: calendarOperatorCleanupMigration },
   { id: '0179_github_reader', statements: githubReaderMigration },
   { id: '0180_github_publication', statements: githubPublicationMigration },
+  { id: '0181_reminder_reconciliation', statements: reminderReconciliationMigration },
+  { id: '0182_quickbooks_reconnect_fence', statements: quickBooksReconnectFenceMigration },
+  { id: '0183_managed_wise_connection', statements: managedWiseConnectionMigration },
+  { id: '0184_quickbooks_refresh_ownership', statements: quickBooksRefreshOwnershipMigration },
+  { id: '0185_quickbooks_write_intents', statements: quickBooksWriteIntentsMigration },
+  { id: '0186_quickbooks_outbox_grants', statements: quickBooksOutboxGrantsMigration },
+  { id: '0187_quickbooks_revocation_recovery_index', statements: quickBooksRevocationRecoveryIndexMigration },
 ] as const
 
 // Fixtures assert against this rather than re-listing ids: a hand-copied ledger merges

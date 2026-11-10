@@ -97,7 +97,7 @@ it('does not report expected 4xx API errors and observes asynchronous API-port r
   await expect(Promise.all(pending)).resolves.toEqual([undefined])
 })
 
-it.each(['managedQuickBooks', 'managedDeel'] as const)('passes %s to fetch, queue and scheduled without serializing it', async option => {
+it.each(['managedQuickBooks', 'managedWise', 'managedBill', 'managedDeel'] as const)('[managed provider] passes %s to fetch, queue and scheduled without serializing it', async option => {
   const failure = new Error('Owned composition boundary stop')
   vi.mocked(createRuntimeServices).mockRejectedValue(failure)
   const port = { configured: () => false, compose: vi.fn(async () => null) }
@@ -113,6 +113,32 @@ it.each(['managedQuickBooks', 'managedDeel'] as const)('passes %s to fetch, queu
     expect(bindings).not.toHaveProperty(option)
   }
   expect(port.compose).not.toHaveBeenCalled()
+})
+
+it('[#1237] uses only pure managed Wise availability in the service-free HTML shell', async () => {
+  const binding = {} as D1Database
+  const managedWise = { configured: vi.fn((scope: object) => scope === binding), compose: vi.fn(async () => null) }
+  const worker = createWorker({ managedWise })
+  const { ctx } = context()
+  const response = await worker.fetch!(incoming('https://fixture.invalid/invoices'), { ...env, DB: binding }, ctx)
+  expect(response.status).toBe(200)
+  expect(await response.text()).toContain('data-accounting-provider="wise" data-provider-available="true"')
+  expect(managedWise.configured).toHaveBeenCalledWith(binding)
+  expect(managedWise.compose).not.toHaveBeenCalled()
+  expect(createRuntimeServices).not.toHaveBeenCalled()
+})
+
+it('[#1252] the service-free shell reads pure tenant BILL availability without composing a runtime', async () => {
+  const binding = {} as D1Database
+  const managedBill = { configured: vi.fn((scope: object) => scope === binding), compose: vi.fn(async () => null) }
+  const worker = createWorker({ managedBill })
+  const { ctx } = context()
+  const response = await worker.fetch!(incoming('https://fixture.invalid/invoices'), { ...env, DB: binding }, ctx)
+  expect(response.status).toBe(200)
+  expect(await response.text()).toContain('data-accounting-provider="bill" data-provider-available="true"')
+  expect(managedBill.configured).toHaveBeenCalledWith(binding)
+  expect(managedBill.compose).not.toHaveBeenCalled()
+  expect(createRuntimeServices).not.toHaveBeenCalled()
 })
 
 it('[#1238] the service-free shell reads pure tenant Deel availability without composing a runtime', async () => {

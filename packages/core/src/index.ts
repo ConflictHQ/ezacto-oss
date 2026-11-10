@@ -1,3 +1,4 @@
+export * from './managed-wise.js'
 export * from './calendar-connection.js'
 export * from './managed-deel.js'
 export * from './managed-bill.js'

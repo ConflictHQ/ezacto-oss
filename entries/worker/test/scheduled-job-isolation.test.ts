@@ -25,6 +25,35 @@ vi.mock("@sentry/cloudflare", async (original) => ({
 beforeEach(() => {
   vi.clearAllMocks();
 });
+
+it('runs reminder reconciliation on the five-minute tick even if the bank sweep fails', async () => {
+  const error = new Error('bank failure')
+  const processDue = vi.fn().mockResolvedValue(undefined)
+  vi.mocked(createRuntimeServices).mockResolvedValue({
+    bankFeeds: { processDue: vi.fn().mockRejectedValue(error) },
+    reminderReconciliation: { processDue },
+  } as never)
+  await expect(worker.scheduled!({ cron: '*/5 * * * *', scheduledTime: Date.now() } as never,
+    {} as never, {} as never)).rejects.toBe(error)
+  expect(processDue).toHaveBeenCalledOnce()
+})
+
+it('reports a reminder reconciliation error without failing a successful bank tick', async () => {
+  const error = new Error('reconciliation unavailable')
+  const bank = vi.fn().mockResolvedValue({ checked: 0, failed: 0 })
+  const invoiceRecovery = vi.fn().mockResolvedValue(undefined)
+  vi.mocked(createRuntimeServices).mockResolvedValue({
+    bankFeeds: { processDue: bank },
+    reminderReconciliation: { processDue: vi.fn().mockRejectedValue(error) },
+    invoiceFeedbackRecovery: { processDue: invoiceRecovery },
+  } as never)
+  await worker.scheduled!({ cron: '*/5 * * * *', scheduledTime: Date.now() } as never,
+    {} as never, {} as never)
+  expect(bank).toHaveBeenCalledOnce()
+  expect(invoiceRecovery).toHaveBeenCalledOnce()
+  const captured = vi.mocked(Sentry.captureException).mock.calls[0]![0] as Error
+  expect(scrubWorkerEvent({}, { originalException: captured })?.tags).toMatchObject({ operation: 'reminder reconciliation' })
+})
 const minute = [
   "webhook",
   "purge",
@@ -38,6 +67,7 @@ const minute = [
   "dispatch",
   "expiry",
   "backupCleanup",
+  "quickbooksWrite",
   "deelPayment",
   "maintenance",
   "outbox",
@@ -50,7 +80,7 @@ const expectedOperation: Record<string, string> = {
   notice: 'scheduled manifest notice', dispatch: 'scheduled run dispatch', expiry: 'scheduled run expiry',
   maintenance: 'demo maintenance', outbox: 'outbox drain', export: 'nightly export',
   recurring: 'recurring invoice generation', reminder: 'payment reminders', bill: 'BILL reconciliation',
-  quickbooks: 'QuickBooks catch-up', deelStatus: 'Deel time sync', deel: 'Deel time sync',
+  quickbooksWrite: 'QuickBooks accounting write recovery', quickbooks: 'QuickBooks catch-up', deelStatus: 'Deel time sync', deel: 'Deel time sync',
   deelPayment: 'Deel payment status',
   backupCleanup: 'temporary backup cleanup',
 };
@@ -105,7 +135,7 @@ it.each([
       recurringInvoices: { generateDue: job("recurring", undefined) },
       reminders: { processDue: job("reminder", undefined) },
       bill: { reconcilePayments: job("bill", undefined) },
-      quickBooks: { catchUp: job("quickbooks", undefined) },
+      quickBooks: { catchUp: job("quickbooks", undefined), recoverPendingWrites: job("quickbooksWrite", undefined) },
       deelPaymentStatus: { refresh: job("deelPayment", { configured: true, checked: 0, failed: 0, remaining: 0 }) },
       deelSync: {
         status() {

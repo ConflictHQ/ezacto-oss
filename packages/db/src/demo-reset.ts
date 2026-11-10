@@ -165,6 +165,10 @@ export const PRESERVED_TABLES: ReadonlySet<string> = new Set([
   // Instance security material is seeded once; keeping the migration ledger
   // while deleting this row would permanently disable closure proofs.
   'account_closure_security',
+  // Migration-seeded singleton sweep cursors; the wipe resets their progress
+  // and leases below, since the emails they point into are deleted.
+  'reminder_reconciliation_cursor',
+  'invoice_feedback_recovery_cursor',
   // The migration creates this singleton once. Authorization triggers update
   // it in place, so deleting it would disable all subsequent revision changes.
   'idempotency_authorization',
@@ -188,6 +192,9 @@ export const PRESERVED_TABLES: ReadonlySet<string> = new Set([
   // The migration seeds this singleton and its retain trigger refuses deletion.
   // The wipe advances its generation and disconnects it (issue 1252).
   'bill_managed_connection',
+  // Wise custody has a migration-seeded singleton too. Erase its credential
+  // and advance its generation in the wipe instead of deleting the row.
+  'wise_managed_connection',
   'calendar_sync_instance',
   'github_publication_instance',
   'github_publication_dispatch',
@@ -245,6 +252,9 @@ const wipeStatements = (objects: DemoSchemaObjects, now: string): readonly DemoS
   // Authority changed while its triggers were lifted. Advance the preserved
   // revision in the wipe transaction, even if bootstrap/seed never resumes.
   { text: 'UPDATE idempotency_authorization SET revision = revision + 1 WHERE id = 1', bindings: [] },
+  // The emails these cursors walked are gone; restart the sweeps from the beginning.
+  { text: 'UPDATE reminder_reconciliation_cursor SET after_id = 0, next_due = 0, lease_token = NULL, lease_expires_at = NULL WHERE id = 1', bindings: [] },
+  { text: "UPDATE invoice_feedback_recovery_cursor SET after_event_id = '', next_due = 0, lease_token = NULL, lease_expires_at = NULL WHERE id = 1", bindings: [] },
   // Connection deletion is a lifecycle change even while its triggers are lifted.
   // Invalidate pending grants even if the subsequent bootstrap never resumes.
   { text: 'UPDATE quickbooks_connection_generation SET generation = generation + 1 WHERE singleton = 1', bindings: [] },
@@ -252,6 +262,7 @@ const wipeStatements = (objects: DemoSchemaObjects, now: string): readonly DemoS
   // The wipe emptied the users and links this connection was bound to. Drop the
   // sealed credential and binding; the generation advances, so no stale command applies.
   { text: "UPDATE bill_managed_connection SET generation = generation + 1, status = 'disconnected', company_id = NULL, binding_company_id = NULL, sealed_credential = NULL, connected_by_user_id = NULL, health_at = NULL WHERE singleton = 1", bindings: [] },
+  { text: "UPDATE wise_managed_connection SET generation = generation + 1, status = 'disconnected', profile_id = NULL, sealed_credential = NULL, connected_by_user_id = NULL, health_at = NULL, updated_at = NULL WHERE singleton = 1", bindings: [] },
   { text: "UPDATE calendar_sync_instance SET nonce=lower(hex(randomblob(32))) WHERE singleton=1", bindings: [] },
   { text: "UPDATE github_publication_instance SET nonce=lower(hex(randomblob(32))) WHERE singleton=1", bindings: [] },
   { text: "UPDATE github_publication_dispatch SET token=NULL,expires_at=0 WHERE id=1", bindings: [] },

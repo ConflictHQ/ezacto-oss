@@ -1,3 +1,8 @@
+import { invoiceWriteSource, customerWriteSource, paymentWriteSource } from './mirror.js';
+import { clientAncestry } from './mapping.js';
+import { ManagedQuickBooksWriteUnavailableError, type ManagedQuickBooksWrites } from './managed-writes.js';
+import { ManagedQuickBooksRefreshUnavailableError, type ManagedQuickBooksRefresh, type QuickBooksRefreshSnapshot } from './managed-refresh.js';
+import type { QuickBooksTokens } from './oauth.js';
 /**
  * Assembling the QuickBooks connection from deployment configuration, the
  * store, and Intuit.
@@ -93,6 +98,8 @@ export interface QuickBooksSyncResult {
 
 /** Likewise structural: what the routes call, without importing the routes. */
 export interface QuickBooksService {
+  recoverPendingWrites?(limit?: number): Promise<void>;
+  writeStatus?(): Promise<'ready' | 'pending' | 'unavailable'>;
   /** Local connect readiness; absent on older/custom service ports. Never makes a provider request. */
   configured?(): boolean;
   clientId(): string | null;
@@ -110,6 +117,7 @@ export interface QuickBooksService {
     realmId: string;
   }): Promise<QuickBooksConnectionStatus>;
   readStatus(): Promise<QuickBooksConnectionStatus | null>;
+  authorizationStatus?(): Promise<'ready' | 'pending' | 'unavailable'>;
   setAllowOnlinePayment(allow: boolean): Promise<void>;
   disconnect(): Promise<void>;
   receiveWebhook(input: {
@@ -135,6 +143,7 @@ export interface QuickBooksService {
    * recording the failure, so the caller reports it; the cursor has not moved.
    */
   catchUp(): Promise<QuickBooksCatchUp | null>;
+  recoverPendingWrites?(limit?: number): Promise<void>;
 }
 
 /** How the last catch-up run came to rest. */
@@ -195,6 +204,7 @@ export interface QuickBooksConnectionStore {
         refreshToken: string;
         accessTokenExpiresAt: string;
         refreshTokenExpiresAt: string;
+        connectionGeneration?: number;
       })
     | null
   >;
@@ -429,6 +439,14 @@ const mirroredFromHere = (paymentId: number): string =>
 const maximumSkippedReasonLength = 255;
 
 export interface QuickBooksRuntimeOptions {
+  /** Durable managed ownership, composed outside replayable hosted SQL. */
+  readonly managedRefresh?: ManagedQuickBooksRefresh;
+  /** Trusted in-process transport, invoked only inside the durable refresh owner.
+   * Hosted credentials stay in the host; never serialize this capability. */
+  readonly managedRefreshExchange?: (connection: QuickBooksRefreshSnapshot, now: Date, attemptId: string) => Promise<QuickBooksTokens>;
+  readonly managedWrites?: ManagedQuickBooksWrites;
+  /** Trusted host coordinator, bound to the authenticated request and durable revocation custody. */
+  readonly managedDisconnect?: () => Promise<void>;
   readonly config: QuickBooksConfig;
   readonly store: QuickBooksConnectionStore;
   readonly source: QuickBooksMirrorSource;
@@ -495,6 +513,7 @@ export interface QuickBooksRuntime {
   syncState(invoiceId: number): Promise<QuickBooksInvoiceSyncState | null>;
   reconcile(): Promise<QuickBooksReconciliation | null>;
   catchUp(): Promise<QuickBooksCatchUp | null>;
+  recoverPendingWrites?(limit?: number): Promise<void>;
 }
 
 /** The same local connect prerequisites as the native runtime, without constructing a client. */
@@ -507,6 +526,9 @@ export const quickBooksConfigured = (config: Pick<QuickBooksConfig, 'clientId' |
 export const createQuickBooksRuntime = (
   options: Readonly<QuickBooksRuntimeOptions>,
 ): QuickBooksRuntime => {
+  if (options.managedRefreshExchange !== undefined && options.managedRefresh === undefined) {
+    throw new Error("Managed QuickBooks refresh transport requires durable ownership");
+  }
   const { config, store, source } = options;
   const clientId = trimmed(config.clientId);
   const clientSecret = trimmed(config.clientSecret);
@@ -549,17 +571,28 @@ export const createQuickBooksRuntime = (
     const connection = await store.readConnection();
     if (connection === null) return null;
     const now = options.now();
+    if (options.managedRefresh !== undefined && await options.managedRefresh.status() !== 'ready') {
+      throw new ManagedQuickBooksRefreshUnavailableError();
+    }
     let accessToken = connection.accessToken;
     if (accessTokenNeedsRefresh(connection, now)) {
-      const refreshed = await refreshAccessToken({
-        clientId: clientId ?? "",
-        clientSecret: requireSecret(),
-        refreshToken: connection.refreshToken,
-        endpoints: await endpoints(),
-        fetch: options.fetch,
-        now,
-      });
-      await store.saveTokens({
+      const exchange = async (attemptId?: string) => {
+        if (options.managedRefreshExchange !== undefined) {
+          if (attemptId === undefined) throw new Error("Managed refresh owner is required");
+          return options.managedRefreshExchange(connection, now, attemptId);
+        }
+        return refreshAccessToken({
+          clientId: clientId ?? "",
+          clientSecret: requireSecret(),
+          refreshToken: connection.refreshToken,
+          endpoints: await endpoints(),
+          fetch: options.fetch,
+          now,
+        });
+      };
+      const refreshed = options.managedRefresh === undefined ? await exchange()
+        : await options.managedRefresh.refresh(connection, exchange);
+      if (options.managedRefresh === undefined) await store.saveTokens({
         realmId: connection.realmId,
         accessToken: refreshed.accessToken,
         refreshToken: refreshed.refreshToken,
@@ -569,7 +602,11 @@ export const createQuickBooksRuntime = (
       });
       accessToken = refreshed.accessToken;
     }
+    if (options.managedWrites !== undefined && connection.connectionGeneration === undefined) throw new ManagedQuickBooksWriteUnavailableError();
     return new QuickBooksClient({
+      ...(options.managedWrites === undefined ? {} : { managedWrites: options.managedWrites.session({
+        realmId: connection.realmId, connectedAt: connection.connectedAt, connectionGeneration: connection.connectionGeneration!,
+      }) }),
       now: options.now,
       realmId: connection.realmId,
       accessToken,
@@ -709,6 +746,14 @@ export const createQuickBooksRuntime = (
     invoiceId: number;
     payment: MirrorPayment;
   }): Promise<MirrorPaymentOutcome> => {
+    if (options.managedWrites !== undefined) {
+      const current = (await source.readPayments(input.invoiceId)).find(payment => payment.id === input.payment.id);
+      if (current === undefined || current.amountCents !== input.payment.amountCents || current.paidOn !== input.payment.paidOn || current.provider !== input.payment.provider) {
+        return { kind: 'refused', reason: 'The native receipt changed after it was recorded; review it before mirroring.' };
+      }
+      if (current.provider === 'quickbooks') return { kind: 'refused', reason: 'the payment came from QuickBooks' };
+      if (current.amountCents <= 0) return { kind: 'refused', reason: 'QuickBooks takes receipts, not refunds' };
+    }
     const connection = await store.readConnection();
     if (connection === null) {
       return { kind: "refused", reason: "QuickBooks is not connected" };
@@ -743,8 +788,12 @@ export const createQuickBooksRuntime = (
         reason: "QuickBooks no longer holds the invoice; it was deleted there since it was mirrored",
       };
     }
+    const nativeInvoice = await source.readInvoice(input.invoiceId);
+    if (nativeInvoice === null || notADocumentOfRecord(nativeInvoice.state) !== null) return { kind: 'refused', reason: 'the native invoice is not open or paid' };
     const realmId = connection.realmId;
     return mirrorPayment({
+      invoiceId: input.invoiceId,
+      invoiceVersion: nativeInvoice.version,
       payment: input.payment,
       invoiceQuickBooksId,
       customerQuickBooksId: quickBooksInvoice.CustomerRef.value,
@@ -1130,22 +1179,28 @@ export const createQuickBooksRuntime = (
   };
 
   const service: QuickBooksService = {
-    configured: () => quickBooksConfigured(config),
+    ...(options.managedWrites === undefined ? {} : { recoverPendingWrites: (limit?: number) => recoverPendingWrites(limit), writeStatus: () => options.managedWrites!.status() }),
+    configured: () => options.managedRefreshExchange === undefined ? quickBooksConfigured(config)
+      : clientId !== null && appBaseUrl !== null && (() => { try { new URL(CALLBACK_PATH, appBaseUrl); return true; } catch { return false; } })(),
+    ...(options.managedRefresh === undefined ? {} : { authorizationStatus: () => options.managedRefresh!.status() }),
     clientId: () => clientId,
     callbackUrl,
     settingsUrl: () => SETTINGS_PATH,
     newState: options.newState ?? randomState,
 
-    authorizeUrl: async ({ state, redirectUri }) =>
-      authorizeUrl({
+    authorizeUrl: async ({ state, redirectUri }) => {
+      if (options.managedRefreshExchange !== undefined) throw new ManagedQuickBooksRefreshUnavailableError();
+      return authorizeUrl({
         clientId: clientId ?? "",
         redirectUri,
         state,
         scopes: [QUICKBOOKS_ACCOUNTING_SCOPE],
         endpoints: await endpoints(),
-      }),
+      });
+    },
 
     beginAuthorization: async ({ state, userId, redirectUri }) => {
+      if (options.managedRefreshExchange !== undefined) throw new ManagedQuickBooksRefreshUnavailableError();
       const now = options.now();
       await store.beginAuthorization({
         state,
@@ -1157,6 +1212,7 @@ export const createQuickBooksRuntime = (
     },
 
     completeAuthorization: async ({ state, code, realmId }) => {
+      if (options.managedRefreshExchange !== undefined) throw new ManagedQuickBooksRefreshUnavailableError();
       const now = options.now();
       // Consumed first. Everything after this is done on behalf of a request
       // this instance actually started.
@@ -1214,6 +1270,10 @@ export const createQuickBooksRuntime = (
     },
 
     disconnect: async () => {
+      if (options.managedDisconnect !== undefined) return options.managedDisconnect();
+      if (options.managedRefresh !== undefined || options.managedWrites !== undefined) {
+        throw new ManagedQuickBooksRefreshUnavailableError();
+      }
       const connection = await store.readConnection();
       await store.disconnect({ now: options.now().toISOString() });
       // Told to Intuit as well as forgotten here. A local-only disconnect
@@ -1311,7 +1371,40 @@ export const createQuickBooksRuntime = (
     catchUp,
   };
 
-  return { service, mirror, mirrorPayment: mirrorPaymentOnto, sync, syncState, reconcile, catchUp };
+  const recoverPendingWrites = async (limit = 10): Promise<void> => {
+    if (options.managedWrites === undefined) return;
+    const connection = await store.readConnection();
+    if (connection === null || connection.connectionGeneration === undefined) return;
+    const pending = await options.managedWrites.pendingWrites({ realmId: connection.realmId, connectedAt: connection.connectedAt,
+      connectionGeneration: connection.connectionGeneration }, limit);
+    const failures: unknown[] = [];
+    for (const write of pending) {
+      try {
+        const invoice = await source.readInvoice(write.invoiceId);
+        if (invoice === null || notADocumentOfRecord(invoice.state) !== null) continue;
+        const client = await authorizedClient();
+        if (client === null) return;
+        // Recover the retained entity only. Global sync and the ordinary mirror
+        // may also plan fresh writes or import provider receipts.
+        if (write.resource === 'payment') {
+          const payment = (await source.readPayments(write.invoiceId)).find(payment => payment.id === write.nativeId);
+          if (payment !== undefined && payment.provider !== 'quickbooks') await client.recoverSource(await paymentWriteSource(payment, invoice.id, invoice.version));
+        } else if (write.resource === 'invoice') await client.recoverSource(await invoiceWriteSource(invoice, connection.allowOnlinePayment));
+        else {
+          const clients = await source.readClients(invoice.clientId);
+          const chain = clientAncestry(invoice.clientId, clients);
+          const index = chain.findIndex(customer => customer.id === write.nativeId);
+          if (index >= 0) await client.recoverSource(await customerWriteSource(chain.slice(0, index + 1), invoice));
+        }
+      } catch (error) {
+        // A retained pending/refused effect is an expected recovery state. The
+        // ledger and write status keep it visible without a cron error storm.
+        if (!(error instanceof ManagedQuickBooksWriteUnavailableError) && !(error instanceof ManagedQuickBooksRefreshUnavailableError)) failures.push(error);
+      }
+    }
+    if (failures.length) throw new Error('QuickBooks accounting write recovery failed');
+  };
+  return { recoverPendingWrites, service, mirror, mirrorPayment: mirrorPaymentOnto, sync, syncState, reconcile, catchUp };
 };
 
 /**
@@ -1326,6 +1419,23 @@ export const createQuickBooksRuntime = (
  * Failures throw. The outbox retries, and the mirror is safe to retry: that is
  * what the adopt path and the link table are for.
  */
+export interface QuickBooksMirrorEvent {
+  readonly eventType: string
+  readonly aggregateType: string
+  readonly aggregateId: number
+  readonly payload?: Readonly<Record<string, unknown>>
+}
+
+/** The same event selection as the existing mirror, exposed for preclaim
+ * admission so unrelated events never depend on provider availability. */
+export const quickBooksMirrorEventNeedsProvider = (event: QuickBooksMirrorEvent): boolean => {
+  if (event.aggregateType !== 'invoice') return false
+  if (event.eventType === 'invoice.sent') return true
+  if (event.eventType !== 'payment.recorded') return false
+  const payment = recordedPayment(event.payload)
+  return payment !== null && payment.provider !== 'quickbooks'
+}
+
 export const createQuickBooksMirrorSubscriber = (
   runtime: Readonly<QuickBooksRuntime>,
 ): {
@@ -1341,7 +1451,7 @@ export const createQuickBooksMirrorSubscriber = (
 } => ({
   id: "quickbooks_mirror",
   async deliver(event) {
-    if (event.aggregateType !== "invoice") return;
+    if (!quickBooksMirrorEventNeedsProvider(event)) return;
     if (event.eventType === "invoice.sent") {
       // A refusal is a decision, not a failure: no connection, or a document in
       // QuickBooks this mirror did not write. Retrying cannot change either, so

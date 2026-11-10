@@ -25,6 +25,7 @@ const email = (overrides: Partial<EmailLogRow> = {}): EmailLogRow => ({
   subject: 'Invoice 1315',
   template: 'invoice:1',
   status: 'sent',
+  reminder_attempt_lease_expires_at: null,
   attempt_count: 1,
   failure_code: null,
   failure_reason: null,

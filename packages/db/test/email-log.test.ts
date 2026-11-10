@@ -1,6 +1,6 @@
 import BetterSqlite3 from 'better-sqlite3'
 import { Miniflare } from 'miniflare'
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import {
   EMAIL_LOG_KIND_TEMPLATES,
   EMAIL_RETRY_POLICY,
@@ -11,11 +11,11 @@ import {
   type HttpEmailProvider,
   type QueuedEmailJob,
 } from '@ezacto/mailer'
-import { createContainerEmailLogStore, createD1EmailLogStore } from '../src/email-log.js'
+import { createContainerEmailLogStore, createD1EmailLogStore, type HeldReminderAttempts } from '../src/email-log.js'
 import { migrateContainer, migrateD1, migrationIds } from '../src/migrate.js'
 
 interface Harness {
-  store: EmailLogStore & EmailLogPager
+  store: EmailLogStore & EmailLogPager & HeldReminderAttempts
   rows<T>(query: string, ...bindings: unknown[]): Promise<T[]>
   run(query: string, ...bindings: unknown[]): Promise<void>
   migrateAgain(): Promise<void>
@@ -106,6 +106,72 @@ for (const [runtime, factory] of factories) {
 
     const setup = async () => (harness = await factory())
 
+    it('[security #1352] records all terminal feedback and suppressions atomically under the held claim', async () => {
+      const current = await setup()
+      const queued = await current.store.createQueued({ ...message, template: 'reminder:payment', cc: [{ email: 'cc@example.test' }] })
+      const attempt = 'b5f88b55-bc30-4bf2-94f5-350849e4b6c0'
+      const wrong = '7acbff11-1395-4011-a881-c299dad9e890'
+      const feedback = [{ eventId: 'event-a', recipient: 'owner@example.test', type: 'failed' as const },
+        { eventId: 'event-b', recipient: 'cc@example.test', type: 'complained' as const }]
+      await current.store.claimAttempt(queued.id, 'mailgun', attempt, 60)
+      expect(await current.store.recordReminderFeedback(queued.id, wrong, 'provider-id', feedback)).toBe(false)
+      await expect(current.store.recordReminderFeedback(queued.id, attempt, 'provider-id', [feedback[0]!, feedback[0]!])).rejects.toThrow()
+      expect(await current.store.get(queued.id)).toMatchObject({ status: 'queued', providerMessageId: null })
+      expect(await current.rows('SELECT id FROM email_suppression_events')).toEqual([])
+      expect(await current.store.recordReminderFeedback(queued.id, attempt, 'provider-id', feedback)).toBe(true)
+      expect(await current.store.get(queued.id)).toMatchObject({ status: 'complained', providerMessageId: 'provider-id' })
+      expect(await current.rows('SELECT address, reason FROM email_suppression_events ORDER BY address')).toEqual([
+        { address: 'cc@example.test', reason: 'complaint' }, { address: 'owner@example.test', reason: 'bounce' },
+      ])
+      expect(await current.store.recordReminderFeedback(queued.id, attempt, 'provider-id', feedback)).toBe(false)
+      const other = await current.store.createQueued({ ...message, template: 'reminder:payment' })
+      await current.store.claimAttempt(other.id, 'mailgun', wrong, 60)
+      await expect(current.store.recordReminderFeedback(other.id, wrong, 'other-id', [feedback[0]!])).rejects.toThrow()
+      expect(await current.store.get(other.id)).toMatchObject({ status: 'queued', providerMessageId: null })
+      expect(await current.rows('SELECT id FROM email_suppression_events')).toHaveLength(2)
+    })
+
+    it('[security #1352] leases and advances reminder reconciliation progress without stale owners', async () => {
+      const current = await setup()
+      const first = 'b5f88b55-bc30-4bf2-94f5-350849e4b6c0'
+      const second = '7acbff11-1395-4011-a881-c299dad9e890'
+      expect(await current.store.claimReminderSweep(first)).toBe(0)
+      expect(await current.store.claimReminderSweep(second)).toBeNull()
+      current.setNow('2026-08-28T20:03:01.000Z')
+      expect(await current.store.claimReminderSweep(second)).toBe(0)
+      expect(await current.store.finishReminderSweep(first, 999, true)).toBe(false)
+      expect(await current.store.finishReminderSweep(second, 15, true)).toBe(true)
+      expect(await current.store.claimReminderSweep(first)).toBeNull()
+      current.setNow('2026-08-28T20:08:02.000Z')
+      expect(await current.store.claimReminderSweep(first)).toBe(15)
+      expect(await current.store.finishReminderSweep(first, 0, false)).toBe(true)
+      current.setNow('2026-08-28T20:13:03.000Z')
+      expect(await current.store.claimReminderSweep(second)).toBeNull()
+      current.setNow('2026-08-28T21:08:03.000Z')
+      expect(await current.store.claimReminderSweep(second)).toBe(0)
+    })
+
+    it('[security #1352] pages only expired held Mailgun reminder attempts for reconciliation', async () => {
+      const current = await setup()
+      const reminder = { ...message, template: 'reminder:payment' }
+      const first = await current.store.createQueued(reminder)
+      const second = await current.store.createQueued(reminder)
+      const other = await current.store.createQueued(message)
+      const attempt = 'b5f88b55-bc30-4bf2-94f5-350849e4b6c0'
+      await current.store.claimAttempt(first.id, 'mailgun', attempt, 60)
+      await current.store.claimAttempt(second.id, 'mailgun', attempt, 60)
+      await current.store.claimAttempt(other.id, 'mailgun', attempt, 60)
+      expect(await current.store.heldReminderAttempts(0, 1)).toEqual([])
+      current.setNow('2026-08-28T20:01:01.000Z')
+      const page = await current.store.heldReminderAttempts(0, 1)
+      expect(page).toHaveLength(1)
+      expect(page[0]).toMatchObject({ record: { id: first.id }, attemptId: attempt, claimedAt: now })
+      expect((await current.store.heldReminderAttempts(first.id, 10)).map(value => value.record.id)).toEqual([second.id])
+      await current.store.markSent(second.id, 'mailgun', { messageId: 'provider-id' }, attempt)
+      expect(await current.store.heldReminderAttempts(first.id, 10)).toEqual([])
+      await expect(current.store.heldReminderAttempts(0, 101)).rejects.toThrow()
+    })
+
     it('[unit] registers 0015 through 0018 in order and migrates idempotently', async () => {
       const current = await setup()
       await current.migrateAgain()
@@ -195,6 +261,34 @@ for (const [runtime, factory] of factories) {
       expect(JSON.stringify(await current.rows(`SELECT * FROM email_log`))).not.toContain(
         'ezacto_verify_secret',
       )
+    })
+
+    it('[money #1352] retains an uncertain reminder claim after its lease expires', async () => {
+      const current = await setup()
+      const queued = await current.store.createQueued({ ...message, template: 'reminder:1' })
+      expect(await current.store.claimAttempt(queued.id, 'http-provider', 'attempt-one', 30)).toBe(1)
+      expect(await current.store.releaseAttempt(queued.id, 'http-provider', 'attempt-one')).toBe(false)
+      current.setNow('2026-08-28T20:01:00.000Z')
+      expect(await current.store.claimAttempt(queued.id, 'http-provider', 'attempt-two', 30)).toBeNull()
+      await expect(current.store.markRefused(queued.id, 'demo_recipient_not_allowed')).rejects.toThrow()
+      expect(await current.store.get(queued.id)).toMatchObject({ reminderAttemptLeaseExpiresAt: '2026-08-28T20:00:30.000Z' })
+      expect(await current.store.markSent(queued.id, 'http-provider', { messageId: 'late-provider-receipt' }, 'attempt-one')).toMatchObject({ status: 'sent', reminderAttemptLeaseExpiresAt: null })
+    })
+
+    it('[money #1352] holds a lost provider reply without re-sending the queued reminder', async () => {
+      const current = await setup()
+      const reminder = { ...message, template: 'reminder:1' }
+      const queued = await current.store.createQueued(reminder)
+      const provider: HttpEmailProvider = { name: 'http-provider', send: vi.fn(async () => {
+        throw new Error('fixture accepted but reply lost')
+      }) }
+      const job: QueuedEmailJob = { schemaVersion: 1, deliveryId: queued.id, message: reminder }
+      expect(await processQueuedEmail(job, 1, current.store, provider)).toEqual({ action: 'ack' })
+      current.setNow('2026-08-28T20:01:00.000Z')
+      expect(await processQueuedEmail(job, 2, current.store, provider)).toEqual({ action: 'ack' })
+      expect(provider.send).toHaveBeenCalledTimes(1)
+      expect(await current.store.get(queued.id)).toMatchObject({ status: 'queued', attemptCount: 1,
+        reminderAttemptLeaseExpiresAt: '2026-08-28T20:00:30.000Z' })
     })
 
     it('[concurrency] leases one provider attempt and fences stale terminal writers', async () => {

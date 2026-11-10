@@ -1,3 +1,4 @@
+import type { WorkerManagedWise } from '../../worker/src/managed-providers.js'
 import { createCalendarOperatorCleanupStore } from '@ezacto/db'
 import { createConfiguredCalendarServices } from '@ezacto/integrations'
 import { createCalendarOAuthStore } from '@ezacto/db'
@@ -16,7 +17,7 @@ import { createDeelStagingRuntime } from '@ezacto/integrations'
 import { createCsvImportApply } from './csv-apply-service.js'
 import { createCsvApplyRunStore } from '@ezacto/db'
 import { reportWorkerError, runtimeTraceId, type WorkerErrorReporter } from '../../worker/src/error-reporting.js'
-import type { WorkerManagedDeel } from '../../worker/src/managed-providers.js'
+import type { WorkerManagedBill, WorkerManagedDeel } from '../../worker/src/managed-providers.js'
 import { moduleAvailability } from '@ezacto/api'
 import { createOrganizationHolidayRepository } from '@ezacto/db'
 import { demoDeployment } from '../../worker/src/app.js'
@@ -348,6 +349,20 @@ export interface ContainerRuntime {
   close(timeoutMs?: number): Promise<void>
 }
 
+export class ManagedWiseUnsupportedRuntimeError extends Error {
+  readonly code = 'capability_unsupported'
+  constructor() {
+    super('Managed Wise read capability is not supported by the container entry. Configure it through a supported host adapter.')
+    this.name = 'ManagedWiseUnsupportedRuntimeError'
+  }
+}
+export class ManagedBillUnsupportedRuntimeError extends Error {
+  readonly code = 'capability_unsupported'
+  constructor() {
+    super('Managed BILL is not supported by the container entry. Configure it through a supported host adapter.')
+    this.name = 'ManagedBillUnsupportedRuntimeError'
+  }
+}
 export class ManagedDeelUnsupportedRuntimeError extends Error {
   readonly code = 'capability_unsupported'
   constructor() {
@@ -356,6 +371,9 @@ export class ManagedDeelUnsupportedRuntimeError extends Error {
   }
 }
 export interface ContainerRuntimeOptions {
+  /** Explicit unsupported capabilities fail before storage or environment fallback. */
+  managedWise?: WorkerManagedWise
+  managedBill?: WorkerManagedBill
   managedDeel?: WorkerManagedDeel
   reportError?: WorkerErrorReporter
   calendarSources?: Parameters<typeof createCalendarSyncService>[0]['sources']
@@ -463,6 +481,8 @@ export const createContainerRuntime = async (
   config: ContainerConfig,
   options: ContainerRuntimeOptions = {},
 ): Promise<ContainerRuntime> => {
+  if (options.managedWise !== undefined) throw new ManagedWiseUnsupportedRuntimeError()
+  if (options.managedBill !== undefined) throw new ManagedBillUnsupportedRuntimeError()
   if (options.managedDeel !== undefined) throw new ManagedDeelUnsupportedRuntimeError()
   await ensureDataDirectory(config.dataDirectory)
   await assertNoIncompletePrivacyRestore(config.dataDirectory)

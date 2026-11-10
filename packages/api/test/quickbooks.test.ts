@@ -193,6 +193,16 @@ describe('the connect button', () => {
     expect(response.status).toBe(409)
   })
 
+  it('reports unavailable managed disconnect without a false success', async () => {
+    const error = new Error('private coordinator detail')
+    error.name = 'ManagedQuickBooksRefreshUnavailableError'
+    const response = await app(service({ disconnect: vi.fn(async () => { throw error }) })).request('/integrations/quickbooks', { method: 'DELETE' })
+    expect(response.status).toBe(409)
+    const body = await response.json() as { error: { code: string; message: string } }
+    expect(body.error.code).toBe('quickbooks_authorization_unavailable')
+    expect(JSON.stringify(body)).not.toContain('private coordinator detail')
+  })
+
   it('[security] only an administrator may connect or disconnect', async () => {
     // Connecting an accounting system is a grant over the whole book, not a
     // per-user preference.
@@ -442,6 +452,19 @@ describe('the invoice sync line and button (issue 819)', () => {
     expect(response.status).toBe(200)
     expect(await response.json()).toEqual({ data: wire })
     expect(quickBooks.sync).toHaveBeenCalledWith(41)
+  })
+
+  it('[api #1235] reports pending managed writes as a static 409 without exposing provider context', async () => {
+    const quickBooks = service({ sync: vi.fn(async () => {
+      const error = new Error('OWNED_PRIVATE_PROVIDER_CONTEXT')
+      error.name = 'ManagedQuickBooksWriteUnavailableError'
+      throw error
+    }) })
+    const response = await app(quickBooks).request('/invoices/41/quickbooks/sync', { method: 'POST' })
+    expect(response.status).toBe(409)
+    const body = await response.text()
+    expect(JSON.parse(body)).toMatchObject({ error: { code: 'quickbooks_write_unavailable', message: 'QuickBooks accounting write is pending or requires recovery.' } })
+    expect(body).not.toContain('OWNED_PRIVATE')
   })
 
   it('[api] a refused mirror is a 409 that names the reason', async () => {

@@ -1,3 +1,4 @@
+export { createManagedWiseConnectionStore } from './managed-wise.js'
 export { createCalendarConnectionStore } from './calendar-connections.js'
 export { createCalendarFeedService } from './calendar-feeds.js'
 export { createDeelPaymentStatusStore } from './deel-payment-status.js'
@@ -593,3 +594,9 @@ export * from './github-reader-work.js'
 export * from './github-reader-service.js'
 
 export * from './github-app-setup.js'
+
+export { createManagedQuickBooksRefreshStore } from './quickbooks-refresh.js'
+
+export { createManagedQuickBooksWriteStore } from './quickbooks-writes.js'
+
+export { readManagedQuickBooksOutboxAdmission, type ManagedQuickBooksOutboxAdmission } from './quickbooks-outbox.js'

@@ -1,3 +1,4 @@
+import { ManagedWiseUnavailableError } from '@ezacto/core'
 /**
  * Wise, as an operator meets it (issue 543).
  *
@@ -199,6 +200,13 @@ const requireWritable = (service: Readonly<WiseService>): void => {
   }
 }
 
+const readWise = async <T>(work: () => Promise<T>): Promise<T> => {
+  try { return await work() } catch (error) {
+    if (!(error instanceof ManagedWiseUnavailableError)) throw error
+    throw new ApiError({ status: 503, code: 'service_unavailable', message: error.message })
+  }
+}
+
 const serializeRecipient = (recipient: WiseRecipientView) => ({
   id: recipient.id,
   holder_name: recipient.holderName,
@@ -243,7 +251,7 @@ export const installWiseRoutes = <Bindings extends object>(
 ): void => {
   api.get('/integrations/wise', async (context) => {
     assertMoneyWriter(context)
-    const status = service.configured() ? await service.readStatus() : null
+    const status = service.configured() ? await readWise(() => service.readStatus()) : null
     return context.json(
       {
         data: {
@@ -269,7 +277,7 @@ export const installWiseRoutes = <Bindings extends object>(
   api.get('/integrations/wise/recipients', async (context) => {
     assertMoneyWriter(context)
     requireConfigured(service)
-    const recipients = await service.listRecipients()
+    const recipients = await readWise(() => service.listRecipients())
     return context.json(
       { data: recipients.map(serializeRecipient) },
       200,
@@ -290,7 +298,7 @@ export const installWiseRoutes = <Bindings extends object>(
   api.get('/integrations/wise/proposals', async (context) => {
     assertMoneyWriter(context)
     requireConfigured(service)
-    const proposals = await service.proposeDestinations()
+    const proposals = await readWise(() => service.proposeDestinations())
     return context.json(
       {
         data: proposals.map((proposal) => ({
@@ -542,7 +550,7 @@ export const installWiseRoutes = <Bindings extends object>(
       ])
     }
     assertMayDestineFor(context, userId)
-    const destination = service.configured() ? await service.readDestination(userId) : null
+    const destination = service.configured() ? await readWise(() => service.readDestination(userId)) : null
     return context.json(
       {
         data: {

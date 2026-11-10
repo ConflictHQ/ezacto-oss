@@ -1,4 +1,4 @@
-import type { QuickBooksRuntime, DeelSyncRuntime } from '@ezacto/integrations'
+import type { QuickBooksRuntime, ManagedWiseRuntime, ManagedBillRuntime, DeelSyncRuntime } from '@ezacto/integrations'
 import { moduleAvailability } from '@ezacto/api'
 import { demoDeployment, type AppEnv } from './app.js'
 
@@ -21,6 +21,29 @@ export interface WorkerManagedQuickBooks {
 
 export const managedQuickBooksAvailable = (
   port: WorkerManagedQuickBooks, env: AppEnv, scope: object | undefined,
+): boolean => scope !== undefined && !demoDeployment(env) &&
+  moduleAvailability(env).accounting && port.configured(scope) === true
+
+/** Managed Wise is a read capability. The factory cannot return a payment
+ * provider or webhook and must not perform provider I/O while composing. */
+export interface WorkerManagedWise {
+  configured(scope: object): boolean
+  compose(input: { readonly scope: object; readonly database: D1Database }): Promise<ManagedWiseRuntime | null>
+}
+export const managedWiseAvailable = (
+  port: WorkerManagedWise, env: AppEnv, scope: object | undefined,
+): boolean => scope !== undefined && !demoDeployment(env) &&
+  moduleAvailability(env).accounting && port.configured(scope) === true
+
+/** Tenant-owned BILL custody over the existing mirror/reconciliation engine.
+ * Provider login/effects must stay outside replayable host SQL transactions.
+ */
+export interface WorkerManagedBill {
+  configured(scope: object): boolean
+  compose(input: { readonly scope: object; readonly database: D1Database }): Promise<ManagedBillRuntime | null>
+}
+export const managedBillAvailable = (
+  port: WorkerManagedBill, env: AppEnv, scope: object | undefined,
 ): boolean => scope !== undefined && !demoDeployment(env) &&
   moduleAvailability(env).accounting && port.configured(scope) === true
 

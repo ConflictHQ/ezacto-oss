@@ -19,6 +19,197 @@ const message = {
 const response = (body: unknown, status = 200): Response =>
   new Response(JSON.stringify(body), { status });
 
+describe("held reminder evidence", () => {
+  const scope = { deliveryId: 7, attemptId: "b5f88b55-bc30-4bf2-94f5-350849e4b6c0", eventId: "evt-1",
+    messageId: "mg-1", recipient: "owner@example.test", eventType: "delivered" as const, begin: 100, end: 200 };
+  const key = "ezacto-reminder-7-b5f88b55-bc30-4bf2-94f5-350849e4b6c0";
+  const tag = "ezacto-reminder-b5";
+  const event = { id: "evt-1", event: "delivered", timestamp: 150, recipient: "owner@example.test", flags: { 'is-test-mode': false },
+    tags: [tag], "user-variables": { ezacto_idempotency_key: key }, message: { headers: { "message-id": "<mg-1>" } } };
+
+  it("uses a bounded tag shard and keeps the exact attempt as metadata", async () => {
+    let request: Request | undefined;
+    const provider = new MailgunMailer(config, { fetch: async value => { request = value; return response({ id: "<mg-1>" }); } });
+    await provider.send(message, { signal: AbortSignal.timeout(1_000), idempotencyKey: key });
+    const body = new URLSearchParams(await request!.text());
+    expect(body.get("o:tag")).toBe(tag);
+    expect(body.get("v:ezacto_idempotency_key")).toBe(key);
+  });
+
+  it("[security #1352] accepts only an exact authenticated domain-scoped observation", async () => {
+    let request: Request | undefined;
+    const provider = new MailgunMailer(config, { fetch: async value => { request = value; return response({ items: [event] }); } });
+    expect(await provider.inspectReminderEvent(scope)).toBe(true);
+    expect(request?.method).toBe("GET");
+    expect(request?.redirect).toBe("error");
+    expect(new URL(request!.url).pathname).toBe("/v3/mail.example.test/events");
+    expect(new URL(request!.url).searchParams.get("tags")).toBe(tag);
+    expect(request!.url).not.toContain(scope.recipient);
+  });
+
+  it("[security #1352] does not infer acceptance from missing or mismatched evidence", async () => {
+    for (const item of [null, { ...event, recipient: "other@example.test" }, { ...event, id: "other" },
+      { ...event, tags: ["other"] }, { ...event, timestamp: 201 }, { ...event, flags: { "is-test-mode": true } }, { ...event, flags: {} },
+      { ...event, message: { headers: { "message-id": "other" } } }]) {
+      const provider = new MailgunMailer(config, { fetch: async () => response({ items: item === null ? [] : [item] }) });
+      expect(await provider.inspectReminderEvent(scope)).toBe(false);
+    }
+    const invalid = new MailgunMailer(config, { fetch: async () => response({ items: "invalid" }) });
+    await expect(invalid.inspectReminderEvent(scope)).rejects.toThrow("Mailgun evidence response is invalid");
+    const oversized = new MailgunMailer(config, { fetch: async () => new Response("x".repeat(1_000_001)) });
+    await expect(oversized.inspectReminderEvent(scope)).rejects.toThrow("Mailgun evidence response exceeded size limit");
+    const controller = new AbortController();
+    const cancel = vi.fn();
+    const stalled = new MailgunMailer(config, { fetch: async () => new Response(new ReadableStream({ start() {}, cancel })) });
+    const pending = stalled.inspectReminderEvent({ ...scope, signal: controller.signal });
+    controller.abort();
+    await expect(pending).rejects.toThrow();
+    expect(cancel).toHaveBeenCalledOnce();
+  });
+
+  it("[security #1352] finds positive held-attempt evidence without a webhook", async () => {
+    const lookup = { deliveryId: scope.deliveryId, attemptId: scope.attemptId,
+      recipients: ["owner@example.test"], begin: scope.begin, end: scope.end };
+    let request: Request | undefined;
+    const query = async (items: unknown[]) => {
+      let first = true;
+      const provider = new MailgunMailer(config, { fetch: async value => {
+        if (!first) return response({ items: [] });
+        first = false; request = value;
+        return response({ items, paging: { next: 'https://api.mailgun.net/v3/mail.example.test/events?page=2' } });
+      } });
+      return provider.findReminderReceipt(lookup);
+    };
+    expect(await query([{ ...event, event: "accepted" }])).toEqual({ messageId: "mg-1" });
+    expect(new URL(request!.url).searchParams.get("tags")).toBe(tag);
+    expect(request!.url).not.toContain(lookup.recipients[0]);
+    expect(await query([])).toBeNull();
+    expect(await query([{ ...event, recipient: "other@example.test" }])).toBeNull();
+    expect(await query([{ ...event, tags: ["other"] }])).toBeNull();
+    expect(await query([{ ...event, "user-variables": { ezacto_idempotency_key: "other" } }])).toBeNull();
+    expect(await query([{ ...event, timestamp: 201 }])).toBeNull();
+    expect(await query([{ ...event, event: "failed", severity: "temporary" }])).toBeNull();
+    expect(await query([{ ...event, flags: { "is-test-mode": true } }])).toBeNull();
+    expect(await query([{ ...event, flags: {} }])).toBeNull();
+    expect(await query([event, { ...event, event: 'failed', severity: 'permanent', flags: {} }])).toBeNull();
+    expect(await query([event, { ...event, message: { headers: { "message-id": "other" } } }])).toBeNull();
+    expect(await query([{ ...event, event: "failed", severity: "permanent" }])).toEqual({ messageId: "mg-1",
+      feedback: [{ eventId: "evt-1", recipient: "owner@example.test", type: "failed" }] });
+    expect(await query([event, { ...event, event: "complained" }])).toEqual({ messageId: "mg-1",
+      feedback: [{ eventId: "evt-1", recipient: "owner@example.test", type: "complained" }] });
+    expect(await query([event, { ...event, event: "failed", severity: "permanent", recipient: "other@example.test" }])).toBeNull();
+    expect(await query([event, { ...event, event: "failed", severity: "permanent", id: "" }])).toBeNull();
+    expect(await query([{ ...event, event: "failed", severity: "permanent" }, { ...event, event: "complained" }])).toBeNull();
+  });
+
+  it("searches bounded provider pages and refuses unsafe or incomplete pagination", async () => {
+    const lookup = { deliveryId: scope.deliveryId, attemptId: scope.attemptId,
+      recipients: [scope.recipient], begin: scope.begin, end: scope.end };
+    const other = { ...event, "user-variables": { ezacto_idempotency_key: "other" } };
+    const full = Array.from({ length: 100 }, () => other);
+    const next = "https://api.mailgun.net/v3/mail.example.test/events?page=2";
+    const fetch = vi.fn().mockResolvedValueOnce(response({ items: full, paging: { next } }))
+      .mockResolvedValueOnce(response({ items: [event], paging: { next: 'https://api.mailgun.net/v3/mail.example.test/events?page=3' } }))
+      .mockResolvedValueOnce(response({ items: [] }));
+    expect(await new MailgunMailer(config, { fetch }).findReminderReceipt(lookup)).toEqual({ messageId: "mg-1" });
+    expect(fetch).toHaveBeenCalledTimes(3);
+    const unsafe = vi.fn().mockResolvedValue(response({ items: [event, ...full.slice(1)],
+      paging: { next: "https://attacker.example/events" } }));
+    expect(await new MailgunMailer(config, { fetch: unsafe }).findReminderReceipt(lookup)).toBeNull();
+    expect(unsafe).toHaveBeenCalledOnce();
+    const conflict = vi.fn().mockResolvedValueOnce(response({ items: [event, ...full.slice(1)], paging: { next } }))
+      .mockResolvedValueOnce(response({ items: [{ ...event, event: "failed", severity: "permanent" }],
+        paging: { next: 'https://api.mailgun.net/v3/mail.example.test/events?page=3' } }))
+      .mockResolvedValueOnce(response({ items: [] }));
+    expect(await new MailgunMailer(config, { fetch: conflict }).findReminderReceipt(lookup)).toEqual({ messageId: "mg-1",
+      feedback: [{ eventId: "evt-1", recipient: "owner@example.test", type: "failed" }] });
+    const limited = vi.fn().mockImplementation(async (request: Request) => {
+      const page = Number(new URL(request.url).searchParams.get('page') ?? 1);
+      return response({ items: full, paging: { next: `https://api.mailgun.net/v3/mail.example.test/events?page=${page + 1}` } });
+    });
+    expect(await new MailgunMailer(config, { fetch: limited }).findReminderReceipt(lookup)).toBeNull();
+    expect(limited).toHaveBeenCalledTimes(15);
+  });
+
+  it('splits a crowded range and requires both halves to finish', async () => {
+    const lookup = { deliveryId: scope.deliveryId, attemptId: scope.attemptId,
+      recipients: [scope.recipient], begin: scope.begin, end: scope.end };
+    const other = { ...event, 'user-variables': { ezacto_idempotency_key: 'other' } };
+    const fetch = vi.fn().mockImplementation(async (request: Request) => {
+      const url = new URL(request.url), page = Number(url.searchParams.get('page') ?? '1');
+      if (url.searchParams.get('begin') === '100' && url.searchParams.get('end') === '200') {
+        url.searchParams.set('page', String(page + 1));
+        return response({ items: Array.from({ length: 100 }, () => other), paging: { next: url.href } });
+      }
+      if (page > 1) return response({ items: [] });
+      const observed = url.searchParams.get('end') === '150' ? { ...event, event: 'accepted', timestamp: 140 } :
+        { ...event, event: 'failed', severity: 'permanent', timestamp: 160 };
+      url.searchParams.set('page', '2');
+      return response({ items: [observed], paging: { next: url.href } });
+    });
+    expect(await new MailgunMailer(config, { fetch }).findReminderReceipt(lookup)).toEqual({ messageId: 'mg-1',
+      feedback: [{ eventId: 'evt-1', recipient: 'owner@example.test', type: 'failed' }] });
+    expect(fetch).toHaveBeenCalledTimes(9);
+    const incomplete = vi.fn().mockImplementation(async (request: Request) => {
+      const url = new URL(request.url), page = Number(url.searchParams.get('page') ?? '1');
+      if (url.searchParams.get('begin') === '150') return response({ items: [event] });
+      if (url.searchParams.get('end') === '150') return response({ items: [] });
+      url.searchParams.set('page', String(page + 1));
+      return response({ items: Array.from({ length: 100 }, () => other), paging: { next: url.href } });
+    });
+    expect(await new MailgunMailer(config, { fetch: incomplete }).findReminderReceipt(lookup)).toBeNull();
+  });
+
+  it('follows short pages and refuses to treat an incomplete traversal as a receipt', async () => {
+    const lookup = { deliveryId: scope.deliveryId, attemptId: scope.attemptId,
+      recipients: [scope.recipient], begin: scope.begin, end: scope.end };
+    const next = 'https://api.mailgun.net/v3/mail.example.test/events?page=2';
+    const fetch = vi.fn().mockResolvedValueOnce(response({ items: [event], paging: { next } }))
+      .mockResolvedValueOnce(response({ items: [{ ...event, message: { headers: { 'message-id': 'different' } } }],
+        paging: { next: 'https://api.mailgun.net/v3/mail.example.test/events?page=3' } }))
+      .mockResolvedValueOnce(response({ items: [] }));
+    expect(await new MailgunMailer(config, { fetch }).findReminderReceipt(lookup)).toBeNull();
+    expect(fetch).toHaveBeenCalledTimes(3);
+    const truncated = vi.fn().mockResolvedValue(response({ items: [event] }));
+    expect(await new MailgunMailer(config, { fetch: truncated }).findReminderReceipt(lookup)).toBeNull();
+  });
+
+  it('accepts a Mailgun path cursor but rejects paths that escape the events endpoint', async () => {
+    const lookup = { deliveryId: scope.deliveryId, attemptId: scope.attemptId,
+      recipients: [scope.recipient], begin: scope.begin, end: scope.end };
+    const paging = (next: string) => response({ items: [event], paging: { next } });
+    const valid = vi.fn().mockResolvedValueOnce(paging('https://api.mailgun.net/v3/mail.example.test/events/W3siY3Vyc29y'))
+      .mockResolvedValueOnce(response({ items: [] }));
+    expect(await new MailgunMailer(config, { fetch: valid }).findReminderReceipt(lookup)).toEqual({ messageId: 'mg-1' });
+    for (const next of ['https://api.mailgun.net/v3/mail.example.test/events%2f../messages',
+      'https://api.mailgun.net/v3/mail.example.test/events/cursor%2fother',
+      'https://api.mailgun.net/v3/mail.example.test/events/cursor/other',
+      'https://api.mailgun.net/v3/mail.example.test/messages']) {
+      const unsafe = vi.fn().mockResolvedValue(paging(next));
+      expect(await new MailgunMailer(config, { fetch: unsafe }).findReminderReceipt(lookup)).toBeNull();
+      expect(unsafe).toHaveBeenCalledOnce();
+    }
+  });
+
+  it('independently verifies an invoice terminal event without trusting webhook fields alone', async () => {
+    const input = { eventId: 'evt-1', messageId: 'mg-1', recipient: 'owner@example.test',
+      eventType: 'failed' as const, begin: 100, end: 200 };
+    const terminal = { ...event, event: 'failed', severity: 'permanent' };
+    let request: Request | undefined;
+    const lookup = async (item: unknown) => new MailgunMailer(config, { fetch: async value => {
+      request = value; return response({ items: item === null ? [] : [item] });
+    } }).inspectInvoiceFeedback(input);
+    expect(await lookup(terminal)).toBe(true);
+    expect(new URL(request!.url).searchParams.get('message-id')).toBe('mg-1');
+    expect(request!.url).not.toContain(input.recipient);
+    for (const item of [null, { ...terminal, id: 'another' }, { ...terminal, recipient: 'other@example.test' },
+      { ...terminal, severity: 'temporary' }, { ...terminal, timestamp: 201 },
+      { ...terminal, flags: { 'is-test-mode': true } }, { ...terminal, flags: {} }, { ...terminal, message: { headers: { 'message-id': 'other' } } }]) {
+      expect(await lookup(item)).toBe(false);
+    }
+  });
+});
+
 describe("Mailgun HTTP provider", () => {
   it("[unit] sends a form-encoded POST to the Mailgun v3 messages endpoint and returns a durable receipt", async () => {
     const requests: Request[] = [];

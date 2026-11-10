@@ -425,6 +425,10 @@ export const createModuleSettingsController = (
   const quickBooksAllowPayment = required<HTMLInputElement>('[data-quickbooks-allow-payment]')
   const quickBooksDisconnect = required<HTMLButtonElement>('[data-quickbooks-disconnect]')
   const quickBooksResult = required<HTMLElement>('[data-settings-quickbooks-result]')
+  let quickBooksBinding: string | null = null
+  let pendingDisconnect: { binding: string; key: string } | null = null
+  const disconnectStorage = 'ezacto.quickbooks.disconnect.v1'
+
   const quickBooksReconcilePanel = required<HTMLElement>('[data-quickbooks-reconcile-panel]')
   const quickBooksReconcile = required<HTMLButtonElement>('[data-quickbooks-reconcile]')
   const quickBooksReconcileResult = required<HTMLElement>('[data-quickbooks-reconcile-result]')
@@ -1282,6 +1286,12 @@ export const createModuleSettingsController = (
     // taken off it. Whatever it still has in flight then has nowhere to paint,
     // whether or not the shell remembered to abort its signal on the way out.
     session = null
+    quickBooksBinding = null
+    pendingDisconnect = null
+    quickBooksActions.hidden = true
+    quickBooksFacts.hidden = true
+    quickBooksFacts.replaceChildren()
+    quickBooksResult.textContent = ''
     loaded.clear()
     for (const control of refreshControls) {
       control.disabled = false
@@ -1869,15 +1879,20 @@ export const createModuleSettingsController = (
           return
         }
         const connection = view.connection
+        quickBooksBinding = connection === null ? null : JSON.stringify([identity.user_id, connection.realm_id, connection.connected_at])
+        const authorizationReady = view.authorization === undefined || view.authorization === 'ready'
+        const authorizationMessage = view.authorization === 'pending'
+          ? 'QuickBooks authorization is pending. Accounting actions are unavailable until it completes or is recovered.'
+          : 'QuickBooks authorization needs recovery before accounting actions can resume.'
         quickBooksActions.hidden = false
-        quickBooksConnect.hidden = connection !== null
-        quickBooksDisconnect.hidden = connection === null
-        quickBooksPaymentRow.hidden = connection === null
+        quickBooksConnect.hidden = connection !== null || !authorizationReady
+        quickBooksDisconnect.hidden = connection === null || !authorizationReady
+        quickBooksPaymentRow.hidden = connection === null || !authorizationReady
         quickBooksReconcilePanel.hidden =
-          connection === null || api.getQuickBooksReconciliation === undefined
+          connection === null || !authorizationReady || api.getQuickBooksReconciliation === undefined
         if (connection === null) {
           quickBooksFacts.hidden = true
-          quickBooksStatus.textContent = 'Not connected.'
+          quickBooksStatus.textContent = authorizationReady ? 'Not connected.' : authorizationMessage
           return
         }
         facts(quickBooksFacts, [
@@ -1887,7 +1902,11 @@ export const createModuleSettingsController = (
         ])
         quickBooksFacts.hidden = false
         quickBooksAllowPayment.checked = connection.allow_online_payment
-        quickBooksStatus.textContent = ''
+        const writesReady = view.writes === undefined || view.writes === 'ready'
+        quickBooksAllowPayment.disabled = !writesReady
+        quickBooksStatus.textContent = !authorizationReady ? authorizationMessage : writesReady ? ''
+          : view.writes === 'pending' ? 'QuickBooks accounting writes are awaiting recovery. Read-only reconciliation remains available.'
+          : 'QuickBooks accounting writes need review. Read-only reconciliation remains available.'
       })
     } catch (error) {
       active.presentFailure(error, () => {
@@ -2565,15 +2584,31 @@ export const createModuleSettingsController = (
 
   quickBooksDisconnect.addEventListener('click', () => {
     const active = currentSession()
-    if (active === null || api.disconnectQuickBooks === undefined) return
+    if (active === null || api.disconnectQuickBooks === undefined || quickBooksBinding === null) return
+    const binding = quickBooksBinding
+    if (pendingDisconnect?.binding !== binding) {
+      try {
+        const saved: unknown = JSON.parse(sessionStorage.getItem(disconnectStorage) ?? 'null')
+        pendingDisconnect = saved && typeof saved === 'object' && 'binding' in saved && saved.binding === binding &&
+          'key' in saved && typeof saved.key === 'string' && /^[0-9a-f-]{36}$/.test(saved.key)
+          ? { binding, key: saved.key } : null
+      } catch { pendingDisconnect = null }
+    }
+    pendingDisconnect ??= { binding, key: crypto.randomUUID() }
+    const intent = pendingDisconnect
+    try { sessionStorage.setItem(disconnectStorage, JSON.stringify(intent)) } catch { /* retain it in memory */ }
     quickBooksDisconnect.disabled = true
     void api
-      .disconnectQuickBooks(active.signal)
+      .disconnectQuickBooks(active.signal, intent.key)
       .then(async () => {
-        quickBooksResult.textContent = 'Disconnected.'
-        // Re-read rather than assume: disconnecting also revokes the grant at
-        // Intuit, and what the server now holds is the thing to show.
-        if (session !== null) await loadQuickBooks({ profile: 'administrator' } as Whoami, session)
+        if (pendingDisconnect === intent) pendingDisconnect = null
+        try {
+          const saved: unknown = JSON.parse(sessionStorage.getItem(disconnectStorage) ?? 'null')
+          if (saved && typeof saved === 'object' && 'key' in saved && saved.key === intent.key) sessionStorage.removeItem(disconnectStorage)
+        } catch { /* storage may be unavailable */ }
+        active.present(() => { quickBooksResult.textContent = 'Disconnect requested.' })
+        // Read the server's current connection and authorization state.
+        if (currentSession() === active) await loadQuickBooks(active.identity, active)
       })
       .catch((error: unknown) => {
         active.presentFailure(error, () => {

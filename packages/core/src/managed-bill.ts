@@ -1,3 +1,4 @@
+import { createTenantCredentialVault } from './tenant-credential-vault.js'
 /** Managed tenant-owned BILL connection contracts (issue 1252). The credential is
  * a tenant company login (or AP/AR sync token); the developer key is platform
  * owned and is never part of tenant custody. Provider effects are never part of
@@ -98,26 +99,6 @@ export class ManagedBillConnectionError extends Error {
   }
 }
 
-const encoder = new TextEncoder()
-const base64 = (bytes: Uint8Array) => {
-  let binary = ''
-  for (const byte of bytes) binary += String.fromCharCode(byte)
-  return btoa(binary).replaceAll('+', '-').replaceAll('/', '_').replace(/=+$/, '')
-}
-const decode = (value: string): Uint8Array =>
-  Uint8Array.from(atob(value.replaceAll('-', '+').replaceAll('_', '/')), (char) =>
-    char.charCodeAt(0),
-  )
-const hex = (bytes: ArrayBuffer) =>
-  Array.from(new Uint8Array(bytes), (byte) => byte.toString(16).padStart(2, '0')).join('')
-const keyBytes = (encoded: string): Uint8Array => {
-  if (!/^[A-Za-z0-9_-]{43}$/.test(encoded)) throw new ManagedBillConnectionError('invalid')
-  const bytes = decode(encoded)
-  if (bytes.length !== 32 || base64(bytes) !== encoded)
-    throw new ManagedBillConnectionError('invalid')
-  return bytes
-}
-
 export interface ManagedBillVault {
   keyId: string
   seal(credentials: ManagedBillCredentials, generation: number): Promise<string>
@@ -130,93 +111,16 @@ export interface ManagedBillVault {
  * purpose keys supplied by the host (32 bytes, base64url); `tenantBinding` is an
  * opaque host-owned identity authenticated into every envelope, so an envelope
  * cannot be opened for another tenant or another connection generation. */
-export const createManagedBillVault = async (options: {
+export const createManagedBillVault = (options: {
   custodyKey: string
   fingerprintKey: string
   tenantBinding: string
-}): Promise<ManagedBillVault> => {
-  const custody = keyBytes(options.custodyKey)
-  const fingerprintBytes = keyBytes(options.fingerprintKey)
-  if (options.custodyKey === options.fingerprintKey || !options.tenantBinding)
-    throw new ManagedBillConnectionError('invalid')
-  const aesKey = await crypto.subtle.importKey(
-    'raw',
-    new Uint8Array(custody),
-    { name: 'AES-GCM' },
-    false,
-    ['encrypt', 'decrypt'],
-  )
-  const hmacKey = await crypto.subtle.importKey(
-    'raw',
-    new Uint8Array(fingerprintBytes),
-    { name: 'HMAC', hash: 'SHA-256' },
-    false,
-    ['sign'],
-  )
-  const keyId = hex(await crypto.subtle.digest('SHA-256', new Uint8Array(custody))).slice(0, 32)
-  const aad = (generation: number) => {
-    if (!Number.isSafeInteger(generation) || generation < 1)
-      throw new ManagedBillConnectionError('invalid')
-    return encoder.encode(
-      JSON.stringify({
-        version: 1,
-        purpose: 'ezacto-managed-bill-tenant-credential',
-        tenant: options.tenantBinding,
-        generation,
-        key_id: keyId,
-      }),
-    )
-  }
-  return {
-    keyId,
-    async seal(credentials, generation) {
-      validateManagedBillCredentials(credentials)
-      const nonce = crypto.getRandomValues(new Uint8Array(12))
-      const ciphertext = await crypto.subtle.encrypt(
-        { name: 'AES-GCM', iv: nonce, additionalData: aad(generation), tagLength: 128 },
-        aesKey,
-        encoder.encode(JSON.stringify(credentials)),
-      )
-      return JSON.stringify({
-        version: 1,
-        key_id: keyId,
-        nonce: base64(nonce),
-        ciphertext: base64(new Uint8Array(ciphertext)),
-      })
-    },
-    async open(envelope, generation) {
-      try {
-        const record = JSON.parse(envelope) as Record<string, unknown>
-        if (
-          record.version !== 1 ||
-          record.key_id !== keyId ||
-          typeof record.nonce !== 'string' ||
-          typeof record.ciphertext !== 'string'
-        )
-          throw new Error('envelope')
-        const clear = await crypto.subtle.decrypt(
-          {
-            name: 'AES-GCM',
-            iv: new Uint8Array(decode(record.nonce)),
-            additionalData: aad(generation),
-            tagLength: 128,
-          },
-          aesKey,
-          new Uint8Array(decode(record.ciphertext)),
-        )
-        const credentials = JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(clear))
-        validateManagedBillCredentials(credentials)
-        return credentials as ManagedBillCredentials
-      } catch {
-        // Never surface parser/crypto detail: it can echo envelope material.
-        throw new ManagedBillConnectionError('invalid')
-      }
-    },
-    async fingerprint(parts) {
-      return hex(await crypto.subtle.sign('HMAC', hmacKey, encoder.encode(JSON.stringify(parts))))
-    },
-  }
-}
+}): Promise<ManagedBillVault> => createTenantCredentialVault({
+  ...options,
+  purpose: 'ezacto-managed-bill-tenant-credential',
+  validate: validateManagedBillCredentials,
+  invalid: () => new ManagedBillConnectionError('invalid'),
+})
 
 const bounded = (value: unknown, max: number): value is string =>
   typeof value === 'string' &&

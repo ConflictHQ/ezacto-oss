@@ -47768,6 +47768,7 @@
           "related_type",
           "related_id",
           "attempt_count",
+          "reminder_attempt_lease_expires_at",
           "failure_code",
           "failure_reason",
           "viewed_at",
@@ -47889,6 +47890,17 @@
           "attempt_count": {
             "type": "integer",
             "minimum": 0
+          },
+          "reminder_attempt_lease_expires_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
           "failure_code": {
             "anyOf": [
@@ -49180,6 +49192,22 @@
                   {
                     "type": "null"
                   }
+                ]
+              },
+              "authorization": {
+                "type": "string",
+                "enum": [
+                  "ready",
+                  "pending",
+                  "unavailable"
+                ]
+              },
+              "writes": {
+                "type": "string",
+                "enum": [
+                  "ready",
+                  "pending",
+                  "unavailable"
                 ]
               }
             },
