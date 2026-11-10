@@ -3792,7 +3792,7 @@ test('[e2e:approval-audit #745] real native commands retain actor, time, entity 
     const row = activity.locator('tbody tr[data-row]').filter({
       has: page.getByRole('cell', { name: `Timesheet ${event}`, exact: true }),
     })
-    const owned = row.filter({ has: page.getByRole('link', { name: `${event === 'locked' || event === 'unlocked' ? 'timesheet_lock' : 'timesheet_submission'} #${event === 'locked' || event === 'unlocked' ? receipts.lockId : receipts.submissionId}`, exact: true }) })
+    const owned = row.filter({ has: page.getByRole('cell', { name: `${event === 'locked' || event === 'unlocked' ? 'timesheet_lock' : 'timesheet_submission'} #${event === 'locked' || event === 'unlocked' ? receipts.lockId : receipts.submissionId}`, exact: true }) })
     // Rejecting and correcting the same submission produces two submitted facts.
     const expectedCount = event === 'submitted' ? 2 : 1
     await expect(owned).toHaveCount(expectedCount)
