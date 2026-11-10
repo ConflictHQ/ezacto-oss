@@ -38,12 +38,12 @@ describe('held Mailgun reminder reconciliation', () => {
       now = '2026-08-28T20:02:00.000Z'
       const fetch = vi.fn().mockImplementation(async (request: Request) => {
         expect(request.method).toBe('GET')
-        if (new URL(request.url).searchParams.get('page') === '2') return new Response(JSON.stringify({ items: [] }))
+        if (new URL(request.url).pathname.endsWith('/events/W3siY3Vyc29y')) return new Response(JSON.stringify({ items: [] }))
         return new Response(JSON.stringify({ items: [{ id: 'event-terminal', event, severity: 'permanent', timestamp: Date.parse('2026-08-28T20:00:01.000Z') / 1000,
           recipient: 'cc@example.test', tags: [`ezacto-reminder-${attemptId.slice(0, 2)}`],
           'user-variables': { ezacto_idempotency_key: `ezacto-reminder-${queued.id}-${attemptId}` },
           message: { headers: { 'message-id': '<mailgun-id>' } } }],
-          paging: { next: 'https://api.mailgun.net/v3/mail.example.test/events?page=2' } }))
+          paging: { next: 'https://api.mailgun.net/v3/mail.example.test/events/W3siY3Vyc29y' } }))
       })
       const lookup = new MailgunMailer({ apiKey: 'test-key', domain: 'mail.example.test' }, { fetch })
       await runReminderReconciliation({ store: log, lookup, token: '7acbff11-1395-4011-a881-c299dad9e890' })
