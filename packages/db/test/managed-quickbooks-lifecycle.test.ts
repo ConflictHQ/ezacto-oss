@@ -23,11 +23,12 @@ import { createAccountDeletionRequestRepository } from '../src/account-deletion-
 import { createAccountClosureRepository } from '../src/account-closure.js'
 
 const initial = '2026-10-24T18:00:00.000Z'
-let dispose: (() => Promise<void>) | undefined
+const disposers: (() => Promise<void>)[] = []
 afterEach(async () => {
-  await dispose?.()
-  dispose = undefined
+  const results = await Promise.allSettled(disposers.splice(0).map(dispose => dispose()))
   vi.restoreAllMocks()
+  const failed = results.filter(result => result.status === 'rejected')
+  if (failed.length) throw new AggregateError(failed.map(result => result.reason), 'QuickBooks fixture cleanup failed')
 })
 const fixture = async (
   runtime: 'sqlite' | 'd1',
@@ -40,6 +41,7 @@ const fixture = async (
   let now = initial
   if (runtime === 'sqlite') {
     const native = new BetterSqlite3(':memory:')
+    disposers.push(async () => { native.close() })
     if (legacy)
       migrateContainerThrough(native, legacy === true ? '0156_wise_signed_deliveries' : legacy)
     else migrateContainer(native)
@@ -48,15 +50,15 @@ const fixture = async (
     }
     db = createContainerDatabase(native)
     sessions = createContainerSessionStore(native, { now: () => now })
-    dispose = async () => {
-      native.close()
-    }
   } else {
     const mf = new Miniflare({
       modules: true,
       script: 'export default {fetch(){return new Response("ok")}}',
       d1Databases: ['DB'],
     })
+    // Own the worker before any await: a timed-out startup/migration must not
+    // leak a writer into subsequent cases or overwrite their disposer.
+    disposers.push(() => mf.dispose())
     const binding = await mf.getD1Database('DB')
     if (legacy)
       await migrateD1Through(binding, legacy === true ? '0156_wise_signed_deliveries' : legacy)
@@ -64,7 +66,6 @@ const fixture = async (
     upgrade = () => migrateD1(binding)
     db = createD1Database(binding)
     sessions = createD1SessionStore(binding, { now: () => now })
-    dispose = () => mf.dispose()
   }
   const execute = (text: string) => db.run(sql.raw(text))
   await execute(
