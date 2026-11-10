@@ -307,7 +307,7 @@ export class MailgunMailer implements HttpEmailProvider {
   async findReminderReceipt(input: {
     deliveryId: number; attemptId: string; recipients: readonly string[];
     begin: number; end: number; signal?: AbortSignal;
-  }): Promise<{ messageId: string } | null> {
+  }): Promise<{ messageId: string; feedback?: Array<{ eventId: string; recipient: string; type: 'failed' | 'complained' }> } | null> {
     if (!Number.isSafeInteger(input.deliveryId) || input.deliveryId < 1 ||
         !/^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/u.test(input.attemptId) ||
         !Number.isSafeInteger(input.begin) || !Number.isSafeInteger(input.end) ||
@@ -327,7 +327,8 @@ export class MailgunMailer implements HttpEmailProvider {
     const signal = input.signal === undefined ? AbortSignal.timeout(10_000) : AbortSignal.any([input.signal, AbortSignal.timeout(10_000)]);
     const evidence = await this.reminderEvidencePages(url, signal);
     const messageIds = new Set<string>();
-    let terminalFeedback = false;
+    let invalidTerminal = false;
+    const feedback = new Map<string, { eventId: string; recipient: string; type: 'failed' | 'complained' }>();
     for (const value of evidence.items) {
       if (!value || typeof value !== 'object' || Array.isArray(value)) continue;
       const item = value as Record<string, unknown>;
@@ -339,20 +340,28 @@ export class MailgunMailer implements HttpEmailProvider {
           (item.event === 'failed' && item.severity !== 'permanent') ||
           flags?.['is-test-mode'] === true ||
           typeof item.timestamp !== 'number' || !Number.isFinite(item.timestamp) || item.timestamp < input.begin || item.timestamp > input.end ||
-          typeof item.recipient !== 'string' || !recipients.has(item.recipient.toLowerCase()) ||
-          !Array.isArray(item.tags) || !item.tags.includes(tag) || variables?.ezacto_idempotency_key !== key || typeof headers?.['message-id'] !== 'string') continue;
+          !Array.isArray(item.tags) || !item.tags.includes(tag) || variables?.ezacto_idempotency_key !== key) continue;
+      const terminal = item.event === 'failed' || item.event === 'complained';
+      if (typeof item.recipient !== 'string' || !recipients.has(item.recipient.toLowerCase()) || typeof headers?.['message-id'] !== 'string') {
+        if (terminal) invalidTerminal = true;
+        continue;
+      }
       try {
         const messageId = bounded(headers['message-id'], 'Mailgun message id', 512).replace(/^<|>$/gu, '');
         if (messageId) {
           messageIds.add(messageId);
-          // Reconciliation here records provider acceptance only. A known
-          // bounce or complaint needs the feedback/suppression path; don't
-          // flatten that stronger outcome into a sent record.
-          if (item.event === 'failed' || item.event === 'complained') terminalFeedback = true;
-        }
-      } catch { /* An invalid provider item cannot establish a receipt. */ }
+          if (terminal) {
+            const eventId = bounded(item.id as string, 'Mailgun event id', 255);
+            const observation = { eventId, recipient: item.recipient.toLowerCase(), type: item.event as 'failed' | 'complained' };
+            const previous = feedback.get(eventId);
+            if (previous && (previous.recipient !== observation.recipient || previous.type !== observation.type)) invalidTerminal = true;
+            feedback.set(eventId, observation);
+          }
+        } else if (terminal) invalidTerminal = true;
+      } catch { if (terminal) invalidTerminal = true; }
     }
-    return evidence.complete && messageIds.size === 1 && !terminalFeedback ? { messageId: [...messageIds][0]! } : null;
+    if (!evidence.complete || messageIds.size !== 1 || invalidTerminal || feedback.size > 100) return null;
+    return { messageId: [...messageIds][0]!, ...(feedback.size ? { feedback: [...feedback.values()] } : {}) };
   }
 
   /**

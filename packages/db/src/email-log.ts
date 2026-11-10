@@ -34,6 +34,8 @@ export interface HeldReminderAttempts {
   }>>
   claimReminderSweep(token: string): Promise<number | null>
   finishReminderSweep(token: string, afterId: number, more: boolean): Promise<boolean>
+  recordReminderFeedback(deliveryId: number, attemptId: string, messageId: string,
+    feedback: readonly { eventId: string; recipient: string; type: 'failed' | 'complained' }[]): Promise<boolean>
 }
 
 interface PortableDatabase {
@@ -242,6 +244,25 @@ const createStore = (
         `UPDATE reminder_reconciliation_cursor SET after_id = ?, next_due = ?, lease_token = NULL,
           lease_expires_at = NULL WHERE id = 1 AND lease_token = ? RETURNING id`,
         [afterId, seconds + (more ? 300 : 3600), token],
+      )
+      return row !== null
+    },
+    async recordReminderFeedback(deliveryId, attemptId, messageId, feedback) {
+      if (!Number.isSafeInteger(deliveryId) || deliveryId < 1 ||
+          !/^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/u.test(attemptId) ||
+          typeof messageId !== 'string' || !messageId.trim() || messageId !== messageId.trim() || messageId.length > 512 ||
+          [...messageId].some(character => character.codePointAt(0)! < 32 || character.codePointAt(0) === 127) ||
+          !Array.isArray(feedback) || feedback.length < 1 || feedback.length > 100 ||
+          feedback.some(f => !f || typeof f.eventId !== 'string' || !f.eventId.trim() || f.eventId.length > 255 ||
+            typeof f.recipient !== 'string' || !f.recipient.trim() || f.recipient !== f.recipient.trim().toLowerCase() ||
+            (f.type !== 'failed' && f.type !== 'complained'))) {
+        throw new TypeError('invalid reminder feedback evidence')
+      }
+      const row = await database.first<{ id: number }>(
+        `INSERT INTO reminder_reconciliation_feedback(delivery_id, attempt_id, provider_message_id, feedback_json, recorded_at)
+         SELECT id, ?, ?, ?, ? FROM email_log WHERE id = ? AND status = 'queued' AND provider = 'mailgun'
+           AND template LIKE 'reminder:%' AND active_attempt_id = ? RETURNING delivery_id AS id`,
+        [attemptId, messageId, JSON.stringify(feedback), timestamp(), deliveryId, attemptId],
       )
       return row !== null
     },

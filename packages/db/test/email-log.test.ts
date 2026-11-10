@@ -106,6 +106,31 @@ for (const [runtime, factory] of factories) {
 
     const setup = async () => (harness = await factory())
 
+    it('[security #1352] records all terminal feedback and suppressions atomically under the held claim', async () => {
+      const current = await setup()
+      const queued = await current.store.createQueued({ ...message, template: 'reminder:payment', cc: [{ email: 'cc@example.test' }] })
+      const attempt = 'b5f88b55-bc30-4bf2-94f5-350849e4b6c0'
+      const wrong = '7acbff11-1395-4011-a881-c299dad9e890'
+      const feedback = [{ eventId: 'event-a', recipient: 'owner@example.test', type: 'failed' as const },
+        { eventId: 'event-b', recipient: 'cc@example.test', type: 'complained' as const }]
+      await current.store.claimAttempt(queued.id, 'mailgun', attempt, 60)
+      expect(await current.store.recordReminderFeedback(queued.id, wrong, 'provider-id', feedback)).toBe(false)
+      await expect(current.store.recordReminderFeedback(queued.id, attempt, 'provider-id', [feedback[0]!, feedback[0]!])).rejects.toThrow()
+      expect(await current.store.get(queued.id)).toMatchObject({ status: 'queued', providerMessageId: null })
+      expect(await current.rows('SELECT id FROM email_suppression_events')).toEqual([])
+      expect(await current.store.recordReminderFeedback(queued.id, attempt, 'provider-id', feedback)).toBe(true)
+      expect(await current.store.get(queued.id)).toMatchObject({ status: 'complained', providerMessageId: 'provider-id' })
+      expect(await current.rows('SELECT address, reason FROM email_suppression_events ORDER BY address')).toEqual([
+        { address: 'cc@example.test', reason: 'complaint' }, { address: 'owner@example.test', reason: 'bounce' },
+      ])
+      expect(await current.store.recordReminderFeedback(queued.id, attempt, 'provider-id', feedback)).toBe(false)
+      const other = await current.store.createQueued({ ...message, template: 'reminder:payment' })
+      await current.store.claimAttempt(other.id, 'mailgun', wrong, 60)
+      await expect(current.store.recordReminderFeedback(other.id, wrong, 'other-id', [feedback[0]!])).rejects.toThrow()
+      expect(await current.store.get(other.id)).toMatchObject({ status: 'queued', providerMessageId: null })
+      expect(await current.rows('SELECT id FROM email_suppression_events')).toHaveLength(2)
+    })
+
     it('[security #1352] leases and advances reminder reconciliation progress without stale owners', async () => {
       const current = await setup()
       const first = 'b5f88b55-bc30-4bf2-94f5-350849e4b6c0'

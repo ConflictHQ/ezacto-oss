@@ -11,7 +11,10 @@ export const reconcileHeldMailgunReminders = async (input: {
   afterId: number
   list: (afterId: number, limit: number) => Promise<HeldAttempt[]>
   lookup: Pick<MailgunMailer, 'findReminderReceipt'>
-  log: Pick<EmailLogStore, 'get' | 'markSent'>
+  log: Pick<EmailLogStore, 'get' | 'markSent'> & {
+    recordReminderFeedback(deliveryId: number, attemptId: string, messageId: string,
+      feedback: readonly { eventId: string; recipient: string; type: 'failed' | 'complained' }[]): Promise<boolean>
+  }
 }): Promise<{ nextId: number | null; examined: number; reconciled: number; deferred: number }> => {
   const page = await input.list(input.afterId, 10)
   let reconciled = 0
@@ -24,7 +27,7 @@ export const reconcileHeldMailgunReminders = async (input: {
       continue
     }
     const begin = Math.floor(claimed / 1000) - 300
-    let receipt: { messageId: string } | null
+    let receipt: Awaited<ReturnType<MailgunMailer['findReminderReceipt']>>
     try {
       receipt = await input.lookup.findReminderReceipt({
         deliveryId: record.id, attemptId, recipients: [...record.to, ...record.cc].map(person => person.email),
@@ -38,6 +41,11 @@ export const reconcileHeldMailgunReminders = async (input: {
     }
     if (receipt === null) {
       deferred += 1
+      continue
+    }
+    if (receipt.feedback !== undefined) {
+      if (await input.log.recordReminderFeedback(record.id, attemptId, receipt.messageId, receipt.feedback)) reconciled += 1
+      else deferred += 1
       continue
     }
     try {
@@ -58,6 +66,8 @@ export const reconcileHeldMailgunReminders = async (input: {
 /** Claim one page durably; a crash leaves the same page retryable after the lease. */
 export const runReminderReconciliation = async (input: {
   store: Pick<EmailLogStore, 'get' | 'markSent'> & {
+    recordReminderFeedback(deliveryId: number, attemptId: string, messageId: string,
+      feedback: readonly { eventId: string; recipient: string; type: 'failed' | 'complained' }[]): Promise<boolean>
     heldReminderAttempts(afterId: number, limit: number): Promise<HeldAttempt[]>
     claimReminderSweep(token: string): Promise<number | null>
     finishReminderSweep(token: string, afterId: number, more: boolean): Promise<boolean>

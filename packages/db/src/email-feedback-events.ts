@@ -22,11 +22,17 @@ interface PortableDatabase {
 
 const createLedger = (database: PortableDatabase): EmailFeedbackLedger => ({
   async claim(input): Promise<EmailFeedbackClaim> {
+    // Historical migration tests can use this ledger before reconciliation was
+    // introduced. On current schemas, aliases also spend a webhook token.
+    const aliases = await database.first<{ present: number }>(
+      "SELECT 1 AS present FROM sqlite_master WHERE type = 'table' AND name = 'reminder_reconciliation_webhook_tokens'",
+    ) !== null
     const inserted = await database.first<{ eventId: string }>(
       `INSERT INTO email_feedback_events
          (event_id, signature_token, event_type, severity, recipient,
           provider_message_id, delivery_id, received_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+       SELECT ?, ?, ?, ?, ?, ?, ?, ?
+       ${aliases ? 'WHERE NOT EXISTS (SELECT 1 FROM reminder_reconciliation_webhook_tokens WHERE signature_token = ?)' : ''}
        ON CONFLICT DO NOTHING
        RETURNING event_id AS eventId`,
       [
@@ -38,6 +44,7 @@ const createLedger = (database: PortableDatabase): EmailFeedbackLedger => ({
         input.providerMessageId,
         input.deliveryId,
         input.now,
+        ...(aliases ? [input.signatureToken] : []),
       ],
     )
     if (inserted !== null) return 'fresh'
@@ -53,7 +60,6 @@ const createLedger = (database: PortableDatabase): EmailFeedbackLedger => ({
     )
     if (
       existing === null ||
-      existing.signatureToken !== input.signatureToken ||
       existing.eventType !== input.eventType ||
       existing.severity !== input.severity ||
       (existing.recipient?.toLowerCase() ?? null) !== (input.recipient?.toLowerCase() ?? null) ||
@@ -61,6 +67,31 @@ const createLedger = (database: PortableDatabase): EmailFeedbackLedger => ({
       existing.deliveryId !== input.deliveryId
     ) {
       return 'token_reused'
+    }
+    if (existing.signatureToken !== input.signatureToken) {
+      // A provider-API reconciliation has no signed webhook token. Spend the
+      // later genuine token before acknowledging the exact same event.
+      if (!aliases || existing.processedAt === null || !existing.signatureToken.startsWith('reconciliation:')) return 'token_reused'
+      const proven = await database.first<{ present: number }>(
+        `SELECT 1 AS present FROM reminder_reconciliation_feedback r, json_each(r.feedback_json) f
+         WHERE r.delivery_id = ? AND json_extract(f.value, '$.eventId') = ?
+           AND r.provider_message_id = ? LIMIT 1`,
+        [input.deliveryId, input.eventId, input.providerMessageId],
+      )
+      if (proven === null) return 'token_reused'
+      const alias = await database.first<{ token: string }>(
+        `INSERT INTO reminder_reconciliation_webhook_tokens(signature_token, event_id)
+         SELECT ?, ? WHERE NOT EXISTS (SELECT 1 FROM email_feedback_events WHERE signature_token = ?)
+         ON CONFLICT DO NOTHING RETURNING signature_token AS token`,
+        [input.signatureToken, input.eventId, input.signatureToken],
+      )
+      if (alias === null) {
+        const prior = await database.first<{ eventId: string }>(
+          'SELECT event_id AS eventId FROM reminder_reconciliation_webhook_tokens WHERE signature_token = ?', [input.signatureToken],
+        )
+        if (prior?.eventId !== input.eventId) return 'token_reused'
+      }
+      return 'duplicate'
     }
     return existing.processedAt === null ? 'resume' : 'duplicate'
   },

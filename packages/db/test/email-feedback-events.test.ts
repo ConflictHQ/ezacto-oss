@@ -20,7 +20,7 @@ import {
   createContainerEmailFeedbackLedger,
   createD1EmailFeedbackLedger,
 } from '../src/email-feedback-events.js'
-import { createContainerEmailLogStore, createD1EmailLogStore } from '../src/email-log.js'
+import { createContainerEmailLogStore, createD1EmailLogStore, type HeldReminderAttempts } from '../src/email-log.js'
 import { migrateContainer, migrateContainerThrough, migrateD1 } from '../src/migrate.js'
 
 // A made-up key for this file only. Nothing here is, or resembles, a real one.
@@ -29,7 +29,7 @@ const instant = '2026-10-19T12:00:00.000Z'
 const seconds = Date.parse(instant) / 1000
 
 interface Harness {
-  log: EmailLogStore
+  log: EmailLogStore & HeldReminderAttempts
   suppressions: EmailSuppressionStore
   ledger: EmailFeedbackLedger
   rows<T>(query: string, ...bindings: unknown[]): Promise<T[]>
@@ -430,6 +430,26 @@ for (const [runtime, factory] of [
         { id: 'evt-3', outcome: 'ignored' },
         { id: 'evt-4', outcome: 'ignored' },
       ])
+    })
+
+    it('[security #1352] acknowledges a reconciled webhook once and spends its signature token', async () => {
+      const { current, service } = await setup()
+      const attempt = 'b5f88b55-bc30-4bf2-94f5-350849e4b6c0'
+      const queued = await current.log.createQueued({ ...message('a@example.test'), template: 'reminder:1' })
+      await current.log.claimAttempt(queued.id, 'mailgun', attempt, 30)
+      await current.log.recordReminderFeedback(queued.id, attempt, 'mg-a', [
+        { eventId: 'event-reconciled', recipient: 'owner@example.test', type: 'failed' },
+      ])
+      const webhook = post({ id: 'event-reconciled', token: 'actual-webhook-token' })
+      expect(await service.receive(webhook)).toEqual({ kind: 'duplicate' })
+      expect(await service.receive(webhook)).toEqual({ kind: 'duplicate' })
+      expect(await service.receive(post({ id: 'different-event', token: 'actual-webhook-token' }))).toEqual({ kind: 'replayed' })
+      expect(await current.rows('SELECT id FROM email_suppression_events')).toHaveLength(1)
+      const forged = { eventId: 'not-reconciled', signatureToken: 'reconciliation:forged', eventType: 'failed',
+        severity: 'permanent', recipient: 'owner@example.test', providerMessageId: 'mg-a', deliveryId: queued.id, now: instant }
+      expect(await current.ledger.claim(forged)).toBe('fresh')
+      await current.ledger.finish(forged.eventId, instant, 'ignored', null)
+      expect(await current.ledger.claim({ ...forged, signatureToken: 'new-token' })).toBe('token_reused')
     })
 
     it('[security #1352] retains a matching event for an expired held reminder without trusting the tag', async () => {

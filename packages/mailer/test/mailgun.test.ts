@@ -86,8 +86,13 @@ describe("held reminder evidence", () => {
     expect(await query([{ ...event, event: "failed", severity: "temporary" }])).toBeNull();
     expect(await query([{ ...event, flags: { "is-test-mode": true } }])).toBeNull();
     expect(await query([event, { ...event, message: { headers: { "message-id": "other" } } }])).toBeNull();
-    expect(await query([{ ...event, event: "failed", severity: "permanent" }])).toBeNull();
-    expect(await query([event, { ...event, event: "complained" }])).toBeNull();
+    expect(await query([{ ...event, event: "failed", severity: "permanent" }])).toEqual({ messageId: "mg-1",
+      feedback: [{ eventId: "evt-1", recipient: "owner@example.test", type: "failed" }] });
+    expect(await query([event, { ...event, event: "complained" }])).toEqual({ messageId: "mg-1",
+      feedback: [{ eventId: "evt-1", recipient: "owner@example.test", type: "complained" }] });
+    expect(await query([event, { ...event, event: "failed", severity: "permanent", recipient: "other@example.test" }])).toBeNull();
+    expect(await query([event, { ...event, event: "failed", severity: "permanent", id: "" }])).toBeNull();
+    expect(await query([{ ...event, event: "failed", severity: "permanent" }, { ...event, event: "complained" }])).toBeNull();
   });
 
   it("searches bounded provider pages and refuses unsafe or incomplete pagination", async () => {
@@ -106,7 +111,8 @@ describe("held reminder evidence", () => {
     expect(unsafe).toHaveBeenCalledOnce();
     const conflict = vi.fn().mockResolvedValueOnce(response({ items: [event, ...full.slice(1)], paging: { next } }))
       .mockResolvedValueOnce(response({ items: [{ ...event, event: "failed", severity: "permanent" }] }));
-    expect(await new MailgunMailer(config, { fetch: conflict }).findReminderReceipt(lookup)).toBeNull();
+    expect(await new MailgunMailer(config, { fetch: conflict }).findReminderReceipt(lookup)).toEqual({ messageId: "mg-1",
+      feedback: [{ eventId: "evt-1", recipient: "owner@example.test", type: "failed" }] });
     const limited = vi.fn().mockImplementation(async (request: Request) => {
       const page = Number(new URL(request.url).searchParams.get('page') ?? 1);
       return response({ items: full, paging: { next: `https://api.mailgun.net/v3/mail.example.test/events?page=${page + 1}` } });

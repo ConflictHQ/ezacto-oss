@@ -18,7 +18,10 @@ const record = (id: number): EmailLogRecord => ({
 })
 
 describe('held Mailgun reminder reconciliation', () => {
-  it.each(['SQLite', 'D1'] as const)('uses provider evidence to complete a persisted %s claim without sending mail', async (backend) => {
+  it.each([
+    ['SQLite', 'accepted', 'sent'], ['D1', 'accepted', 'sent'],
+    ['SQLite', 'failed', 'bounced'], ['D1', 'complained', 'complained'],
+  ] as const)('records %s provider event %s as %s without sending mail', async (backend, event, expected) => {
     const db = backend === 'SQLite' ? new BetterSqlite3(':memory:') : null
     const miniflare = backend === 'D1' ? new Miniflare({ modules: true,
       script: 'export default { fetch() { return new Response("ok") } }', d1Databases: ['DB'] }) : null
@@ -35,14 +38,19 @@ describe('held Mailgun reminder reconciliation', () => {
       now = '2026-08-28T20:02:00.000Z'
       const fetch = vi.fn().mockImplementation(async (request: Request) => {
         expect(request.method).toBe('GET')
-        return new Response(JSON.stringify({ items: [{ event: 'accepted', timestamp: Date.parse('2026-08-28T20:00:01.000Z') / 1000,
+        return new Response(JSON.stringify({ items: [{ id: 'event-terminal', event, severity: 'permanent', timestamp: Date.parse('2026-08-28T20:00:01.000Z') / 1000,
           recipient: 'cc@example.test', tags: [`ezacto-reminder-${attemptId.slice(0, 2)}`],
           'user-variables': { ezacto_idempotency_key: `ezacto-reminder-${queued.id}-${attemptId}` },
           message: { headers: { 'message-id': '<mailgun-id>' } } }] }))
       })
       const lookup = new MailgunMailer({ apiKey: 'test-key', domain: 'mail.example.test' }, { fetch })
       await runReminderReconciliation({ store: log, lookup, token: '7acbff11-1395-4011-a881-c299dad9e890' })
-      expect(await log.get(queued.id)).toMatchObject({ status: 'sent', providerMessageId: 'mailgun-id' })
+      expect(await log.get(queued.id)).toMatchObject({ status: expected, providerMessageId: 'mailgun-id' })
+      if (event !== 'accepted') {
+        const rows = db !== null ? db.prepare('SELECT address, reason FROM email_suppression_events').all() :
+          (await d1!.prepare('SELECT address, reason FROM email_suppression_events').all()).results
+        expect(rows).toEqual([{ address: 'cc@example.test', reason: event === 'failed' ? 'bounce' : 'complaint' }])
+      }
       expect(await log.heldReminderAttempts(0, 10)).toEqual([])
       expect(fetch).toHaveBeenCalledOnce()
       expect(await log.claimReminderSweep(attemptId)).toBeNull()
@@ -56,7 +64,8 @@ describe('held Mailgun reminder reconciliation', () => {
       .mockResolvedValueOnce(null).mockRejectedValueOnce(new Error('provider unavailable'))
     const markSent = vi.fn().mockResolvedValue(record(1))
     const get = vi.fn()
-    expect(await reconcileHeldMailgunReminders({ afterId: 0, list, lookup: { findReminderReceipt }, log: { markSent, get } }))
+    const recordReminderFeedback = vi.fn()
+    expect(await reconcileHeldMailgunReminders({ afterId: 0, list, lookup: { findReminderReceipt }, log: { markSent, get, recordReminderFeedback } }))
       .toEqual({ nextId: null, examined: 3, reconciled: 1, deferred: 2 })
     expect(markSent).toHaveBeenCalledExactlyOnceWith(1, 'mailgun', { messageId: 'accepted' }, attemptId)
     expect(findReminderReceipt.mock.calls[0]![0]).toMatchObject({ deliveryId: 1, attemptId,
@@ -69,11 +78,12 @@ describe('held Mailgun reminder reconciliation', () => {
     const findReminderReceipt = vi.fn().mockResolvedValue({ messageId: 'accepted' })
     const markSent = vi.fn().mockRejectedValue(new Error('claim lost'))
     const get = vi.fn().mockResolvedValue({ ...record(2), status: 'sent' })
-    expect(await reconcileHeldMailgunReminders({ afterId: 0, list, lookup: { findReminderReceipt }, log: { markSent, get } }))
+    const recordReminderFeedback = vi.fn()
+    expect(await reconcileHeldMailgunReminders({ afterId: 0, list, lookup: { findReminderReceipt }, log: { markSent, get, recordReminderFeedback } }))
       .toEqual({ nextId: null, examined: 2, reconciled: 0, deferred: 2 })
     expect(findReminderReceipt).toHaveBeenCalledOnce()
     get.mockResolvedValue(record(2))
-    await expect(reconcileHeldMailgunReminders({ afterId: 0, list, lookup: { findReminderReceipt }, log: { markSent, get } }))
+    await expect(reconcileHeldMailgunReminders({ afterId: 0, list, lookup: { findReminderReceipt }, log: { markSent, get, recordReminderFeedback } }))
       .rejects.toThrow('claim lost')
   })
 
@@ -85,7 +95,8 @@ describe('held Mailgun reminder reconciliation', () => {
     const finishReminderSweep = vi.fn().mockResolvedValue(true)
     const markSent = vi.fn().mockResolvedValue(record(1))
     const get = vi.fn()
-    const store = { heldReminderAttempts, claimReminderSweep, finishReminderSweep, markSent, get }
+    const recordReminderFeedback = vi.fn()
+    const store = { heldReminderAttempts, claimReminderSweep, finishReminderSweep, markSent, get, recordReminderFeedback }
     const lookup = { findReminderReceipt: vi.fn().mockResolvedValue(null) }
     const token = '7acbff11-1395-4011-a881-c299dad9e890'
     await runReminderReconciliation({ store, lookup, token })
