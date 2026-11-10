@@ -38,10 +38,12 @@ describe('held Mailgun reminder reconciliation', () => {
       now = '2026-08-28T20:02:00.000Z'
       const fetch = vi.fn().mockImplementation(async (request: Request) => {
         expect(request.method).toBe('GET')
+        if (new URL(request.url).searchParams.get('page') === '2') return new Response(JSON.stringify({ items: [] }))
         return new Response(JSON.stringify({ items: [{ id: 'event-terminal', event, severity: 'permanent', timestamp: Date.parse('2026-08-28T20:00:01.000Z') / 1000,
           recipient: 'cc@example.test', tags: [`ezacto-reminder-${attemptId.slice(0, 2)}`],
           'user-variables': { ezacto_idempotency_key: `ezacto-reminder-${queued.id}-${attemptId}` },
-          message: { headers: { 'message-id': '<mailgun-id>' } } }] }))
+          message: { headers: { 'message-id': '<mailgun-id>' } } }],
+          paging: { next: 'https://api.mailgun.net/v3/mail.example.test/events?page=2' } }))
       })
       const lookup = new MailgunMailer({ apiKey: 'test-key', domain: 'mail.example.test' }, { fetch })
       await runReminderReconciliation({ store: log, lookup, token: '7acbff11-1395-4011-a881-c299dad9e890' })
@@ -52,7 +54,7 @@ describe('held Mailgun reminder reconciliation', () => {
         expect(rows).toEqual([{ address: 'cc@example.test', reason: event === 'failed' ? 'bounce' : 'complaint' }])
       }
       expect(await log.heldReminderAttempts(0, 10)).toEqual([])
-      expect(fetch).toHaveBeenCalledOnce()
+      expect(fetch).toHaveBeenCalledTimes(2)
       expect(await log.claimReminderSweep(attemptId)).toBeNull()
     } finally { db?.close(); await miniflare?.dispose() }
   })

@@ -227,7 +227,9 @@ export class MailgunMailer implements HttpEmailProvider {
       const body = parseBody(await readEvidenceBody(response, signal));
       if (!Array.isArray(body.items) || body.items.length > 100) throw new Error('Mailgun evidence response is invalid');
       items.push(...body.items);
-      if (body.items.length < 100) return { items, complete: true };
+      // Mailgun always provides next/previous links; only an empty page ends
+      // a traversal. A short page may still have later conflicting evidence.
+      if (body.items.length === 0) return { items, complete: true };
       const paging = body.paging && typeof body.paging === 'object' && !Array.isArray(body.paging) ? body.paging as Record<string, unknown> : null;
       if (typeof paging?.next !== 'string' || paging.next.length > 4096) return { items, complete: false };
       let next: URL;

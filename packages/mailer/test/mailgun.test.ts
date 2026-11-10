@@ -72,7 +72,12 @@ describe("held reminder evidence", () => {
       recipients: ["owner@example.test"], begin: scope.begin, end: scope.end };
     let request: Request | undefined;
     const query = async (items: unknown[]) => {
-      const provider = new MailgunMailer(config, { fetch: async value => { request = value; return response({ items }); } });
+      let first = true;
+      const provider = new MailgunMailer(config, { fetch: async value => {
+        if (!first) return response({ items: [] });
+        first = false; request = value;
+        return response({ items, paging: { next: 'https://api.mailgun.net/v3/mail.example.test/events?page=2' } });
+      } });
       return provider.findReminderReceipt(lookup);
     };
     expect(await query([{ ...event, event: "accepted" }])).toEqual({ messageId: "mg-1" });
@@ -102,15 +107,18 @@ describe("held reminder evidence", () => {
     const full = Array.from({ length: 100 }, () => other);
     const next = "https://api.mailgun.net/v3/mail.example.test/events?page=2";
     const fetch = vi.fn().mockResolvedValueOnce(response({ items: full, paging: { next } }))
-      .mockResolvedValueOnce(response({ items: [event] }));
+      .mockResolvedValueOnce(response({ items: [event], paging: { next: 'https://api.mailgun.net/v3/mail.example.test/events?page=3' } }))
+      .mockResolvedValueOnce(response({ items: [] }));
     expect(await new MailgunMailer(config, { fetch }).findReminderReceipt(lookup)).toEqual({ messageId: "mg-1" });
-    expect(fetch).toHaveBeenCalledTimes(2);
+    expect(fetch).toHaveBeenCalledTimes(3);
     const unsafe = vi.fn().mockResolvedValue(response({ items: [event, ...full.slice(1)],
       paging: { next: "https://attacker.example/events" } }));
     expect(await new MailgunMailer(config, { fetch: unsafe }).findReminderReceipt(lookup)).toBeNull();
     expect(unsafe).toHaveBeenCalledOnce();
     const conflict = vi.fn().mockResolvedValueOnce(response({ items: [event, ...full.slice(1)], paging: { next } }))
-      .mockResolvedValueOnce(response({ items: [{ ...event, event: "failed", severity: "permanent" }] }));
+      .mockResolvedValueOnce(response({ items: [{ ...event, event: "failed", severity: "permanent" }],
+        paging: { next: 'https://api.mailgun.net/v3/mail.example.test/events?page=3' } }))
+      .mockResolvedValueOnce(response({ items: [] }));
     expect(await new MailgunMailer(config, { fetch: conflict }).findReminderReceipt(lookup)).toEqual({ messageId: "mg-1",
       feedback: [{ eventId: "evt-1", recipient: "owner@example.test", type: "failed" }] });
     const limited = vi.fn().mockImplementation(async (request: Request) => {
@@ -119,6 +127,20 @@ describe("held reminder evidence", () => {
     });
     expect(await new MailgunMailer(config, { fetch: limited }).findReminderReceipt(lookup)).toBeNull();
     expect(limited).toHaveBeenCalledTimes(5);
+  });
+
+  it('follows short pages and refuses to treat an incomplete traversal as a receipt', async () => {
+    const lookup = { deliveryId: scope.deliveryId, attemptId: scope.attemptId,
+      recipients: [scope.recipient], begin: scope.begin, end: scope.end };
+    const next = 'https://api.mailgun.net/v3/mail.example.test/events?page=2';
+    const fetch = vi.fn().mockResolvedValueOnce(response({ items: [event], paging: { next } }))
+      .mockResolvedValueOnce(response({ items: [{ ...event, message: { headers: { 'message-id': 'different' } } }],
+        paging: { next: 'https://api.mailgun.net/v3/mail.example.test/events?page=3' } }))
+      .mockResolvedValueOnce(response({ items: [] }));
+    expect(await new MailgunMailer(config, { fetch }).findReminderReceipt(lookup)).toBeNull();
+    expect(fetch).toHaveBeenCalledTimes(3);
+    const truncated = vi.fn().mockResolvedValue(response({ items: [event] }));
+    expect(await new MailgunMailer(config, { fetch: truncated }).findReminderReceipt(lookup)).toBeNull();
   });
 });
 
