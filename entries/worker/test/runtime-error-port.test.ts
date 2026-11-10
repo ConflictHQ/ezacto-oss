@@ -96,3 +96,21 @@ it('does not report expected 4xx API errors and observes asynchronous API-port r
   expect(pending).toHaveLength(1)
   await expect(Promise.all(pending)).resolves.toEqual([undefined])
 })
+
+it('[#1235] passes the trusted managed composition to fetch, queue and scheduled without serializing it', async () => {
+  const failure = new Error('Owned composition boundary stop')
+  vi.mocked(createRuntimeServices).mockRejectedValue(failure)
+  const managedQuickBooks = { configured: () => false, compose: vi.fn(async () => null) }
+  const worker = createWorker({ managedQuickBooks })
+  const { ctx } = context()
+  const configured = { ...env, MAILGUN_API_KEY: 'fixture-key', MAILGUN_DOMAIN: 'example.test', MAIL_FROM: 'mail@example.test' }
+  expect((await worker.fetch!(incoming('https://fixture.invalid/api/v1/profile'), configured, ctx)).status).toBe(503)
+  await expect(worker.queue!({ queue: 'fixture-mail', messages: [] } as unknown as MessageBatch<unknown>, configured, ctx)).rejects.toBe(failure)
+  await expect(worker.scheduled!({ cron: '0 * * * *', scheduledTime: Date.now(), noRetry() {} }, configured, ctx)).rejects.toBe(failure)
+  expect(createRuntimeServices).toHaveBeenCalledTimes(3)
+  for (const [bindings, options] of vi.mocked(createRuntimeServices).mock.calls) {
+    expect(options?.managedQuickBooks).toBe(managedQuickBooks)
+    expect(bindings).not.toHaveProperty('managedQuickBooks')
+  }
+  expect(managedQuickBooks.compose).not.toHaveBeenCalled()
+})

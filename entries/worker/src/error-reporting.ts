@@ -1,3 +1,4 @@
+import type { WorkerManagedQuickBooks } from './managed-providers.js'
 import * as Sentry from '@sentry/cloudflare'
 import { ApiError } from '@ezacto/api'
 import type { ErrorEvent, Event, EventHint, StackFrame } from '@sentry/cloudflare'
@@ -27,7 +28,10 @@ export interface WorkerErrorContext {
 }
 /** Trusted, process-local integration port. Never serialize the original error. */
 export type WorkerErrorReporter = (error: Error, context: WorkerErrorContext) => void | Promise<void>
-export interface WorkerOptions { readonly reportError?: WorkerErrorReporter }
+export interface WorkerOptions {
+  readonly reportError?: WorkerErrorReporter
+  readonly managedQuickBooks?: WorkerManagedQuickBooks
+}
 
 const phases = new Set<unknown>(['api', 'bootstrap', 'readiness', 'idempotency', 'scheduled', 'queue', 'payment'])
 const classes = new Set(['Error', 'TypeError', 'RangeError', 'SyntaxError', 'ReferenceError', 'URIError', 'AggregateError', 'ApiError'])
