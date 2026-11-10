@@ -141,6 +141,8 @@ afterAll(async () => {
 it.each([0, 1])('[integration #1238] native Worker tenant %s consumes managed status/preview without shared-token or auxiliary capability fallback', async index => {
   const tenant = tenants[index]!, env = environment(tenant), worker = createWorker({ managedDeel: port })
   const before = calls.length
+  const foreign = await worker.fetch!(request('/preview', tenants[1 - index]!.cookie, 'POST', window), env, context)
+  expect(foreign.status).toBe(401); expect(calls).toHaveLength(before)
   const denied = await worker.fetch!(request('/preview', tenant.member, 'POST', window), env, context)
   expect(denied.status).toBe(403); expect(calls).toHaveLength(before)
   const status = await worker.fetch!(request('', tenant.cookie), env, context)
