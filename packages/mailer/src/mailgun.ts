@@ -213,6 +213,35 @@ export class MailgunMailer implements HttpEmailProvider {
   private readonly monotonicNow: () => number;
   private readonly endpoint: string;
 
+  /** Follow only domain-scoped Mailgun event links and bound work and memory. */
+  private async reminderEvidencePages(url: URL, signal: AbortSignal): Promise<{ items: unknown[]; complete: boolean }> {
+    const items: unknown[] = [];
+    const visited = new Set<string>();
+    let current = url;
+    for (let page = 0; page < 5; page += 1) {
+      if (visited.has(current.href)) return { items, complete: false };
+      visited.add(current.href);
+      const response = await this.fetchImplementation(new Request(current, { method: 'GET',
+        headers: { authorization: this.authorization }, redirect: 'error', signal }));
+      if (!response.ok) throw new MailgunApiError(response.status);
+      const body = parseBody(await readEvidenceBody(response, signal));
+      if (!Array.isArray(body.items) || body.items.length > 100) throw new Error('Mailgun evidence response is invalid');
+      items.push(...body.items);
+      if (body.items.length < 100) return { items, complete: true };
+      const paging = body.paging && typeof body.paging === 'object' && !Array.isArray(body.paging) ? body.paging as Record<string, unknown> : null;
+      if (typeof paging?.next !== 'string' || paging.next.length > 4096) return { items, complete: false };
+      let next: URL;
+      try { next = new URL(paging.next); } catch { return { items, complete: false }; }
+      // Never send account credentials to an arbitrary paging URL or follow a
+      // link outside this exact domain's events endpoint.
+      if (next.origin !== url.origin || next.pathname !== url.pathname || next.username || next.password || next.hash) {
+        return { items, complete: false };
+      }
+      current = next;
+    }
+    return { items, complete: false };
+  }
+
   constructor(config: MailgunConfig, options: MailgunOptions = {}) {
     const apiKey = secret(config.apiKey, "Mailgun API key", 512);
     const domain = bounded(config.domain, "Mailgun domain", 253).toLowerCase();
@@ -253,19 +282,17 @@ export class MailgunMailer implements HttpEmailProvider {
     const url = new URL(`${baseUrl(this.region)}/v3/${encodeURIComponent(this.domain)}/events`);
     url.search = new URLSearchParams({ begin: String(input.begin), end: String(input.end), ascending: 'yes', limit: '100', tags: tag }).toString();
     const signal = input.signal === undefined ? AbortSignal.timeout(10_000) : AbortSignal.any([input.signal, AbortSignal.timeout(10_000)]);
-    const response = await this.fetchImplementation(new Request(url, { method: 'GET', headers: { authorization: this.authorization }, redirect: 'error', signal }));
-    if (!response.ok) throw new MailgunApiError(response.status);
-    const body = parseBody(await readEvidenceBody(response, signal));
-    if (!Array.isArray(body.items) || body.items.length > 100) throw new Error('Mailgun evidence response is invalid');
-    return body.items.some(value => {
+    const evidence = await this.reminderEvidencePages(url, signal);
+    return evidence.items.some(value => {
       if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
       const item = value as Record<string, unknown>;
       const message = item.message && typeof item.message === 'object' && !Array.isArray(item.message) ? item.message as Record<string, unknown> : null;
       const headers = message?.headers && typeof message.headers === 'object' && !Array.isArray(message.headers) ? message.headers as Record<string, unknown> : null;
       const variables = item['user-variables'] && typeof item['user-variables'] === 'object' && !Array.isArray(item['user-variables']) ? item['user-variables'] as Record<string, unknown> : null;
+      const flags = item.flags && typeof item.flags === 'object' && !Array.isArray(item.flags) ? item.flags as Record<string, unknown> : null;
       const rawId = typeof headers?.['message-id'] === 'string' ? headers['message-id'].replace(/^<|>$/gu, '') : null;
       return item.id === eventId && item.event === input.eventType &&
-        (input.eventType !== 'failed' || item.severity === 'permanent') && rawId === messageId &&
+        (input.eventType !== 'failed' || item.severity === 'permanent') && flags?.['is-test-mode'] !== true && rawId === messageId &&
         typeof item.timestamp === 'number' && Number.isFinite(item.timestamp) && item.timestamp >= input.begin && item.timestamp <= input.end &&
         typeof item.recipient === 'string' && item.recipient.toLowerCase() === recipient &&
         Array.isArray(item.tags) && item.tags.includes(tag) && variables?.ezacto_idempotency_key === key;
@@ -298,13 +325,10 @@ export class MailgunMailer implements HttpEmailProvider {
     const url = new URL(`${baseUrl(this.region)}/v3/${encodeURIComponent(this.domain)}/events`);
     url.search = new URLSearchParams({ begin: String(input.begin), end: String(input.end), ascending: 'yes', limit: '100', tags: tag }).toString();
     const signal = input.signal === undefined ? AbortSignal.timeout(10_000) : AbortSignal.any([input.signal, AbortSignal.timeout(10_000)]);
-    const response = await this.fetchImplementation(new Request(url, { method: 'GET', headers: { authorization: this.authorization }, redirect: 'error', signal }));
-    if (!response.ok) throw new MailgunApiError(response.status);
-    const body = parseBody(await readEvidenceBody(response, signal));
-    if (!Array.isArray(body.items) || body.items.length > 100) throw new Error('Mailgun evidence response is invalid');
+    const evidence = await this.reminderEvidencePages(url, signal);
     const messageIds = new Set<string>();
     let terminalFeedback = false;
-    for (const value of body.items) {
+    for (const value of evidence.items) {
       if (!value || typeof value !== 'object' || Array.isArray(value)) continue;
       const item = value as Record<string, unknown>;
       const message = item.message && typeof item.message === 'object' && !Array.isArray(item.message) ? item.message as Record<string, unknown> : null;
@@ -328,7 +352,7 @@ export class MailgunMailer implements HttpEmailProvider {
         }
       } catch { /* An invalid provider item cannot establish a receipt. */ }
     }
-    return messageIds.size === 1 && !terminalFeedback ? { messageId: [...messageIds][0]! } : null;
+    return evidence.complete && messageIds.size === 1 && !terminalFeedback ? { messageId: [...messageIds][0]! } : null;
   }
 
   /**
