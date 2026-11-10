@@ -1,9 +1,13 @@
+import { copyFile, cp, mkdtemp, rm } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import BetterSqlite3 from 'better-sqlite3'
+import { Miniflare } from 'miniflare'
 import { sql } from 'drizzle-orm'
-import { afterEach, describe, expect, it, vi } from 'vitest'
-import { createContainerDatabase } from '../src/adapters.js'
-import { migrateContainer } from '../src/migrate.js'
-import { createContainerSessionStore } from '../src/sessions.js'
+import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest'
+import { createContainerDatabase, createD1Database } from '../src/adapters.js'
+import { migrateContainer, migrateD1 } from '../src/migrate.js'
+import { createContainerSessionStore, createD1SessionStore } from '../src/sessions.js'
 import { createBillLinkStore } from '../src/bill.js'
 import { createManagedBillConnectionStore } from '../src/index.js'
 import { createApiSessionService } from '../../api/src/sessions.js'
@@ -36,10 +40,42 @@ const credentials = (company = '008OWNEDONE', over: Partial<ManagedBillCredentia
   environment: 'sandbox' as const,
   ...over,
 })
-let closers: (() => void)[] = []
-afterEach(() => {
-  closers.forEach((close) => close())
+const d1Worker = { modules: true,
+  script: 'export default { fetch() { return new Response("ok") } }', d1Databases: ['DB'] } as const
+let templates: { root: string; sqlite: string; d1: string } | undefined
+beforeAll(async () => {
+  const root = await mkdtemp(join(tmpdir(), 'ezacto-bill-templates-'))
+  const sqlite = join(root, 'template.sqlite')
+  const d1 = join(root, 'd1')
+  let native: BetterSqlite3.Database | undefined
+  let miniflare: Miniflare | undefined
+  try {
+    native = new BetterSqlite3(sqlite)
+    migrateContainer(native)
+    native.close()
+    native = undefined
+    miniflare = new Miniflare({ ...d1Worker, d1Persist: d1 })
+    await migrateD1(await miniflare.getD1Database('DB'))
+    // Checkpoint the WAL and close all writers before any physical copy.
+    await miniflare.dispose()
+    miniflare = undefined
+    templates = { root, sqlite, d1 }
+  } catch (error) {
+    try { native?.close(); await miniflare?.dispose() } finally { await rm(root, { recursive: true, force: true }) }
+    throw error
+  }
+}, 120_000)
+afterAll(async () => {
+  if (templates) await rm(templates.root, { recursive: true, force: true })
+})
+
+let closers: (() => Promise<void>)[] = []
+afterEach(async () => {
+  const current = closers
   closers = []
+  const results = await Promise.allSettled(current.map(close => close()))
+  const failures = results.filter(result => result.status === 'rejected')
+  if (failures.length > 0) throw new AggregateError(failures.map(result => result.reason), 'BILL fixture cleanup failed')
 })
 const json = (body: unknown, status = 200) =>
   new Response(JSON.stringify(body), { status, headers: { 'content-type': 'application/json' } })
@@ -74,13 +110,32 @@ const fakeBill = (accepted: { company: string; username: string; password: strin
   return { fetch, calls, setLoginOk: (ok: boolean) => (loginOk = ok) }
 }
 
-const tenant = async (name: string, company: string) => {
-  const native = new BetterSqlite3(':memory:')
-  closers.push(() => native.close())
-  migrateContainer(native)
-  const db = createContainerDatabase(native)
+const tenant = async (runtime: 'sqlite' | 'd1', name: string, company: string) => {
   let now = initial
-  const sessions = createContainerSessionStore(native, { now: () => now })
+  let db: ReturnType<typeof createContainerDatabase> | ReturnType<typeof createD1Database>
+  let sessions: ReturnType<typeof createContainerSessionStore> | ReturnType<typeof createD1SessionStore>
+  if (!templates) throw new Error('BILL templates were not initialized')
+  const directory = await mkdtemp(join(tmpdir(), 'ezacto-bill-case-'))
+  let native: BetterSqlite3.Database | undefined
+  let miniflare: Miniflare | undefined
+  // Each tenant owns a physical copy, connection and workerd; no mutable state
+  // or credential/session is shared. Partial initialization is disposable too.
+  closers.push(async () => {
+    try { native?.close(); await miniflare?.dispose() } finally { await rm(directory, { recursive: true, force: true }) }
+  })
+  if (runtime === 'sqlite') {
+    const path = join(directory, 'tenant.sqlite')
+    await copyFile(templates.sqlite, path)
+    native = new BetterSqlite3(path)
+    db = createContainerDatabase(native)
+    sessions = createContainerSessionStore(native, { now: () => now })
+  } else {
+    await cp(templates.d1, directory, { recursive: true })
+    miniflare = new Miniflare({ ...d1Worker, d1Persist: directory })
+    const binding = await miniflare.getD1Database('DB')
+    db = createD1Database(binding)
+    sessions = createD1SessionStore(binding, { now: () => now })
+  }
   const run = (text: string) => db.run(sql.raw(text))
   await run(`INSERT INTO organizations(name,modules,created_at,updated_at) VALUES('${name}','{}','${now}','${now}')`)
   await run(`INSERT INTO users(id,first_name,last_name,profile,manager_grants,created_at,updated_at) VALUES
@@ -141,7 +196,7 @@ const tenant = async (name: string, company: string) => {
       now: () => new Date(now),
     })
   return {
-    native,
+    sessions,
     db,
     store,
     vault,
@@ -166,9 +221,9 @@ const ok = <T>(value: T | Response): T => {
 }
 const COMMAND = 'a'.repeat(64)
 
-describe('managed tenant BILL connection', () => {
+describe.each(['sqlite', 'd1'] as const)('managed tenant BILL connection (%s)', runtime => {
   it('starts disconnected and reports status without decrypting or calling BILL', async () => {
-    const t = await tenant('one', '008OWNEDONE')
+    const t = await tenant(runtime, 'one', '008OWNEDONE')
     expect(await t.runtime.status()).toMatchObject({
       status: 'disconnected',
       companyId: null,
@@ -182,7 +237,7 @@ describe('managed tenant BILL connection', () => {
   })
 
   it('connects with fresh admin authority, seals the credential and never echoes it', async () => {
-    const t = await tenant('one', '008OWNEDONE')
+    const t = await tenant(runtime, 'one', '008OWNEDONE')
     const result = ok(
       await t.commands.configure(t.request(), {
         commandId: COMMAND,
@@ -203,7 +258,7 @@ describe('managed tenant BILL connection', () => {
   })
 
   it('refuses members, missing origin and bearer-less callers with static errors', async () => {
-    const t = await tenant('one', '008OWNEDONE')
+    const t = await tenant(runtime, 'one', '008OWNEDONE')
     const attempt = (request: Request) =>
       t.commands.configure(request, { commandId: COMMAND, expectedGeneration: 0, credentials: credentials() })
     const member = await attempt(t.request(t.member.token))
@@ -216,7 +271,7 @@ describe('managed tenant BILL connection', () => {
   })
 
   it('rejects invalid credentials without echoing them', async () => {
-    const t = await tenant('one', '008OWNEDONE')
+    const t = await tenant(runtime, 'one', '008OWNEDONE')
     const response = await t.commands.configure(t.request(), {
       commandId: COMMAND,
       expectedGeneration: 0,
@@ -228,7 +283,7 @@ describe('managed tenant BILL connection', () => {
   })
 
   it('replays an exact command and refuses a changed secret under the same command id', async () => {
-    const t = await tenant('one', '008OWNEDONE')
+    const t = await tenant(runtime, 'one', '008OWNEDONE')
     const input = { commandId: COMMAND, expectedGeneration: 0, credentials: credentials() }
     ok(await t.commands.configure(t.request(), input))
     expect(ok(await t.commands.configure(t.request(), input))).toMatchObject({ outcome: 'replayed', generation: 1 })
@@ -241,7 +296,7 @@ describe('managed tenant BILL connection', () => {
   })
 
   it('refuses a stale generation instead of overwriting a newer connection', async () => {
-    const t = await tenant('one', '008OWNEDONE')
+    const t = await tenant(runtime, 'one', '008OWNEDONE')
     ok(await t.commands.configure(t.request(), { commandId: COMMAND, expectedGeneration: 0, credentials: credentials() }))
     const stale = await t.commands.configure(t.request(), {
       commandId: 'b'.repeat(64),
@@ -260,7 +315,7 @@ describe('managed tenant BILL connection', () => {
   })
 
   it('a revoked or demoted administrator cannot apply a command', async () => {
-    const t = await tenant('one', '008OWNEDONE')
+    const t = await tenant(runtime, 'one', '008OWNEDONE')
     await t.db.run(sql.raw(`UPDATE users SET profile='member' WHERE id=2`))
     const response = await t.commands.configure(t.request(), {
       commandId: COMMAND,
@@ -280,7 +335,7 @@ describe('managed tenant BILL connection', () => {
   })
 
   it('connects through the runtime: opens only this tenant credential and records health', async () => {
-    const t = await tenant('one', '008OWNEDONE')
+    const t = await tenant(runtime, 'one', '008OWNEDONE')
     ok(await t.commands.configure(t.request(), { commandId: COMMAND, expectedGeneration: 0, credentials: credentials() }))
     expect(await t.runtime.reconcilePayments()).toBe(0)
     expect(t.bill.calls.filter((c) => c.path === 'login')).toEqual([{ path: 'login', company: '008OWNEDONE' }])
@@ -293,7 +348,7 @@ describe('managed tenant BILL connection', () => {
   })
 
   it('reports unavailable after a refused login and recovers on rotation, never leaking the secret', async () => {
-    const t = await tenant('one', '008OWNEDONE')
+    const t = await tenant(runtime, 'one', '008OWNEDONE')
     ok(await t.commands.configure(t.request(), { commandId: COMMAND, expectedGeneration: 0, credentials: credentials() }))
     t.bill.setLoginOk(false)
     await expect(t.runtime.reconcilePayments()).rejects.toThrow(/sign-in failed/)
@@ -308,7 +363,7 @@ describe('managed tenant BILL connection', () => {
   })
 
   it('performs no provider I/O while disabled, without the platform key, disconnected or erased', async () => {
-    const t = await tenant('one', '008OWNEDONE')
+    const t = await tenant(runtime, 'one', '008OWNEDONE')
     ok(await t.commands.configure(t.request(), { commandId: COMMAND, expectedGeneration: 0, credentials: credentials() }))
     t.setEnabled(false)
     expect(await t.runtime.reconcilePayments()).toBe(0)
@@ -327,7 +382,7 @@ describe('managed tenant BILL connection', () => {
   })
 
   it('disconnect and erase remove credential custody, keep the generation monotonic and keep history', async () => {
-    const t = await tenant('one', '008OWNEDONE')
+    const t = await tenant(runtime, 'one', '008OWNEDONE')
     ok(await t.commands.configure(t.request(), { commandId: COMMAND, expectedGeneration: 0, credentials: credentials() }))
     await t.runtime.reconcilePayments()
     const disconnected = ok(await t.commands.disconnect(t.request(), { commandId: 'd'.repeat(64), expectedGeneration: 1 }))
@@ -346,7 +401,7 @@ describe('managed tenant BILL connection', () => {
   })
 
   it('refuses to repoint adopted history at a different BILL company, but allows rotation within it', async () => {
-    const t = await tenant('one', '008OWNEDONE')
+    const t = await tenant(runtime, 'one', '008OWNEDONE')
     ok(await t.commands.configure(t.request(), { commandId: COMMAND, expectedGeneration: 0, credentials: credentials() }))
     await t.runtime.reconcilePayments()
     ok(await t.commands.disconnect(t.request(), { commandId: 'd'.repeat(64), expectedGeneration: 1 }))
@@ -361,8 +416,8 @@ describe('managed tenant BILL connection', () => {
   })
 
   it('isolates two tenant databases: credentials, sessions and generations never cross', async () => {
-    const one = await tenant('one', '008OWNEDONE')
-    const two = await tenant('two', '008OWNEDTWO')
+    const one = await tenant(runtime, 'one', '008OWNEDONE')
+    const two = await tenant(runtime, 'two', '008OWNEDTWO')
     ok(await one.commands.configure(one.request(), { commandId: COMMAND, expectedGeneration: 0, credentials: credentials('008OWNEDONE') }))
     ok(await two.commands.configure(two.request(), { commandId: COMMAND, expectedGeneration: 0, credentials: credentials('008OWNEDTWO') }))
     await one.runtime.reconcilePayments()
@@ -381,11 +436,11 @@ describe('managed tenant BILL connection', () => {
   })
 
   it('composes the existing status route and opted-in subscriber through public exports', async () => {
-    const t = await tenant('one', '008OWNEDONE')
+    const t = await tenant(runtime, 'one', '008OWNEDONE')
     ok(await t.commands.configure(t.request(), { commandId: COMMAND, expectedGeneration: 0, credentials: credentials() }))
     const opts: boolean[] = []
     const api = createApiApp({
-      authentication: { sessions: createApiSessionService(createContainerSessionStore(t.native, { now: t.now })) },
+      authentication: { sessions: createApiSessionService(t.sessions) },
       installApi: (hono) =>
         installBillRoutes(hono, {
           status: async () => {
@@ -414,7 +469,7 @@ describe('managed tenant BILL connection', () => {
   })
 
   it('a rolled-back command leaves no receipt: expected failure paths are static and unreported', async () => {
-    const t = await tenant('one', '008OWNEDONE')
+    const t = await tenant(runtime, 'one', '008OWNEDONE')
     ok(await t.commands.configure(t.request(), { commandId: COMMAND, expectedGeneration: 0, credentials: credentials() }))
     await t.commands.configure(t.request(), { commandId: 'b'.repeat(64), expectedGeneration: 0, credentials: credentials() })
     expect(await t.rows('bill_managed_commands')).toHaveLength(1)

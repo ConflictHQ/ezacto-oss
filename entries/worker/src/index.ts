@@ -1,7 +1,7 @@
 import { createCsvWorkerRuntime, csvWorkerConfigured, verifyCsvQueueDatabase } from './csv-runtime.js'
 import { parseCursorSigningKey, ensureRuntimeDatabaseReady } from './runtime.js'
 import { AsyncLocalStorage } from 'node:async_hooks'
-import { apiFailureStatus, reportWorkerError, runtimeTraceId, scrubWorkerEvent, type WorkerErrorContext, type WorkerScheduledOperation, type WorkerOptions } from './error-reporting.js'
+import { apiFailureStatus, billFailureCode, reportWorkerError, runtimeTraceId, scrubWorkerEvent, type WorkerErrorContext, type WorkerScheduledOperation, type WorkerOptions } from './error-reporting.js'
 export type { WorkerErrorContext, WorkerErrorPhase, WorkerErrorReporter, WorkerOptions } from './error-reporting.js'
 import { consumeMigrationBatch } from './migration-queue.js'
 import * as Sentry from '@sentry/cloudflare'
@@ -449,7 +449,7 @@ export const createWorker = (options: WorkerOptions = {}): ExportedHandler<Worke
       await isolate('BILL reconciliation', () => createScheduledBillReconciliation({
         reconcile: services.bill!.reconcilePayments,
         report: (error) => {
-          console.error('[worker] BILL reconciliation failed', error)
+          console.error('[worker] BILL reconciliation failed', billFailureCode(error))
           report(error, { phase: 'scheduled', operation: 'BILL reconciliation' })
         },
       })(),

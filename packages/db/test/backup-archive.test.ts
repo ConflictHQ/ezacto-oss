@@ -4,7 +4,7 @@ import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { Miniflare } from 'miniflare'
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import {
   BackupArchiveError,
   getBackupRun,
@@ -78,134 +78,146 @@ const setup = async () => {
 }
 
 describe('backup archive stream', () => {
-  it('[unit] a completed run opens with standard tools, files byte-identical to R2', async () => {
-    const { bucket, run, manifest } = await setup()
-    const bytes = await readAll(await openBackupArchive(run, r2BackupSource(bucket)))
+  describe('with a real D1 and R2 backup', () => {
+    let fixture: Awaited<ReturnType<typeof setup>>
 
-    const dir = mkdtempSync(join(tmpdir(), 'ezacto-archive-'))
-    scratch.push(dir)
-    const file = join(dir, 'bundle.zip')
-    writeFileSync(file, bytes)
-    // unzip -t checks every CRC and the central directory.
-    expect(execFileSync('unzip', ['-t', file]).toString()).toContain('No errors detected')
-    const listing = execFileSync('unzip', ['-Z1', file]).toString().trim().split('\n')
-    expect(listing).toEqual([
-      'manifest.json',
-      'RESTORE.md',
-      ...Object.keys(manifest.tables)
-        .sort()
-        .map((t) => `tables/${t}.csv`),
-      ...workerBackupFiles(manifest.files).map(file => file.name),
-    ])
+    // Full schema migration and export are integration setup, not archive work.
+    // Keep a fresh database and bucket for every case, with a separate budget.
+    beforeEach(async () => { fixture = await setup() }, 120_000)
 
-    for (const name of listing) {
-      const fromZip = execFileSync('unzip', ['-p', file, name], { maxBuffer: 1 << 26 })
-      const object = await bucket.get(`${prefix}${name}`)
-      const fromR2 = Buffer.from(await object!.arrayBuffer())
-      expect(new Uint8Array(fromZip)).toEqual(new Uint8Array(fromR2))
-    }
-    expect(readFileSync(file).length).toBe(bytes.length)
-  })
+    it('[unit] a completed run opens with standard tools, files byte-identical to R2', async () => {
+      const { bucket, run, manifest } = fixture
+      const bytes = await readAll(await openBackupArchive(run, r2BackupSource(bucket)))
 
-  it('[unit] carries non-ASCII data intact', async () => {
-    const { bucket, run } = await setup()
-    const bytes = await readAll(await openBackupArchive(run, r2BackupSource(bucket)))
-    const dir = mkdtempSync(join(tmpdir(), 'ezacto-archive-'))
-    scratch.push(dir)
-    const file = join(dir, 'bundle.zip')
-    writeFileSync(file, bytes)
-    const csv = new TextDecoder().decode(execFileSync('unzip', ['-p', file, 'tables/clients.csv']))
-    expect(csv).toContain('"café, ""quoted"""')
-  })
+      const dir = mkdtempSync(join(tmpdir(), 'ezacto-archive-'))
+      scratch.push(dir)
+      const file = join(dir, 'bundle.zip')
+      writeFileSync(file, bytes)
+      // unzip -t checks every CRC and the central directory.
+      expect(execFileSync('unzip', ['-t', file]).toString()).toContain('No errors detected')
+      const listing = execFileSync('unzip', ['-Z1', file]).toString().trim().split('\n')
+      expect(listing).toEqual([
+        'manifest.json',
+        'RESTORE.md',
+        ...Object.keys(manifest.tables)
+          .sort()
+          .map((t) => `tables/${t}.csv`),
+        ...workerBackupFiles(manifest.files).map(file => file.name),
+      ])
 
-  it('[security] a table object that no longer matches the manifest aborts the stream, sending none of its bytes', async () => {
-    const { bucket, run, manifest } = await setup()
-    const tables = Object.keys(manifest.tables).sort()
-    const victim = tables[Math.floor(tables.length / 2)]!
-    await bucket.put(`${prefix}tables/${victim}.csv`, 'tampered\n')
-
-    const stream = await openBackupArchive(run, r2BackupSource(bucket))
-    const reader = stream.getReader()
-    const received: Uint8Array[] = []
-    let failure: unknown
-    try {
-      for (;;) {
-        const { done, value } = await reader.read()
-        if (done) break
-        received.push(value)
+      // Extract once: starting a process for every archive entry made this
+      // byte-for-byte check take longer as the number of tables grew.
+      const extracted = join(dir, 'extracted')
+      execFileSync('unzip', ['-qq', file, '-d', extracted])
+      for (const name of listing) {
+        const fromZip = readFileSync(join(extracted, name))
+        const object = await bucket.get(`${prefix}${name}`)
+        const fromR2 = Buffer.from(await object!.arrayBuffer())
+        expect(new Uint8Array(fromZip)).toEqual(new Uint8Array(fromR2))
       }
-    } catch (error) {
-      failure = error
-    }
-    expect(failure).toBeInstanceOf(BackupArchiveError)
-    expect((failure as BackupArchiveError).code).toBe('checksum_mismatch')
-    expect(new TextDecoder().decode(Buffer.concat(received))).not.toContain('tampered')
-  })
-
-  it('[security] a missing table object aborts the stream', async () => {
-    const { bucket, run, manifest } = await setup()
-    await bucket.delete(`${prefix}tables/${Object.keys(manifest.tables)[0]!}.csv`)
-    await expect(
-      readAll(await openBackupArchive(run, r2BackupSource(bucket))),
-    ).rejects.toMatchObject({ code: 'object_missing' })
-  })
-
-  it('[security] refuses a manifest object that differs from the one D1 recorded', async () => {
-    const { bucket, run, manifest } = await setup()
-    const forged = { ...manifest, tables: { ...manifest.tables } }
-    const name = Object.keys(forged.tables)[0]!
-    forged.tables[name] = { row_count: 0, sha256: '0'.repeat(64) }
-    await bucket.put(`${prefix}manifest.json`, JSON.stringify(forged, null, 2))
-    await expect(openBackupArchive(run, r2BackupSource(bucket))).rejects.toMatchObject({
-      code: 'manifest_mismatch',
+      expect(readFileSync(file).length).toBe(bytes.length)
     })
-  })
 
-  it('[security] refuses a manifest that names a table with a path in it', async () => {
-    const { bucket, run } = await setup()
-    const hostile = {
-      ...run,
-      manifest_json: JSON.stringify({
-        exported_at: now,
-        tables: { '../other/secret': { row_count: 0, sha256: '0'.repeat(64) } },
-      }),
-    }
-    await bucket.put(`${prefix}manifest.json`, hostile.manifest_json)
-    await expect(openBackupArchive(hostile, r2BackupSource(bucket))).rejects.toMatchObject({
-      code: 'manifest_mismatch',
+    it('[unit] carries non-ASCII data intact', async () => {
+      const { bucket, run } = fixture
+      const bytes = await readAll(await openBackupArchive(run, r2BackupSource(bucket)))
+      const dir = mkdtempSync(join(tmpdir(), 'ezacto-archive-'))
+      scratch.push(dir)
+      const file = join(dir, 'bundle.zip')
+      writeFileSync(file, bytes)
+      const csv = new TextDecoder().decode(execFileSync('unzip', ['-p', file, 'tables/clients.csv']))
+      expect(csv).toContain('"café, ""quoted"""')
     })
-  })
 
-  it('[unit] refuses runs that did not complete', async () => {
-    const { bucket, run } = await setup()
-    await expect(
-      openBackupArchive({ ...run, status: 'failed' }, r2BackupSource(bucket)),
-    ).rejects.toMatchObject({ code: 'run_not_exportable' })
-    await expect(
-      openBackupArchive({ ...run, r2_prefix: null }, r2BackupSource(bucket)),
-    ).rejects.toMatchObject({ code: 'run_not_exportable' })
-  })
+    it('[security] a table object that no longer matches the manifest aborts the stream, sending none of its bytes', async () => {
+      const { bucket, run, manifest } = fixture
+      const tables = Object.keys(manifest.tables).sort()
+      const victim = tables[Math.floor(tables.length / 2)]!
+      await bucket.put(`${prefix}tables/${victim}.csv`, 'tampered\n')
 
-  it('[unit] reads objects as the consumer pulls, never the whole bundle up front', async () => {
-    const { bucket, run, manifest } = await setup()
-    const reads: string[] = []
-    const inner = r2BackupSource(bucket)
-    const counting: BackupObjectSource = {
-      async get(key) {
-        reads.push(key)
-        return inner.get(key)
-      },
-    }
-    const stream = await openBackupArchive(run, counting)
-    const reader = stream.getReader()
-    await reader.read()
-    await reader.read()
-    await reader.read()
-    // The manifest read to open, then at most the entries pulled (plus the
-    // stream's one-chunk look-ahead), far fewer than every table.
-    expect(Object.keys(manifest.tables).length).toBeGreaterThan(20)
-    expect(reads.length).toBeLessThan(8)
-    await reader.cancel()
+      const stream = await openBackupArchive(run, r2BackupSource(bucket))
+      const reader = stream.getReader()
+      const received: Uint8Array[] = []
+      let failure: unknown
+      try {
+        for (;;) {
+          const { done, value } = await reader.read()
+          if (done) break
+          received.push(value)
+        }
+      } catch (error) {
+        failure = error
+      }
+      expect(failure).toBeInstanceOf(BackupArchiveError)
+      expect((failure as BackupArchiveError).code).toBe('checksum_mismatch')
+      expect(new TextDecoder().decode(Buffer.concat(received))).not.toContain('tampered')
+    })
+
+    it('[security] a missing table object aborts the stream', async () => {
+      const { bucket, run, manifest } = fixture
+      await bucket.delete(`${prefix}tables/${Object.keys(manifest.tables)[0]!}.csv`)
+      await expect(
+        readAll(await openBackupArchive(run, r2BackupSource(bucket))),
+      ).rejects.toMatchObject({ code: 'object_missing' })
+    })
+
+    it('[security] refuses a manifest object that differs from the one D1 recorded', async () => {
+      const { bucket, run, manifest } = fixture
+      const forged = { ...manifest, tables: { ...manifest.tables } }
+      const name = Object.keys(forged.tables)[0]!
+      forged.tables[name] = { row_count: 0, sha256: '0'.repeat(64) }
+      await bucket.put(`${prefix}manifest.json`, JSON.stringify(forged, null, 2))
+      await expect(openBackupArchive(run, r2BackupSource(bucket))).rejects.toMatchObject({
+        code: 'manifest_mismatch',
+      })
+    })
+
+    it('[security] refuses a manifest that names a table with a path in it', async () => {
+      const { bucket, run } = fixture
+      const hostile = {
+        ...run,
+        manifest_json: JSON.stringify({
+          exported_at: now,
+          tables: { '../other/secret': { row_count: 0, sha256: '0'.repeat(64) } },
+        }),
+      }
+      await bucket.put(`${prefix}manifest.json`, hostile.manifest_json)
+      await expect(openBackupArchive(hostile, r2BackupSource(bucket))).rejects.toMatchObject({
+        code: 'manifest_mismatch',
+      })
+    })
+
+    it('[unit] refuses runs that did not complete', async () => {
+      const { bucket, run } = fixture
+      await expect(
+        openBackupArchive({ ...run, status: 'failed' }, r2BackupSource(bucket)),
+      ).rejects.toMatchObject({ code: 'run_not_exportable' })
+      await expect(
+        openBackupArchive({ ...run, r2_prefix: null }, r2BackupSource(bucket)),
+      ).rejects.toMatchObject({ code: 'run_not_exportable' })
+    })
+
+    it('[unit] reads objects as the consumer pulls, never the whole bundle up front', async () => {
+      const { bucket, run, manifest } = fixture
+      const reads: string[] = []
+      const inner = r2BackupSource(bucket)
+      const counting: BackupObjectSource = {
+        async get(key) {
+          reads.push(key)
+          return inner.get(key)
+        },
+      }
+      const stream = await openBackupArchive(run, counting)
+      const reader = stream.getReader()
+      await reader.read()
+      await reader.read()
+      await reader.read()
+      // The manifest read to open, then at most the entries pulled (plus the
+      // stream's one-chunk look-ahead), far fewer than every table.
+      expect(Object.keys(manifest.tables).length).toBeGreaterThan(20)
+      expect(reads.length).toBeLessThan(8)
+      await reader.cancel()
+    })
   })
 
   it('[unit] a bundle with many large objects streams without a whole-bundle buffer', async () => {

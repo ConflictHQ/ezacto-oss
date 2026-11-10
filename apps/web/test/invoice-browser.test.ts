@@ -865,6 +865,35 @@ describe('invoice payment controller', () => {
     expect(getDirectoryProject).toHaveBeenCalledTimes(3)
   })
 
+  it('[browser #1351] keeps operating facts outside the invoice and off paper', async () => {
+    renderDetail()
+    await createInvoicePaymentController({
+      getInvoice: vi.fn(async () => invoice('CLIENT-COPY', { line_items: [line()] })),
+      getDirectoryProject: vi.fn(async () => ({ id: 1, name: 'Northpeak', time_rounding_mode: null, time_rounding_minutes: null }) as never),
+      getTimeEntrySettings: vi.fn(async () => ({ time_rounding: { mode: 'exact' as const, minutes: 15 as const } })),
+      getInvoiceQuickBooks: vi.fn(async () => ({ connected: false, invoice: null, payments: [], last_outcome: null })),
+      getInvoiceReminderPreference: vi.fn(async () => ({ invoice_id: 7, reminders: null, organization_reminder_policy: { first_after_days: 3, every_days: 7 }, effective: true, next_reminder_at: '2026-09-18T00:00:00.000Z' })),
+      listInvoiceMessages: vi.fn(async () => []),
+      listInvoicePayments: vi.fn(async () => []),
+    }).activate(identity(1), new AbortController().signal, () => false)
+    const article = document.querySelector<HTMLElement>('[data-invoice-document]')!
+    for (const selector of ['[data-invoice-rounding-fact]', '[data-invoice-quickbooks-fact]', '[data-invoice-reminders-fact]']) {
+      const fact = document.querySelector<HTMLElement>(selector)!
+      await vi.waitFor(() => expect(fact.hidden).toBe(false))
+      expect(article.contains(fact)).toBe(false)
+      expect(fact.closest('[data-invoice-internal]')).not.toBeNull()
+    }
+    expect(article.textContent).not.toContain('organization setting')
+    expect(article.textContent).not.toContain('Not connected')
+    expect(article.textContent).not.toContain('Send payment reminders')
+    expect(document.querySelector('[data-invoice-detail-total]')?.textContent).toBe('$10.00')
+    expect(document.querySelector('[data-invoice-reminders-toggle]')).not.toBeNull()
+    applyPrintRules()
+    expect(painted('[data-invoice-internal]').display).toBe('none')
+    expect(painted('[data-invoice-document]').display).not.toBe('none')
+    expect(painted('[data-invoice-detail-total]').display).not.toBe('none')
+  })
+
   it('[browser #949] leaves the rounding row out when there is nothing to say', async () => {
     renderDetail()
     await createInvoicePaymentController({

@@ -1,0 +1,30 @@
+{
+  "upstream": "https://github.com/cloudflare/workers-sdk/pull/15552",
+  "commit": "6f3d7b58b1f6cd036aca3e5946807bba37776065",
+  "packages": [
+    {
+      "version": "4.20260730.0",
+      "inputSha256": "25f0935c66e24b503a64561e77625b1dd163995ce2177485e3be48d05bde7d45",
+      "outputSha256": "75d16e8043db0b5ca20e40e336623d90af5630bae8330bf6ccc81a9abc24386d"
+    },
+    {
+      "version": "5.20260911.0-alpha",
+      "inputSha256": "c6caf860a78bdb2f1ae758de0f131be1487292034358f09615750ae576a486b9",
+      "outputSha256": "c31080d939ae0736c9abad0e5293f9eb369e3024b6f0d38ef0167ed8f1fa7bad"
+    }
+  ],
+  "replacements": [
+    {
+      "before": "Atomics.store(notifyHandle, /* index */ 0, /* value */ 1);",
+      "after": "Atomics.store(notifyHandle, /* index */ 0, /* generation */ (id + 1) | 0);"
+    },
+    {
+      "before": "    Atomics.store(\n      this.#notifyHandle,\n      /* index */\n      0,\n      /* value */\n      0\n    );\n",
+      "after": "    // Upstream PR15552: retain the previous generation until this reply is published.\n\n\n\n\n\n\n"
+    },
+    {
+      "before": "    Atomics.wait(\n      this.#notifyHandle,\n      /* index */\n      0,\n      /* value */\n      0\n    );",
+      "after": "    const generation = (id + 1) | 0;\n    for (let seen = Atomics.load(this.#notifyHandle, 0);\n      seen !== generation;\n      seen = Atomics.load(this.#notifyHandle, 0)) {\n      Atomics.wait(this.#notifyHandle, 0, seen);\n    }\n"
+    }
+  ]
+}
