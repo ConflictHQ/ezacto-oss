@@ -1,3 +1,4 @@
+export { createManagedWiseConnectionCommands, type ManagedWiseConnectionOptions, type ManagedWiseConnectCommand, type ManagedWiseDisconnectInput } from './managed-wise.js'
 export { installCalendarConnectionRoutes, type CalendarConnectionPort } from './calendar-connections.js'
 export { installCalendarFeedRoutes, installCalendarSubscriptionRoute } from './calendar-feeds.js'
 export { installDeelPaymentStatusRoutes } from './deel-payment-status.js'
