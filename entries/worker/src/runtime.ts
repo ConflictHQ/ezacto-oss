@@ -1575,6 +1575,7 @@ export const createRuntimeServices = async (
             signingKey: credentials.MAILGUN_WEBHOOK_SIGNING_KEY,
             log: emailLog,
             ledger: createD1EmailFeedbackLedger(database),
+            ...(emailProvider instanceof MailgunMailer ? { verifyHeldReminder: (input: Parameters<MailgunMailer['inspectReminderEvent']>[0]) => emailProvider.inspectReminderEvent(input) } : {}),
           }),
         }),
     paymentRuns,

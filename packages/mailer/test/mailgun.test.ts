@@ -19,6 +19,37 @@ const message = {
 const response = (body: unknown, status = 200): Response =>
   new Response(JSON.stringify(body), { status });
 
+describe("held reminder evidence", () => {
+  const scope = { deliveryId: 7, attemptId: "b5f88b55-bc30-4bf2-94f5-350849e4b6c0", eventId: "evt-1",
+    messageId: "mg-1", recipient: "owner@example.test", eventType: "delivered" as const, begin: 100, end: 200 };
+  const tag = "ezacto_idempotency_key:ezacto-reminder-7-b5f88b55-bc30-4bf2-94f5-350849e4b6c0";
+  const event = { id: "evt-1", event: "delivered", timestamp: 150, recipient: "owner@example.test",
+    tags: [tag], message: { headers: { "message-id": "<mg-1>" } } };
+
+  it("[security #1352] accepts only an exact authenticated domain-scoped observation", async () => {
+    let request: Request | undefined;
+    const provider = new MailgunMailer(config, { fetch: async value => { request = value; return response({ items: [event] }); } });
+    expect(await provider.inspectReminderEvent(scope)).toBe(true);
+    expect(request?.method).toBe("GET");
+    expect(request?.redirect).toBe("error");
+    expect(new URL(request!.url).pathname).toBe("/v3/mail.example.test/events");
+    expect(new URL(request!.url).searchParams.get("tags")).toBe(tag);
+    expect(request!.url).not.toContain(scope.recipient);
+  });
+
+  it("[security #1352] does not infer acceptance from missing or mismatched evidence", async () => {
+    for (const item of [null, { ...event, recipient: "other@example.test" }, { ...event, id: "other" },
+      { ...event, tags: ["other"] }, { ...event, timestamp: 201 }, { ...event, message: { headers: { "message-id": "other" } } }]) {
+      const provider = new MailgunMailer(config, { fetch: async () => response({ items: item === null ? [] : [item] }) });
+      expect(await provider.inspectReminderEvent(scope)).toBe(false);
+    }
+    const invalid = new MailgunMailer(config, { fetch: async () => response({ items: "invalid" }) });
+    await expect(invalid.inspectReminderEvent(scope)).rejects.toThrow("Mailgun evidence response is invalid");
+    const oversized = new MailgunMailer(config, { fetch: async () => new Response("x".repeat(1_000_001)) });
+    await expect(oversized.inspectReminderEvent(scope)).rejects.toThrow("Mailgun evidence response exceeded size limit");
+  });
+});
+
 describe("Mailgun HTTP provider", () => {
   it("[unit] sends a form-encoded POST to the Mailgun v3 messages endpoint and returns a durable receipt", async () => {
     const requests: Request[] = [];

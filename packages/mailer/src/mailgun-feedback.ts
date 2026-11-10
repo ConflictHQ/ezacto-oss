@@ -73,6 +73,9 @@ export interface MailgunFeedbackOptions {
   log: EmailLogStore
   ledger: EmailFeedbackLedger
   now?: () => Date
+  /** Authenticated provider observation; false never proves absence. */
+  verifyHeldReminder?: (input: { deliveryId: number; attemptId: string; eventId: string; messageId: string; recipient: string;
+    eventType: 'delivered' | 'failed' | 'complained'; begin: number; end: number }) => Promise<boolean>
 }
 
 const encoder = new TextEncoder()
@@ -182,7 +185,7 @@ export const createMailgunFeedbackService = (
               : null
 
       const at = current.toISOString()
-      const record =
+      let record =
         wanted === null || providerMessageId === null
           ? null
           : await options.log.getByProviderMessageId(providerMessageId)
@@ -190,11 +193,28 @@ export const createMailgunFeedbackService = (
         const hint = hints.length === 1 ? hints[0] : undefined
         if (hint && options.ledger.heldReminderAttempt !== undefined &&
             await options.ledger.heldReminderAttempt('mailgun', hint.deliveryId, hint.attemptId)) {
-          // The event body is not signed. Do not reserve its event id or token
-          // before independent provider evidence authenticates its contents.
-          return { kind: 'retry' }
+          // The signed timestamp/token do not authenticate the event body. Only
+          // an independent provider lookup can establish a positive receipt.
+          if (options.verifyHeldReminder !== undefined && recipient !== null &&
+              (eventType === 'delivered' || eventType === 'failed' || eventType === 'complained')) {
+            const held = await options.log.get(hint.deliveryId)
+            const addressed = held?.status === 'queued' && held.provider === 'mailgun' &&
+              [...held.to, ...held.cc].some(person => person.email.toLowerCase() === recipient)
+            if (addressed) {
+              try {
+                const seconds = Math.floor(current.getTime() / 1000)
+                if (await options.verifyHeldReminder({ ...hint, eventId, messageId: providerMessageId, recipient,
+                  eventType, begin: seconds - 86_100, end: seconds + 300 })) {
+                  await options.log.markSent(hint.deliveryId, 'mailgun', { messageId: providerMessageId }, hint.attemptId)
+                  record = await options.log.getByProviderMessageId(providerMessageId)
+                  if (record?.id !== hint.deliveryId || record.provider !== 'mailgun') return { kind: 'retry' }
+                }
+              } catch { return { kind: 'retry' } }
+            }
+          }
+          if (record === null) return { kind: 'retry' }
         }
-        if (await options.ledger.attemptInFlight('mailgun', at)) {
+        if (record === null && await options.ledger.attemptInFlight('mailgun', at)) {
           // The send may not have recorded its message id yet.
           return { kind: 'retry' }
         }

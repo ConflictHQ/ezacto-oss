@@ -125,6 +125,32 @@ const parseBody = (text: string): Record<string, unknown> => {
   }
 };
 
+/** Bound the provider evidence body while reading, not after allocation. */
+const readEvidenceBody = async (response: Response): Promise<string> => {
+  const length = response.headers.get("content-length");
+  if (length !== null && /^\d+$/u.test(length) && Number(length) > responseLimit) {
+    await response.body?.cancel();
+    throw new Error("Mailgun evidence response exceeded size limit");
+  }
+  if (response.body === null) throw new Error("Mailgun evidence response is invalid");
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  let bytes = 0, result = "";
+  try {
+    for (;;) {
+      const part = await reader.read();
+      if (part.done) break;
+      bytes += part.value.byteLength;
+      if (bytes > responseLimit) {
+        await reader.cancel();
+        throw new Error("Mailgun evidence response exceeded size limit");
+      }
+      result += decoder.decode(part.value, { stream: true });
+    }
+    return result + decoder.decode();
+  } finally { reader.releaseLock(); }
+};
+
 const attachmentSizeLimit = 25 * 1024 * 1024;
 const forbiddenFilenameCharacters = new Set([
   "/", "\\", ":", "*", "?", '"', "<", ">", "|",
@@ -198,6 +224,45 @@ export class MailgunMailer implements HttpEmailProvider {
       options.fetch ?? (async (request) => globalThis.fetch(request));
     this.monotonicNow = options.monotonicNow ?? (() => performance.now());
     this.endpoint = `${baseUrl(region)}/v3/${encodeURIComponent(domain)}/messages`;
+  }
+
+  /** Read one bounded page of authenticated provider events. A positive
+   * match is an observation only; no match is not evidence of non-delivery. */
+  async inspectReminderEvent(input: {
+    deliveryId: number; attemptId: string; eventId: string; messageId: string; recipient: string;
+    eventType: 'delivered' | 'failed' | 'complained'; begin: number; end: number; signal?: AbortSignal;
+  }): Promise<boolean> {
+    if (!Number.isSafeInteger(input.deliveryId) || input.deliveryId < 1 ||
+        !/^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/u.test(input.attemptId) ||
+        !Number.isSafeInteger(input.begin) || !Number.isSafeInteger(input.end) || input.end <= input.begin || input.end - input.begin > 86_400) {
+      throw new TypeError('Mailgun reminder evidence scope is invalid');
+    }
+    const eventId = bounded(input.eventId, 'Mailgun event id', 255);
+    const messageId = bounded(input.messageId, 'Mailgun message id', 512).replace(/^<|>$/gu, '');
+    const recipient = bounded(input.recipient, 'Mailgun recipient', 254).toLowerCase();
+    if (!messageId || !emailPattern.test(recipient) || !['delivered', 'failed', 'complained'].includes(input.eventType)) {
+      throw new TypeError('Mailgun reminder evidence scope is invalid');
+    }
+    const tag = `ezacto_idempotency_key:ezacto-reminder-${input.deliveryId}-${input.attemptId}`;
+    const url = new URL(`${baseUrl(this.region)}/v3/${encodeURIComponent(this.domain)}/events`);
+    url.search = new URLSearchParams({ begin: String(input.begin), end: String(input.end), ascending: 'yes', limit: '100', tags: tag }).toString();
+    const signal = input.signal === undefined ? AbortSignal.timeout(10_000) : AbortSignal.any([input.signal, AbortSignal.timeout(10_000)]);
+    const response = await this.fetchImplementation(new Request(url, { method: 'GET', headers: { authorization: this.authorization }, redirect: 'error', signal }));
+    if (!response.ok) throw new MailgunApiError(response.status);
+    const body = parseBody(await readEvidenceBody(response));
+    if (!Array.isArray(body.items) || body.items.length > 100) throw new Error('Mailgun evidence response is invalid');
+    return body.items.some(value => {
+      if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
+      const item = value as Record<string, unknown>;
+      const message = item.message && typeof item.message === 'object' && !Array.isArray(item.message) ? item.message as Record<string, unknown> : null;
+      const headers = message?.headers && typeof message.headers === 'object' && !Array.isArray(message.headers) ? message.headers as Record<string, unknown> : null;
+      const rawId = typeof headers?.['message-id'] === 'string' ? headers['message-id'].replace(/^<|>$/gu, '') : null;
+      return item.id === eventId && item.event === input.eventType &&
+        (input.eventType !== 'failed' || item.severity === 'permanent') && rawId === messageId &&
+        typeof item.timestamp === 'number' && Number.isFinite(item.timestamp) && item.timestamp >= input.begin && item.timestamp <= input.end &&
+        typeof item.recipient === 'string' && item.recipient.toLowerCase() === recipient &&
+        Array.isArray(item.tags) && item.tags.includes(tag);
+    });
   }
 
   /**

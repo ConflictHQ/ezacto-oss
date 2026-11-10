@@ -8,6 +8,7 @@ import { Miniflare } from 'miniflare'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import {
   createMailgunFeedbackService,
+  MailgunMailer,
   processQueuedEmail,
   type EmailSuppressionStore,
   type EmailFeedbackLedger,
@@ -442,6 +443,45 @@ for (const [runtime, factory] of [
       expect(await current.log.get(queued.id)).toMatchObject({ status: 'queued', providerMessageId: null })
       await current.log.markSent(queued.id, 'mailgun', { messageId: 'mg-a' }, attempt)
       expect(await service.receive(event)).toEqual({ kind: 'applied', outcome: 'bounced' })
+    })
+
+    it('[security #1352] reconciles only an independently verified held reminder event', async () => {
+      const { current } = await setup()
+      const attempt = 'b5f88b55-bc30-4bf2-94f5-350849e4b6c0'
+      const queued = await current.log.createQueued({ ...message('a@example.test'), template: 'reminder:1' })
+      await current.log.claimAttempt(queued.id, 'mailgun', attempt, 30)
+      const verify = vi.fn().mockResolvedValueOnce(false).mockResolvedValueOnce(true)
+      const service = createMailgunFeedbackService({ signingKey: fixtureKey, log: current.log, ledger: current.ledger,
+        now: () => new Date(Date.parse(instant) + 60_000), verifyHeldReminder: verify })
+      const event = post({ id: 'verified-held', tags: [`ezacto_idempotency_key:ezacto-reminder-${queued.id}-${attempt}`] })
+      expect(await service.receive(event)).toEqual({ kind: 'retry' })
+      expect(await current.log.get(queued.id)).toMatchObject({ status: 'queued', providerMessageId: null })
+      expect(await service.receive(event)).toEqual({ kind: 'applied', outcome: 'bounced' })
+      expect(await current.log.get(queued.id)).toMatchObject({ status: 'bounced', providerMessageId: 'mg-a' })
+      expect(verify).toHaveBeenCalledTimes(2)
+      expect(verify).toHaveBeenCalledWith(expect.objectContaining({ deliveryId: queued.id, attemptId: attempt,
+        eventId: 'verified-held', messageId: 'mg-a', recipient: 'owner@example.test', eventType: 'failed' }))
+    })
+
+    it('[security #1352] reconciles against an authenticated Mailgun event lookup', async () => {
+      const { current } = await setup()
+      const attempt = 'b5f88b55-bc30-4bf2-94f5-350849e4b6c0'
+      const queued = await current.log.createQueued({ ...message('a@example.test'), template: 'reminder:1' })
+      await current.log.claimAttempt(queued.id, 'mailgun', attempt, 30)
+      const tag = `ezacto_idempotency_key:ezacto-reminder-${queued.id}-${attempt}`
+      const fetch = vi.fn(async (request: Request) => {
+        expect(request.method).toBe('GET')
+        expect(new URL(request.url).searchParams.get('tags')).toBe(tag)
+        return Response.json({ items: [{ id: 'auth-event', event: 'failed', severity: 'permanent', timestamp: seconds,
+          recipient: 'owner@example.test', tags: [tag], message: { headers: { 'message-id': '<mg-a>' } } }] })
+      })
+      const provider = new MailgunMailer({ apiKey: 'fixture-key', domain: 'mail.example.test' }, { fetch })
+      const service = createMailgunFeedbackService({ signingKey: fixtureKey, log: current.log, ledger: current.ledger,
+        now: () => new Date(Date.parse(instant) + 60_000), verifyHeldReminder: input => provider.inspectReminderEvent(input) })
+      const event = post({ id: 'auth-event', tags: [tag] })
+      expect(await service.receive(event)).toEqual({ kind: 'applied', outcome: 'bounced' })
+      expect(await current.log.get(queued.id)).toMatchObject({ status: 'bounced', providerMessageId: 'mg-a' })
+      expect(fetch).toHaveBeenCalledTimes(1)
     })
 
     it('[security #1352] does not defer unrelated feedback because another reminder is held', async () => {
