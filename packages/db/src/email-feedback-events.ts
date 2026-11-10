@@ -75,6 +75,14 @@ const createLedger = (database: PortableDatabase): EmailFeedbackLedger => ({
     )
   },
 
+  async heldReminderAttempt(provider, deliveryId, attemptId) {
+    if (!Number.isSafeInteger(deliveryId) || deliveryId < 1 ||
+        !/^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/u.test(attemptId)) return false
+    const row = await database.first<{ held: number }>(
+      `SELECT 1 AS held FROM email_log WHERE id = ? AND provider = ? AND status = 'queued'
+        AND template LIKE 'reminder:%' AND active_attempt_id = ? LIMIT 1`, [deliveryId, provider, attemptId])
+    return row !== null
+  },
   async attemptInFlight(provider, now) {
     const row = await database.first<{ held: number }>(
       `SELECT 1 AS held FROM email_log

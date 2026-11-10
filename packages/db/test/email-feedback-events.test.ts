@@ -98,6 +98,7 @@ interface EventInput {
   timestamp?: string
   key?: string
   reason?: string
+  tags?: string[]
 }
 
 const post = (input: EventInput): string => {
@@ -111,6 +112,7 @@ const post = (input: EventInput): string => {
       severity: input.severity ?? 'permanent',
       recipient: input.recipient ?? 'owner@example.test',
       ...(input.reason === undefined ? {} : { reason: input.reason }),
+      ...(input.tags === undefined ? {} : { tags: input.tags }),
       message: { headers: { 'message-id': input.messageId ?? 'mg-a' } },
     },
   })
@@ -425,6 +427,33 @@ for (const [runtime, factory] of [
         { id: 'evt-3', outcome: 'ignored' },
         { id: 'evt-4', outcome: 'ignored' },
       ])
+    })
+
+    it('[security #1352] retains a matching event for an expired held reminder without trusting the tag', async () => {
+      const { current } = await setup()
+      const attempt = 'b5f88b55-bc30-4bf2-94f5-350849e4b6c0'
+      const queued = await current.log.createQueued({ ...message('a@example.test'), template: 'reminder:1' })
+      await current.log.claimAttempt(queued.id, 'mailgun', attempt, 30)
+      const later = new Date(Date.parse(instant) + 60_000)
+      const service = createMailgunFeedbackService({ signingKey: fixtureKey, log: current.log, ledger: current.ledger, now: () => later })
+      const event = post({ id: 'held-event', tags: [`ezacto_idempotency_key:ezacto-reminder-${queued.id}-${attempt}`] })
+      expect(await service.receive(event)).toEqual({ kind: 'retry' })
+      expect(await current.rows('SELECT 1 FROM email_feedback_events')).toEqual([])
+      expect(await current.log.get(queued.id)).toMatchObject({ status: 'queued', providerMessageId: null })
+      await current.log.markSent(queued.id, 'mailgun', { messageId: 'mg-a' }, attempt)
+      expect(await service.receive(event)).toEqual({ kind: 'applied', outcome: 'bounced' })
+    })
+
+    it('[security #1352] does not defer unrelated feedback because another reminder is held', async () => {
+      const { current } = await setup()
+      const attempt = 'b5f88b55-bc30-4bf2-94f5-350849e4b6c0'
+      const queued = await current.log.createQueued({ ...message('a@example.test'), template: 'reminder:1' })
+      await current.log.claimAttempt(queued.id, 'mailgun', attempt, 30)
+      const service = createMailgunFeedbackService({ signingKey: fixtureKey, log: current.log, ledger: current.ledger,
+        now: () => new Date(Date.parse(instant) + 60_000) })
+      const event = post({ id: 'unrelated', tags: [`ezacto_idempotency_key:ezacto-reminder-${queued.id + 1}-${attempt}`] })
+      expect(await service.receive(event)).toEqual({ kind: 'applied', outcome: 'ignored' })
+      expect(await current.log.get(queued.id)).toMatchObject({ status: 'queued', providerMessageId: null })
     })
 
     it('[unit] answers retry while a send is mid-flight, records nothing, and lands on the retry', async () => {

@@ -49,6 +49,8 @@ export interface EmailFeedbackLedger {
   ): Promise<void>
   /** Whether a send to this provider holds a live lease, so its message id is not yet recorded. */
   attemptInFlight(provider: string, now: string): Promise<boolean>
+  /** Untrusted correlation is only a hint to delay disposition, never evidence. */
+  heldReminderAttempt?(provider: string, deliveryId: number, attemptId: string): Promise<boolean>
 }
 
 export type MailgunFeedbackResult =
@@ -158,6 +160,15 @@ export const createMailgunFeedbackService = (
       const headers = asObject(asObject(data['message'])?.['headers'])
       const rawMessageId = text(headers?.['message-id'], 512)
       const providerMessageId = rawMessageId === null ? null : bareMessageId(rawMessageId)
+      // Mailgun signs its timestamp and token, not this body. A correlation tag
+      // can only delay discarding an event; it cannot establish a receipt.
+      const tags = Array.isArray(data['tags']) ? data['tags'] : []
+      const hints = tags.flatMap(tag => {
+        if (typeof tag !== 'string') return []
+        const match = /^ezacto_idempotency_key:ezacto-reminder-([1-9][0-9]{0,15})-([a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12})$/u.exec(tag)
+        if (!match || !Number.isSafeInteger(Number(match[1]))) return []
+        return [{ deliveryId: Number(match[1]), attemptId: match[2]! }]
+      })
 
       // Failed is only a bounce when permanent: Mailgun keeps retrying a
       // temporary failure, and one that later succeeds is not a bad address.
@@ -175,15 +186,18 @@ export const createMailgunFeedbackService = (
         wanted === null || providerMessageId === null
           ? null
           : await options.log.getByProviderMessageId(providerMessageId)
-      if (
-        wanted !== null &&
-        providerMessageId !== null &&
-        record === null &&
-        (await options.ledger.attemptInFlight('mailgun', at))
-      ) {
-        // The send this event is about may not have written its message id
-        // yet. Answering now would drop an event that a retry would land.
-        return { kind: 'retry' }
+      if (wanted !== null && providerMessageId !== null && record === null) {
+        const hint = hints.length === 1 ? hints[0] : undefined
+        if (hint && options.ledger.heldReminderAttempt !== undefined &&
+            await options.ledger.heldReminderAttempt('mailgun', hint.deliveryId, hint.attemptId)) {
+          // The event body is not signed. Do not reserve its event id or token
+          // before independent provider evidence authenticates its contents.
+          return { kind: 'retry' }
+        }
+        if (await options.ledger.attemptInFlight('mailgun', at)) {
+          // The send may not have recorded its message id yet.
+          return { kind: 'retry' }
+        }
       }
 
       const claim = await options.ledger.claim({
