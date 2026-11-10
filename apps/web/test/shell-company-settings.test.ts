@@ -5,7 +5,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { EzactoClient } from '@conflict-hq/ezacto-client'
 import type { LogPageResult } from '../src/components/paged-log.js'
 import { createShellApi } from '../src/shell/model.js'
-import type { CompanySettingsApi, NotificationSettingsState } from '../src/module-settings/model.js'
+import type { CompanySettingsApi, NotificationSettingsState, QuickBooksConnectionView } from '../src/module-settings/model.js'
 import {
   EzactoApiError,
   authenticationError,
@@ -1108,6 +1108,83 @@ describe('company settings', () => {
     allow.checked = true
     allow.dispatchEvent(new Event('change', { bubbles: true }))
     await vi.waitFor(() => expect(api.updateQuickBooksSettings).toHaveBeenCalledWith(true, expect.anything()))
+  })
+
+  it('[browser #1236] keeps a disconnect intent through a failed request and clears it on success', async () => {
+    sessionStorage.removeItem('ezacto.quickbooks.disconnect.v1')
+    stubModulesEndpoint()
+    openCompanySettings('integrations')
+    const disconnectQuickBooks = vi.fn().mockRejectedValueOnce(new Error('response lost')).mockResolvedValue(undefined)
+    const api = {
+      ...companyApi([senderIdentity()], []),
+      getQuickBooksConnection: vi.fn(async () => ({ configured: true, connection: {
+        realm_id: 'realm-a', company_name: 'Northpeak Books', scope: 'com.intuit.quickbooks.accounting',
+        allow_online_payment: false, connected_at: '2026-09-11T12:00:00.000Z',
+      } })),
+      disconnectQuickBooks,
+    }
+    const controller = createModuleSettingsController(api as never)
+    await controller.activate(identity, new AbortController().signal, () => false)
+    const button = document.querySelector<HTMLButtonElement>('[data-quickbooks-disconnect]')!
+    await vi.waitFor(() => expect(button.hidden).toBe(false))
+    button.click()
+    await vi.waitFor(() => expect(button.disabled).toBe(false))
+    expect(disconnectQuickBooks).toHaveBeenCalledTimes(1)
+    const key = disconnectQuickBooks.mock.calls[0]![1]
+    expect(key).toMatch(/^[0-9a-f-]{36}$/)
+    expect(sessionStorage.getItem('ezacto.quickbooks.disconnect.v1')).toContain(key)
+    button.click()
+    await vi.waitFor(() => expect(disconnectQuickBooks).toHaveBeenCalledTimes(2))
+    expect(disconnectQuickBooks.mock.calls[1]![1]).toBe(key)
+    await vi.waitFor(() => expect(sessionStorage.getItem('ezacto.quickbooks.disconnect.v1')).toBeNull())
+  })
+
+  it.each([true, false])('[browser #1236] recovers only the stored intent for the same connection: %s', async sameConnection => {
+    const savedKey = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa'
+    stubModulesEndpoint()
+    openCompanySettings('integrations')
+    sessionStorage.setItem('ezacto.quickbooks.disconnect.v1', JSON.stringify({
+      binding: JSON.stringify([identity.user_id, 'realm-a', '2026-09-11T12:00:00.000Z']), key: savedKey,
+    }))
+    const disconnectQuickBooks = vi.fn().mockRejectedValue(new Error('response lost'))
+    const api = {
+      ...companyApi([senderIdentity()], []),
+      getQuickBooksConnection: vi.fn(async () => ({ configured: true, connection: {
+        realm_id: 'realm-a', company_name: null, scope: 'com.intuit.quickbooks.accounting',
+        allow_online_payment: false, connected_at: sameConnection ? '2026-09-11T12:00:00.000Z' : '2026-10-11T12:00:00.000Z',
+      } })),
+      disconnectQuickBooks,
+    }
+    const controller = createModuleSettingsController(api as never)
+    await controller.activate(identity, new AbortController().signal, () => false)
+    const button = document.querySelector<HTMLButtonElement>('[data-quickbooks-disconnect]')!
+    await vi.waitFor(() => expect(button.hidden).toBe(false))
+    button.click()
+    await vi.waitFor(() => expect(disconnectQuickBooks).toHaveBeenCalledTimes(1))
+    expect(disconnectQuickBooks.mock.calls[0]![1] === savedKey).toBe(sameConnection)
+    await vi.waitFor(() => expect(button.disabled).toBe(false))
+    sessionStorage.removeItem('ezacto.quickbooks.disconnect.v1')
+  })
+
+  it('[browser #1236] withdraws the old disconnect control while a new session loads', async () => {
+    stubModulesEndpoint()
+    openCompanySettings('integrations')
+    const next = deferred<QuickBooksConnectionView>()
+    const disconnectQuickBooks = vi.fn()
+    const getQuickBooksConnection = vi.fn().mockResolvedValueOnce({ configured: true, connection: {
+      realm_id: 'realm-a', company_name: null, scope: 'com.intuit.quickbooks.accounting',
+      allow_online_payment: false, connected_at: '2026-09-11T12:00:00.000Z',
+    } }).mockReturnValueOnce(next.promise)
+    const controller = createModuleSettingsController({ ...companyApi([senderIdentity()], []), getQuickBooksConnection, disconnectQuickBooks } as never)
+    await controller.activate(identity, new AbortController().signal, () => false)
+    const button = document.querySelector<HTMLButtonElement>('[data-quickbooks-disconnect]')!
+    await vi.waitFor(() => expect(button.hidden).toBe(false))
+    const loading = controller.activate({ ...identity, user_id: 2 }, new AbortController().signal, () => false)
+    expect(document.querySelector<HTMLElement>('[data-settings-quickbooks-actions]')!.hidden).toBe(true)
+    button.click()
+    expect(disconnectQuickBooks).not.toHaveBeenCalled()
+    next.resolve({ configured: true, connection: null })
+    await loading
   })
 
   it.each(['pending', 'unavailable'] as const)('[browser #1235] shows QuickBooks authorization %s without offering accounting actions', async authorization => {

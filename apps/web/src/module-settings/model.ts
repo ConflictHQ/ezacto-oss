@@ -367,7 +367,7 @@ export interface CompanySettingsApi extends PayoutProviderSwitchesApi {
     allowOnlinePayment: boolean,
     signal?: AbortSignal,
   ): Promise<unknown>
-  disconnectQuickBooks?(signal?: AbortSignal): Promise<void>
+  disconnectQuickBooks?(signal?: AbortSignal, idempotencyKey?: string): Promise<void>
   /** Reads QuickBooks and lists differences; changes nothing on either side. */
   getQuickBooksReconciliation?(signal?: AbortSignal): Promise<QuickBooksReconciliationView>
 
