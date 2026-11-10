@@ -24,7 +24,8 @@ import {
  *
  * A contact arrives by an emailed link carrying a sign-in token in the URL
  * fragment, or with a session they already hold. The fragment is stripped from
- * the address bar before the first request, the token is spent once on
+ * the address bar before the first request. After an explicit confirmation,
+ * the token is spent once on
  * `/portal/verify`, and everything after that rides the session cookie the
  * server sets. Nothing is kept in storage and nothing is sent anywhere but the
  * portal routes.
@@ -85,6 +86,11 @@ export const mountPortalEstimates = async (
   const signInForm = required<HTMLFormElement>('[data-portal-sign-in-form]')
   const email = required<HTMLInputElement>('[data-portal-email]')
   const requestLink = required<HTMLButtonElement>('[data-portal-request-link]')
+  const signInConfirm = required<HTMLElement>('[data-portal-sign-in-confirm]')
+  const confirmLink = required<HTMLButtonElement>('[data-portal-confirm-link]')
+  const cancelLink = required<HTMLButtonElement>('[data-portal-cancel-link]')
+  let signInToken = tokenFromFragment(environment.location.hash)
+  let confirmingLink = false
   let linkPending = false
 
   let open: PortalEstimate | null = null
@@ -405,7 +411,7 @@ export const mountPortalEstimates = async (
     void route()
   })
   window.addEventListener('popstate', () => {
-    void route()
+    if (signInToken === null) void route()
   })
 
   signInForm.addEventListener('submit', (event) => {
@@ -434,22 +440,43 @@ export const mountPortalEstimates = async (
       })
   })
 
-  const token = tokenFromFragment(environment.location.hash)
-  if (token !== null) {
-    // Out of the address bar before anything else, so it is in no history entry,
-    // screenshot or copied link from here on.
-    environment.history.replaceState(
-      null,
-      '',
-      `${environment.location.pathname}${environment.location.search}`,
-    )
+  confirmLink.addEventListener('click', () => {
+    if (signInToken === null || confirmingLink) return
+    confirmingLink = true
+    confirmLink.disabled = cancelLink.disabled = true
     status.textContent = 'Signing you in…'
-    try {
-      await request('/portal/verify', {method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({token})})
-    } catch (error) {
+    void request('/portal/verify', {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ token: signInToken }),
+    }).then(async () => {
+      signInToken = null
+      signInConfirm.hidden = true
+      await route()
+    }).catch(error => {
+      signInToken = null
+      signInConfirm.hidden = true
+      signIn.hidden = false
       fail(error)
-      return
-    }
+    }).finally(() => { confirmingLink = false })
+  })
+  cancelLink.addEventListener('click', () => {
+    if (confirmingLink) return
+    signInToken = null
+    signInConfirm.hidden = true
+    signIn.hidden = false
+    status.textContent = 'Nothing was signed in. Request a new link with your email address.'
+    email.focus()
+  })
+
+  if (signInToken !== null) {
+    // Remove the credential before any request, and retain it only in this
+    // page's closure. Merely opening an emailed URL never spends its token.
+    environment.history.replaceState(
+      null, '', `${environment.location.pathname}${environment.location.search}`,
+    )
+    signInConfirm.hidden = false
+    status.textContent = 'Confirm to sign in with this link. It works once.'
+    return
   }
   await route()
 }

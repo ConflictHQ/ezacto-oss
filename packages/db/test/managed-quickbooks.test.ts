@@ -1,3 +1,5 @@
+import { createManagedQuickBooksRefresh } from '@ezacto/integrations'
+import { createManagedQuickBooksRefreshStore } from '../src/quickbooks-refresh.js'
 import BetterSqlite3 from 'better-sqlite3'
 import { Miniflare } from 'miniflare'
 import { sql } from 'drizzle-orm'
@@ -357,14 +359,13 @@ describe.each(['sqlite', 'd1'] as const)('managed QuickBooks native %s', (runtim
   it('does not confuse a token refresh with a new accepted connection incarnation', async () => {
     const f = await fixture(runtime)
     await f.commands.accept(f.request(), f.command)
-    await f.canonical.saveTokens({
-      realmId: 'owned-realm',
-      accessToken: 'NEW_ACCESS',
-      refreshToken: 'NEW_REFRESH',
+    const refresh = createManagedQuickBooksRefresh({ store: createManagedQuickBooksRefreshStore(f.db),
+      admitted: () => true, now: () => new Date(f.now()) })
+    await refresh.refresh((await f.canonical.readConnection())!, async () => ({
+      accessToken: 'NEW_ACCESS', refreshToken: 'NEW_REFRESH',
       accessTokenExpiresAt: '2026-10-24T20:00:00.000Z',
       refreshTokenExpiresAt: '2027-10-25T18:00:00.000Z',
-      now: f.now(),
-    })
+    }))
     expect(data(await f.commands.inspect(f.request(), f.command))).toMatchObject({
       replayed: true,
       connectionGeneration: 1,

@@ -1,6 +1,9 @@
 import BetterSqlite3 from 'better-sqlite3'
 import { Miniflare } from 'miniflare'
-import { afterEach, describe, expect, it, vi } from 'vitest'
+import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest'
+import { cp, mkdtemp, rm } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import { createContainerDatabase, createD1Database } from '../src/adapters.js'
 import {
   executeInvoiceEdit,
@@ -9,6 +12,7 @@ import {
   type InvoiceStateDatabase,
 } from '../src/invoice-state.js'
 import { migrateContainer, migrateD1 } from '../src/migrate.js'
+import { FollowUpDeliveryDeferred } from '../src/follow-up-deferred.js'
 import {
   ACTIVITY_LOG_SUBSCRIBER_ID,
   createContainerOutboxService,
@@ -30,9 +34,49 @@ const paidAt = '2026-09-02T10:01:00.000Z'
 const drainAt = '2026-09-02T10:02:00.000Z'
 const authorize = async () => true
 
+const workerOptions = { modules: true,
+  script: 'export default { fetch() { return new Response("ok") } }', d1Databases: ['DB'] } as const
+let templateRoot: string, sqliteTemplate: Buffer
+const templateOwnership = { worker: undefined as Miniflare | undefined, disposal: undefined as Promise<void> | undefined }
+const disposeTemplate = () => templateOwnership.disposal ??= templateOwnership.worker?.dispose() ?? Promise.resolve()
+let templateClosed = false
+const caseClosers: (() => Promise<void>)[] = []
+const closeCases = async () => {
+  const results = await Promise.allSettled(caseClosers.splice(0).map(close => close()))
+  const failures = results.filter(result => result.status === 'rejected')
+  if (failures.length) throw new AggregateError(failures.map(result => result.reason), 'Outbox fixture cleanup failed')
+}
+beforeAll(() => {
+  const sqlite = new BetterSqlite3(':memory:')
+  try { migrateContainer(sqlite); sqliteTemplate = sqlite.serialize() } finally { sqlite.close() }
+})
+const prepareD1Template = async () => {
+  templateRoot = await mkdtemp(join(tmpdir(), 'outbox-schema-'))
+  if (templateClosed) {
+    await rm(templateRoot, { recursive: true, force: true })
+    throw new Error('Outbox fixture setup was closed')
+  }
+  const template = new Miniflare({ ...workerOptions, d1Persist: join(templateRoot, 'd1') })
+  templateOwnership.worker = template
+  try { await migrateD1(await template.getD1Database('DB')) }
+  finally { await disposeTemplate() }
+  if (templateClosed) throw new Error('Outbox fixture setup was closed')
+}
+afterEach(closeCases)
+afterAll(async () => {
+  templateClosed = true
+  try { await closeCases() }
+  finally {
+    try { await disposeTemplate() }
+    finally { if (templateRoot) await rm(templateRoot, { recursive: true, force: true }) }
+  }
+})
+
 const containerDatabase = (): TestDatabase => {
-  const database = new BetterSqlite3(':memory:')
-  migrateContainer(database)
+  const database = new BetterSqlite3(Buffer.from(sqliteTemplate))
+  let disposed = false
+  const close = async () => { if (!disposed) { disposed = true; database.close() } }
+  caseClosers.push(close)
   return {
     orm: createContainerDatabase(database),
     outbox: (options = {}) => createContainerOutboxService(database, options),
@@ -41,37 +85,38 @@ const containerDatabase = (): TestDatabase => {
     },
     rows: async <T>(sql: string, ...bindings: unknown[]) =>
       database.prepare(sql).all(...bindings) as T[],
-    close: async () => {
-      database.close()
-    },
+    close,
   }
 }
 
 const d1Database = async (): Promise<TestDatabase> => {
-  const miniflare = new Miniflare({
-    modules: true,
-    script: 'export default { fetch() { return new Response("ok") } }',
-    d1Databases: ['DB'],
-  })
-  const database = await miniflare.getD1Database('DB')
-  await migrateD1(database)
-  return {
-    orm: createD1Database(database),
-    outbox: (options = {}) => createD1OutboxService(database, options),
-    run: async (sql, ...bindings) => {
-      await database
-        .prepare(sql)
-        .bind(...bindings)
-        .run()
-    },
-    rows: async <T>(sql: string, ...bindings: unknown[]) =>
-      (
-        await database
-          .prepare(sql)
-          .bind(...bindings)
-          .all<T>()
-      ).results,
-    close: async () => miniflare.dispose(),
+  const directory = await mkdtemp(join(tmpdir(), 'outbox-case-'))
+  const resources = { worker: undefined as Miniflare | undefined, disposed: false,
+    closing: undefined as Promise<void> | undefined }
+  const close = () => resources.closing ??= (async () => {
+    resources.disposed = true
+    try { await resources.worker?.dispose() }
+    finally { await rm(directory, { recursive: true, force: true }) }
+  })()
+  caseClosers.push(close)
+  try {
+    await cp(join(templateRoot, 'd1'), join(directory, 'd1'), { recursive: true })
+    if (templateClosed || resources.disposed) throw new Error('Outbox fixture startup was closed')
+    resources.worker = new Miniflare({ ...workerOptions, d1Persist: join(directory, 'd1') })
+    const database = await resources.worker.getD1Database('DB')
+    return {
+      orm: createD1Database(database),
+      outbox: (options = {}) => createD1OutboxService(database, options),
+      run: async (sql, ...bindings) => { await database.prepare(sql).bind(...bindings).run() },
+      rows: async <T>(sql: string, ...bindings: unknown[]) =>
+        (await database.prepare(sql).bind(...bindings).all<T>()).results,
+      close,
+    }
+  } catch (error) {
+    await close()
+    // A cancelled copy may have finished after its first cleanup.
+    await rm(directory, { recursive: true, force: true })
+    throw error
   }
 }
 
@@ -168,8 +213,77 @@ const payInvoice = async (
 for (const [runtime, factory] of factories) {
   describe(`outbox drainer (${runtime})`, () => {
     let database: TestDatabase | undefined
+    if (runtime === 'D1') beforeAll(prepareD1Template)
 
     afterEach(async () => database?.close())
+
+    it('[regression] keeps each migrated fixture physically isolated with foreign keys enabled', async () => {
+      const first = await factory(), second = await factory()
+      await installFixture(first)
+      expect(await first.rows('PRAGMA foreign_keys')).toEqual([{ foreign_keys: 1 }])
+      expect(await second.rows('PRAGMA foreign_keys')).toEqual([{ foreign_keys: 1 }])
+      expect(await second.rows('SELECT count(*) AS n FROM organizations')).toEqual([{ n: 0 }])
+      const later = await factory()
+      expect(await later.rows('SELECT count(*) AS n FROM organizations')).toEqual([{ n: 0 }])
+      expect(await first.rows('SELECT name FROM organizations')).toEqual([{ name: 'Outbox Test' }])
+    })
+
+    it('[regression] pausing an expired final owner preserves the retry limit and fences its stale acknowledgement', async () => {
+      database = await factory()
+      await installFixture(database)
+      await sendInvoice(database)
+      await database.run(`INSERT INTO outbox_delivery_receipts
+        (subscriber_id,event_id,status,attempt_count,active_attempt_id,attempt_lease_expires_at,created_at,updated_at)
+        VALUES('paused-final','outbox-event-sent','processing',1,'old-owner',?,?,?)`,
+        '2026-09-02T10:01:00.000Z',sentAt,sentAt)
+      let available = false, now = drainAt
+      const deliver = vi.fn(async () => {})
+      const options = { subscribers: [{ id: 'paused-final', available: () => available, deliver }],
+        now: () => now, maxAttempts: 1, retryDelaySeconds: [] }
+      expect(await database.outbox(options).drain()).toMatchObject({ delivered: 0, failed: 0 })
+      expect(await database.rows("SELECT status,attempt_count,active_attempt_id FROM outbox_delivery_receipts WHERE subscriber_id='paused-final'"))
+        .toEqual([{ status: 'pending', attempt_count: 1, active_attempt_id: null }])
+      available = true; now = '2026-09-02T10:03:00.000Z'
+      expect(await database.outbox(options).drain()).toMatchObject({ failed: 1, delivered: 0 })
+      expect(deliver).not.toHaveBeenCalled()
+      expect(await database.rows("SELECT status,attempt_count,next_attempt_at FROM outbox_delivery_receipts WHERE subscriber_id='paused-final'"))
+        .toEqual([{ status: 'failed', attempt_count: 1, next_attempt_at: null }])
+    })
+
+    it('[regression] pauses unavailable provider intent without attempts, unrelated stalls or resending completed mail after restart', async () => {
+      database = await factory()
+      await installFixture(database)
+      await sendInvoice(database)
+      await database.run(`INSERT INTO event_outbox
+        (id,aggregate_type,aggregate_id,aggregate_sequence,event_type,payload_json,occurred_at,available_at)
+        VALUES('unrelated','fixture',9,1,'fixture.changed','{}',?,?)`,sentAt,sentAt)
+      let enabled = false, now = drainAt
+      const mail = vi.fn(async () => {}), mirror = vi.fn(async () => {})
+      const subscribers: OutboxSubscriber[] = [
+        { id: 'mail', deliver: async event => { if (event.eventType === 'invoice.sent') await mail() } },
+        { id: 'bill', available: async event => event.eventType !== 'invoice.sent' || enabled,
+          deliver: async event => { if (event.eventType === 'invoice.sent') await mirror() } },
+      ]
+      const options = { subscribers, now: () => now, maxAttempts: 1, retryDelaySeconds: [] }
+      expect(await database.outbox(options).drain()).toMatchObject({ failed: 0, retried: 0 })
+      expect(mail).toHaveBeenCalledTimes(1)
+      expect(mirror).not.toHaveBeenCalled()
+      expect(await database.rows("SELECT status,attempt_count,last_error_code FROM outbox_delivery_receipts WHERE subscriber_id='bill' AND event_id='outbox-event-sent'"))
+        .toEqual([{ status: 'pending', attempt_count: 0, last_error_code: null }])
+      expect(await database.rows("SELECT id FROM event_outbox WHERE published_at IS NOT NULL"))
+        .toEqual([{ id: 'unrelated' }])
+      enabled = true
+      now = '2026-09-02T10:03:00.000Z'
+      const restarted = database.outbox(options)
+      expect(await restarted.drain()).toMatchObject({ delivered: 1, failed: 0, retried: 0 })
+      expect(mirror).toHaveBeenCalledTimes(1)
+      expect(mail).toHaveBeenCalledTimes(1)
+      expect(await database.rows("SELECT status,attempt_count FROM outbox_delivery_receipts WHERE subscriber_id='bill' AND event_id='outbox-event-sent'"))
+        .toEqual([{ status: 'delivered', attempt_count: 1 }])
+      expect(await database.rows('SELECT id FROM event_outbox WHERE published_at IS NULL')).toEqual([])
+      expect(await restarted.drain()).toMatchObject({ examined: 0 })
+      expect(mirror).toHaveBeenCalledTimes(1)
+    })
 
     if (runtime === 'container') {
       it.each(['before', 'after'] as const)('[regression] finalizes once after a lost %s-commit completion response', async (when) => {
@@ -474,6 +588,55 @@ for (const [runtime, factory] of factories) {
       // an invoice.sent it did not have.
       expect(byInvoice.get(1)).toEqual(['invoice.sent', 'payment.recorded', 'invoice.paid'])
       expect(byInvoice.get(2)).toEqual(['invoice.updated', 'payment.recorded', 'invoice.paid'])
+    })
+
+    it('[money] defers a waiting follow-up without exhausting failure attempts', async () => {
+      database = await factory()
+      await installFixture(database)
+      await sendInvoice(database)
+      let now = Date.parse(drainAt), ready = false
+      const deliver = vi.fn(async () => { if (!ready) throw new FollowUpDeliveryDeferred() })
+      const service = database.outbox({ subscribers: [{ id: 'invoice_thank_you', deliver }], now: () => new Date(now).toISOString(),
+        createAttemptId: (() => { let id = 0; return () => `deferred-${++id}` })(), maxAttempts: 2, retryDelaySeconds: [60] })
+      for (let i = 0; i < 6; i++) {
+        await expect(service.drain()).resolves.toMatchObject({ retried: 1, failed: 0 })
+        expect(await service.listDeliveries({ status: 'pending' })).toEqual([expect.objectContaining({ subscriberId: 'invoice_thank_you', attemptCount: 0 })])
+        now += 300_000
+      }
+      ready = true
+      await expect(service.drain()).resolves.toMatchObject({ delivered: 1 })
+      expect(deliver).toHaveBeenCalledTimes(7)
+    })
+
+    it('[money] preserves prior real failures when the next follow-up attempt is deferred', async () => {
+      database = await factory()
+      await installFixture(database)
+      await sendInvoice(database)
+      let now = Date.parse(drainAt), state: 'failure' | 'waiting' | 'ready' = 'failure'
+      const service = database.outbox({ subscribers: [{ id: 'invoice_thank_you', deliver: async () => {
+        if (state === 'failure') throw new Error('fixture failure')
+        if (state === 'waiting') throw new FollowUpDeliveryDeferred()
+      } }], now: () => new Date(now).toISOString(), maxAttempts: 2, retryDelaySeconds: [60] })
+      await expect(service.drain()).resolves.toMatchObject({ retried: 1 })
+      now += 60_000; state = 'waiting'
+      await expect(service.drain()).resolves.toMatchObject({ retried: 1, failed: 0 })
+      expect(await service.listDeliveries({ status: 'pending' })).toEqual([
+        expect.objectContaining({ subscriberId: 'invoice_thank_you', attemptCount: 1, lastErrorCode: 'subscriber_rejected' }),
+      ])
+      now += 300_000; state = 'ready'
+      await expect(service.drain()).resolves.toMatchObject({ delivered: 1 })
+    })
+
+    it('[security] does not grant follow-up deferral to another subscriber', async () => {
+      database = await factory()
+      await installFixture(database)
+      await sendInvoice(database)
+      const service = database.outbox({ subscribers: [{ id: 'other', deliver: async () => { throw new FollowUpDeliveryDeferred() } }],
+        now: () => drainAt, maxAttempts: 1, retryDelaySeconds: [] })
+      await expect(service.drain()).resolves.toMatchObject({ failed: 1 })
+      expect(await service.listDeliveries({ status: 'failed' })).toEqual([
+        expect.objectContaining({ subscriberId: 'other', attemptCount: 1, lastErrorCode: 'subscriber_rejected' }),
+      ])
     })
 
     it('[unit] retries on the deterministic schedule, surfaces failure, and permits retry', async () => {

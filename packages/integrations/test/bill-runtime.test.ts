@@ -313,6 +313,47 @@ describe('reconciling payments', () => {
     expect(index).toBe(2)
   })
 
+  it('[money] aborts a repeated payment cursor without recording a partial page', async () => {
+    const server = billServer()
+    let pages = 0
+    server.fetch.mockImplementation(async (request: Request) => {
+      const url = new URL(request.url)
+      if (url.pathname === '/connect/v3/login') return json({ sessionId: 'session-1' })
+      if (url.pathname === '/connect/v3/receivable-payments') {
+        pages += 1
+        return json({ results: [paid], nextPage: 'sensitive-cursor' })
+      }
+      throw new Error(`unexpected ${url.pathname}`)
+    })
+    const mirrorSource = source({ mirroredInvoices: vi.fn(async () => new Map([['00e001', 1315]])) })
+    const harness = runtime(fullConfig, { server, source: mirrorSource })
+    await expect(harness.runtime.reconcilePayments()).rejects.toThrow('BILL pagination repeated a cursor')
+    expect(pages).toBe(2)
+    expect(mirrorSource.recordPayment).not.toHaveBeenCalled()
+  })
+
+  it('[money] refuses a repeated invoice cursor without adopting an unmatched invoice', async () => {
+    const server = billServer()
+    let pages = 0
+    server.fetch.mockImplementation(async (request: Request) => {
+      const url = new URL(request.url)
+      if (url.pathname === '/connect/v3/login') return json({ sessionId: 'session-1' })
+      if (url.pathname === '/connect/v3/invoices') {
+        pages += 1
+        return json({ results: [], nextPage: 'sensitive-cursor' })
+      }
+      throw new Error(`unexpected ${url.pathname}`)
+    })
+    const mirrorSource = source({ unsettledInvoices: vi.fn(async () => [
+      { id: 44, number: '1299', clientId: 5, issueDate: '2026-08-01', amountCents: 2_520_000 },
+    ]) })
+    const harness = runtime(fullConfig, { server, source: mirrorSource })
+    await expect(harness.runtime.reconcilePayments()).rejects.toThrow('BILL pagination repeated a cursor')
+    expect(pages).toBe(2)
+    expect(harness.store.saveLink).not.toHaveBeenCalled()
+    expect(mirrorSource.recordPayment).not.toHaveBeenCalled()
+  })
+
   it('[money #836] adopts an open invoice BILL already holds under our number, then records its payment', async () => {
     // The books on a real instance: every invoice for one client reached
     // BILL from Harvest, and the client pays there. None was mirrored from

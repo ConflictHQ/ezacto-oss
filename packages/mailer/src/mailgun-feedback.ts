@@ -49,6 +49,10 @@ export interface EmailFeedbackLedger {
   ): Promise<void>
   /** Whether a send to this provider holds a live lease, so its message id is not yet recorded. */
   attemptInFlight(provider: string, now: string): Promise<boolean>
+  /** Untrusted correlation is only a hint to delay disposition, never evidence. */
+  heldReminderAttempt?(provider: string, deliveryId: number, attemptId: string): Promise<boolean>
+  /** Called only after an independent provider lookup verifies the exact event. */
+  recordInvoiceEvidence?(eventId: string, now: string): Promise<void>
 }
 
 export type MailgunFeedbackResult =
@@ -71,6 +75,11 @@ export interface MailgunFeedbackOptions {
   log: EmailLogStore
   ledger: EmailFeedbackLedger
   now?: () => Date
+  /** Authenticated provider observation; false never proves absence. */
+  verifyHeldReminder?: (input: { deliveryId: number; attemptId: string; eventId: string; messageId: string; recipient: string;
+    eventType: 'delivered' | 'failed' | 'complained'; begin: number; end: number }) => Promise<boolean>
+  verifyInvoiceFeedback?: (input: { eventId: string; messageId: string; recipient: string;
+    eventType: 'failed' | 'complained'; begin: number; end: number }) => Promise<boolean>
 }
 
 const encoder = new TextEncoder()
@@ -158,6 +167,18 @@ export const createMailgunFeedbackService = (
       const headers = asObject(asObject(data['message'])?.['headers'])
       const rawMessageId = text(headers?.['message-id'], 512)
       const providerMessageId = rawMessageId === null ? null : bareMessageId(rawMessageId)
+      // Mailgun signs its timestamp and token, not this body. A correlation tag
+      // can only delay discarding an event; it cannot establish a receipt.
+      const tags = Array.isArray(data['tags']) ? data['tags'] : []
+      const variables = asObject(data['user-variables'])
+      const metadata = text(variables?.['ezacto_idempotency_key'], 128)
+      const candidates = [...tags, ...(metadata === null ? [] : [`ezacto_idempotency_key:${metadata}`])]
+      const hints = candidates.flatMap(tag => {
+        if (typeof tag !== 'string') return []
+        const match = /^ezacto_idempotency_key:ezacto-reminder-([1-9][0-9]{0,15})-([a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12})$/u.exec(tag)
+        if (!match || !Number.isSafeInteger(Number(match[1]))) return []
+        return [{ deliveryId: Number(match[1]), attemptId: match[2]! }]
+      })
 
       // Failed is only a bounce when permanent: Mailgun keeps retrying a
       // temporary failure, and one that later succeeds is not a bad address.
@@ -171,19 +192,39 @@ export const createMailgunFeedbackService = (
               : null
 
       const at = current.toISOString()
-      const record =
+      let record =
         wanted === null || providerMessageId === null
           ? null
           : await options.log.getByProviderMessageId(providerMessageId)
-      if (
-        wanted !== null &&
-        providerMessageId !== null &&
-        record === null &&
-        (await options.ledger.attemptInFlight('mailgun', at))
-      ) {
-        // The send this event is about may not have written its message id
-        // yet. Answering now would drop an event that a retry would land.
-        return { kind: 'retry' }
+      if (wanted !== null && providerMessageId !== null && record === null) {
+        const hint = hints.length === 1 ? hints[0] : undefined
+        if (hint && options.ledger.heldReminderAttempt !== undefined &&
+            await options.ledger.heldReminderAttempt('mailgun', hint.deliveryId, hint.attemptId)) {
+          // The signed timestamp/token do not authenticate the event body. Only
+          // an independent provider lookup can establish a positive receipt.
+          if (options.verifyHeldReminder !== undefined && recipient !== null &&
+              (eventType === 'delivered' || eventType === 'failed' || eventType === 'complained')) {
+            const held = await options.log.get(hint.deliveryId)
+            const addressed = held?.status === 'queued' && held.provider === 'mailgun' &&
+              [...held.to, ...held.cc].some(person => person.email.toLowerCase() === recipient)
+            if (addressed) {
+              try {
+                const seconds = Math.floor(current.getTime() / 1000)
+                if (await options.verifyHeldReminder({ ...hint, eventId, messageId: providerMessageId, recipient,
+                  eventType, begin: seconds - 86_100, end: seconds + 300 })) {
+                  await options.log.markSent(hint.deliveryId, 'mailgun', { messageId: providerMessageId }, hint.attemptId)
+                  record = await options.log.getByProviderMessageId(providerMessageId)
+                  if (record?.id !== hint.deliveryId || record.provider !== 'mailgun') return { kind: 'retry' }
+                }
+              } catch { return { kind: 'retry' } }
+            }
+          }
+          if (record === null) return { kind: 'retry' }
+        }
+        if (record === null && await options.ledger.attemptInFlight('mailgun', at)) {
+          // The send may not have recorded its message id yet.
+          return { kind: 'retry' }
+        }
       }
 
       const claim = await options.ledger.claim({
@@ -197,6 +238,21 @@ export const createMailgunFeedbackService = (
         now: at,
       })
       if (claim === 'token_reused') return { kind: 'replayed' }
+      // The webhook signature authenticates its token, not its body. Store
+      // recipient-level evidence only after an authenticated provider lookup.
+      if (record?.template.startsWith('invoice:') && record.provider === 'mailgun' && providerMessageId !== null && recipient !== null &&
+          (eventType === 'complained' || (eventType === 'failed' && severity === 'permanent')) &&
+          [...record.to, ...record.cc].some(person => person.email.toLowerCase() === recipient) &&
+          options.verifyInvoiceFeedback !== undefined && options.ledger.recordInvoiceEvidence !== undefined) {
+        try {
+          const seconds = Math.floor(current.getTime() / 1000)
+          if (await options.verifyInvoiceFeedback({ eventId, messageId: providerMessageId, recipient, eventType,
+            begin: seconds - 86_100, end: seconds + 300 })) await options.ledger.recordInvoiceEvidence(eventId, at)
+        } catch {
+          // Ordinary feedback processing remains available, but it cannot be
+          // used as recipient-level proof until a later independent lookup.
+        }
+      }
       if (claim === 'duplicate') return { kind: 'duplicate' }
 
       const finish = async (

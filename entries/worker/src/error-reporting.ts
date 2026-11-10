@@ -1,6 +1,7 @@
-import type { WorkerManagedQuickBooks, WorkerManagedWise } from './managed-providers.js'
+import type { WorkerManagedQuickBooks, WorkerManagedWise, WorkerManagedBill } from './managed-providers.js'
 import * as Sentry from '@sentry/cloudflare'
 import { ApiError } from '@ezacto/api'
+import { BillApiError, BillAuthError } from '@ezacto/integrations'
 import type { ErrorEvent, Event, EventHint, StackFrame } from '@sentry/cloudflare'
 
 /** Static application operations only: never a URL, provider response or input. */
@@ -10,11 +11,11 @@ export const workerScheduledOperations = [
   'off-site backup checkpoint', 'scheduled job proposal sweep',
   'Stripe alert notice', 'scheduled manifest notice', 'scheduled run dispatch', 'scheduled run expiry',
   'nightly export', 'temporary backup cleanup', 'recurring invoice generation', 'payment reminders',
-  'calendar sync', 'GitHub issue reconciliation', 'BILL reconciliation', 'QuickBooks catch-up', 'Deel time sync', 'Deel payment status',
-  'demo maintenance', 'demo sender seed', 'outbox drain',
+  'calendar sync', 'GitHub issue reconciliation', 'BILL reconciliation', 'QuickBooks catch-up', 'QuickBooks accounting write recovery', 'Deel time sync', 'Deel payment status',
+  'demo maintenance', 'demo sender seed', 'outbox drain', 'reminder reconciliation', 'invoice feedback recovery',
 ] as const
 export type WorkerScheduledOperation = (typeof workerScheduledOperations)[number]
-type WorkerFailureCode = 'd1_network_lost' | 'd1_overloaded' | 'd1_timeout' | 'd1_resource_limit' | 'worker_request_limit' | 'database_query_failed' | 'unknown'
+type WorkerFailureCode = 'd1_network_lost' | 'd1_overloaded' | 'd1_timeout' | 'd1_resource_limit' | 'worker_request_limit' | 'database_query_failed' | 'bill_http_401' | 'bill_http_403' | 'bill_http_429' | 'bill_http_4xx' | 'bill_http_5xx' | 'unknown'
 const operations = new Set<unknown>(workerScheduledOperations)
 const isScheduledOperation = (value: unknown): value is WorkerScheduledOperation => operations.has(value)
 
@@ -32,6 +33,7 @@ export interface WorkerOptions {
   readonly reportError?: WorkerErrorReporter
   readonly managedQuickBooks?: WorkerManagedQuickBooks
   readonly managedWise?: WorkerManagedWise
+  readonly managedBill?: WorkerManagedBill
 }
 
 const phases = new Set<unknown>(['api', 'bootstrap', 'readiness', 'idempotency', 'scheduled', 'queue', 'payment'])
@@ -86,7 +88,27 @@ const errorObjects = (error: unknown): readonly object[] => {
   return objects
 }
 
-const failureCode = (error: unknown): WorkerFailureCode => {
+/** A fixed status class only; provider messages, codes and bodies stay private. */
+export const billFailureCode = (error: unknown): WorkerFailureCode => {
+  for (const current of errorObjects(error)) {
+    let isBill = false
+    try { isBill = current instanceof BillApiError || current instanceof BillAuthError } catch { continue }
+    if (!isBill) continue
+    const status = ownValue(current, 'status')
+    if (status === 401) return 'bill_http_401'
+    if (status === 403) return 'bill_http_403'
+    if (status === 429) return 'bill_http_429'
+    if (typeof status === 'number' && Number.isInteger(status) && status >= 400 && status <= 499) return 'bill_http_4xx'
+    if (typeof status === 'number' && Number.isInteger(status) && status >= 500 && status <= 599) return 'bill_http_5xx'
+  }
+  return 'unknown'
+}
+
+const failureCode = (error: unknown, context?: WorkerErrorContext): WorkerFailureCode => {
+  if (context?.phase === 'scheduled' && context.operation === 'BILL reconciliation') {
+    const bill = billFailureCode(error)
+    if (bill !== 'unknown') return bill
+  }
   let databaseQuery = false
   for (const current of errorObjects(error)) {
     const message = ownValue(current, 'message')
@@ -135,7 +157,7 @@ export const captureWorkerError: WorkerErrorReporter = (error, context) => {
       if (typeof stack === 'string' && stack.length > 0) { safe.stack = stack; hasOriginalStack = true; break }
     } catch { /* Optional positions only. */ }
   }
-  trusted.set(safe, { context: safeContext(context), hasOriginalStack, failureCode: failureCode(error) })
+  trusted.set(safe, { context: safeContext(context), hasOriginalStack, failureCode: failureCode(error, context) })
   Sentry.captureException(safe)
 }
 

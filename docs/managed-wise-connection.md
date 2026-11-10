@@ -7,7 +7,7 @@ own token; the host must never substitute its own Wise business credential.
 ## Public contracts
 
 - `@ezacto/core`: `createManagedWiseVault`, `ManagedWise*` types and static errors.
-- `@ezacto/db` and `@ezacto/db/d1`: `createManagedWiseConnectionStore` (0182).
+- `@ezacto/db` and `@ezacto/db/d1`: `createManagedWiseConnectionStore` (0183).
 - `@ezacto/api`: `createManagedWiseConnectionCommands`, consumed in process by a
   host's admitted configuration handler. The credentials are invocation arguments,
   never a generic activity/SDK payload. Existing `installWiseRoutes` consumes the

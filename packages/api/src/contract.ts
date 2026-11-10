@@ -4328,6 +4328,7 @@ export const apiContractSchemas: Readonly<Record<string, JsonSchema>> = {
       "related_type",
       "related_id",
       "attempt_count",
+      "reminder_attempt_lease_expires_at",
       "failure_code",
       "failure_reason",
       "viewed_at",
@@ -4357,6 +4358,7 @@ export const apiContractSchemas: Readonly<Record<string, JsonSchema>> = {
       related_type: nullable(stringSchema),
       related_id: nullable(integerSchema),
       attempt_count: { type: "integer", minimum: 0 },
+      reminder_attempt_lease_expires_at: nullable(timestampSchema),
       failure_code: nullable({
         type: "string",
         enum: ["queue_unavailable", "provider_timeout", "provider_rejected"],
@@ -4772,6 +4774,8 @@ export const apiContractSchemas: Readonly<Record<string, JsonSchema>> = {
         properties: {
           configured: { type: "boolean" },
           connection: nullable(reference("QuickBooksConnection")),
+          authorization: { type: "string", enum: ["ready", "pending", "unavailable"] },
+          writes: { type: "string", enum: ["ready", "pending", "unavailable"] },
         },
         additionalProperties: false,
       },

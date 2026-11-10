@@ -1,9 +1,9 @@
-import { managedQuickBooksAvailable, managedWiseAvailable } from './managed-providers.js'
-export type { WorkerManagedQuickBooks, WorkerManagedWise } from './managed-providers.js'
+import { managedQuickBooksAvailable, managedWiseAvailable, managedBillAvailable } from './managed-providers.js'
+export type { WorkerManagedQuickBooks, WorkerManagedWise, WorkerManagedBill } from './managed-providers.js'
 import { createCsvWorkerRuntime, csvWorkerConfigured, verifyCsvQueueDatabase } from './csv-runtime.js'
 import { parseCursorSigningKey, ensureRuntimeDatabaseReady } from './runtime.js'
 import { AsyncLocalStorage } from 'node:async_hooks'
-import { apiFailureStatus, reportWorkerError, runtimeTraceId, scrubWorkerEvent, type WorkerErrorContext, type WorkerScheduledOperation, type WorkerOptions } from './error-reporting.js'
+import { apiFailureStatus, billFailureCode, reportWorkerError, runtimeTraceId, scrubWorkerEvent, type WorkerErrorContext, type WorkerScheduledOperation, type WorkerOptions } from './error-reporting.js'
 export type { WorkerErrorContext, WorkerErrorPhase, WorkerErrorReporter, WorkerOptions } from './error-reporting.js'
 import { consumeMigrationBatch } from './migration-queue.js'
 import * as Sentry from '@sentry/cloudflare'
@@ -161,12 +161,15 @@ export const createWorker = (options: WorkerOptions = {}): ExportedHandler<Worke
       else reportWorkerError(options.reportError, error, { ...context, traceId: runtimeTraceId() })
     },
   },
-    options.managedQuickBooks === undefined && options.managedWise === undefined ? undefined : {
+    options.managedQuickBooks === undefined && options.managedWise === undefined && options.managedBill === undefined ? undefined : {
       ...(options.managedQuickBooks === undefined ? {} : {
         quickBooks: (env: AppEnv) => managedQuickBooksAvailable(options.managedQuickBooks!, env, (env as Partial<WorkerEnv>).DB),
       }),
       ...(options.managedWise === undefined ? {} : {
         wise: (env: AppEnv) => managedWiseAvailable(options.managedWise!, env, (env as Partial<WorkerEnv>).DB),
+      }),
+      ...(options.managedBill === undefined ? {} : {
+        bill: (env: AppEnv) => managedBillAvailable(options.managedBill!, env, (env as Partial<WorkerEnv>).DB),
       }),
     },
   )
@@ -191,7 +194,7 @@ export const createWorker = (options: WorkerOptions = {}): ExportedHandler<Worke
         await publicApp.fetch(request, env, executionContext))
     }
     try {
-      const services = await createRuntimeServices(env, { reportError: report, ...(options.managedQuickBooks === undefined ? {} : { managedQuickBooks: options.managedQuickBooks }), ...(options.managedWise === undefined ? {} : { managedWise: options.managedWise }) })
+      const services = await createRuntimeServices(env, { reportError: report, ...(options.managedQuickBooks === undefined ? {} : { managedQuickBooks: options.managedQuickBooks }), ...(options.managedWise === undefined ? {} : { managedWise: options.managedWise }), ...(options.managedBill === undefined ? {} : { managedBill: options.managedBill }) })
       const app = createApp(
         services,
         workerBrandAssetSurface,
@@ -256,7 +259,7 @@ export const createWorker = (options: WorkerOptions = {}): ExportedHandler<Worke
     const services = await createRuntimeServices(env, {
       emailProvider: provider,
       reportError: report,
-      ...(options.managedQuickBooks === undefined ? {} : { managedQuickBooks: options.managedQuickBooks }), ...(options.managedWise === undefined ? {} : { managedWise: options.managedWise }),
+      ...(options.managedQuickBooks === undefined ? {} : { managedQuickBooks: options.managedQuickBooks }), ...(options.managedWise === undefined ? {} : { managedWise: options.managedWise }), ...(options.managedBill === undefined ? {} : { managedBill: options.managedBill }),
     })
     // The consumer fetches what a job names, immediately before sending. Bytes
     // never rode the queue to get here (issue 626).
@@ -281,8 +284,18 @@ export const createWorker = (options: WorkerOptions = {}): ExportedHandler<Worke
     // response was lost. Service construction/provider jobs are not retried.
     // Exhaustion propagates to withSentry once and marks this tick failed;
     // readiness is cached only on success, so the next tick can recover.
-    const services = await createRuntimeServices(env, { retryReadiness: true, reportError: report, ...(options.managedQuickBooks === undefined ? {} : { managedQuickBooks: options.managedQuickBooks }), ...(options.managedWise === undefined ? {} : { managedWise: options.managedWise }) })
-    if(controller.cron==='*/5 * * * *'){if(moduleAvailability(env).invoices)await services.bankFeeds?.processDue();return}
+    const services = await createRuntimeServices(env, { retryReadiness: true, reportError: report, ...(options.managedQuickBooks === undefined ? {} : { managedQuickBooks: options.managedQuickBooks }), ...(options.managedWise === undefined ? {} : { managedWise: options.managedWise }), ...(options.managedBill === undefined ? {} : { managedBill: options.managedBill }) })
+    if (controller.cron === '*/5 * * * *') {
+      try {
+        if (moduleAvailability(env).invoices) await services.bankFeeds?.processDue()
+      } finally {
+        try { await services.reminderReconciliation?.processDue() }
+        catch (error) { report(error, { phase: 'scheduled', operation: 'reminder reconciliation' }) }
+        try { await services.invoiceFeedbackRecovery?.processDue() }
+        catch (error) { report(error, { phase: 'scheduled', operation: 'invoice feedback recovery' }) }
+      }
+      return
+    }
     if(!demoDeployment(env)&&csvWorkerConfigured(env)){for(const phase of ['purge','publish'] as const){try{await env.CSV_IMPORT_QUEUE!.send({kind:'csv-maintenance',phase})}catch{report(new Error('CSV maintenance publication deferred.'),{phase:'scheduled'})}}}
     // The operator's invoices switch (issue 1254): where it is off none of the
     // invoice sweeps run, and what they would have touched stays as it is.
@@ -450,11 +463,14 @@ export const createWorker = (options: WorkerOptions = {}): ExportedHandler<Worke
       await isolate('BILL reconciliation', () => createScheduledBillReconciliation({
         reconcile: services.bill!.reconcilePayments,
         report: (error) => {
-          console.error('[worker] BILL reconciliation failed', error)
+          console.error('[worker] BILL reconciliation failed', billFailureCode(error))
           report(error, { phase: 'scheduled', operation: 'BILL reconciliation' })
         },
       })(),
           )
+    }
+    if (controller.cron === '* * * * *' && services.quickBooks?.recoverPendingWrites !== undefined) {
+      await isolate('QuickBooks accounting write recovery', () => services.quickBooks!.recoverPendingWrites!(10))
     }
     if (controller.cron === '0 * * * *' && services.quickBooks !== undefined) {
       // Payments QuickBooks changed that no webhook told us of (issue 1013).

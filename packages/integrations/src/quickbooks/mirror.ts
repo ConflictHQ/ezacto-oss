@@ -1,3 +1,4 @@
+import { quickBooksWriteSourceHash, type QuickBooksWriteIntent, type QuickBooksWriteSource, type QuickBooksWriteResource, type QuickBooksKnownLink } from './managed-writes.js'
 /**
  * Copying one invoice into QuickBooks, and reading one payment back.
  *
@@ -40,12 +41,14 @@ export interface MirrorLinkStore {
 
 /** The half of the QuickBooks client a mirror uses. */
 export interface MirrorQuickBooks {
+  recoverSource?(source: QuickBooksWriteSource): Promise<void>
+  knownCreatedLink?(resource: QuickBooksWriteResource, nativeId: number): Promise<QuickBooksKnownLink | null>
   findCustomerByDisplayName(displayName: string): Promise<QuickBooksCustomer | null>
-  createCustomer(input: Record<string, unknown>): Promise<QuickBooksCustomer>
+  createCustomer(input: Record<string, unknown>, intent?: QuickBooksWriteIntent): Promise<QuickBooksCustomer>
   findInvoiceByDocNumber(docNumber: string): Promise<QuickBooksInvoice | null>
   readInvoice(id: string): Promise<QuickBooksInvoice | null>
-  createInvoice(input: Record<string, unknown>): Promise<QuickBooksInvoice>
-  updateInvoice(input: Record<string, unknown>): Promise<QuickBooksInvoice>
+  createInvoice(input: Record<string, unknown>, intent?: QuickBooksWriteIntent): Promise<QuickBooksInvoice>
+  updateInvoice(input: Record<string, unknown>, intent?: QuickBooksWriteIntent): Promise<QuickBooksInvoice>
 }
 
 export type MirrorOutcome =
@@ -63,6 +66,22 @@ export interface MirrorInvoiceInput {
   readonly allowOnlinePayment: boolean
 }
 
+/** Shared by the event mirror and bounded scheduled recovery. Only fields
+ * describing the approved financial request enter the hash. */
+export const invoiceWriteSource = async (invoice: MirrorInvoice, allowOnlinePayment: boolean): Promise<QuickBooksWriteSource> => ({
+  resource: 'invoice', nativeId: invoice.id, invoiceId: invoice.id, invoiceVersion: invoice.version,
+  sourceHash: await quickBooksWriteSourceHash([invoice.id, invoice.number, invoice.clientId, invoice.currency,
+    invoice.issueDate, invoice.dueDate, invoice.subject, invoice.notes, invoice.amountCents, invoice.lines, allowOnlinePayment]),
+})
+export const customerWriteSource = async (chain: readonly MirrorClient[], invoice: Pick<MirrorInvoice, 'id' | 'version'>): Promise<QuickBooksWriteSource> => ({
+  resource: 'customer', nativeId: chain[chain.length - 1]!.id, invoiceId: invoice.id, invoiceVersion: invoice.version,
+  sourceHash: await quickBooksWriteSourceHash(chain.map(client => [client.id, client.name, client.parentClientId, client.currency])),
+})
+export const paymentWriteSource = async (payment: MirrorPayment, invoiceId: number, invoiceVersion?: number): Promise<QuickBooksWriteSource> => ({
+  resource: 'payment', nativeId: payment.id, invoiceId, invoiceVersion,
+  sourceHash: await quickBooksWriteSourceHash([payment.id, payment.amountCents, payment.paidOn, payment.provider, invoiceId]),
+})
+
 const centsOf = (amount: number | undefined): number | null =>
   amount === undefined ? null : Math.round(amount * 100)
 
@@ -75,7 +94,7 @@ const centsOf = (amount: number | undefined): number | null =>
  * failure halfway leaves the levels already done recorded rather than repeated.
  */
 const ensureCustomer = async (
-  input: Pick<MirrorInvoiceInput, 'clients' | 'links' | 'quickBooks'>,
+  input: Pick<MirrorInvoiceInput, 'invoice' | 'clients' | 'links' | 'quickBooks'>,
   clientId: number,
 ): Promise<{ quickBooksId: string } | { refused: string }> => {
   const ancestry = clientAncestry(clientId, input.clients)
@@ -83,7 +102,13 @@ const ensureCustomer = async (
   for (let depth = 1; depth <= ancestry.length; depth += 1) {
     const chain = ancestry.slice(0, depth)
     const current = chain[chain.length - 1]!
-    const existingLink = await input.links.readLink('customer', current.id)
+    const source = await customerWriteSource(chain, input.invoice)
+    await input.quickBooks.recoverSource?.(source)
+    let existingLink = await input.links.readLink('customer', current.id)
+    if (existingLink === null) {
+      existingLink = await input.quickBooks.knownCreatedLink?.('customer', current.id) ?? null
+      if (existingLink !== null) await input.links.saveLink('customer', current.id, existingLink)
+    }
     if (existingLink !== null) {
       parentId = existingLink.quickBooksId
       continue
@@ -107,7 +132,7 @@ const ensureCustomer = async (
       parentId = found.Id
       continue
     }
-    const created = await input.quickBooks.createCustomer(planned.payload)
+    const created = await input.quickBooks.createCustomer(planned.payload, { ...source, operation: 'create' })
     await input.links.saveLink('customer', current.id, {
       quickBooksId: created.Id,
       syncToken: created.SyncToken,
@@ -125,7 +150,13 @@ export const mirrorInvoice = async (
   // The invoice is looked up before any customer is made. A number QuickBooks
   // already holds is decided here, and deciding it after `ensureCustomer` left
   // a customer in the books for an invoice that was then refused.
-  const link = await input.links.readLink('invoice', input.invoice.id)
+  const source = await invoiceWriteSource(input.invoice, input.allowOnlinePayment)
+  await input.quickBooks.recoverSource?.(source)
+  let link = await input.links.readLink('invoice', input.invoice.id)
+  if (link === null) {
+    link = await input.quickBooks.knownCreatedLink?.('invoice', input.invoice.id) ?? null
+    if (link !== null) await input.links.saveLink('invoice', input.invoice.id, link)
+  }
   // Only looked up where there is no link. With one, the id is known and a query
   // by number would be a round trip to learn something already recorded.
   const existing =
@@ -170,6 +201,7 @@ export const mirrorInvoice = async (
         customerRef: { value: customer.quickBooksId },
         ...(input.allowOnlinePayment ? { allowOnlinePayment: true } : {}),
       }),
+      { ...source, operation: 'create' },
     )
     await input.links.saveLink('invoice', input.invoice.id, {
       quickBooksId: created.Id,
@@ -206,6 +238,7 @@ export const mirrorInvoice = async (
         ...(input.allowOnlinePayment ? { allowOnlinePayment: true } : {}),
       },
     ),
+    { ...source, operation: 'update' },
   )
   await input.links.saveLink('invoice', input.invoice.id, {
     quickBooksId: updated.Id,
@@ -234,8 +267,10 @@ export interface MirrorPaymentLinkStore {
 
 /** The half of the QuickBooks client a payment mirror uses. */
 export interface MirrorPaymentQuickBooks {
+  recoverSource?(source: QuickBooksWriteSource): Promise<void>
+  knownCreatedLink?(resource: QuickBooksWriteResource, nativeId: number): Promise<QuickBooksKnownLink | null>
   findPaymentByRefNumber(refNumber: string): Promise<QuickBooksPayment | null>
-  createPayment(input: Record<string, unknown>): Promise<QuickBooksPayment>
+  createPayment(input: Record<string, unknown>, intent?: QuickBooksWriteIntent): Promise<QuickBooksPayment>
 }
 
 export type MirrorPaymentOutcome =
@@ -244,6 +279,8 @@ export type MirrorPaymentOutcome =
   | { readonly kind: 'linked'; readonly quickBooksId: string }
 
 export interface MirrorPaymentInput {
+  readonly invoiceId?: number
+  readonly invoiceVersion?: number | undefined
   readonly payment: MirrorPayment
   /** The QuickBooks invoice the payment settles, already mirrored. */
   readonly invoiceQuickBooksId: string
@@ -308,7 +345,13 @@ export const mirrorPayment = async (
   if (input.payment.amountCents <= 0) {
     return { kind: 'refused', reason: 'QuickBooks takes receipts, not refunds' }
   }
-  const link = await input.links.readPaymentLink(input.payment.id)
+  const source = input.invoiceId === undefined ? undefined : await paymentWriteSource(input.payment, input.invoiceId, input.invoiceVersion)
+  if (source !== undefined) await input.quickBooks.recoverSource?.(source)
+  let link = await input.links.readPaymentLink(input.payment.id)
+  if (link === null) {
+    link = await input.quickBooks.knownCreatedLink?.('payment', input.payment.id) ?? null
+    if (link !== null) await input.links.savePaymentLink(input.payment.id, link)
+  }
   if (link !== null) return { kind: 'linked', quickBooksId: link.quickBooksId }
 
   const found = await input.quickBooks.findPaymentByRefNumber(paymentRefNumber(input.payment.id))
@@ -320,7 +363,9 @@ export const mirrorPayment = async (
     return { kind: 'adopted', quickBooksId: found.Id }
   }
 
-  const created = await input.quickBooks.createPayment(paymentPayload(input))
+  const created = source === undefined
+    ? await input.quickBooks.createPayment(paymentPayload(input))
+    : await input.quickBooks.createPayment(paymentPayload(input), { ...source, operation: 'create' })
   await input.links.savePaymentLink(input.payment.id, {
     quickBooksId: created.Id,
     syncToken: created.SyncToken,

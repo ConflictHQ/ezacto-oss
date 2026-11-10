@@ -165,6 +165,10 @@ export const PRESERVED_TABLES: ReadonlySet<string> = new Set([
   // Instance security material is seeded once; keeping the migration ledger
   // while deleting this row would permanently disable closure proofs.
   'account_closure_security',
+  // Migration-seeded singleton sweep cursors; the wipe resets their progress
+  // and leases below, since the emails they point into are deleted.
+  'reminder_reconciliation_cursor',
+  'invoice_feedback_recovery_cursor',
   // The migration creates this singleton once. Authorization triggers update
   // it in place, so deleting it would disable all subsequent revision changes.
   'idempotency_authorization',
@@ -248,6 +252,9 @@ const wipeStatements = (objects: DemoSchemaObjects, now: string): readonly DemoS
   // Authority changed while its triggers were lifted. Advance the preserved
   // revision in the wipe transaction, even if bootstrap/seed never resumes.
   { text: 'UPDATE idempotency_authorization SET revision = revision + 1 WHERE id = 1', bindings: [] },
+  // The emails these cursors walked are gone; restart the sweeps from the beginning.
+  { text: 'UPDATE reminder_reconciliation_cursor SET after_id = 0, next_due = 0, lease_token = NULL, lease_expires_at = NULL WHERE id = 1', bindings: [] },
+  { text: "UPDATE invoice_feedback_recovery_cursor SET after_event_id = '', next_due = 0, lease_token = NULL, lease_expires_at = NULL WHERE id = 1", bindings: [] },
   // Connection deletion is a lifecycle change even while its triggers are lifted.
   // Invalidate pending grants even if the subsequent bootstrap never resumes.
   { text: 'UPDATE quickbooks_connection_generation SET generation = generation + 1 WHERE singleton = 1', bindings: [] },

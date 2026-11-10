@@ -5,21 +5,33 @@ import { createContainerDatabase, createD1Database } from '../src/adapters.js'
 import { executeInvoiceLifecycleCommand, type InvoiceStateDatabase } from '../src/invoice-state.js'
 import { migrateContainer, migrateD1 } from '../src/migrate.js'
 import { createMoneyResourceRepository } from '../src/money-resources.js'
+import { followUpAudienceGuard, readThankYouRecipients } from '../src/automatic-thank-you.js'
+import { createReminderPort, recordReminderDelivery } from '../src/reminder-port.js'
+import { createContainerEmailFeedbackLedger, createD1EmailFeedbackLedger, type InvoiceFeedbackRecoveryLedger } from '../src/email-feedback-events.js'
 
 interface Harness {
   orm: InvoiceStateDatabase
+  ledger: InvoiceFeedbackRecoveryLedger
   run(sql: string, ...bindings: unknown[]): Promise<void>
   rows<T>(sql: string, ...bindings: unknown[]): Promise<T[]>
   close(): Promise<void>
 }
 
 const at = '2026-09-02T12:00:00.000Z'
+let startingD1: Miniflare | undefined
+
+const timedD1Setup = async <T>(stage: string, work: () => Promise<T>): Promise<T> => {
+  const notice = setTimeout(() => console.warn(`[invoice-delivery-fixture] ${stage} has not completed after 30 seconds`), 30_000)
+  notice.unref()
+  try { return await work() } finally { clearTimeout(notice) }
+}
 
 const container = async (): Promise<Harness> => {
   const sqlite = new BetterSqlite3(':memory:')
   migrateContainer(sqlite)
   return {
     orm: createContainerDatabase(sqlite),
+    ledger: createContainerEmailFeedbackLedger(sqlite),
     run: async (sql, ...bindings) => void sqlite.prepare(sql).run(...bindings),
     rows: async <T>(sql: string, ...bindings: unknown[]) =>
       sqlite.prepare(sql).all(...bindings) as T[],
@@ -33,14 +45,26 @@ const d1 = async (): Promise<Harness> => {
     script: 'export default { fetch() { return new Response("ok") } }',
     d1Databases: ['DB'],
   })
-  const database = await miniflare.getD1Database('DB')
-  await migrateD1(database)
-  return {
-    orm: createD1Database(database),
-    run: async (sql, ...bindings) => void await database.prepare(sql).bind(...bindings).run(),
-    rows: async <T>(sql: string, ...bindings: unknown[]) =>
-      (await database.prepare(sql).bind(...bindings).all<T>()).results,
-    close: async () => miniflare.dispose(),
+  startingD1 = miniflare
+  try {
+    const database = await timedD1Setup('D1 binding', () => miniflare.getD1Database('DB'))
+    await timedD1Setup('D1 migrations', () => migrateD1(database))
+    if (startingD1 !== miniflare) throw new Error('D1 fixture setup was closed')
+    startingD1 = undefined
+    return {
+      orm: createD1Database(database),
+      ledger: createD1EmailFeedbackLedger(database),
+      run: async (sql, ...bindings) => void await database.prepare(sql).bind(...bindings).run(),
+      rows: async <T>(sql: string, ...bindings: unknown[]) =>
+        (await database.prepare(sql).bind(...bindings).all<T>()).results,
+      close: async () => miniflare.dispose(),
+    }
+  } catch (error) {
+    if (startingD1 === miniflare) {
+      startingD1 = undefined
+      await miniflare.dispose()
+    }
+    throw error
   }
 }
 
@@ -127,7 +151,13 @@ const command = (
 for (const [name, factory] of [['SQLite', container], ['real D1', d1]] as const) {
   describe(`invoice email persistence (${name})`, () => {
     let database: Harness | undefined
-    afterEach(async () => database?.close())
+    afterEach(async () => {
+      await database?.close()
+      database = undefined
+      const pending = startingD1
+      startingD1 = undefined
+      await pending?.dispose()
+    })
 
     it('atomically persists the immutable version snapshot, event, and recipient receipt', async () => {
       database = await factory()
@@ -167,6 +197,9 @@ for (const [name, factory] of [['SQLite', container], ['real D1', d1]] as const)
     it('sends one email To the client and Cc everyone copied, each recorded against it', async () => {
       database = await factory()
       await seed(database)
+      await database.run(`INSERT INTO invoice_line_items
+        (invoice_id, position, kind, description, quantity, unit_price_cents, amount_cents, created_at, updated_at)
+        VALUES (1, 0, 'Service', 'Fixture work', 1, 1234, 1234, ?, ?)`, at, at)
       const cc = [
         { name: 'Pat Example', email: 'pat@example.net' },
         { name: '', email: 'finance@example.com' },
@@ -215,6 +248,59 @@ for (const [name, factory] of [['SQLite', container], ['real D1', d1]] as const)
       await expect(
         command(database, 1, [{ name: 'Pat Example', email: 'pat@example.net' }]),
       ).rejects.toMatchObject({ code: 'command_id_reused' })
+
+      // #1352: a planned date records a later message but sends no email.
+      // Run the real audience query on both SQLite and D1; that history row
+      // must never replace the immutable To/Cc delivery snapshot.
+      await executeInvoiceLifecycleCommand(database.orm, {
+        invoiceId: 1, commandId: 'planned-reminder', command: 'send',
+        actor: { type: 'user', id: 1 }, authorize: async () => true,
+        expectedVersion: 1, occurredAt: at, messageId: 9000, eventId: 'evt-planned',
+        message: {
+          sentBy: 'Avery Ng', sentByEmail: null, sentFrom: 'Delivery Org', sentFromEmail: 'billing@example.com',
+          recipients: [{ name: 'Client', email: 'client@example.net' }],
+          subject: null, body: null, attachPdf: false, sendMeACopy: false,
+          thankYou: false, reminder: true, sendReminderOn: '2026-10-15',
+        },
+      })
+      expect(await readThankYouRecipients(database.orm, 1)).toEqual([])
+      await database.run(`UPDATE email_log SET status = 'sent', provider = 'mailgun', provider_message_id = 'fixture-accepted' WHERE id = 700`)
+      const audience = [{ name: 'Client', email: 'client@example.net', role: 'to' as const },
+        ...cc.map(person => ({ ...person, role: 'cc' as const }))]
+      expect(await readThankYouRecipients(database.orm, 1)).toEqual(audience)
+      const binding = JSON.stringify(audience)
+      expect(await database.rows(`SELECT CASE WHEN ${followUpAudienceGuard} THEN 1 ELSE 0 END AS allowed`, 1, 1, binding, binding)).toEqual([{ allowed: 1 }])
+      await database.run(`INSERT INTO scheduled_reminders (id, invoice_id, scheduled_at, interval_days, causation_event_id, created_at, updated_at)
+        VALUES (87, 1, ?, 7, 'recovery-fixture', ?, ?)`, at, at, at)
+      expect(await recordReminderDelivery(database.orm, {
+        scheduledReminderId: 87, invoiceId: 1, deliveryId: 702, recipients: audience,
+        templateVersion: 1, senderIdentityId: 10, senderIdentityVersion: 0, senderEvidenceVersion: 1,
+        fromName: 'Delivery Org', fromEmail: 'billing@example.com', replyToEmail: null,
+        subject: 'Reminder', textBody: 'Please review.', htmlBody: null, daysPastDue: 0, now: at,
+      })).toBe('recorded')
+      expect(await database.rows(`SELECT i.state, i.due_amount_cents AS due, r.status AS reminder_status, l.status AS delivery_status
+        FROM invoices i JOIN scheduled_reminders r ON r.invoice_id = i.id JOIN invoice_reminder_deliveries d ON d.scheduled_reminder_id = r.id
+        JOIN email_log l ON l.id = d.delivery_id WHERE r.id = 87`)).toEqual([{ state: 'open', due: 1234, reminder_status: 'pending', delivery_status: 'queued' }])
+      const port = createReminderPort({ database: database.orm, configuration: {
+        getTemplate: async () => { throw new Error('unexpected template read') },
+        listSenderIdentities: async () => { throw new Error('unexpected sender read') },
+      }, invoices: { read: async () => { throw new Error('unexpected invoice read') }, paymentUrl: async () => null }, now: () => at })
+      expect(await port.prepare({ id: 87, invoiceId: 1, scheduledAt: at, intervalDays: 7, status: 'pending',
+        template: 'reminder', causationEventId: 'recovery-fixture', createdAt: at, updatedAt: at })).toMatchObject({
+        deliveryId: 702, to: [{ name: 'Client', email: 'client@example.net' }], cc,
+      })
+      await database.run(`UPDATE email_log SET status = 'bounced' WHERE id = 700`)
+      expect(await database.rows(`SELECT CASE WHEN ${followUpAudienceGuard} THEN 1 ELSE 0 END AS allowed`, 1, 1, binding, binding)).toEqual([{ allowed: 0 }])
+      await database.run(`INSERT INTO scheduled_reminders (id, invoice_id, scheduled_at, interval_days, causation_event_id, created_at, updated_at)
+        VALUES (88, 1, ?, 7, 'fixture', ?, ?)`, at, at, at)
+      await expect(recordReminderDelivery(database.orm, {
+        scheduledReminderId: 88, invoiceId: 1, deliveryId: 701, recipients: audience,
+        templateVersion: 1, senderIdentityId: 10, senderIdentityVersion: 0, senderEvidenceVersion: 1,
+        fromName: 'Delivery Org', fromEmail: 'billing@example.com', replyToEmail: null,
+        subject: 'Reminder', textBody: 'Please review.', htmlBody: null, daysPastDue: 0, now: at,
+      })).rejects.toThrow()
+      expect(await database.rows(`SELECT id FROM email_log WHERE id = 701`)).toEqual([])
+      expect(await database.rows(`SELECT delivery_id FROM invoice_reminder_deliveries WHERE scheduled_reminder_id = 88`)).toEqual([])
     })
 
     it('persists the intent for a deployment-attested Mailgun sender', async () => {
@@ -224,6 +310,45 @@ for (const [name, factory] of [['SQLite', container], ['real D1', d1]] as const)
       expect(await database.rows(
         `SELECT sender_identity_id, sender_evidence_version FROM invoice_email_intents`,
       )).toEqual([{ sender_identity_id: 10, sender_evidence_version: 1 }])
+    })
+
+    it('[money #1352] fences a partial audience on independently verified feedback', async () => {
+      database = await factory()
+      await seed(database, true)
+      await command(database, 1, [{ name: 'Bad', email: 'bad@example.net' }, { name: 'Good', email: 'good@example.net' }])
+      await database.run(`UPDATE email_log SET status = 'sent', provider = 'mailgun', provider_message_id = 'fixture-accepted' WHERE id = 700`)
+      const before = await readThankYouRecipients(database.orm, 1), oldBinding = JSON.stringify(before)
+      await database.run(`INSERT INTO email_feedback_events(event_id, signature_token, event_type, severity, recipient,
+        provider_message_id, delivery_id, received_at) VALUES ('bounce-proof', 'token-proof', 'failed', 'permanent',
+        'bad@example.net', 'fixture-accepted', 700, ?)`, at)
+      await database.run(`UPDATE email_log SET status = 'bounced' WHERE id = 700`)
+      await database.run(`UPDATE email_feedback_events SET processed_at = ?, outcome = 'bounced' WHERE event_id = 'bounce-proof'`, at)
+      expect(await readThankYouRecipients(database.orm, 1)).toEqual([])
+      const token = '7acbff11-1395-4011-a881-c299dad9e890'
+      const nextToken = '12345678-1234-4abc-8def-123456789abc'
+      expect(await database.ledger.claimInvoiceFeedbackSweep(token, at)).toBe('')
+      expect(await database.ledger.claimInvoiceFeedbackSweep(nextToken, at)).toBeNull()
+      expect(await database.ledger.scanInvoiceFeedback('', 10)).toMatchObject([{ eventId: 'bounce-proof', recipient: 'bad@example.net', eligible: 1 }])
+      const later = new Date(Date.parse(at) + 181_000).toISOString()
+      expect(await database.ledger.claimInvoiceFeedbackSweep(nextToken, later)).toBe('')
+      expect(await database.ledger.finishInvoiceFeedbackSweep(token, '', false, later)).toBe(false)
+      await database.ledger.recordInvoiceEvidence('bounce-proof', at)
+      expect(await database.ledger.scanInvoiceFeedback('', 10)).toMatchObject([{ eventId: 'bounce-proof', eligible: 0 }])
+      expect(await database.ledger.finishInvoiceFeedbackSweep(nextToken, '', false, later)).toBe(true)
+      const eligible = [{ name: 'Client', email: 'client@example.net', role: 'to' },
+        { name: 'Good', email: 'good@example.net', role: 'cc' }]
+      expect(await readThankYouRecipients(database.orm, 1)).toEqual(eligible)
+      const binding = JSON.stringify(eligible)
+      expect(await database.rows(`SELECT CASE WHEN ${followUpAudienceGuard} THEN 1 ELSE 0 END AS allowed`,
+        1, 1, oldBinding, oldBinding)).toEqual([{ allowed: 0 }])
+      expect(await database.rows(`SELECT CASE WHEN ${followUpAudienceGuard} THEN 1 ELSE 0 END AS allowed`,
+        1, 1, binding, binding)).toEqual([{ allowed: 1 }])
+      await expect(database.run(`UPDATE invoice_feedback_provider_evidence SET verified_at = ? WHERE event_id = 'bounce-proof'`, at)).rejects.toThrow()
+      await database.run(`INSERT INTO email_feedback_events(event_id, signature_token, event_type, severity, recipient,
+        provider_message_id, delivery_id, received_at) VALUES ('foreign-recipient', 'foreign-token', 'failed', 'permanent',
+        'other@example.net', 'fixture-accepted', 700, ?)`, at)
+      await expect(database.run(`INSERT INTO invoice_feedback_provider_evidence(event_id, verified_at) VALUES ('foreign-recipient', ?)`, at)).rejects.toThrow()
+      expect(await readThankYouRecipients(database.orm, 1)).toEqual(eligible)
     })
 
     it('rolls back the message, state, event, and log if exact evidence is absent', async () => {

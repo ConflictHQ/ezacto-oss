@@ -3318,23 +3318,46 @@ for (const corrected of ['1', '2.5', '2:30']) {
   })
 }
 
-test('[e2e:approve-lock] [e2e:timesheet-approval] [e2e:lock-policy] rejects, approves, reopens, policy-locks, and unlocks a real D1 timesheet', async ({
-  context,
-  page,
-}) => {
-  const seeded = await context.request.post('/__ezacto_browser_fixture__/start-end', {
-    data: { action: 'approval-seed' },
-    headers: {
-      'x-ezacto-browser-fixture-control': 'start-end-round-trip',
-    },
-  })
-  expect(seeded.status()).toBe(204)
-
-  await page.route('https://fonts.googleapis.com/**', (route) => route.abort())
+// Each journey owns a fresh page and a bounded set of real native commands.
+// Review, approval, reopening, policy locking and audit shared one 400-line/30s budget;
+// the retained load logs show the final outbox/audit exhausting that budget.
+const beginApprovalScenario = async (page: Page, context: { request: APIRequestContext }): Promise<void> => {
+  for (const action of ['sign-in-rate-reset', 'approval-reset', 'approval-seed']) {
+    const seeded = await context.request.post('/__ezacto_browser_fixture__/start-end', {
+      data: { action }, headers: { 'x-ezacto-browser-fixture-control': 'start-end-round-trip' },
+    })
+    expect(seeded.status()).toBe(204)
+  }
+  await page.route('https://fonts.googleapis.com/**', route => route.abort())
   await page.goto('/?week=2026-08-17')
   await page.locator('[data-sign-in-form]').getByLabel('Email').fill(fixtureEmail)
   await page.getByLabel('Password', { exact: true }).fill(fixturePassword)
   await page.getByRole('button', { name: 'Sign in', exact: true }).click()
+  await expect(page.locator('[data-authenticated-shell]:not([inert])')).toBeVisible()
+}
+
+// Arrange each later journey through the actual API; no seeded submission,
+// approval or audit rows, and no dependency on an earlier browser finishing.
+const seedApprovalState = async (page: Page, target: 'submitted' | 'approved'): Promise<void> => {
+  await page.evaluate(async target => {
+    const call = async (path: string, method: string, body?: unknown) => {
+      const response = await fetch(`/api/v1/${path}`, {
+        method, headers: { 'content-type': 'application/json', 'idempotency-key': crypto.randomUUID() },
+        ...(body === undefined ? {} : { body: JSON.stringify(body) }),
+      })
+      if (!response.ok) throw new Error(`Owned approval fixture ${path} failed with ${response.status}`)
+      return await response.json() as { data: { id: number } }
+    }
+    await call('time-entries/901', 'PATCH', { notes: 'Corrected delivery detail' })
+    const submitted = await call('timesheet-submissions', 'POST', {
+      period_start: '2026-08-16', period_end: '2026-08-22',
+    })
+    if (target === 'approved') await call(`timesheet-submissions/${submitted.data.id}/approve`, 'POST')
+  }, target)
+}
+
+test('[e2e:approve-lock] rejects, corrects and resubmits a real D1 timesheet', async ({ context, page }) => {
+  await beginApprovalScenario(page, context)
   await expect(page.locator('[data-day-label]')).toContainText('Monday, 17 Aug 2026')
   await page.getByRole('button', { name: 'Next day' }).click()
   await expect(page.locator('[data-day-label]')).toContainText('Tuesday, 18 Aug 2026')
@@ -3434,6 +3457,11 @@ test('[e2e:approve-lock] [e2e:timesheet-approval] [e2e:lock-policy] rejects, app
   expect((await resubmitted).ok()).toBe(true)
   await expect(page.locator('[data-timesheet-rejection-reason]')).toBeHidden()
 
+})
+
+test('[e2e:approve-lock] approves a real submission and locks its tracked work', async ({ context, page }) => {
+  await beginApprovalScenario(page, context)
+  await seedApprovalState(page, 'submitted')
   await page.goto('/approvals')
   const resubmittedCard = page.locator('[data-approval-queue] [data-submission-id]')
   await expect(resubmittedCard).toContainText('Browser Owner')
@@ -3474,6 +3502,11 @@ test('[e2e:approve-lock] [e2e:timesheet-approval] [e2e:lock-policy] rejects, app
     },
   })
 
+})
+
+test('[e2e:approve-lock] reopens a real approved period with a required reason', async ({ context, page }) => {
+  await beginApprovalScenario(page, context)
+  await seedApprovalState(page, 'approved')
   await page.goto('/approvals')
   const approvedCard = page
     .locator('[data-approval-history] [data-approved-submission-id]')
@@ -3529,6 +3562,11 @@ test('[e2e:approve-lock] [e2e:timesheet-approval] [e2e:lock-policy] rejects, app
     },
   })
 
+})
+
+test('[e2e:lock-policy] configures, locks and unlocks real tracked work', async ({ context, page }) => {
+  await beginApprovalScenario(page, context)
+  await page.goto('/approvals')
   const policyPanel = page.locator('[data-lock-policy-panel]')
   await expect(policyPanel).toBeVisible()
   await policyPanel.locator('[data-lock-policy-auto]').uncheck()
@@ -3715,6 +3753,33 @@ test('[e2e:approve-lock] [e2e:timesheet-approval] [e2e:lock-policy] rejects, app
     data: { seconds: 4500, approval_status: 'unsubmitted', is_locked: false },
   })
 
+})
+
+test('[e2e:approval-audit #745] real native commands retain actor, time, entity and filter evidence', async ({ context, page }) => {
+  await beginApprovalScenario(page, context)
+  const receipts = await page.evaluate(async () => {
+    const post = async (path: string, body?: unknown) => {
+      const response = await fetch(`/api/v1/${path}`, {
+        method: 'POST', headers: { 'content-type': 'application/json', 'idempotency-key': crypto.randomUUID() },
+        ...(body === undefined ? {} : { body: JSON.stringify(body) }),
+      })
+      if (!response.ok) throw new Error(`Owned approval fixture ${path} failed with ${response.status}`)
+      return await response.json() as { data: { id: number; reviewed_at: string } }
+    }
+    // A separate period keeps this audit independent of the earlier UI journey.
+    // These are application commands, not pre-seeded audit/event rows.
+    await post('time-entries', { project_id: 1, task_id: 1, spent_date: '2026-08-26', seconds: 3600, notes: 'Owned approval audit fixture' })
+    const period = { period_start: '2026-08-23', period_end: '2026-08-29' }
+    const submitted = await post('timesheet-submissions', period)
+    await post(`timesheet-submissions/${submitted.data.id}/reject`, { reason: 'Audit fixture correction' })
+    await post('timesheet-submissions', period)
+    const approved = await post(`timesheet-submissions/${submitted.data.id}/approve`)
+    await post(`timesheet-submissions/${submitted.data.id}/withdraw`, { reason: 'Audit fixture reopened' })
+    const locked = await post('timesheet-locks', { locked_through: '2026-08-26', reason: 'Audit fixture lock' })
+    await post(`timesheet-locks/${locked.data.id}/unlock`, { reason: 'Audit fixture unlocked' })
+    return { submissionId: submitted.data.id, lockId: locked.data.id, approvedAt: approved.data.reviewed_at }
+  })
+  const approvedAt = receipts.approvedAt
   const drained = await context.request.post('/__ezacto_browser_fixture__/drain-outbox', {
     headers: { 'x-ezacto-browser-fixture-control': 'start-end-round-trip' },
   })
@@ -3727,12 +3792,18 @@ test('[e2e:approve-lock] [e2e:timesheet-approval] [e2e:lock-policy] rejects, app
     const row = activity.locator('tbody tr[data-row]').filter({
       has: page.getByRole('cell', { name: `Timesheet ${event}`, exact: true }),
     })
-    await expect(row.first()).toBeVisible()
-    await expect(row.first()).toContainText('Browser Owner')
+    const owned = row.filter({ has: page.getByRole('cell', { name: `${event === 'locked' || event === 'unlocked' ? 'timesheet_lock' : 'timesheet_submission'} #${event === 'locked' || event === 'unlocked' ? receipts.lockId : receipts.submissionId}`, exact: true }) })
+    // Rejecting and correcting the same submission produces two submitted facts.
+    const expectedCount = event === 'submitted' ? 2 : 1
+    await expect(owned).toHaveCount(expectedCount)
+    for (let index = 0; index < expectedCount; index += 1) {
+      await expect(owned.nth(index)).toBeVisible()
+      await expect(owned.nth(index)).toContainText('Browser Owner')
+    }
   }
   const approvedRow = activity.locator('tbody tr[data-row]').filter({
     has: page.getByRole('cell', { name: 'Timesheet approved', exact: true }),
-  })
+  }).filter({ has: page.getByRole('link', { name: `timesheet_submission #${receipts.submissionId}`, exact: true }) })
   await expect(approvedRow.first().locator('td').first()).toHaveText(approvedAt)
   await page.locator('[data-activity-entity]').selectOption('timesheet_submission')
   await expect(activity).not.toContainText('Timesheet unlocked')
@@ -3740,8 +3811,7 @@ test('[e2e:approve-lock] [e2e:timesheet-approval] [e2e:lock-policy] rejects, app
   await expect(approvedRow.getByRole('link', { name: /timesheet_submission #/u })).toHaveAttribute(
     'href',
     '/approvals',
-  )
-})
+  )})
 
 test('[e2e:timesheet-approval] submits and approves an expense-only week', async ({
   context,

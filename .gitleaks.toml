@@ -137,3 +137,19 @@ condition = "AND"
 regexTarget = "line"
 paths = ['''^packages/(db/test/(github-reader-admin|github-publication-runtime)|cli/test/github-publication-restore|integrations/test/github-comments)\.test\.ts$''']
 regexes = ['''^\s*(const\s+(pem|privateKey)\s*=|pem\s*=)\s*`-----BEGIN PRIVATE KEY-----\\n\$\{Buffer\.from\(await crypto\.subtle\.exportKey\('pkcs8', (keys|keypair)\.privateKey\)\)\.toString\('base64'\)\}\\n-----END PRIVATE KEY-----`\s*;?\s*$''']
+
+# Reminder-reconciliation tests use fixed UUID-shaped webhook tokens and
+# idempotency keys ("ezacto-reminder-<id>-<uuid>"). Scoped to these test files
+# and to lines that carry a literal UUID, so a real key in them still trips.
+[[allowlists]]
+targetRules = ["generic-api-key"]
+description = "UUID-shaped token and idempotency-key fixtures in reminder reconciliation tests"
+condition = "AND"
+regexTarget = "line"
+regexes = ['''[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}''']
+paths = [
+  '''^entries/worker/test/reminder-reconciliation\.test\.ts$''',
+  '''^packages/db/test/invoice-email-delivery\.test\.ts$''',
+  '''^packages/mailer/test/mailer\.test\.ts$''',
+  '''^packages/mailer/test/mailgun\.test\.ts$''',
+]

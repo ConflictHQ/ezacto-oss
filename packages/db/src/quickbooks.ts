@@ -8,6 +8,7 @@
  */
 
 import { sql } from 'drizzle-orm'
+import { ManagedQuickBooksRefreshUnavailableError } from '@ezacto/integrations'
 import { atomicStatements } from './atomic-statements.js'
 import type { InvoiceStateDatabase } from './invoice-state.js'
 import { quickBooksConnectionStatements } from './quickbooks-connection-command.js'
@@ -18,6 +19,7 @@ import type * as schema from './schema.js'
 type Database = BetterSQLite3Database<typeof schema> | DrizzleD1Database<typeof schema>
 
 export interface QuickBooksConnectionRecord {
+  readonly connectionGeneration: number
   readonly realmId: string
   readonly companyName: string | null
   readonly accessToken: string
@@ -69,6 +71,7 @@ export interface QuickBooksLinkRecord {
 }
 
 interface ConnectionRow {
+  connection_generation: number
   realm_id: string
   company_name: string | null
   access_token: string
@@ -83,6 +86,7 @@ interface ConnectionRow {
 }
 
 const connection = (row: ConnectionRow): QuickBooksConnectionRecord => ({
+  connectionGeneration: row.connection_generation,
   realmId: row.realm_id,
   companyName: row.company_name,
   accessToken: row.access_token,
@@ -257,7 +261,8 @@ export const createQuickBooksStore = (database: Database): QuickBooksStore => ({
   readConnection: async () => {
     const rows = await database.all<ConnectionRow>(sql`SELECT realm_id, company_name, access_token, refresh_token,
          access_token_expires_at, refresh_token_expires_at, scope,
-         allow_online_payment, connected_by_user_id, connected_at, disconnected_at
+         allow_online_payment, connected_by_user_id, connected_at, disconnected_at,
+         (SELECT generation FROM quickbooks_connection_generation WHERE singleton=1) AS connection_generation
        FROM quickbooks_connections WHERE id = 1 AND disconnected_at IS NULL`)
     return rows[0] === undefined ? null : connection(rows[0])
   },
@@ -287,10 +292,20 @@ export const createQuickBooksStore = (database: Database): QuickBooksStore => ({
   },
 
   saveTokens: async (input) => {
-    await database.run(sql`UPDATE quickbooks_connections
+    try { await database.run(sql`UPDATE quickbooks_connections
        SET access_token = ${input.accessToken}, refresh_token = ${input.refreshToken}, access_token_expires_at = ${input.accessTokenExpiresAt},
          refresh_token_expires_at = ${input.refreshTokenExpiresAt}, updated_at = ${input.now}
-       WHERE id = 1 AND realm_id = ${input.realmId} AND disconnected_at IS NULL`)
+       WHERE id = 1 AND realm_id = ${input.realmId} AND disconnected_at IS NULL`) }
+    catch (error) {
+      // Drizzle's outer error includes bound credentials. A managed ownership
+      // refusal is expected, and must not reach API logs with those parameters.
+      let cause: unknown = error
+      for (let depth = 0; depth < 8 && cause instanceof Error; depth += 1) {
+        if (cause.message.includes('managed_quickbooks_refresh_owner_required')) throw new ManagedQuickBooksRefreshUnavailableError()
+        cause = cause.cause
+      }
+      throw error
+    }
   },
 
   setAllowOnlinePayment: async (input) => {

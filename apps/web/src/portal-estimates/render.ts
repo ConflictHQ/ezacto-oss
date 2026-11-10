@@ -45,6 +45,12 @@ ${portalBrandHead(options.chrome)}  <script type="module" src="/assets/portal-es
       <h1 id="portal-estimates-heading" tabindex="-1" data-portal-heading>Your estimates</h1>
     </header>
     <p class="form-result" data-portal-status role="status" aria-live="polite">Loading…</p>
+    <section data-portal-sign-in-confirm hidden aria-labelledby="portal-sign-in-confirm-heading">
+      <h2 id="portal-sign-in-confirm-heading">Confirm client portal sign-in</h2>
+      <p>Continue only if you requested this sign-in link.</p>
+      <button type="button" class="primary-action" data-portal-confirm-link>Continue to client portal</button>
+      <button type="button" data-portal-cancel-link>Use another sign-in link</button>
+    </section>
     <section data-portal-sign-in hidden aria-labelledby="portal-sign-in-heading">
       <h2 id="portal-sign-in-heading">Sign in to review your estimates</h2>
       <form data-portal-sign-in-form>

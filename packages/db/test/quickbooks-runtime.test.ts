@@ -4,6 +4,7 @@ import type { MirrorClient } from "@ezacto/integrations";
 import {
   createQuickBooksMirrorSubscriber,
   createQuickBooksRuntime,
+  ManagedQuickBooksRefreshUnavailableError,
   type QuickBooksMirrorSource,
   type QuickBooksRuntime,
   type QuickBooksSourceInvoice,
@@ -139,6 +140,7 @@ const runtime = async (
   fetchImpl: (request: Request) => Promise<Response>,
   mirrorSource = source(),
   config: Partial<Parameters<typeof createQuickBooksRuntime>[0]["config"]> = {},
+  managed: Pick<Parameters<typeof createQuickBooksRuntime>[0], "managedRefresh" | "managedDisconnect"> = {},
 ): Promise<QuickBooksRuntime & { store: ReturnType<typeof createQuickBooksStore> }> => {
   sqlite = new BetterSqlite3(":memory:");
   await migrateContainer(sqlite);
@@ -183,6 +185,7 @@ const runtime = async (
       ...config,
     },
     store,
+    ...managed,
     source: mirrorSource,
     reconciliation: createQuickBooksReconciliationSource(createContainerDatabase(sqlite)),
     fetch: fetchImpl,
@@ -210,6 +213,29 @@ const sign = async (payload: string, token = "verifier-token"): Promise<string> 
   const mac = await crypto.subtle.sign("HMAC", key, new TextEncoder().encode(payload));
   return btoa(String.fromCharCode(...new Uint8Array(mac)));
 };
+
+describe("managed disconnect custody", () => {
+  it("delegates to the trusted coordinator without legacy local disconnect or provider I/O", async () => {
+    const send = vi.fn(async () => new Response(null, { status: 500 }));
+    const disconnect = vi.fn(async () => {});
+    const service = await runtime(send, source(), {}, { managedDisconnect: disconnect });
+    const legacy = vi.spyOn(service.store, "disconnect");
+    await service.service.disconnect();
+    expect(disconnect).toHaveBeenCalledOnce();
+    expect(legacy).not.toHaveBeenCalled();
+    expect(send).not.toHaveBeenCalled();
+  });
+
+  it("refuses legacy disconnect when managed custody has no coordinator", async () => {
+    const send = vi.fn(async () => new Response(null, { status: 500 }));
+    const managedRefresh = { status: async () => "ready" as const, refresh: vi.fn() };
+    const service = await runtime(send, source(), {}, { managedRefresh });
+    const legacy = vi.spyOn(service.store, "disconnect");
+    await expect(service.service.disconnect()).rejects.toBeInstanceOf(ManagedQuickBooksRefreshUnavailableError);
+    expect(legacy).not.toHaveBeenCalled();
+    expect(send).not.toHaveBeenCalled();
+  });
+});
 
 describe("connecting", () => {
   it("[e2e] completes the handshake and records the company", async () => {

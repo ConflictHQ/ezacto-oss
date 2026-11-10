@@ -165,7 +165,24 @@ test('[e2e:estimate-review #1010] requests a real queued link, signs in and reco
     )
     const token = new URLSearchParams(link.hash.slice(1)).get('token')!
     expect(link.search).toBe('')
+    // #740: a real signed token survives scanners fetching the old URL.
+    // The actual page still uses its credential-free fragment/JSON exchange.
+    const legacy = new URL('/portal/verify', link.origin)
+    legacy.searchParams.set('token', token)
+    for (const method of ['GET', 'HEAD', 'GET']) {
+      const scanner = await request.fetch(legacy.href, { method })
+      expect(scanner.status()).toBe(200)
+      expect(scanner.headers()['set-cookie']).toBeUndefined()
+      expect(scanner.headers()['cache-control']).toBe('no-store')
+      if (method === 'GET') {
+        expect(await scanner.text()).toContain('<form method="post" action="/portal/verify">')
+      }
+    }
+    expect((await context.cookies()).some(cookie => cookie.name === '__Host-ezacto_portal')).toBe(false)
     await page.goto(link.href)
+    await expect(page.getByRole('heading', { name: 'Confirm client portal sign-in', exact: true })).toBeVisible()
+    expect((await context.cookies()).some(cookie => cookie.name === '__Host-ezacto_portal')).toBe(false)
+    await page.getByRole('button', { name: 'Continue to client portal', exact: true }).click()
     await expect(page.getByRole('link', { name: 'EST-MAILED-1010', exact: true })).toBeVisible()
     expect(new URL(page.url()).hash).toBe('')
     const cookies = await context.cookies()

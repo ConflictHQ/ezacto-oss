@@ -1,6 +1,9 @@
+import { readManagedQuickBooksOutboxAdmission } from '@ezacto/db/d1'
+import { createManagedQuickBooksOutboxSubscriber } from './managed-quickbooks-outbox.js'
 import type { WiseRuntime } from '@ezacto/integrations'
-import { managedQuickBooksAvailable, managedWiseAvailable, type WorkerManagedQuickBooks, type WorkerManagedWise } from './managed-providers.js'
+import { managedQuickBooksAvailable, managedWiseAvailable, managedBillAvailable, type WorkerManagedQuickBooks, type WorkerManagedWise, type WorkerManagedBill } from './managed-providers.js'
 import { createCalendarOperatorCleanupStore } from '@ezacto/db/d1'
+import { runInvoiceFeedbackRecovery, runReminderReconciliation } from './reminder-reconciliation.js'
 import { createConfiguredCalendarServices } from '@ezacto/integrations'
 import { createCalendarOAuthStore } from '@ezacto/db/d1'
 import { createConfiguredBankFeedRuntime } from '@ezacto/integrations'
@@ -721,6 +724,7 @@ export const createRuntimeServices = async (
     /** Trusted tenant runtime; an explicit null never falls back to environment credentials. */
     managedQuickBooks?: WorkerManagedQuickBooks;
     managedWise?: WorkerManagedWise;
+    managedBill?: WorkerManagedBill;
     calendarSources?: Parameters<typeof createCalendarSyncService>[0]['sources'];
     emailProvider?: HttpEmailProvider;
     ses?: SesMailerOptions;
@@ -738,14 +742,19 @@ export const createRuntimeServices = async (
   // Stable per binding, so the readiness cache below still keys on it.
   const database = createIdempotentD1(binding);
   const demo = demoDeployment(env);
-  // A managed read capability withholds every deployment Wise credential,
-  // including the independent bank-feed token. No explicit managed null may
-  // select a host business account or mount the money-moving provider.
-  const credentials = options.managedWise === undefined ? providerCredentials(env) : {
-    ...providerCredentials(env), WISE_TOKEN: undefined, WISE_PROFILE_ID: undefined,
-    WISE_WEBHOOK_PUBLIC_KEY: undefined, WISE_BANK_FEED_TOKEN: undefined,
-    WISE_BANK_FEED_PROFILE_ID: undefined, WISE_BANK_FEED_BALANCE_ID: undefined,
-    WISE_BANK_FEED_CURRENCY: undefined,
+  // Explicit managed capabilities withhold all matching deployment
+  // credentials, including auxiliary Wise and BILL mail/payment paths.
+  const credentials = {
+    ...providerCredentials(env),
+    ...(options.managedWise === undefined ? {} : {
+      WISE_TOKEN: undefined, WISE_PROFILE_ID: undefined, WISE_WEBHOOK_PUBLIC_KEY: undefined,
+      WISE_BANK_FEED_TOKEN: undefined, WISE_BANK_FEED_PROFILE_ID: undefined,
+      WISE_BANK_FEED_BALANCE_ID: undefined, WISE_BANK_FEED_CURRENCY: undefined,
+    }),
+    ...(options.managedBill === undefined ? {} : {
+      BILL_DEV_KEY: undefined, BILL_COMPANY_ID: undefined, BILL_USERNAME: undefined,
+      BILL_PASSWORD: undefined, BILL_REPLY_TO_USER_ID: undefined,
+    }),
   };
   const cursorSigningKey = parseCursorSigningKey(env.API_CURSOR_SIGNING_KEY);
   const csv = !demo && csvWorkerConfigured(env) ? createCsvWorkerRuntime(binding,env.ATTACHMENTS!,env.CSV_IMPORT_QUEUE!,cursorSigningKey,error=>reportWorkerError(options.reportError,error,{phase:'queue',traceId:runtimeTraceId()})) : undefined;
@@ -1023,7 +1032,9 @@ export const createRuntimeServices = async (
   // QuickBooks there is nothing to connect -- BILL has no OAuth -- so the
   // routes mount either way and say whether they can reach anything; what
   // changes with the credential is only whether a mirror can run.
-  const bill = createBillRuntime({
+  const managedBill = options.managedBill !== undefined && managedBillAvailable(options.managedBill, env, binding)
+    ? await options.managedBill.compose({ scope: binding, database }) : null
+  const bill = managedBill ?? createBillRuntime({
     config: {
       devKey: credentials.BILL_DEV_KEY,
       companyId: credentials.BILL_COMPANY_ID,
@@ -1232,8 +1243,23 @@ export const createRuntimeServices = async (
             ),
           ]),
       reminders.subscriber,
-      ...(quickBooks === null ? [] : [createQuickBooksMirrorSubscriber(quickBooks)]),
-      createBillMirrorSubscriber(bill),
+      ...(options.managedQuickBooks === undefined
+        ? quickBooks === null ? [] : [createQuickBooksMirrorSubscriber(quickBooks)]
+        : [createManagedQuickBooksOutboxSubscriber({ runtime: quickBooks,
+          available: () => managedQuickBooksAvailable(options.managedQuickBooks!, env, binding),
+          readAdmission: eventId => readManagedQuickBooksOutboxAdmission(drizzle, eventId),
+        })]),
+      { ...createBillMirrorSubscriber({ mirror: (invoiceId: number) => bill.mirror(invoiceId) }),
+        ...(options.managedBill === undefined ? {} : {
+          available: async (event: Readonly<{ aggregateType: string; eventType: string; aggregateId: number }>) => {
+            if (event.aggregateType !== 'invoice' || event.eventType !== 'invoice.sent') return true
+            const source = createBillMirrorSource(drizzle, () => new Date())
+            const invoice = await source.readInvoice(event.aggregateId)
+            if (invoice === null || !(await source.isOptedIn(invoice.clientId))) return true
+            return managedBillAvailable(options.managedBill!, env, binding) && (await bill.status()).configured
+          },
+        }),
+      },
     ],
   });
   const twoFactor = createTwoFactorService({
@@ -1341,6 +1367,10 @@ export const createRuntimeServices = async (
     harvestInvoices: moneyResources,
     bankDeposits: createBankDepositReviewService(drizzle),
     bankFeeds: createConfiguredBankFeedRuntime({store:createBankDepositIngestionService(drizzle),environment:credentials}),
+    ...(emailProvider instanceof MailgunMailer && !demo ? {
+      reminderReconciliation: { processDue: () => runReminderReconciliation({ store: emailLog, lookup: emailProvider }) },
+      invoiceFeedbackRecovery: { processDue: () => runInvoiceFeedbackRecovery({ ledger: createD1EmailFeedbackLedger(database), lookup: emailProvider }) },
+    } : {}),
     invoiceGeneration: createInvoiceGenerationService(drizzle),
     recurringInvoices: createRecurringInvoiceEngine(drizzle),
     reminders: { processDue: processDueReminders },
@@ -1600,6 +1630,8 @@ export const createRuntimeServices = async (
             signingKey: credentials.MAILGUN_WEBHOOK_SIGNING_KEY,
             log: emailLog,
             ledger: createD1EmailFeedbackLedger(database),
+            ...(emailProvider instanceof MailgunMailer ? { verifyHeldReminder: (input: Parameters<MailgunMailer['inspectReminderEvent']>[0]) => emailProvider.inspectReminderEvent(input) } : {}),
+            ...(emailProvider instanceof MailgunMailer ? { verifyInvoiceFeedback: (input: Parameters<MailgunMailer['inspectInvoiceFeedback']>[0]) => emailProvider.inspectInvoiceFeedback(input) } : {}),
           }),
         }),
     paymentRuns,

@@ -1,3 +1,7 @@
+import { createHash } from 'node:crypto'
+import { createManagedQuickBooksRevocationCoordinator } from '@ezacto/integrations'
+import { atomicStatements } from '../src/atomic-statements.js'
+import { quickBooksConnectionStatements } from '../src/quickbooks-connection-command.js'
 import BetterSqlite3 from 'better-sqlite3'
 import { Miniflare } from 'miniflare'
 import { sql } from 'drizzle-orm'
@@ -32,7 +36,7 @@ afterEach(async () => {
 })
 const fixture = async (
   runtime: 'sqlite' | 'd1',
-  legacy: boolean | '0180_github_publication' = false,
+  legacy: boolean | '0181_reminder_reconciliation' | '0186_quickbooks_outbox_grants' = false,
 ) => {
   let upgrade!: () => Promise<void>
   let db: ReturnType<typeof createContainerDatabase> | ReturnType<typeof createD1Database>
@@ -118,6 +122,7 @@ const fixture = async (
   const rows = (table: string) => db.all<Record<string, unknown>>(sql.raw(`SELECT * FROM ${table}`))
   return {
     db,
+    legacy,
     upgrade,
     store,
     lifecycle,
@@ -155,12 +160,26 @@ const fence = (
   ...over,
 })
 const connect = async (f: Fixture) => {
-  expect(data(await f.commands.accept(f.request(), f.command))).toMatchObject({
-    connectionGeneration: 1,
-  })
+  if (f.legacy === '0181_reminder_reconciliation') {
+    // Seed the actual pre0182 receipt/connection, not the current command whose
+    // refresh guard requires0184. No old-schema guards are disabled or mocked.
+    const c = f.command, t = c.tokens
+    const fingerprint = createHash('sha256').update(JSON.stringify([c.grantId,c.browserHash,c.credentialHash,
+      c.expectedActorUserId,c.expectedConnectionGeneration,c.expiresAt,t.realmId,t.companyName,t.scope,
+      t.accessToken,t.refreshToken,t.accessTokenExpiresAt,t.refreshTokenExpiresAt])).digest('hex')
+    await atomicStatements(f.db, [{ text: `INSERT INTO quickbooks_managed_grants
+      (grant_id,actor_id,authority_kind,session_id,browser_hash,credential_hash,command_fingerprint,
+       expected_generation,accepted_generation,realm_id,expires_at,recorded_at)
+      VALUES(?,2,'guarded-session',NULL,?,?,?,0,1,?,?,?) RETURNING grant_id`,
+      params: [c.grantId,c.browserHash,c.credentialHash,fingerprint,t.realmId,c.expiresAt,f.now()] },
+      ...quickBooksConnectionStatements({ ...t, connectedByUserId: 2, now: f.now() })])
+    expect(await f.rows('quickbooks_connection_generation')).toMatchObject([{ generation: 1 }])
+  } else {
+    expect(data(await f.commands.accept(f.request(), f.command))).toMatchObject({ connectionGeneration: 1 })
+  }
 }
 const status = (value: unknown) => (value instanceof Response ? value.status : 0)
-const everything = async (f: Fixture, excludeLedger = false, existing?: readonly string[]) => {
+const everything = async (f: Fixture, excludeLedger = false, existingTables?: readonly string[]) => {
   const tables = await f.db.all<{ name: string }>(
     sql.raw(
       "SELECT name FROM sqlite_schema WHERE type='table' AND name NOT LIKE 'sqlite_%' AND name NOT LIKE '_cf_%'" +
@@ -168,11 +187,90 @@ const everything = async (f: Fixture, excludeLedger = false, existing?: readonly
     ),
   )
   const dump: unknown[] = []
-  for (const { name } of tables) if (existing === undefined || existing.includes(name)) dump.push(await f.rows(`"${name}"`))
+  for (const { name } of tables) if (existingTables === undefined || existingTables.includes(name)) dump.push(await f.rows(`"${name}"`))
   return JSON.stringify(dump)
 }
 
 describe.each(['sqlite', 'd1'] as const)('managed QuickBooks lifecycle fence %s', (runtime) => {
+  it('returns only the current grant identity to an authenticated administrator', async () => {
+    const f = await fixture(runtime)
+    expect(data(await f.commands.currentGrant(f.request())).grant).toBeNull()
+    expect(status(await f.commands.currentGrant(f.request(f.member.token)))).toBe(403)
+    expect(status(await f.commands.currentGrant(f.request(f.admin.token, 'https://evil.example')))).toBe(403)
+    data(await f.commands.accept(f.request(), f.command))
+    const result = data(await f.commands.currentGrant(f.request()))
+    expect(result.grant).toEqual({ grantId: f.command.grantId, connectionGeneration: 1 })
+    expect(JSON.stringify(result)).not.toContain('PRIVATE_')
+    data(await f.commands.fence(f.request(), fence(f)))
+    expect(data(await f.commands.currentGrant(f.request())).grant).toBeNull()
+  })
+
+  it('refuses an unbound live connection and a revoked administrator session', async () => {
+    const f = await fixture(runtime)
+    await f.canonical.saveConnection({ ...f.command.tokens, connectedByUserId: 2, now: f.now() })
+    expect(status(await f.commands.currentGrant(f.request()))).toBe(409)
+    await f.sessions.revoke(2, f.admin.session.id)
+    expect(status(await f.commands.currentGrant(f.request()))).toBe(401)
+  })
+
+  it('retains an ambiguous provider revocation and refuses a second transport', async () => {
+    const f = await fixture(runtime)
+    data(await f.commands.accept(f.request(), f.command))
+    data(await f.commands.fence(f.request(), fence(f)))
+    const provider = vi.fn(async () => { throw new Error('PRIVATE_PROVIDER_RESPONSE') })
+    const coordinator = createManagedQuickBooksRevocationCoordinator({ store: f.lifecycle, admitted: () => true,
+      revoke: provider, now: () => new Date(f.now()) })
+    expect(await coordinator.run(fence(f).revocationId)).toBe('uncertain')
+    expect(await coordinator.run(fence(f).revocationId)).toBe('uncertain')
+    expect(provider).toHaveBeenCalledOnce()
+    expect(await f.lifecycle.readRevocation(fence(f).revocationId)).toMatchObject({ status: 'attempting', attempts: 1 })
+    expect(status(await f.commands.prepare(f.request()))).toBe(409)
+  })
+
+  it('adds the recovery index without changing existing revocation custody', async () => {
+    const f = await fixture(runtime, '0186_quickbooks_outbox_grants')
+    data(await f.commands.accept(f.request(), f.command))
+    data(await f.commands.fence(f.request(), fence(f)))
+    const before = await f.rows('quickbooks_revocations')
+    await f.upgrade()
+    expect(await f.rows('quickbooks_revocations')).toEqual(before)
+    expect(await f.lifecycle.nextUnresolved()).toMatchObject({ revocationId: fence(f).revocationId, status: 'pending' })
+  })
+
+  it('fences the current grant with fresh authority and replays the same intent', async () => {
+    const f = await fixture(runtime)
+    const intent = { revocationId: 'd'.repeat(64), environment: 'sandbox' as const }
+    expect(data(await f.commands.fenceCurrent(f.request(), intent)).fence).toBeNull()
+    expect(status(await f.commands.fenceCurrent(f.request(f.member.token), intent))).toBe(403)
+    data(await f.commands.accept(f.request(), f.command))
+    const result = data(await f.commands.fenceCurrent(f.request(), intent))
+    expect(result.fence).toMatchObject({ outcome: 'fenced', revocation: { status: 'pending', grantId: f.command.grantId } })
+    expect(JSON.stringify(result)).not.toContain('PRIVATE_')
+    expect(data(await f.commands.fenceCurrent(f.request(), intent)).fence).toMatchObject({ outcome: 'replayed' })
+    expect(status(await f.commands.fenceCurrent(f.request(), { ...intent, environment: 'production' }))).toBe(409)
+    expect(await f.rows('quickbooks_revocations')).toHaveLength(1)
+    const guarded = createManagedQuickBooksGrantCommands({ store: f.store, lifecycle: f.lifecycle,
+      guardedUserId: async () => 2, now: f.now })
+    expect(data(await guarded.fenceCurrent(f.request(), intent)).fence).toMatchObject({ outcome: 'replayed' })
+    const denied = createManagedQuickBooksGrantCommands({ store: f.store, lifecycle: f.lifecycle,
+      guardedUserId: async () => 3, now: f.now })
+    expect(status(await denied.fenceCurrent(f.request(), intent))).toBe(403)
+  })
+
+  it('discovers bounded pending and uncertain revocation work', async () => {
+    const f = await fixture(runtime)
+    const plan = await f.db.all<{ detail: string }>(sql.raw("EXPLAIN QUERY PLAN SELECT revocation_id FROM quickbooks_revocations WHERE status='pending' ORDER BY fenced_at,revocation_id LIMIT 1"))
+    expect(plan.some(row => row.detail.includes('quickbooks_revocations_recovery'))).toBe(true)
+    expect(await f.lifecycle.nextUnresolved()).toBeNull()
+    data(await f.commands.accept(f.request(), f.command))
+    data(await f.commands.fence(f.request(), fence(f)))
+    expect(await f.lifecycle.nextUnresolved()).toMatchObject({ revocationId: fence(f).revocationId, status: 'pending' })
+    await f.lifecycle.beginRevocation(fence(f).revocationId, f.now())
+    expect(await f.lifecycle.nextUnresolved()).toMatchObject({ revocationId: fence(f).revocationId, status: 'attempting' })
+    await f.lifecycle.settleRevocation(fence(f).revocationId, 'revoked', f.now())
+    expect(await f.lifecycle.nextUnresolved()).toBeNull()
+  })
+
   it('fences, retains only the refresh token, and refuses stale grant/refresh/native writes', async () => {
     const f = await fixture(runtime)
     await connect(f)
@@ -267,18 +365,19 @@ describe.each(['sqlite', 'd1'] as const)('managed QuickBooks lifecycle fence %s'
   })
 
   it('[migration #1236] retains all data while fencing an unresolved prior connection on upgrade', async () => {
-    const f = await fixture(runtime, '0180_github_publication')
+    const f = await fixture(runtime, '0181_reminder_reconciliation')
     await connect(f)
     data(await f.commands.fence(f.request(), fence(f)))
     const existing = (await f.db.all<{ name: string }>(sql.raw("SELECT name FROM sqlite_schema WHERE type='table'"))).map(row => row.name)
     const before = await everything(f, true)
     await f.upgrade()
+    expect(await everything(f, true, existing)).toBe(before)
     const added = (await f.db.all<{ name: string }>(sql.raw("SELECT name FROM sqlite_schema WHERE type='table'")))
       .map(row => row.name).filter(name => !existing.includes(name)).sort()
-    expect(added).toEqual(['wise_managed_commands','wise_managed_connection'])
+    expect(added).toEqual(['quickbooks_outbox_grants','quickbooks_refresh_attempts','quickbooks_write_attempts','quickbooks_write_effects','quickbooks_write_request_chunks','quickbooks_write_response_chunks','wise_managed_commands','wise_managed_connection'])
+    expect(await f.rows('quickbooks_refresh_attempts')).toEqual([])
     expect(await f.rows('wise_managed_commands')).toEqual([])
     expect(await f.rows('wise_managed_connection')).toMatchObject([{ singleton: 1, generation: 0, status: 'disconnected' }])
-    expect(await everything(f, true, existing)).toBe(before)
     expect(status(await f.commands.prepare(f.request()))).toBe(409)
     await expect(
       f.canonical.saveConnection({ ...f.command.tokens, connectedByUserId: 2, now: f.now() }),
@@ -287,7 +386,7 @@ describe.each(['sqlite', 'd1'] as const)('managed QuickBooks lifecycle fence %s'
   })
 
   it('[migration #1236] refuses a pre-existing live/revoking overlap without changing its custody or ledger', async () => {
-    const f = await fixture(runtime, '0180_github_publication')
+    const f = await fixture(runtime, '0181_reminder_reconciliation')
     await connect(f)
     data(await f.commands.fence(f.request(), fence(f)))
     // This is the actual write accepted by the old schema; no guards are dropped.

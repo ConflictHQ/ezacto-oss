@@ -24,6 +24,7 @@ const email = (overrides: Partial<EmailLogRow> = {}): EmailLogRow => ({
   subject: 'Invoice 1315',
   template: 'invoice_sent',
   status: 'sent',
+  reminder_attempt_lease_expires_at: null,
   attempt_count: 1,
   failure_code: null,
   failure_reason: null,
@@ -135,6 +136,14 @@ describe('what was sent (#485)', () => {
     expect(cells).toContain('Invoice 1315')
     expect(cells).toContain('Sent')
     expect(cells).toContain('2026-09-13 09:00')
+  })
+
+  it('[browser #1352] identifies an expired reminder attempt without claiming provider failure', async () => {
+    mount()
+    await activate(api({ listEmailLog: vi.fn(async () => pageOf([
+      email({ template: 'reminder:1', status: 'queued', reminder_attempt_lease_expires_at: '2020-01-01T00:00:00.000Z' }),
+    ])) }))
+    expect(text('[data-email-log-list]')).toContain('Delivery outcome unknown')
   })
 
   it('[browser #936] says when an invoice email was first opened, and leaves the rest blank', async () => {

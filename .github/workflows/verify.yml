@@ -64,6 +64,8 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: ./.github/actions/node-workspace
+      - name: Miniflare replies stay paired after stale worker notifications
+        run: npm run test:dependency-patches
       - run: npm run lint
       # D16 rev2 asked for an AA contrast check in CI. It rides the lint job
       # rather than a job of its own: the palette is a handful of hex pairs, so

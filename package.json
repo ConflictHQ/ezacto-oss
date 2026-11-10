@@ -4,7 +4,7 @@
   "license": "AGPL-3.0-only",
   "author": "CONFLICT LLC",
   "version": "0.0.0",
-  "description": "ezacto — open-source time tracking & invoicing. Pre-build: knowledge, specs, and pipeline scaffolding.",
+  "description": "ezacto \u2014 open-source time tracking & invoicing. Pre-build: knowledge, specs, and pipeline scaffolding.",
   "engines": {
     "node": ">=22"
   },
@@ -29,7 +29,10 @@
     "build": "npm run build --workspaces --if-present",
     "verify": "npm run contract:check && npm run typecheck && npm run lint && npm run theme:contrast -w @ezacto/web && npm run test && npm run build",
     "privacy:generate": "npm run build -w @ezacto/core && node scripts/generate-privacy-reference.mjs",
-    "privacy:check": "npm run build -w @ezacto/core && node scripts/generate-privacy-reference.mjs --check"
+    "privacy:check": "npm run build -w @ezacto/core && node scripts/generate-privacy-reference.mjs --check",
+    "postinstall": "node scripts/apply-miniflare-sync-generation.mjs",
+    "deps:patch": "node scripts/apply-miniflare-sync-generation.mjs",
+    "test:dependency-patches": "node --test scripts/miniflare-sync-generation.test.mjs scripts/apply-miniflare-sync-generation.test.mjs"
   },
   "dependencies": {
     "esbuild": "^0.28.2"
