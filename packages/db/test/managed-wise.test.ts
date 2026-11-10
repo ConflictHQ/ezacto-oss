@@ -30,7 +30,10 @@ describe.each(['sqlite', 'd1'] as const)('managed Wise read-only %s', (backend) 
         app.fetch(
           new Request(`https://owned.example/api/v1/integrations/wise${path}`, {
             method,
-            headers: { origin: 'https://owned.example', cookie: `__Host-ezacto_session=${token}` },
+            headers: { origin: 'https://owned.example', cookie: `__Host-ezacto_session=${token}`,
+              ...(method === 'POST' ? { 'content-type': 'application/json' } : {}),
+            },
+            ...(method === 'POST' ? { body: '{}' } : {}),
           }),
         )
       const initialCalls = calls.length
