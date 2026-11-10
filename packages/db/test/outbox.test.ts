@@ -12,6 +12,7 @@ import {
   type InvoiceStateDatabase,
 } from '../src/invoice-state.js'
 import { migrateContainer, migrateD1 } from '../src/migrate.js'
+import { FollowUpDeliveryDeferred } from '../src/follow-up-deferred.js'
 import {
   ACTIVITY_LOG_SUBSCRIBER_ID,
   createContainerOutboxService,
@@ -587,6 +588,55 @@ for (const [runtime, factory] of factories) {
       // an invoice.sent it did not have.
       expect(byInvoice.get(1)).toEqual(['invoice.sent', 'payment.recorded', 'invoice.paid'])
       expect(byInvoice.get(2)).toEqual(['invoice.updated', 'payment.recorded', 'invoice.paid'])
+    })
+
+    it('[money] defers a waiting follow-up without exhausting failure attempts', async () => {
+      database = await factory()
+      await installFixture(database)
+      await sendInvoice(database)
+      let now = Date.parse(drainAt), ready = false
+      const deliver = vi.fn(async () => { if (!ready) throw new FollowUpDeliveryDeferred() })
+      const service = database.outbox({ subscribers: [{ id: 'invoice_thank_you', deliver }], now: () => new Date(now).toISOString(),
+        createAttemptId: (() => { let id = 0; return () => `deferred-${++id}` })(), maxAttempts: 2, retryDelaySeconds: [60] })
+      for (let i = 0; i < 6; i++) {
+        await expect(service.drain()).resolves.toMatchObject({ retried: 1, failed: 0 })
+        expect(await service.listDeliveries({ status: 'pending' })).toEqual([expect.objectContaining({ subscriberId: 'invoice_thank_you', attemptCount: 0 })])
+        now += 300_000
+      }
+      ready = true
+      await expect(service.drain()).resolves.toMatchObject({ delivered: 1 })
+      expect(deliver).toHaveBeenCalledTimes(7)
+    })
+
+    it('[money] preserves prior real failures when the next follow-up attempt is deferred', async () => {
+      database = await factory()
+      await installFixture(database)
+      await sendInvoice(database)
+      let now = Date.parse(drainAt), state: 'failure' | 'waiting' | 'ready' = 'failure'
+      const service = database.outbox({ subscribers: [{ id: 'invoice_thank_you', deliver: async () => {
+        if (state === 'failure') throw new Error('fixture failure')
+        if (state === 'waiting') throw new FollowUpDeliveryDeferred()
+      } }], now: () => new Date(now).toISOString(), maxAttempts: 2, retryDelaySeconds: [60] })
+      await expect(service.drain()).resolves.toMatchObject({ retried: 1 })
+      now += 60_000; state = 'waiting'
+      await expect(service.drain()).resolves.toMatchObject({ retried: 1, failed: 0 })
+      expect(await service.listDeliveries({ status: 'pending' })).toEqual([
+        expect.objectContaining({ subscriberId: 'invoice_thank_you', attemptCount: 1, lastErrorCode: 'subscriber_rejected' }),
+      ])
+      now += 300_000; state = 'ready'
+      await expect(service.drain()).resolves.toMatchObject({ delivered: 1 })
+    })
+
+    it('[security] does not grant follow-up deferral to another subscriber', async () => {
+      database = await factory()
+      await installFixture(database)
+      await sendInvoice(database)
+      const service = database.outbox({ subscribers: [{ id: 'other', deliver: async () => { throw new FollowUpDeliveryDeferred() } }],
+        now: () => drainAt, maxAttempts: 1, retryDelaySeconds: [] })
+      await expect(service.drain()).resolves.toMatchObject({ failed: 1 })
+      expect(await service.listDeliveries({ status: 'failed' })).toEqual([
+        expect.objectContaining({ subscriberId: 'other', attemptCount: 1, lastErrorCode: 'subscriber_rejected' }),
+      ])
     })
 
     it('[unit] retries on the deterministic schedule, surfaces failure, and permits retry', async () => {

@@ -287,7 +287,7 @@ same runtime serves invoice events, manual-receipt mirrors and bounded scheduled
 recovery. Self-hosted clients retain their existing transport when this option is
 absent. A managed client refuses a write without a trusted native source context.
 
-Before transport, migration 0184 retains the company-scoped UUID request ID,
+Before transport, migration 0185 retains the company-scoped UUID request ID,
 resource, original native financial snapshot hash, invoice approval version,
 path, minor version and exact UTF-8 body. Immutable 64 KiB chunks retain large
 requests and responses; byte counts and SHA-256 are verified before use. Provider
@@ -329,7 +329,7 @@ consumers moving and resumes through the same runtime after admission returns.
 Safe unknown accounting writes remain recoverable with their original request
 IDs; custody requiring review stays withheld.
 
-Migration 0185 captures the accepted native grant ID and generation in the same
+Migration 0186 captures the accepted native grant ID and generation in the same
 commit as each accounting event. It also records when no grant existed. These
 bindings are immutable while the event exists, and contain no credential.
 An old event cannot target a newer grant even when realm IDs and timestamps are

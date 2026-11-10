@@ -125,6 +125,37 @@ const parseBody = (text: string): Record<string, unknown> => {
   }
 };
 
+/** Bound the provider evidence body while reading, not after allocation. */
+const readEvidenceBody = async (response: Response, signal: AbortSignal): Promise<string> => {
+  const length = response.headers.get("content-length");
+  if (length !== null && /^\d+$/u.test(length) && Number(length) > responseLimit) {
+    await response.body?.cancel();
+    throw new Error("Mailgun evidence response exceeded size limit");
+  }
+  if (response.body === null) throw new Error("Mailgun evidence response is invalid");
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  const abort = () => { void reader.cancel().catch(() => undefined); };
+  signal.addEventListener("abort", abort, { once: true });
+  if (signal.aborted) abort();
+  let bytes = 0, result = "";
+  try {
+    for (;;) {
+      signal.throwIfAborted();
+      const part = await reader.read();
+      signal.throwIfAborted();
+      if (part.done) break;
+      bytes += part.value.byteLength;
+      if (bytes > responseLimit) {
+        await reader.cancel();
+        throw new Error("Mailgun evidence response exceeded size limit");
+      }
+      result += decoder.decode(part.value, { stream: true });
+    }
+    return result + decoder.decode();
+  } finally { signal.removeEventListener("abort", abort); reader.releaseLock(); }
+};
+
 const attachmentSizeLimit = 25 * 1024 * 1024;
 const forbiddenFilenameCharacters = new Set([
   "/", "\\", ":", "*", "?", '"', "<", ">", "|",
@@ -182,6 +213,49 @@ export class MailgunMailer implements HttpEmailProvider {
   private readonly monotonicNow: () => number;
   private readonly endpoint: string;
 
+  /** Follow only domain-scoped Mailgun event links and bound work and memory. */
+  private async reminderEvidencePages(url: URL, signal: AbortSignal): Promise<{ items: unknown[]; complete: boolean; pageLimit?: true }> {
+    const items: unknown[] = [];
+    const visited = new Set<string>();
+    let current = url;
+    for (let page = 0; page < 5; page += 1) {
+      if (visited.has(current.href)) return { items, complete: false };
+      visited.add(current.href);
+      const response = await this.fetchImplementation(new Request(current, { method: 'GET',
+        headers: { authorization: this.authorization }, redirect: 'error', signal }));
+      if (!response.ok) throw new MailgunApiError(response.status);
+      const body = parseBody(await readEvidenceBody(response, signal));
+      if (!Array.isArray(body.items) || body.items.length > 100) throw new Error('Mailgun evidence response is invalid');
+      items.push(...body.items);
+      // Mailgun always provides next/previous links; only an empty page ends
+      // a traversal. A short page may still have later conflicting evidence.
+      if (body.items.length === 0) return { items, complete: true };
+      const paging = body.paging && typeof body.paging === 'object' && !Array.isArray(body.paging) ? body.paging as Record<string, unknown> : null;
+      if (typeof paging?.next !== 'string' || paging.next.length > 4096) return { items, complete: false };
+      let next: URL;
+      try { next = new URL(paging.next); } catch { return { items, complete: false }; }
+      // Mailgun can encode its cursor in one path segment after /events.
+      // Do not let that segment escape the domain-scoped events endpoint.
+      let eventPath = next.pathname === url.pathname;
+      if (next.pathname.startsWith(`${url.pathname}/`)) {
+        const encoded = next.pathname.slice(url.pathname.length + 1);
+        try {
+          const cursor = decodeURIComponent(encoded);
+          eventPath = cursor.length > 0 && cursor !== '.' && cursor !== '..' &&
+            !/[\\/%]/u.test(cursor) && ![...cursor].some(character => {
+              const code = character.codePointAt(0)!;
+              return code < 32 || code === 127;
+            });
+        } catch { eventPath = false; }
+      }
+      if (next.origin !== url.origin || !eventPath || next.username || next.password || next.hash) {
+        return { items, complete: false };
+      }
+      current = next;
+    }
+    return { items, complete: false, pageLimit: true };
+  }
+
   constructor(config: MailgunConfig, options: MailgunOptions = {}) {
     const apiKey = secret(config.apiKey, "Mailgun API key", 512);
     const domain = bounded(config.domain, "Mailgun domain", 253).toLowerCase();
@@ -198,6 +272,160 @@ export class MailgunMailer implements HttpEmailProvider {
       options.fetch ?? (async (request) => globalThis.fetch(request));
     this.monotonicNow = options.monotonicNow ?? (() => performance.now());
     this.endpoint = `${baseUrl(region)}/v3/${encodeURIComponent(domain)}/messages`;
+  }
+
+  /** Read one bounded page of authenticated provider events. A positive
+   * match is an observation only; no match is not evidence of non-delivery. */
+  async inspectReminderEvent(input: {
+    deliveryId: number; attemptId: string; eventId: string; messageId: string; recipient: string;
+    eventType: 'delivered' | 'failed' | 'complained'; begin: number; end: number; signal?: AbortSignal;
+  }): Promise<boolean> {
+    if (!Number.isSafeInteger(input.deliveryId) || input.deliveryId < 1 ||
+        !/^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/u.test(input.attemptId) ||
+        !Number.isSafeInteger(input.begin) || !Number.isSafeInteger(input.end) || input.end <= input.begin || input.end - input.begin > 86_400) {
+      throw new TypeError('Mailgun reminder evidence scope is invalid');
+    }
+    const eventId = bounded(input.eventId, 'Mailgun event id', 255);
+    const messageId = bounded(input.messageId, 'Mailgun message id', 512).replace(/^<|>$/gu, '');
+    const recipient = bounded(input.recipient, 'Mailgun recipient', 254).toLowerCase();
+    if (!messageId || !emailPattern.test(recipient) || !['delivered', 'failed', 'complained'].includes(input.eventType)) {
+      throw new TypeError('Mailgun reminder evidence scope is invalid');
+    }
+    const key = `ezacto-reminder-${input.deliveryId}-${input.attemptId}`;
+    const tag = `ezacto-reminder-${input.attemptId.slice(0, 2)}`;
+    const url = new URL(`${baseUrl(this.region)}/v3/${encodeURIComponent(this.domain)}/events`);
+    url.search = new URLSearchParams({ begin: String(input.begin), end: String(input.end), ascending: 'yes', limit: '100', tags: tag }).toString();
+    const signal = input.signal === undefined ? AbortSignal.timeout(10_000) : AbortSignal.any([input.signal, AbortSignal.timeout(10_000)]);
+    const evidence = await this.reminderEvidencePages(url, signal);
+    return evidence.items.some(value => {
+      if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
+      const item = value as Record<string, unknown>;
+      const message = item.message && typeof item.message === 'object' && !Array.isArray(item.message) ? item.message as Record<string, unknown> : null;
+      const headers = message?.headers && typeof message.headers === 'object' && !Array.isArray(message.headers) ? message.headers as Record<string, unknown> : null;
+      const variables = item['user-variables'] && typeof item['user-variables'] === 'object' && !Array.isArray(item['user-variables']) ? item['user-variables'] as Record<string, unknown> : null;
+      const flags = item.flags && typeof item.flags === 'object' && !Array.isArray(item.flags) ? item.flags as Record<string, unknown> : null;
+      const rawId = typeof headers?.['message-id'] === 'string' ? headers['message-id'].replace(/^<|>$/gu, '') : null;
+      return item.id === eventId && item.event === input.eventType &&
+        (input.eventType !== 'failed' || item.severity === 'permanent') && flags?.['is-test-mode'] === false && rawId === messageId &&
+        typeof item.timestamp === 'number' && Number.isFinite(item.timestamp) && item.timestamp >= input.begin && item.timestamp <= input.end &&
+        typeof item.recipient === 'string' && item.recipient.toLowerCase() === recipient &&
+        Array.isArray(item.tags) && item.tags.includes(tag) && variables?.ezacto_idempotency_key === key;
+    });
+  }
+
+  /** Independently verify one invoice feedback event against the configured
+   * Mailgun domain. A positive result is evidence of this event only, not an
+   * authorization to change an audience or a claim that other mail delivered. */
+  async inspectInvoiceFeedback(input: {
+    eventId: string; messageId: string; recipient: string;
+    eventType: 'failed' | 'complained'; begin: number; end: number; signal?: AbortSignal;
+  }): Promise<boolean> {
+    if (!Number.isSafeInteger(input.begin) || !Number.isSafeInteger(input.end) ||
+        input.end <= input.begin || input.end - input.begin > 86_400 ||
+        !['failed', 'complained'].includes(input.eventType)) {
+      throw new TypeError('Mailgun invoice feedback scope is invalid');
+    }
+    const eventId = bounded(input.eventId, 'Mailgun event id', 255);
+    const messageId = bounded(input.messageId, 'Mailgun message id', 512).replace(/^<|>$/gu, '');
+    const recipient = bounded(input.recipient, 'Mailgun recipient', 254).toLowerCase();
+    if (!messageId || !emailPattern.test(recipient)) throw new TypeError('Mailgun invoice feedback scope is invalid');
+    const url = new URL(`${baseUrl(this.region)}/v3/${encodeURIComponent(this.domain)}/events`);
+    url.search = new URLSearchParams({ begin: String(input.begin), end: String(input.end), ascending: 'yes',
+      limit: '100', 'message-id': messageId }).toString();
+    const signal = input.signal === undefined ? AbortSignal.timeout(10_000) : AbortSignal.any([input.signal, AbortSignal.timeout(10_000)]);
+    const evidence = await this.reminderEvidencePages(url, signal);
+    return evidence.items.some(value => {
+      if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
+      const item = value as Record<string, unknown>;
+      const message = item.message && typeof item.message === 'object' && !Array.isArray(item.message) ? item.message as Record<string, unknown> : null;
+      const headers = message?.headers && typeof message.headers === 'object' && !Array.isArray(message.headers) ? message.headers as Record<string, unknown> : null;
+      const flags = item.flags && typeof item.flags === 'object' && !Array.isArray(item.flags) ? item.flags as Record<string, unknown> : null;
+      const rawId = typeof headers?.['message-id'] === 'string' ? headers['message-id'].replace(/^<|>$/gu, '') : null;
+      return item.id === eventId && item.event === input.eventType &&
+        (input.eventType !== 'failed' || item.severity === 'permanent') && flags?.['is-test-mode'] === false && rawId === messageId &&
+        typeof item.timestamp === 'number' && Number.isFinite(item.timestamp) && item.timestamp >= input.begin && item.timestamp <= input.end &&
+        typeof item.recipient === 'string' && item.recipient.toLowerCase() === recipient;
+    });
+  }
+
+  /**
+   * Find positive provider evidence for an expired reminder claim without
+   * relying on a webhook. A missing result (including a truncated page) says
+   * nothing about whether Mailgun accepted the request.
+   */
+  async findReminderReceipt(input: {
+    deliveryId: number; attemptId: string; recipients: readonly string[];
+    begin: number; end: number; signal?: AbortSignal;
+  }): Promise<{ messageId: string; feedback?: Array<{ eventId: string; recipient: string; type: 'failed' | 'complained' }> } | null> {
+    if (!Number.isSafeInteger(input.deliveryId) || input.deliveryId < 1 ||
+        !/^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/u.test(input.attemptId) ||
+        !Number.isSafeInteger(input.begin) || !Number.isSafeInteger(input.end) ||
+        input.end <= input.begin || input.end - input.begin > 86_400 ||
+        !Array.isArray(input.recipients) || input.recipients.length < 1 || input.recipients.length > 1_000) {
+      throw new TypeError('Mailgun reminder evidence scope is invalid');
+    }
+    const recipients = new Set(input.recipients.map(value => {
+      const recipient = bounded(value, 'Mailgun recipient', 254).toLowerCase();
+      if (!emailPattern.test(recipient)) throw new TypeError('Mailgun reminder evidence scope is invalid');
+      return recipient;
+    }));
+    const key = `ezacto-reminder-${input.deliveryId}-${input.attemptId}`;
+    const tag = `ezacto-reminder-${input.attemptId.slice(0, 2)}`;
+    const url = new URL(`${baseUrl(this.region)}/v3/${encodeURIComponent(this.domain)}/events`);
+    url.search = new URLSearchParams({ begin: String(input.begin), end: String(input.end), ascending: 'yes', limit: '100', tags: tag }).toString();
+    const signal = input.signal === undefined ? AbortSignal.timeout(10_000) : AbortSignal.any([input.signal, AbortSignal.timeout(10_000)]);
+    let evidence = await this.reminderEvidencePages(url, signal);
+    if (evidence.pageLimit && input.end - input.begin > 1) {
+      // Retry a crowded shard in two bounded, overlapping time ranges. Both
+      // must finish: neither a partial traversal nor absence proves anything.
+      const middle = input.begin + Math.floor((input.end - input.begin) / 2);
+      const first = new URL(url), second = new URL(url);
+      first.searchParams.set('end', String(middle));
+      second.searchParams.set('begin', String(middle));
+      const left = await this.reminderEvidencePages(first, signal);
+      const right = await this.reminderEvidencePages(second, signal);
+      evidence = { items: [...left.items, ...right.items], complete: left.complete && right.complete };
+    }
+    const messageIds = new Set<string>();
+    let invalidTerminal = false;
+    const feedback = new Map<string, { eventId: string; recipient: string; type: 'failed' | 'complained' }>();
+    for (const value of evidence.items) {
+      if (!value || typeof value !== 'object' || Array.isArray(value)) continue;
+      const item = value as Record<string, unknown>;
+      const message = item.message && typeof item.message === 'object' && !Array.isArray(item.message) ? item.message as Record<string, unknown> : null;
+      const headers = message?.headers && typeof message.headers === 'object' && !Array.isArray(message.headers) ? message.headers as Record<string, unknown> : null;
+      const variables = item['user-variables'] && typeof item['user-variables'] === 'object' && !Array.isArray(item['user-variables']) ? item['user-variables'] as Record<string, unknown> : null;
+      const flags = item.flags && typeof item.flags === 'object' && !Array.isArray(item.flags) ? item.flags as Record<string, unknown> : null;
+      const terminal = item.event === 'failed' || item.event === 'complained';
+      if (terminal && flags?.['is-test-mode'] !== true && flags?.['is-test-mode'] !== false &&
+          (item.event !== 'failed' || item.severity === 'permanent') &&
+          typeof item.timestamp === 'number' && Number.isFinite(item.timestamp) && item.timestamp >= input.begin && item.timestamp <= input.end &&
+          Array.isArray(item.tags) && item.tags.includes(tag) && variables?.ezacto_idempotency_key === key) invalidTerminal = true;
+      if (!['accepted', 'delivered', 'failed', 'complained'].includes(String(item.event)) ||
+          (item.event === 'failed' && item.severity !== 'permanent') ||
+          flags?.['is-test-mode'] !== false ||
+          typeof item.timestamp !== 'number' || !Number.isFinite(item.timestamp) || item.timestamp < input.begin || item.timestamp > input.end ||
+          !Array.isArray(item.tags) || !item.tags.includes(tag) || variables?.ezacto_idempotency_key !== key) continue;
+      if (typeof item.recipient !== 'string' || !recipients.has(item.recipient.toLowerCase()) || typeof headers?.['message-id'] !== 'string') {
+        if (terminal) invalidTerminal = true;
+        continue;
+      }
+      try {
+        const messageId = bounded(headers['message-id'], 'Mailgun message id', 512).replace(/^<|>$/gu, '');
+        if (messageId) {
+          messageIds.add(messageId);
+          if (terminal) {
+            const eventId = bounded(item.id as string, 'Mailgun event id', 255);
+            const observation = { eventId, recipient: item.recipient.toLowerCase(), type: item.event as 'failed' | 'complained' };
+            const previous = feedback.get(eventId);
+            if (previous && (previous.recipient !== observation.recipient || previous.type !== observation.type)) invalidTerminal = true;
+            feedback.set(eventId, observation);
+          }
+        } else if (terminal) invalidTerminal = true;
+      } catch { if (terminal) invalidTerminal = true; }
+    }
+    if (!evidence.complete || messageIds.size !== 1 || invalidTerminal || feedback.size > 100) return null;
+    return { messageId: [...messageIds][0]!, ...(feedback.size ? { feedback: [...feedback.values()] } : {}) };
   }
 
   /**
@@ -276,7 +504,13 @@ export class MailgunMailer implements HttpEmailProvider {
       );
     }
     params.set("h:X-Ezacto-Idempotency-Key", idempotencyKey);
-    params.set("o:tag", `ezacto_idempotency_key:${idempotencyKey}`);
+    const reminder = /^ezacto-reminder-[1-9][0-9]*-([a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12})$/u.exec(idempotencyKey);
+    if (reminder) {
+      // A bounded shard supports provider searches without creating one
+      // permanent analytics tag per delivery. The exact attempt is metadata.
+      params.set("o:tag", `ezacto-reminder-${reminder[1]!.slice(0, 2)}`);
+      params.set("v:ezacto_idempotency_key", idempotencyKey);
+    } else params.set("o:tag", `ezacto_idempotency_key:${idempotencyKey}`);
 
     // Validated before the first byte is sent, so a bad filename or an empty
     // file is a refusal rather than a half-built request Mailgun rejects.

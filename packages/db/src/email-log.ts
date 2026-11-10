@@ -25,6 +25,19 @@ export interface EmailLogStoreOptions {
   kindTemplates?: EmailLogKindTemplates
 }
 
+/** Internal reconciliation input; never expose attempt tokens through the API. */
+export interface HeldReminderAttempts {
+  heldReminderAttempts(afterId: number, limit: number): Promise<Array<{
+    record: EmailLogRecord
+    attemptId: string
+    claimedAt: string
+  }>>
+  claimReminderSweep(token: string): Promise<number | null>
+  finishReminderSweep(token: string, afterId: number, more: boolean): Promise<boolean>
+  recordReminderFeedback(deliveryId: number, attemptId: string, messageId: string,
+    feedback: readonly { eventId: string; recipient: string; type: 'failed' | 'complained' }[]): Promise<boolean>
+}
+
 interface PortableDatabase {
   first<T>(query: string, bindings?: readonly unknown[]): Promise<T | null>
   all<T>(query: string, bindings?: readonly unknown[]): Promise<T[]>
@@ -46,6 +59,7 @@ interface EmailLogRow {
   relatedType: string | null
   relatedId: number | null
   attemptCount: number
+  reminderAttemptLeaseExpiresAt: string | null
   failureCode: EmailFailureCode | null
   failureReason: string | null
   createdAt: string
@@ -69,6 +83,8 @@ const columns = `id, from_json AS fromJson, reply_to_json AS replyToJson,
   provider_request_id AS providerRequestId, provider_latency_ms AS providerLatencyMs,
   status, related_type AS relatedType,
   related_id AS relatedId, attempt_count AS attemptCount,
+  CASE WHEN template LIKE 'reminder:%' AND status = 'queued' AND active_attempt_id IS NOT NULL
+    THEN attempt_lease_expires_at ELSE NULL END AS reminderAttemptLeaseExpiresAt,
   failure_code AS failureCode, failure_reason AS failureReason,
   created_at AS createdAt, updated_at AS updatedAt`
 
@@ -124,6 +140,7 @@ const rowRecord = (row: EmailLogRow | null): EmailLogRecord => {
     relatedType: row.relatedType,
     relatedId: row.relatedId,
     attemptCount: row.attemptCount,
+    reminderAttemptLeaseExpiresAt: row.reminderAttemptLeaseExpiresAt,
     failureCode: row.failureCode,
     failureReason: row.failureReason,
     createdAt: row.createdAt,
@@ -197,7 +214,7 @@ const stripeAlertRecipientAuthorized = `(template <> 'stripe-payment-alert' OR E
 const createStore = (
   database: PortableDatabase,
   options: EmailLogStoreOptions,
-): EmailLogStore & EmailLogPager => {
+): EmailLogStore & EmailLogPager & HeldReminderAttempts => {
   const now = options.now ?? (() => new Date().toISOString())
   const timestamp = (): string => {
     const value = now()
@@ -205,6 +222,64 @@ const createStore = (
     return value
   }
   return {
+    async claimReminderSweep(token) {
+      if (!/^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/u.test(token)) {
+        throw new TypeError('invalid reminder sweep token')
+      }
+      const seconds = Math.floor(Date.parse(timestamp()) / 1000)
+      const row = await database.first<{ afterId: number }>(
+        `UPDATE reminder_reconciliation_cursor SET lease_token = ?, lease_expires_at = ?
+         WHERE id = 1 AND next_due <= ? AND (lease_token IS NULL OR lease_expires_at <= ?)
+         RETURNING after_id AS afterId`, [token, seconds + 180, seconds, seconds],
+      )
+      return row?.afterId ?? null
+    },
+    async finishReminderSweep(token, afterId, more) {
+      if (!/^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/u.test(token) ||
+          !Number.isSafeInteger(afterId) || afterId < 0 || typeof more !== 'boolean') {
+        throw new TypeError('invalid reminder sweep completion')
+      }
+      const seconds = Math.floor(Date.parse(timestamp()) / 1000)
+      const row = await database.first<{ id: number }>(
+        `UPDATE reminder_reconciliation_cursor SET after_id = ?, next_due = ?, lease_token = NULL,
+          lease_expires_at = NULL WHERE id = 1 AND lease_token = ? RETURNING id`,
+        [afterId, seconds + (more ? 300 : 3600), token],
+      )
+      return row !== null
+    },
+    async recordReminderFeedback(deliveryId, attemptId, messageId, feedback) {
+      if (!Number.isSafeInteger(deliveryId) || deliveryId < 1 ||
+          !/^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/u.test(attemptId) ||
+          typeof messageId !== 'string' || !messageId.trim() || messageId !== messageId.trim() || messageId.length > 512 ||
+          [...messageId].some(character => character.codePointAt(0)! < 32 || character.codePointAt(0) === 127) ||
+          !Array.isArray(feedback) || feedback.length < 1 || feedback.length > 100 ||
+          feedback.some(f => !f || typeof f.eventId !== 'string' || !f.eventId.trim() || f.eventId.length > 255 ||
+            typeof f.recipient !== 'string' || !f.recipient.trim() || f.recipient !== f.recipient.trim().toLowerCase() ||
+            (f.type !== 'failed' && f.type !== 'complained'))) {
+        throw new TypeError('invalid reminder feedback evidence')
+      }
+      const row = await database.first<{ id: number }>(
+        `INSERT INTO reminder_reconciliation_feedback(delivery_id, attempt_id, provider_message_id, feedback_json, recorded_at)
+         SELECT id, ?, ?, ?, ? FROM email_log WHERE id = ? AND status = 'queued' AND provider = 'mailgun'
+           AND template LIKE 'reminder:%' AND active_attempt_id = ? RETURNING delivery_id AS id`,
+        [attemptId, messageId, JSON.stringify(feedback), timestamp(), deliveryId, attemptId],
+      )
+      return row !== null
+    },
+    async heldReminderAttempts(afterId, limit) {
+      if (!Number.isSafeInteger(afterId) || afterId < 0 ||
+          !Number.isSafeInteger(limit) || limit < 1 || limit > 100) {
+        throw new RangeError('invalid held reminder page')
+      }
+      const rows = await database.all<EmailLogRow & { attemptId: string; claimedAt: string }>(
+        `SELECT ${columns}, active_attempt_id AS attemptId, updated_at AS claimedAt
+         FROM email_log WHERE id > ? AND provider = 'mailgun' AND status = 'queued'
+           AND template LIKE 'reminder:%' AND active_attempt_id IS NOT NULL
+           AND julianday(attempt_lease_expires_at) <= julianday(?)
+         ORDER BY id ASC LIMIT ?`, [afterId, timestamp(), limit],
+      )
+      return rows.map(row => ({ record: rowRecord(row), attemptId: row.attemptId, claimedAt: row.claimedAt }))
+    },
     async createQueued(message) {
       const at = timestamp()
       return rowRecord(
@@ -255,7 +330,7 @@ const createStore = (
            WHERE id = ? AND status = 'queued'
              AND (provider IS NULL OR provider = ?)
              AND (active_attempt_id IS NULL
-               OR julianday(attempt_lease_expires_at) <= julianday(?))
+               OR (template NOT LIKE 'reminder:%' AND julianday(attempt_lease_expires_at) <= julianday(?)))
            RETURNING attempt_count AS attemptCount, status`,
         [provider, attemptId, leaseExpiresAt, at, deliveryId, provider, at],
       )
@@ -274,7 +349,7 @@ const createStore = (
            SET active_attempt_id = NULL, attempt_lease_expires_at = NULL,
              updated_at = ?
            WHERE id = ? AND status = 'queued' AND provider = ?
-             AND active_attempt_id = ?
+             AND active_attempt_id = ? AND template NOT LIKE 'reminder:%'
            RETURNING 1 AS released`,
           [at, deliveryId, provider, attemptId],
         )) !== null
@@ -348,16 +423,16 @@ const createStore = (
       const at = timestamp()
       // `provider_rejected` is the one failure the schema carries a reason on.
       // The provider column is left as it is -- empty, for a message no
-      // provider was ever asked about -- which is what tells this apart. A lease
-      // that has run out is no attempt at all; one that has not is a provider
-      // call in flight, and refusing under it would race the send.
+      // provider was ever asked about -- which is what tells this apart. An
+      // expired reminder attempt remains uncertain, so a later queue refusal
+      // must not erase its provider evidence.
       const refused = await database.first<EmailLogRow>(
         `UPDATE email_log
          SET status = 'failed', failure_code = 'provider_rejected', failure_reason = ?,
            active_attempt_id = NULL, attempt_lease_expires_at = NULL, updated_at = ?
          WHERE id = ? AND status = 'queued'
            AND (active_attempt_id IS NULL
-             OR julianday(attempt_lease_expires_at) <= julianday(?))
+             OR (template NOT LIKE 'reminder:%' AND julianday(attempt_lease_expires_at) <= julianday(?)))
          RETURNING ${columns}`,
         [reason, at, deliveryId, at],
       )
@@ -518,7 +593,7 @@ const createStore = (
 export const createContainerEmailLogStore = (
   database: BetterSqlite3.Database,
   options: EmailLogStoreOptions = {},
-): EmailLogStore & EmailLogPager => {
+): EmailLogStore & EmailLogPager & HeldReminderAttempts => {
   database.pragma('foreign_keys = ON')
   return createStore(
     {
@@ -534,7 +609,7 @@ export const createContainerEmailLogStore = (
 export const createD1EmailLogStore = (
   database: D1Database,
   options: EmailLogStoreOptions = {},
-): EmailLogStore & EmailLogPager =>
+): EmailLogStore & EmailLogPager & HeldReminderAttempts =>
   createStore(
     {
       first: async (query, bindings = []) =>

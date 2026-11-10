@@ -1,5 +1,6 @@
 import type BetterSqlite3 from 'better-sqlite3'
 import { retryTransientD1IdempotentOperation } from './d1-idempotent-retry.js'
+import { FollowUpDeliveryDeferred } from './follow-up-deferred.js'
 
 export const ACTIVITY_LOG_SUBSCRIBER_ID = 'activity_log'
 
@@ -583,7 +584,7 @@ const callSubscriber = async (
   event: OutboxEventRecord,
   context: Omit<OutboxSubscriberContext, 'signal'>,
   timeoutMs: number,
-): Promise<OutboxDeliveryFailureCode | null> => {
+): Promise<OutboxDeliveryFailureCode | 'follow_up_deferred' | null> => {
   const controller = new AbortController()
   let timeout: ReturnType<typeof setTimeout> | undefined
   const timedOut = new Promise<never>((_, reject) => {
@@ -599,6 +600,7 @@ const callSubscriber = async (
     ])
     return null
   } catch (error) {
+    if (subscriber.id === 'invoice_thank_you' && error instanceof FollowUpDeliveryDeferred) return 'follow_up_deferred'
     return error instanceof DOMException && error.name === 'TimeoutError'
       ? 'subscriber_timeout'
       : 'subscriber_rejected'
@@ -871,6 +873,22 @@ const createService = (
           continue
         }
 
+        if (failure === 'follow_up_deferred') {
+          // This branch only follows a typed refusal before the port records or
+          // enqueues anything. Return the claim's attempt to the budget, and
+          // recheck later without treating a waiting provider as a failure.
+          const results = await retryTransientD1IdempotentOperation(() => database.atomic([{
+            query: `UPDATE outbox_delivery_receipts
+              SET status = 'pending', attempt_count = attempt_count - 1, next_attempt_at = ?,
+                active_attempt_id = NULL, attempt_lease_expires_at = NULL, updated_at = ?
+              WHERE subscriber_id = ? AND event_id = ? AND status = 'processing'
+                AND active_attempt_id = ? AND attempt_count > 0 RETURNING event_id AS eventId`,
+            bindings: [safeAddSeconds(completedAt, 300), completedAt, selected.subscriber.id, event.id, attemptId],
+          }]))
+          if (results[0]?.[0]?.eventId === event.id) summary.retried += 1
+          else summary.contention += 1
+          continue
+        }
         const disposition = await finalizeFailure(
           database,
           selected.subscriber.id,

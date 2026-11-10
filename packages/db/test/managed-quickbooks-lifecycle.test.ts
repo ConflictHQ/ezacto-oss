@@ -36,7 +36,7 @@ afterEach(async () => {
 })
 const fixture = async (
   runtime: 'sqlite' | 'd1',
-  legacy: boolean | '0180_github_publication' | '0185_quickbooks_outbox_grants' = false,
+  legacy: boolean | '0180_github_publication' | '0186_quickbooks_outbox_grants' = false,
 ) => {
   let upgrade!: () => Promise<void>
   let db: ReturnType<typeof createContainerDatabase> | ReturnType<typeof createD1Database>
@@ -161,8 +161,8 @@ const fence = (
 })
 const connect = async (f: Fixture) => {
   if (f.legacy === '0180_github_publication') {
-    // Seed the actual pre0181 receipt/connection, not the current command whose
-    // refresh guard requires0183. No old-schema guards are disabled or mocked.
+    // Seed the actual pre0182 receipt/connection, not the current command whose
+    // refresh guard requires0184. No old-schema guards are disabled or mocked.
     const c = f.command, t = c.tokens
     const fingerprint = createHash('sha256').update(JSON.stringify([c.grantId,c.browserHash,c.credentialHash,
       c.expectedActorUserId,c.expectedConnectionGeneration,c.expiresAt,t.realmId,t.companyName,t.scope,
@@ -228,7 +228,7 @@ describe.each(['sqlite', 'd1'] as const)('managed QuickBooks lifecycle fence %s'
   })
 
   it('adds the recovery index without changing existing revocation custody', async () => {
-    const f = await fixture(runtime, '0185_quickbooks_outbox_grants')
+    const f = await fixture(runtime, '0186_quickbooks_outbox_grants')
     data(await f.commands.accept(f.request(), f.command))
     data(await f.commands.fence(f.request(), fence(f)))
     const before = await f.rows('quickbooks_revocations')

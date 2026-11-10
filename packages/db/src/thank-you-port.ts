@@ -1,7 +1,9 @@
 import { composeThankYou, type ThankYouInvoice } from '@ezacto/core'
 import { sql } from 'drizzle-orm'
+import { FollowUpDeliveryDeferred } from './follow-up-deferred.js'
 import {
   followUpHeaders,
+  hasRetryableFollowUpDelivery,
   readThankYouRecipients,
   recordThankYouDelivery,
   resolveThankYouPolicy,
@@ -101,7 +103,10 @@ export const createThankYouPort = (
     if (settlement === null) return null
 
     const recipients = await readThankYouRecipients(options.database, invoiceId)
-    if (recipients.length === 0) return null
+    if (recipients.length === 0) {
+      if (await hasRetryableFollowUpDelivery(options.database, invoiceId)) throw new FollowUpDeliveryDeferred()
+      return null
+    }
 
     const [invoice, template, senders] = await Promise.all([
       options.invoices.read(invoiceId),

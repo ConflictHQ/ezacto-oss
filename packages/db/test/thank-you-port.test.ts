@@ -105,6 +105,7 @@ const fixture = async (thankYou: boolean) => {
 const sendTo = (
   orm: Awaited<ReturnType<typeof fixture>>['orm'],
   people: readonly { name: string; email: string }[],
+  pending = false,
 ) =>
   executeInvoiceLifecycleCommand(orm, {
     invoiceId: 1,
@@ -132,6 +133,9 @@ const sendTo = (
       deliveryId: 700,
       recipients: people.map((person) => ({ ...person, role: 'to' as const })),
     },
+  }).then(result => {
+    if (!pending) sqlite!.prepare(`UPDATE email_log SET status = 'sent', provider = 'mailgun', provider_message_id = 'fixture-accepted' WHERE id = 700`).run()
+    return result
   })
 
 const settle = (orm: Awaited<ReturnType<typeof fixture>>['orm'], amountCents = 100000) =>
@@ -152,6 +156,16 @@ afterEach(() => {
 })
 
 describe('an invoice settling produces a message', () => {
+  it('[money] retries a thank-you while the invoice delivery is queued', async () => {
+    const { orm, port } = await fixture(true)
+    await sendTo(orm, [{ name: 'Accounts Payable', email: 'ap@example.test' }], true)
+    await settle(orm)
+    await expect(port.prepare(1)).rejects.toThrow('invoice delivery is not ready for follow-up')
+    expect(sqlite!.prepare('SELECT count(*) AS n FROM invoice_auto_email_intents').get()).toEqual({ n: 0 })
+    sqlite!.prepare(`UPDATE email_log SET status = 'sent', provider = 'mailgun', provider_message_id = 'fixture-accepted' WHERE id = 700`).run()
+    expect((await port.prepare(1))?.to).toEqual([{ name: 'Accounts Payable', email: 'ap@example.test' }])
+  })
+
   it('[money] addresses the person the invoice was sent to, and records it', async () => {
     const { orm, port } = await fixture(true)
     await sendTo(orm, [{ name: 'Accounts Payable', email: 'ap@example.test' }])

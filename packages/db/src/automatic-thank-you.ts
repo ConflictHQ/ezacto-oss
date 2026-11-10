@@ -73,6 +73,59 @@ export interface ThankYouRecipient {
   readonly role: 'to' | 'cc'
 }
 
+/** Shared by read and write fences. A terminal event must have independently
+ * verified provider evidence; unverified or unfinished feedback holds all. */
+const followUpRecipientEligible = `
+  NOT EXISTS (SELECT 1 FROM email_feedback_events pending
+    WHERE delivery.provider = 'mailgun' AND pending.delivery_id = delivery.id
+      AND pending.provider_message_id = delivery.provider_message_id
+      AND (pending.event_type = 'complained' OR (pending.event_type = 'failed' AND pending.severity = 'permanent'))
+      AND EXISTS (SELECT 1 FROM invoice_email_recipients addressed
+        WHERE addressed.delivery_id = delivery.id AND lower(addressed.email) = lower(pending.recipient))
+      AND (pending.processed_at IS NULL OR NOT EXISTS
+        (SELECT 1 FROM invoice_feedback_provider_evidence evidence WHERE evidence.event_id = pending.event_id)))
+  AND (delivery.status = 'sent' OR (delivery.status IN ('bounced', 'complained')
+    AND delivery.provider = 'mailgun' AND delivery.provider_message_id IS NOT NULL
+    AND EXISTS (SELECT 1 FROM email_feedback_events proof
+      JOIN invoice_feedback_provider_evidence evidence ON evidence.event_id = proof.event_id
+      WHERE proof.delivery_id = delivery.id AND proof.provider_message_id = delivery.provider_message_id
+        AND proof.processed_at IS NOT NULL)))
+  AND NOT EXISTS (SELECT 1 FROM email_feedback_events feedback
+    JOIN invoice_feedback_provider_evidence evidence ON evidence.event_id = feedback.event_id
+    WHERE delivery.provider = 'mailgun' AND feedback.delivery_id = delivery.id
+      AND feedback.provider_message_id = delivery.provider_message_id AND feedback.processed_at IS NOT NULL
+      AND lower(feedback.recipient) = lower(recipient.email))`
+
+/** Revalidate the immutable audience and provider acceptance in the same
+ * transaction that records a follow-up. A newer intent must prevent a stale
+ * audience from being recorded, even when that newer delivery is still queued. */
+export const followUpAudienceGuard = `EXISTS (
+  SELECT 1 FROM invoice_messages message
+  JOIN invoice_email_intents intent ON intent.invoice_message_id = message.id
+  JOIN event_outbox event ON event.id = intent.event_id
+  WHERE message.invoice_id = ? AND message.event_type = 'send'
+    AND message.id = (
+      SELECT latest.id FROM invoice_messages latest
+      JOIN invoice_email_intents latest_intent ON latest_intent.invoice_message_id = latest.id
+      JOIN event_outbox latest_event ON latest_event.id = latest_intent.event_id
+      WHERE latest.invoice_id = ? AND latest.event_type = 'send'
+      ORDER BY latest_event.aggregate_sequence DESC LIMIT 1
+    )
+    AND (SELECT count(*) FROM invoice_email_recipients recipient
+      JOIN email_log delivery ON delivery.id = recipient.delivery_id
+      WHERE recipient.invoice_message_id = message.id AND ${followUpRecipientEligible}) = json_array_length(?)
+    AND NOT EXISTS (
+      SELECT 1 FROM invoice_email_recipients recipient
+      JOIN email_log delivery ON delivery.id = recipient.delivery_id
+      WHERE recipient.invoice_message_id = message.id AND ${followUpRecipientEligible} AND NOT EXISTS (
+        SELECT 1 FROM json_each(?) candidate
+        WHERE json_extract(candidate.value, '$.name') = recipient.name
+          AND json_extract(candidate.value, '$.email') = recipient.email
+          AND json_extract(candidate.value, '$.role') = recipient.role
+      )
+    )
+)`
+
 /**
  * The To and Cc headers of a follow-up, from whoever was sent the invoice.
  * Somebody copied on the invoice is copied on what follows it, not promoted to
@@ -217,7 +270,7 @@ export const recordThankYouDelivery = async (
           id, from_json, reply_to_json, to_json, cc_json, template, subject,
           related_type, related_id, created_at, updated_at
         )
-        SELECT ?, ?, ?, ?, ?, ?, ?, 'invoice', ?, ?, ?`,
+        SELECT ?, ?, ?, ?, ?, ?, CASE WHEN ${followUpAudienceGuard} THEN ? ELSE NULL END, 'invoice', ?, ?, ?`,
       params: [
         input.deliveryId,
         JSON.stringify({ email: input.fromEmail, name: input.fromName }),
@@ -225,6 +278,10 @@ export const recordThankYouDelivery = async (
         mailboxJson(headers.to),
         headers.cc.length === 0 ? null : mailboxJson(headers.cc),
         `thank_you:${String(input.templateVersion)}`,
+        input.invoiceId,
+        input.invoiceId,
+        JSON.stringify(input.recipients),
+        JSON.stringify(input.recipients),
         input.subject,
         input.invoiceId,
         input.now,
@@ -284,8 +341,13 @@ export const recordThankYouDelivery = async (
  * also the only answer that cannot surprise anybody: every address here already
  * got mail about this invoice.
  *
- * The most recent send, because an invoice re-sent to a corrected address must
- * not thank the address that was wrong.
+ * The most recent confirmed email delivery, because an invoice re-sent to a
+ * corrected address must not thank the address that was wrong. A planned
+ * reminder recorded through the legacy message route has no delivery intent.
+ * Message IDs are opaque/random and timestamps can tie; the invoice's durable
+ * event sequence orders actual sends. The immutable recipient snapshot already
+ * includes operator and organization copies; never resolve today's directory
+ * or copy settings for an older delivery.
  */
 export const readThankYouRecipients = async (
   database: InvoiceStateDatabase,
@@ -294,13 +356,41 @@ export const readThankYouRecipients = async (
   database.all<ThankYouRecipient>(
     sql`SELECT recipient.name AS name, recipient.email AS email, recipient.role AS role
         FROM invoice_email_recipients recipient
+        JOIN email_log delivery ON delivery.id = recipient.delivery_id
         WHERE recipient.invoice_message_id = (
           SELECT message.id FROM invoice_messages message
+          JOIN invoice_email_intents intent ON intent.invoice_message_id = message.id
+          JOIN event_outbox event ON event.id = intent.event_id
           WHERE message.invoice_id = ${invoiceId} AND message.event_type = 'send'
-          ORDER BY message.id DESC LIMIT 1
+          ORDER BY event.aggregate_sequence DESC LIMIT 1
         )
+        AND ${sql.raw(followUpRecipientEligible)}
         ORDER BY recipient.recipient_index`,
   )
+
+/** A queued invoice may still become a valid follow-up audience. When an
+ * earlier read observed no audience, also retry an accepted delivery to cover
+ * acceptance between the two reads. */
+export const hasRetryableFollowUpDelivery = async (database: InvoiceStateDatabase, invoiceId: number): Promise<boolean> => {
+  const rows = await database.all<{ present: number }>(sql`SELECT 1 AS present
+    FROM invoice_email_recipients recipient JOIN email_log delivery ON delivery.id = recipient.delivery_id
+    WHERE (delivery.status IN ('queued', 'sent') OR (delivery.status IN ('bounced', 'complained')
+      AND delivery.provider = 'mailgun' AND EXISTS (SELECT 1 FROM email_feedback_events pending
+        WHERE pending.delivery_id = delivery.id AND pending.provider_message_id = delivery.provider_message_id
+          AND (pending.event_type = 'complained' OR (pending.event_type = 'failed' AND pending.severity = 'permanent'))
+          AND EXISTS (SELECT 1 FROM invoice_email_recipients addressed
+            WHERE addressed.delivery_id = delivery.id AND lower(addressed.email) = lower(pending.recipient))
+          AND (pending.processed_at IS NULL OR NOT EXISTS
+            (SELECT 1 FROM invoice_feedback_provider_evidence evidence WHERE evidence.event_id = pending.event_id)))))
+    AND recipient.invoice_message_id = (
+      SELECT message.id FROM invoice_messages message
+      JOIN invoice_email_intents intent ON intent.invoice_message_id = message.id
+      JOIN event_outbox event ON event.id = intent.event_id
+      WHERE message.invoice_id = ${invoiceId} AND message.event_type = 'send'
+      ORDER BY event.aggregate_sequence DESC LIMIT 1
+    ) LIMIT 1`)
+  return rows.length > 0
+}
 
 /**
  * Both answers for one invoice, for a screen that has to show why.

@@ -107,6 +107,23 @@ const bare = async () => {
   return createContainerDatabase(database)
 }
 
+const seedAcceptedAudience = (people: readonly { name: string; email: string; role: 'to' | 'cc' }[]) => {
+  const db = sqlite!
+  db.prepare(`INSERT INTO invoice_command_ledger (invoice_id, command_id, command_kind, input_fingerprint, actor_type, actor_id, expected_invoice_version, occurred_at)
+    VALUES (3, 'fixture-send', 'invoice.send', ?, 'user', 1, 0, ?)`).run(`sha256:${'0'.repeat(64)}`, at)
+  db.prepare(`INSERT INTO event_outbox (id, aggregate_type, aggregate_id, aggregate_sequence, event_type, payload_json, occurred_at, available_at)
+    VALUES ('fixture-invoice-send', 'fixture', 3, 1, 'invoice.sent', '{}', ?, ?)`).run(at, at)
+  db.prepare(`INSERT INTO invoice_messages (id, invoice_id, event_type, created_at, updated_at) VALUES (770, 3, 'send', ?, ?)`).run(at, at)
+  db.prepare(`INSERT INTO invoice_email_intents (invoice_message_id, event_id, template_kind, template_version, sender_identity_id,
+    sender_identity_version, sender_evidence_version, from_name, from_email, subject, text_body, confirmed_by_user_id, confirmed_at)
+    VALUES (770, 'fixture-invoice-send', 'invoice', 1, 1, 0, 1, 'Fixture', 'billing@example.test', 'Invoice', 'Attached', 1, ?)`).run(at)
+  db.prepare(`INSERT INTO email_log (id, template, subject, status, provider, provider_message_id, to_json, created_at, updated_at)
+    VALUES (7700, 'invoice', 'Invoice', 'sent', 'mailgun', 'fixture-sent', '[{"email":"ap@example.test"}]', ?, ?)`).run(at, at)
+  const insert = db.prepare(`INSERT INTO invoice_email_recipients (invoice_message_id, recipient_index, delivery_id, role, name, email, created_at)
+    VALUES (770, ?, 7700, ?, ?, ?, ?)`)
+  people.forEach((person, index) => insert.run(index, person.role, person.name, person.email, at))
+}
+
 // An imported payment is manual by definition -- the schema requires it,
 // because Harvest recorded receipts rather than taking them.
 const seedPayment = (harvestId: number | null) => {
@@ -321,6 +338,7 @@ describe('recording the thank-you that was sent', () => {
   it('[money] writes the delivery and the intent that explains it', async () => {
     const database = await bare()
     seedSettledPayment(null)
+    seedAcceptedAudience([{ name: 'Accounts Payable', email: 'ap@example.test', role: 'to' }])
     expect(await recordThankYouDelivery(database, delivery())).toBe('recorded')
     expect(intents()).toEqual([
       {
@@ -340,6 +358,7 @@ describe('recording the thank-you that was sent', () => {
     // delivery behind for the outbox to find.
     const database = await bare()
     seedSettledPayment(null)
+    seedAcceptedAudience([{ name: 'Accounts Payable', email: 'ap@example.test', role: 'to' }])
     expect(await recordThankYouDelivery(database, delivery())).toBe('recorded')
     expect(await recordThankYouDelivery(database, delivery({ deliveryId: 9101 }))).toBe(
       'already_sent',
@@ -477,6 +496,9 @@ describe('choosing who to thank', () => {
         deliveryId: messageId * 100,
         recipients: people.map((person) => ({ ...person, role: 'to' as const })),
       },
+    }).then(result => {
+      sqlite!.prepare(`UPDATE email_log SET status = 'sent', provider = 'mailgun', provider_message_id = ? WHERE id = ?`).run(`fixture-${messageId}`, messageId * 100)
+      return result
     })
 
   it('[unit] thanks everyone the invoice was sent to, in the order it was sent', async () => {
@@ -528,6 +550,7 @@ describe('one thank-you, however many addresses received the invoice', () => {
        provider_account_id, provider_transaction_id, created_at, updated_at)
       VALUES (501, 3, 'USD', 100000, '2026-09-12', 'stripe', 'checkout',
               1, 'pi_settled', '${at}', '${at}')`)
+    seedAcceptedAudience([{ name: 'Accounts Payable', email: 'ap@example.test', role: 'to' }, { name: '', email: 'adeyemi@example.test', role: 'cc' }])
     expect(
       await recordThankYouDelivery(database, {
         invoicePaymentId: 501,
