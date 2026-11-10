@@ -1,3 +1,4 @@
+import { safeDeelFailure } from './failure.js'
 import type { DeelTimesheetSink } from './client.js'
 import type { ContractMatch } from './matching.js'
 
@@ -213,7 +214,7 @@ export const submitTransferPlan = async (input: {
         contractId: submission.contractId,
         spentDate: submission.spentDate,
         entryIds: submission.entries.map((entry) => entry.entryId),
-        reason: error instanceof Error ? error.message : String(error),
+        reason: safeDeelFailure(error),
       })
     }
   }

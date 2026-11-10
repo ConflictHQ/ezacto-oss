@@ -206,7 +206,7 @@ describe('Deel time transfer submission', () => {
       plan,
       client: {
         createTimesheet: async (input) => {
-          if (input.contractId === 'con_ana_hourly') throw new Error('Deel said 422')
+          if (input.contractId === 'con_ana_hourly') throw new Error('PRIVATE_TOKEN PRIVATE_PROVIDER_BODY')
           return { timesheetId: 'tms_2' }
         },
       },
@@ -220,7 +220,7 @@ describe('Deel time transfer submission', () => {
         contractId: 'con_ana_hourly',
         spentDate: '2026-08-14',
         entryIds: [1],
-        reason: 'Deel said 422',
+        reason: 'Deel synchronization failed; retry or inspect the connection.',
       },
     ])
   })
