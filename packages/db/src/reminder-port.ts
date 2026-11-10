@@ -1,6 +1,7 @@
 import { composeReminder, daysPastDue, type ReminderInvoice } from '@ezacto/core'
 import { sql } from 'drizzle-orm'
 import {
+  followUpAudienceGuard,
   followUpHeaders,
   readThankYouRecipients,
   type ThankYouRecipient,
@@ -228,7 +229,7 @@ export const recordReminderDelivery = async (
           id, from_json, reply_to_json, to_json, cc_json, template, subject,
           related_type, related_id, created_at, updated_at
         )
-        SELECT ?, ?, ?, ?, ?, ?, ?, 'invoice', ?, ?, ?`,
+        SELECT ?, ?, ?, ?, ?, ?, CASE WHEN ${followUpAudienceGuard} THEN ? ELSE NULL END, 'invoice', ?, ?, ?`,
       params: [
         input.deliveryId,
         JSON.stringify({ email: input.fromEmail, name: input.fromName }),
@@ -246,6 +247,10 @@ export const recordReminderDelivery = async (
               ),
             ),
         `reminder:${String(input.templateVersion)}`,
+        input.invoiceId,
+        input.invoiceId,
+        JSON.stringify(input.recipients),
+        JSON.stringify(input.recipients),
         input.subject,
         input.invoiceId,
         input.now,

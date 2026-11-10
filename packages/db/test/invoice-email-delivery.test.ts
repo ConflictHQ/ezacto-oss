@@ -5,7 +5,8 @@ import { createContainerDatabase, createD1Database } from '../src/adapters.js'
 import { executeInvoiceLifecycleCommand, type InvoiceStateDatabase } from '../src/invoice-state.js'
 import { migrateContainer, migrateD1 } from '../src/migrate.js'
 import { createMoneyResourceRepository } from '../src/money-resources.js'
-import { readThankYouRecipients } from '../src/automatic-thank-you.js'
+import { followUpAudienceGuard, readThankYouRecipients } from '../src/automatic-thank-you.js'
+import { recordReminderDelivery } from '../src/reminder-port.js'
 
 interface Harness {
   orm: InvoiceStateDatabase
@@ -231,10 +232,25 @@ for (const [name, factory] of [['SQLite', container], ['real D1', d1]] as const)
           thankYou: false, reminder: true, sendReminderOn: '2026-10-15',
         },
       })
-      expect(await readThankYouRecipients(database.orm, 1)).toEqual([
-        { name: 'Client', email: 'client@example.net', role: 'to' },
-        ...cc.map(person => ({ ...person, role: 'cc' })),
-      ])
+      expect(await readThankYouRecipients(database.orm, 1)).toEqual([])
+      await database.run(`UPDATE email_log SET status = 'sent', provider = 'mailgun', provider_message_id = 'fixture-accepted' WHERE id = 700`)
+      const audience = [{ name: 'Client', email: 'client@example.net', role: 'to' as const },
+        ...cc.map(person => ({ ...person, role: 'cc' as const }))]
+      expect(await readThankYouRecipients(database.orm, 1)).toEqual(audience)
+      const binding = JSON.stringify(audience)
+      expect(await database.rows(`SELECT CASE WHEN ${followUpAudienceGuard} THEN 1 ELSE 0 END AS allowed`, 1, 1, binding, binding)).toEqual([{ allowed: 1 }])
+      await database.run(`UPDATE email_log SET status = 'bounced' WHERE id = 700`)
+      expect(await database.rows(`SELECT CASE WHEN ${followUpAudienceGuard} THEN 1 ELSE 0 END AS allowed`, 1, 1, binding, binding)).toEqual([{ allowed: 0 }])
+      await database.run(`INSERT INTO scheduled_reminders (id, invoice_id, scheduled_at, interval_days, causation_event_id, created_at, updated_at)
+        VALUES (88, 1, ?, 7, 'fixture', ?, ?)`, at, at, at)
+      await expect(recordReminderDelivery(database.orm, {
+        scheduledReminderId: 88, invoiceId: 1, deliveryId: 701, recipients: audience,
+        templateVersion: 1, senderIdentityId: 10, senderIdentityVersion: 0, senderEvidenceVersion: 1,
+        fromName: 'Delivery Org', fromEmail: 'billing@example.com', replyToEmail: null,
+        subject: 'Reminder', textBody: 'Please review.', htmlBody: null, daysPastDue: 0, now: at,
+      })).rejects.toThrow()
+      expect(await database.rows(`SELECT id FROM email_log WHERE id = 701`)).toEqual([])
+      expect(await database.rows(`SELECT delivery_id FROM invoice_reminder_deliveries WHERE scheduled_reminder_id = 88`)).toEqual([])
     })
 
     it('persists the intent for a deployment-attested Mailgun sender', async () => {

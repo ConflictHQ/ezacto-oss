@@ -7,6 +7,7 @@ import { executeInvoiceLifecycleCommand, recordInvoicePayment } from '../src/inv
 import { createContainerOutboxService } from '../src/outbox.js'
 import { createContainerReminderScheduler } from '../src/reminders.js'
 import { createReminderPort, listReminderDeliveries } from '../src/reminder-port.js'
+import { readThankYouRecipients } from '../src/automatic-thank-you.js'
 import {
   readOrganizationReminderPolicy,
   setOrganizationReminderPolicy,
@@ -26,7 +27,7 @@ import {
 const sentAt = '2026-09-02T10:00:00.000Z'
 let sqlite: BetterSqlite3.Database | null = null
 
-const fixture = async () => {
+const fixture = async (beforePaymentUrl?: () => Promise<void>) => {
   const database = new BetterSqlite3(':memory:')
   await migrateContainer(database)
   database.pragma('foreign_keys = ON')
@@ -94,7 +95,7 @@ const fixture = async () => {
           ],
         }
       },
-      paymentUrl: async () => 'https://pay.example.test/1293',
+      paymentUrl: async () => { await beforePaymentUrl?.(); return 'https://pay.example.test/1293' },
     },
     // The wall clock, as the outbox's own is: a fixed instant here would sit
     // before the booking's `created_at` and trip the row's timestamp check.
@@ -107,7 +108,7 @@ const sendTo = (
   orm: Awaited<ReturnType<typeof fixture>>['orm'],
   people: readonly { name: string; email: string }[],
   sendReminderOn: string | null = null,
-  options: { messageId?: number; expectedVersion?: number; cc?: readonly { name: string; email: string }[] } = {},
+  options: { messageId?: number; expectedVersion?: number; cc?: readonly { name: string; email: string }[]; pending?: boolean } = {},
 ) =>
   executeInvoiceLifecycleCommand(orm, {
     invoiceId: 1,
@@ -134,6 +135,9 @@ const sendTo = (
       deliveryId: (options.messageId ?? 70) * 10,
       recipients: [...people.map((person) => ({ ...person, role: 'to' as const })), ...(options.cc ?? []).map((person) => ({ ...person, role: 'cc' as const }))],
     },
+  }).then(async result => {
+    if (!options.pending) await orm.$client.prepare(`UPDATE email_log SET status = 'sent', provider = 'mailgun', provider_message_id = ? WHERE id = ?`).run(`fixture-${options.messageId ?? 70}`, (options.messageId ?? 70) * 10)
+    return result
   })
 
 afterEach(() => {
@@ -223,6 +227,52 @@ describe('an overdue invoice is reminded', () => {
     await outbox.drain()
     expect(await scheduler.listPending(1)).toHaveLength(0)
     expect(await port.prepare(next[0]!)).toBeNull()
+  })
+
+  it('[money #1352] withholds follow-ups for an unaccepted or failed latest delivery', async () => {
+    const { database, orm } = await fixture()
+    await sendTo(orm, [{ name: 'AP', email: 'ap@example.test' }], null, { pending: true })
+    expect(await readThankYouRecipients(orm, 1)).toEqual([])
+    database.prepare(`UPDATE email_log SET status = 'failed', failure_code = 'provider_rejected' WHERE id = ?`).run(700)
+    expect(await readThankYouRecipients(orm, 1)).toEqual([])
+    await sendTo(orm, [{ name: 'AP', email: 'ap@example.test' }], null, { messageId: 2, expectedVersion: 1 })
+    expect(await readThankYouRecipients(orm, 1)).toEqual([{ name: 'AP', email: 'ap@example.test', role: 'to' }])
+  })
+
+  it('[money #1352] does not fall back to an old address while a corrected resend is pending', async () => {
+    const { orm } = await fixture()
+    await sendTo(orm, [{ name: 'Old AP', email: 'old@example.test' }])
+    await sendTo(orm, [{ name: 'New AP', email: 'new@example.test' }], null, { messageId: 2, expectedVersion: 1, pending: true })
+    expect(await readThankYouRecipients(orm, 1)).toEqual([])
+    sqlite!.prepare(`UPDATE email_log SET status = 'sent', provider = 'mailgun', provider_message_id = 'fixture-resend' WHERE id = 20`).run()
+    expect(await readThankYouRecipients(orm, 1)).toEqual([{ name: 'New AP', email: 'new@example.test', role: 'to' }])
+  })
+
+  it('[money #1352] refuses a stale audience if an invoice is resent during preparation', async () => {
+    const { database, orm, scheduler, outbox, port } = await fixture(async () => { await race() })
+    await setOrganizationReminderPolicy(orm, { first_after_days: 14, every_days: 7 }, sentAt)
+    await sendTo(orm, [{ name: 'Old AP', email: 'old@example.test' }])
+    await outbox.drain()
+    const pending = await scheduler.listPending(1)
+    expect(pending).not.toHaveLength(0)
+    const race = async () => { await sendTo(orm, [{ name: 'New AP', email: 'new@example.test' }], null, { messageId: 2, expectedVersion: 1 }) }
+    await expect(port.prepare(pending[0]!)).rejects.toThrow(/NOT NULL constraint failed: email_log.subject/u)
+    expect(await listReminderDeliveries(orm, 1)).toEqual([])
+    expect(database.prepare("SELECT count(*) AS n FROM email_log WHERE template LIKE 'reminder:%'").get()).toEqual({ n: 0 })
+  })
+
+  it('[money #1352] refuses a follow-up when delivery feedback changes during preparation', async () => {
+    const { database, orm, scheduler, outbox, port } = await fixture(async () => {
+      database.prepare(`UPDATE email_log SET status = 'bounced' WHERE id = 700`).run()
+    })
+    await setOrganizationReminderPolicy(orm, { first_after_days: 14, every_days: 7 }, sentAt)
+    await sendTo(orm, [{ name: 'AP', email: 'ap@example.test' }])
+    await outbox.drain()
+    const pending = await scheduler.listPending(1)
+    expect(pending).not.toHaveLength(0)
+    await expect(port.prepare(pending[0]!)).rejects.toThrow(/NOT NULL constraint failed: email_log.subject/u)
+    expect(await listReminderDeliveries(orm, 1)).toEqual([])
+    expect(database.prepare("SELECT count(*) AS n FROM email_log WHERE template LIKE 'reminder:%'").get()).toEqual({ n: 0 })
   })
 
   it('[money #1352] preserves delivery Cc and sender copies despite random IDs and a later planned reminder', async () => {

@@ -2,6 +2,7 @@ import { composeThankYou, type ThankYouInvoice } from '@ezacto/core'
 import { sql } from 'drizzle-orm'
 import {
   followUpHeaders,
+  hasRetryableFollowUpDelivery,
   readThankYouRecipients,
   recordThankYouDelivery,
   resolveThankYouPolicy,
@@ -101,7 +102,10 @@ export const createThankYouPort = (
     if (settlement === null) return null
 
     const recipients = await readThankYouRecipients(options.database, invoiceId)
-    if (recipients.length === 0) return null
+    if (recipients.length === 0) {
+      if (await hasRetryableFollowUpDelivery(options.database, invoiceId)) throw new Error('invoice delivery is not ready for follow-up')
+      return null
+    }
 
     const [invoice, template, senders] = await Promise.all([
       options.invoices.read(invoiceId),
