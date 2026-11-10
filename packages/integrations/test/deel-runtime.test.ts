@@ -243,6 +243,15 @@ describe('Deel sync runtime: one timesheet per person-day, once', () => {
     expect(h.requests).toEqual([])
   })
 
+  it('does not persist or return unexpected errors from a source or transport', async () => {
+    const h = harness()
+    h.source.directory = async () => { throw new Error('PRIVATE_TOKEN PRIVATE_PROVIDER_BODY') }
+    const result = await runtimeFor(h, configured).run()
+    expect(result).toMatchObject({ status: 'failed', error: 'Deel synchronization failed; retry or inspect the connection.' })
+    expect(JSON.stringify({ result, runs: h.runs })).not.toContain('PRIVATE_')
+    expect(h.runs[0]?.outcome).toBe('failed')
+  })
+
   it('records a failure of the people listing and releases the lock', async () => {
     const h = harness()
     const runtime = createDeelSyncRuntime({

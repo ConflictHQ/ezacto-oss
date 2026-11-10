@@ -1,3 +1,4 @@
+import { safeDeelFailure } from './failure.js'
 import { DeelApiError, DeelClient, type DeelPerson, type DeelTimesheetSink } from './client.js'
 import { matchPayrollContracts, type DirectoryPerson } from './matching.js'
 import {
@@ -402,9 +403,8 @@ export const createDeelSyncRuntime = (
         }
       }
     } catch (caught) {
-      // The message of a DeelApiError carries a status and nothing else, and
-      // nothing in this path holds the token, so this is safe to persist.
-      error = caught instanceof Error ? caught.message : String(caught)
+      // Sources and transports can fail with credentials or provider details.
+      error = safeDeelFailure(caught)
       detail = { ...trigger, error, failed }
     }
     if (stale !== null) {

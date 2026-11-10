@@ -37,8 +37,10 @@ interface Provider {
 
 let server: Server | undefined
 afterEach(async () => {
-  server?.closeAllConnections()
-  await new Promise((resolve) => server?.close(resolve))
+  if (server) {
+    server.closeAllConnections()
+    await new Promise((resolve) => server!.close(resolve))
+  }
   server = undefined
 })
 
@@ -130,6 +132,20 @@ const storage = () => {
   }
   return { source, log, open, runs, entries }
 }
+
+it('refuses configured managed sync without durable transfer intents before any provider request', async () => {
+  const s = storage(), { intents, ...source } = s.source
+  void intents
+  let requests = 0
+  const runtime = createManagedDeelSyncRuntime({
+    credentials: { current: async () => ({ token: 'PRIVATE_TOKEN', startDate: '2026-09-01', generation: 1 }), generation: async () => 1 },
+    source,
+    settings: { get: async () => ({ mode: 'manual', runTime: '03:00' }), claimAutomaticDay: async () => false, organizationTimezone: async () => 'UTC' },
+    fetch: async () => { requests++; throw new Error('unexpected provider request') }, now: () => new Date(),
+  })
+  await expect(runtime.run()).rejects.toThrow('requires durable transfer intents')
+  expect(requests).toBe(0)
+})
 
 const credentialSource = (initial: { token: string; startDate: string } | null) => {
   const state = { current: initial, generation: 1 }

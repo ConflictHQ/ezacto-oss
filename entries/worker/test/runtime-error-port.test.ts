@@ -97,7 +97,7 @@ it('does not report expected 4xx API errors and observes asynchronous API-port r
   await expect(Promise.all(pending)).resolves.toEqual([undefined])
 })
 
-it.each(['managedQuickBooks', 'managedWise', 'managedBill'] as const)('[managed provider] passes %s to fetch, queue and scheduled without serializing it', async option => {
+it.each(['managedQuickBooks', 'managedWise', 'managedBill', 'managedDeel'] as const)('[managed provider] passes %s to fetch, queue and scheduled without serializing it', async option => {
   const failure = new Error('Owned composition boundary stop')
   vi.mocked(createRuntimeServices).mockRejectedValue(failure)
   const port = { configured: () => false, compose: vi.fn(async () => null) }
@@ -138,5 +138,18 @@ it('[#1252] the service-free shell reads pure tenant BILL availability without c
   expect(await response.text()).toContain('data-accounting-provider="bill" data-provider-available="true"')
   expect(managedBill.configured).toHaveBeenCalledWith(binding)
   expect(managedBill.compose).not.toHaveBeenCalled()
+  expect(createRuntimeServices).not.toHaveBeenCalled()
+})
+
+it('[#1238] the service-free shell reads pure tenant Deel availability without composing a runtime', async () => {
+  const binding = {} as D1Database
+  const managedDeel = { configured: vi.fn((scope: object) => scope === binding), compose: vi.fn(async () => null) }
+  const worker = createWorker({ managedDeel })
+  const { ctx } = context()
+  const response = await worker.fetch!(incoming('https://fixture.invalid/invoices'), { ...env, DB: binding }, ctx)
+  expect(response.status).toBe(200)
+  expect(await response.text()).toContain('data-accounting-provider="deel" data-provider-available="true"')
+  expect(managedDeel.configured).toHaveBeenCalledWith(binding)
+  expect(managedDeel.compose).not.toHaveBeenCalled()
   expect(createRuntimeServices).not.toHaveBeenCalled()
 })

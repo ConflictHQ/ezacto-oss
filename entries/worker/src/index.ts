@@ -1,5 +1,5 @@
-import { managedQuickBooksAvailable, managedWiseAvailable, managedBillAvailable } from './managed-providers.js'
-export type { WorkerManagedQuickBooks, WorkerManagedWise, WorkerManagedBill } from './managed-providers.js'
+import { managedQuickBooksAvailable, managedWiseAvailable, managedBillAvailable, managedDeelAvailable } from './managed-providers.js'
+export type { WorkerManagedQuickBooks, WorkerManagedWise, WorkerManagedBill, WorkerManagedDeel } from './managed-providers.js'
 import { createCsvWorkerRuntime, csvWorkerConfigured, verifyCsvQueueDatabase } from './csv-runtime.js'
 import { parseCursorSigningKey, ensureRuntimeDatabaseReady } from './runtime.js'
 import { AsyncLocalStorage } from 'node:async_hooks'
@@ -161,7 +161,7 @@ export const createWorker = (options: WorkerOptions = {}): ExportedHandler<Worke
       else reportWorkerError(options.reportError, error, { ...context, traceId: runtimeTraceId() })
     },
   },
-    options.managedQuickBooks === undefined && options.managedWise === undefined && options.managedBill === undefined ? undefined : {
+    options.managedQuickBooks === undefined && options.managedWise === undefined && options.managedBill === undefined && options.managedDeel === undefined ? undefined : {
       ...(options.managedQuickBooks === undefined ? {} : {
         quickBooks: (env: AppEnv) => managedQuickBooksAvailable(options.managedQuickBooks!, env, (env as Partial<WorkerEnv>).DB),
       }),
@@ -170,6 +170,9 @@ export const createWorker = (options: WorkerOptions = {}): ExportedHandler<Worke
       }),
       ...(options.managedBill === undefined ? {} : {
         bill: (env: AppEnv) => managedBillAvailable(options.managedBill!, env, (env as Partial<WorkerEnv>).DB),
+      }),
+      ...(options.managedDeel === undefined ? {} : {
+        deel: (env: AppEnv) => managedDeelAvailable(options.managedDeel!, env, (env as Partial<WorkerEnv>).DB),
       }),
     },
   )
@@ -194,7 +197,7 @@ export const createWorker = (options: WorkerOptions = {}): ExportedHandler<Worke
         await publicApp.fetch(request, env, executionContext))
     }
     try {
-      const services = await createRuntimeServices(env, { reportError: report, ...(options.managedQuickBooks === undefined ? {} : { managedQuickBooks: options.managedQuickBooks }), ...(options.managedWise === undefined ? {} : { managedWise: options.managedWise }), ...(options.managedBill === undefined ? {} : { managedBill: options.managedBill }) })
+      const services = await createRuntimeServices(env, { reportError: report, ...(options.managedQuickBooks === undefined ? {} : { managedQuickBooks: options.managedQuickBooks }), ...(options.managedWise === undefined ? {} : { managedWise: options.managedWise }), ...(options.managedBill === undefined ? {} : { managedBill: options.managedBill }), ...(options.managedDeel === undefined ? {} : { managedDeel: options.managedDeel }) })
       const app = createApp(
         services,
         workerBrandAssetSurface,
@@ -259,7 +262,7 @@ export const createWorker = (options: WorkerOptions = {}): ExportedHandler<Worke
     const services = await createRuntimeServices(env, {
       emailProvider: provider,
       reportError: report,
-      ...(options.managedQuickBooks === undefined ? {} : { managedQuickBooks: options.managedQuickBooks }), ...(options.managedWise === undefined ? {} : { managedWise: options.managedWise }), ...(options.managedBill === undefined ? {} : { managedBill: options.managedBill }),
+      ...(options.managedQuickBooks === undefined ? {} : { managedQuickBooks: options.managedQuickBooks }), ...(options.managedWise === undefined ? {} : { managedWise: options.managedWise }), ...(options.managedBill === undefined ? {} : { managedBill: options.managedBill }), ...(options.managedDeel === undefined ? {} : { managedDeel: options.managedDeel }),
     })
     // The consumer fetches what a job names, immediately before sending. Bytes
     // never rode the queue to get here (issue 626).
@@ -284,7 +287,7 @@ export const createWorker = (options: WorkerOptions = {}): ExportedHandler<Worke
     // response was lost. Service construction/provider jobs are not retried.
     // Exhaustion propagates to withSentry once and marks this tick failed;
     // readiness is cached only on success, so the next tick can recover.
-    const services = await createRuntimeServices(env, { retryReadiness: true, reportError: report, ...(options.managedQuickBooks === undefined ? {} : { managedQuickBooks: options.managedQuickBooks }), ...(options.managedWise === undefined ? {} : { managedWise: options.managedWise }), ...(options.managedBill === undefined ? {} : { managedBill: options.managedBill }) })
+    const services = await createRuntimeServices(env, { retryReadiness: true, reportError: report, ...(options.managedQuickBooks === undefined ? {} : { managedQuickBooks: options.managedQuickBooks }), ...(options.managedWise === undefined ? {} : { managedWise: options.managedWise }), ...(options.managedBill === undefined ? {} : { managedBill: options.managedBill }), ...(options.managedDeel === undefined ? {} : { managedDeel: options.managedDeel }) })
     if (controller.cron === '*/5 * * * *') {
       try {
         if (moduleAvailability(env).invoices) await services.bankFeeds?.processDue()

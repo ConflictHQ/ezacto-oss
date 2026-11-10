@@ -790,7 +790,7 @@ export const createApp = (
   signInMethods?: { read(env: AppEnv): Promise<readonly SignInMethodState[] | null> },
   telemetry?: { reportError?: (error: Error, requestId: string) => void | Promise<void> },
   /** Local metadata only; no tenant SQL, credentials or provider health probes. */
-  providerAvailability?: { quickBooks?: (env: AppEnv) => boolean; wise?: (env: AppEnv) => boolean; bill?: (env: AppEnv) => boolean },
+  providerAvailability?: { quickBooks?: (env: AppEnv) => boolean; wise?: (env: AppEnv) => boolean; bill?: (env: AppEnv) => boolean; deel?: (env: AppEnv) => boolean },
 ) => {
   const cleanupPorts = ([services?.nativeAppleLifecycle, services?.appleWebCleanup] as (AppleCleanupPort | undefined)[]).filter((port): port is AppleCleanupPort => port !== undefined)
   const appleCleanup: AppleCleanupPort | undefined = cleanupPorts.length === 0 ? undefined : {
@@ -871,6 +871,9 @@ export const createApp = (
             }),
             ...(providerAvailability?.bill === undefined ? {} : {
               bill: providerAvailability.bill(env),
+            }),
+            ...(providerAvailability?.deel === undefined ? {} : {
+              deel: providerAvailability.deel(env),
             }),
           }
         : {

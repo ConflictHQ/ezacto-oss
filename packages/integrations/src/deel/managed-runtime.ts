@@ -41,6 +41,10 @@ export const createManagedDeelSyncRuntime = (
   const bind = async (): Promise<DeelSyncRuntime | null> => {
     const current = await credentials.current()
     if (current === null) return null
+    // Managed provider effects must retain an intent across a lost reply.
+    const intents = rest.source.intents
+    if (!intents || typeof intents.open !== 'function' || typeof intents.begin !== 'function' || typeof intents.release !== 'function')
+      throw new TypeError('managed Deel synchronization requires durable transfer intents')
     return createDeelSyncRuntime({
       ...rest,
       config: {

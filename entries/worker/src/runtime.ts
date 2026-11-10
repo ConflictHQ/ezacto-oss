@@ -1,7 +1,7 @@
 import { readManagedQuickBooksOutboxAdmission } from '@ezacto/db/d1'
 import { createManagedQuickBooksOutboxSubscriber } from './managed-quickbooks-outbox.js'
 import type { WiseRuntime } from '@ezacto/integrations'
-import { managedQuickBooksAvailable, managedWiseAvailable, managedBillAvailable, type WorkerManagedQuickBooks, type WorkerManagedWise, type WorkerManagedBill } from './managed-providers.js'
+import { managedQuickBooksAvailable, managedWiseAvailable, managedBillAvailable, managedDeelAvailable, type WorkerManagedQuickBooks, type WorkerManagedWise, type WorkerManagedBill, type WorkerManagedDeel } from './managed-providers.js'
 import { createCalendarOperatorCleanupStore } from '@ezacto/db/d1'
 import { runInvoiceFeedbackRecovery, runReminderReconciliation } from './reminder-reconciliation.js'
 import { createConfiguredCalendarServices } from '@ezacto/integrations'
@@ -725,6 +725,7 @@ export const createRuntimeServices = async (
     managedQuickBooks?: WorkerManagedQuickBooks;
     managedWise?: WorkerManagedWise;
     managedBill?: WorkerManagedBill;
+    managedDeel?: WorkerManagedDeel;
     calendarSources?: Parameters<typeof createCalendarSyncService>[0]['sources'];
     emailProvider?: HttpEmailProvider;
     ses?: SesMailerOptions;
@@ -754,6 +755,9 @@ export const createRuntimeServices = async (
     ...(options.managedBill === undefined ? {} : {
       BILL_DEV_KEY: undefined, BILL_COMPANY_ID: undefined, BILL_USERNAME: undefined,
       BILL_PASSWORD: undefined, BILL_REPLY_TO_USER_ID: undefined,
+    }),
+    ...(options.managedDeel === undefined ? {} : {
+      DEEL_TOKEN: undefined, DEEL_SYNC_START_DATE: undefined,
     }),
   };
   const cursorSigningKey = parseCursorSigningKey(env.API_CURSOR_SIGNING_KEY);
@@ -1825,7 +1829,11 @@ export const createRuntimeServices = async (
       settings: createDeelSyncSettingsStore(drizzle),
       recentRuns: createDeelSyncStore(drizzle).recentRuns,
     },
-    deelSync: createDeelSyncRuntime({
+    deelSync: options.managedDeel !== undefined
+      ? managedDeelAvailable(options.managedDeel, env, binding)
+        ? (await options.managedDeel.compose({ scope: binding, database })) ?? undefined
+        : undefined
+      : createDeelSyncRuntime({
       config: {
         token: credentials.DEEL_TOKEN,
         startDate: credentials.DEEL_SYNC_START_DATE,
