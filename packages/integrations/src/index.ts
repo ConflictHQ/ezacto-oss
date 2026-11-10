@@ -345,3 +345,5 @@ export * from './work-items/publication.js'
 export * from './quickbooks/managed-refresh.js'
 
 export * from './quickbooks/managed-writes.js'
+
+export * from './quickbooks/managed-revocation.js'

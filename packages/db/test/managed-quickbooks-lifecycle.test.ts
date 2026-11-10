@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto'
+import { createManagedQuickBooksRevocationCoordinator } from '@ezacto/integrations'
 import { atomicStatements } from '../src/atomic-statements.js'
 import { quickBooksConnectionStatements } from '../src/quickbooks-connection-command.js'
 import BetterSqlite3 from 'better-sqlite3'
@@ -210,6 +211,20 @@ describe.each(['sqlite', 'd1'] as const)('managed QuickBooks lifecycle fence %s'
     expect(status(await f.commands.currentGrant(f.request()))).toBe(409)
     await f.sessions.revoke(2, f.admin.session.id)
     expect(status(await f.commands.currentGrant(f.request()))).toBe(401)
+  })
+
+  it('retains an ambiguous provider revocation and refuses a second transport', async () => {
+    const f = await fixture(runtime)
+    data(await f.commands.accept(f.request(), f.command))
+    data(await f.commands.fence(f.request(), fence(f)))
+    const provider = vi.fn(async () => { throw new Error('PRIVATE_PROVIDER_RESPONSE') })
+    const coordinator = createManagedQuickBooksRevocationCoordinator({ store: f.lifecycle, admitted: () => true,
+      revoke: provider, now: () => new Date(f.now()) })
+    expect(await coordinator.run(fence(f).revocationId)).toBe('uncertain')
+    expect(await coordinator.run(fence(f).revocationId)).toBe('uncertain')
+    expect(provider).toHaveBeenCalledOnce()
+    expect(await f.lifecycle.readRevocation(fence(f).revocationId)).toMatchObject({ status: 'attempting', attempts: 1 })
+    expect(status(await f.commands.prepare(f.request()))).toBe(409)
   })
 
   it('fences, retains only the refresh token, and refuses stale grant/refresh/native writes', async () => {
