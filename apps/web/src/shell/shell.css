@@ -1491,6 +1491,11 @@ html[data-backups-unavailable] [data-settings-data-backups] {
   background: var(--ez-ground);
   color: var(--ez-ink);
 }
+/* Operational facts belong to the staff workspace, outside the customer document. */
+.invoice-document[hidden] + .invoice-internal {
+  display: none;
+}
+
 .invoice-document {
   padding: clamp(20px, 4vw, 48px);
   border: 1px solid var(--ez-border);
@@ -9790,6 +9795,7 @@ th[aria-sort="descending"] .table-sort [data-part="ascending"] { opacity: 0.15; 
   .invoice-page-status,
   .invoice-load-more,
   .invoice-reminder-line,
+  .invoice-internal,
   .invoice-document-actions button,
   .invoice-document-actions .invoice-edit-link,
   .invoice-overflow,

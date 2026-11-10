@@ -1050,6 +1050,27 @@ const fixtureControl = async (request, response) => {
     if (remaining?.count !== 0) {
       throw new Error('project directory fixture cleanup left active work behind')
     }
+  } else if (action === 'invoice-privacy-seed') {
+    // Privacy/PDF acceptance owns its work, even after the full browser suite
+    // has left unrelated uninvoiced time on the default project.
+    await database.batch([
+      database.prepare("INSERT OR IGNORE INTO projects(id,client_id,name,code,hourly_rate_cents,created_at,updated_at) VALUES(135100,1,'Invoice Privacy Project','PRIVACY',10000,?,?)").bind(timestamp,timestamp),
+      database.prepare('UPDATE projects SET is_active=1 WHERE id=135100'),
+      database.prepare('INSERT OR IGNORE INTO user_assignments(id,project_id,user_id,created_at,updated_at) VALUES(135100,135100,1,?,?)').bind(timestamp,timestamp),
+      database.prepare('INSERT OR IGNORE INTO task_assignments(id,project_id,task_id,billable,created_at,updated_at) VALUES(135100,135100,1,1,?,?)').bind(timestamp,timestamp),
+      database.prepare('DELETE FROM time_entries WHERE project_id=135100 AND invoice_id IS NULL'),
+      ...[1800,900].map(seconds => database.prepare(`INSERT INTO time_entries(
+        id,user_id,project_id,task_id,user_assignment_id,task_assignment_id,
+        spent_date,seconds,seconds_without_timer,rounded_seconds,billable,
+        billable_rate_cents,cost_rate_cents,notes,created_at,updated_at)
+        VALUES((SELECT coalesce(max(id),0)+1 FROM time_entries),1,135100,1,135100,135100,
+        ?,?,?,?,1,10000,5000,'Owned invoice privacy fixture',?,?)`).bind(spentDate,seconds,seconds,seconds,timestamp,timestamp)),
+    ])
+  } else if (action === 'invoice-privacy-cleanup') {
+    await database.batch([
+      database.prepare('DELETE FROM time_entries WHERE project_id=135100 AND invoice_id IS NULL'),
+      database.prepare('UPDATE projects SET is_active=0 WHERE id=135100'),
+    ])
   } else if (action === 'invoice-generation-seed') {
     await database.batch([
       database.prepare(
