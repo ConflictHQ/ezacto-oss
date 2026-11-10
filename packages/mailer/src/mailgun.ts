@@ -234,9 +234,21 @@ export class MailgunMailer implements HttpEmailProvider {
       if (typeof paging?.next !== 'string' || paging.next.length > 4096) return { items, complete: false };
       let next: URL;
       try { next = new URL(paging.next); } catch { return { items, complete: false }; }
-      // Never send account credentials to an arbitrary paging URL or follow a
-      // link outside this exact domain's events endpoint.
-      if (next.origin !== url.origin || next.pathname !== url.pathname || next.username || next.password || next.hash) {
+      // Mailgun can encode its cursor in one path segment after /events.
+      // Do not let that segment escape the domain-scoped events endpoint.
+      let eventPath = next.pathname === url.pathname;
+      if (next.pathname.startsWith(`${url.pathname}/`)) {
+        const encoded = next.pathname.slice(url.pathname.length + 1);
+        try {
+          const cursor = decodeURIComponent(encoded);
+          eventPath = cursor.length > 0 && cursor !== '.' && cursor !== '..' &&
+            !/[\\/%]/u.test(cursor) && ![...cursor].some(character => {
+              const code = character.codePointAt(0)!;
+              return code < 32 || code === 127;
+            });
+        } catch { eventPath = false; }
+      }
+      if (next.origin !== url.origin || !eventPath || next.username || next.password || next.hash) {
         return { items, complete: false };
       }
       current = next;

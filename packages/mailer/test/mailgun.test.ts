@@ -142,6 +142,23 @@ describe("held reminder evidence", () => {
     const truncated = vi.fn().mockResolvedValue(response({ items: [event] }));
     expect(await new MailgunMailer(config, { fetch: truncated }).findReminderReceipt(lookup)).toBeNull();
   });
+
+  it('accepts a Mailgun path cursor but rejects paths that escape the events endpoint', async () => {
+    const lookup = { deliveryId: scope.deliveryId, attemptId: scope.attemptId,
+      recipients: [scope.recipient], begin: scope.begin, end: scope.end };
+    const paging = (next: string) => response({ items: [event], paging: { next } });
+    const valid = vi.fn().mockResolvedValueOnce(paging('https://api.mailgun.net/v3/mail.example.test/events/W3siY3Vyc29y'))
+      .mockResolvedValueOnce(response({ items: [] }));
+    expect(await new MailgunMailer(config, { fetch: valid }).findReminderReceipt(lookup)).toEqual({ messageId: 'mg-1' });
+    for (const next of ['https://api.mailgun.net/v3/mail.example.test/events%2f../messages',
+      'https://api.mailgun.net/v3/mail.example.test/events/cursor%2fother',
+      'https://api.mailgun.net/v3/mail.example.test/events/cursor/other',
+      'https://api.mailgun.net/v3/mail.example.test/messages']) {
+      const unsafe = vi.fn().mockResolvedValue(paging(next));
+      expect(await new MailgunMailer(config, { fetch: unsafe }).findReminderReceipt(lookup)).toBeNull();
+      expect(unsafe).toHaveBeenCalledOnce();
+    }
+  });
 });
 
 describe("Mailgun HTTP provider", () => {
