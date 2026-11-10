@@ -59,6 +59,7 @@ const emailLogData = (record: EmailLogRecord, viewedAt: string | null) => ({
   related_type: record.relatedType,
   related_id: record.relatedId,
   attempt_count: record.attemptCount,
+  reminder_attempt_lease_expires_at: record.reminderAttemptLeaseExpiresAt ?? null,
   failure_code: record.failureCode,
   failure_reason: record.failureReason,
   viewed_at: viewedAt,

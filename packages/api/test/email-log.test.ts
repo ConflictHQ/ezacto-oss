@@ -84,6 +84,7 @@ describe('email log API', () => {
           related_type: 'user',
           related_id: 1,
           attempt_count: 5,
+          reminder_attempt_lease_expires_at: null,
           failure_code: 'provider_timeout',
           failure_reason: null,
           viewed_at: null,

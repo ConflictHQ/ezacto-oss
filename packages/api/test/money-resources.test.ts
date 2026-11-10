@@ -9,6 +9,7 @@ import {
 } from "../../db/src/adapters.js";
 import { migrateContainer, migrateD1 } from "../../db/src/migrate.js";
 import { backfillBandClaims } from "../../db/src/band-claim-backfill.js";
+import { readThankYouRecipients } from "../../db/src/automatic-thank-you.js";
 import {
   createMoneyResourceRepository,
   type MoneyResourceDatabase,
@@ -1502,6 +1503,19 @@ for (const [runtime, factory] of factories) {
         { role: "cc", email: "pat@northwind.example", sameEmail: 1 },
         { role: "cc", email: "finance@example.com", sameEmail: 1 },
         { role: "cc", email: "original@example.test", sameEmail: 1 },
+      ]);
+      // Follow-ups use this actual composed delivery, including the operator
+      // and organization copies, only after provider acceptance is recorded.
+      expect(await readThankYouRecipients(test.database.orm, 1)).toEqual([]);
+      await test.database.run(
+        `UPDATE email_log SET status = 'sent', provider = 'ses', provider_message_id = 'fixture-receipt' WHERE id = ?`,
+        log!.id,
+      );
+      expect(await readThankYouRecipients(test.database.orm, 1)).toEqual([
+        { role: "to", email: "ap@northwind.example", name: "Accounts Payable" },
+        { role: "cc", email: "pat@northwind.example", name: "Pat Example" },
+        { role: "cc", email: "finance@example.com", name: "Finance" },
+        { role: "cc", email: "original@example.test", name: "Original Sender" },
       ]);
       // And the message records both headers, the copy, and that the PDF went.
       const sent = (await test.service.listMessages(1))!.at(-1)!;

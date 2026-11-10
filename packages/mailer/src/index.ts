@@ -140,6 +140,8 @@ export interface EmailLogRecord {
   relatedType: string | null
   relatedId: number | null
   attemptCount: number
+  /** Lease of an in-flight or held reminder attempt; null for other mail. */
+  reminderAttemptLeaseExpiresAt?: string | null
   failureCode: EmailFailureCode | null
   failureReason: string | null
   providerRequestId: string | null
@@ -745,7 +747,7 @@ export type EmailQueueDisposition =
 const providerCall = async (
   provider: HttpEmailProvider,
   message: EmailMessage,
-  deliveryId: number,
+  correlationKey: string,
   timeoutMs: number,
 ): Promise<EmailProviderReceipt> => {
   const controller = new AbortController()
@@ -760,7 +762,7 @@ const providerCall = async (
     return await Promise.race([
       provider.send(message, {
         signal: controller.signal,
-        idempotencyKey: `ezacto-email-${deliveryId}`,
+        idempotencyKey: correlationKey,
       }),
       timedOut,
     ])
@@ -886,6 +888,12 @@ export const processQueuedEmail = async (
     'email delivery attempt id',
     128,
   )
+  // Reminder attempts must be globally distinct across tenant databases. The
+  // persisted claim token is also sent as provider correlation data; it is not
+  // a claim that the provider deduplicates on that value.
+  if (message.template.startsWith('reminder:') && !/^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/u.test(attemptId)) {
+    throw new TypeError('reminder attempt id must be a random UUID')
+  }
   // The queue's delivery counter includes lease contention and persistence
   // redeliveries. Only the atomically persisted provider-attempt count may
   // consume the provider retry budget or select its backoff interval.
@@ -898,6 +906,9 @@ export const processQueuedEmail = async (
   if (providerAttempt === null) {
     const current = await log.get(job.deliveryId)
     if (current === null) throw new Error('queued email log does not exist')
+    // A held reminder is durably visible for reconciliation; a duplicate queue
+    // job must not spin or authorize a second provider request.
+    if (current.status === 'queued' && current.template.startsWith('reminder:') && current.reminderAttemptLeaseExpiresAt != null) return { action: 'ack' }
     return current.status === 'queued'
       ? {
           action: 'retry',
@@ -916,11 +927,16 @@ export const processQueuedEmail = async (
     delivered = await providerCall(
       provider,
       message,
-      job.deliveryId,
+      message.template.startsWith('reminder:') ? `ezacto-reminder-${job.deliveryId}-${attemptId}` : `ezacto-email-${job.deliveryId}`,
       providerTimeoutMs,
     )
   } catch (error) {
     const terminalReason = safeFailureReason(error)
+    if (terminalReason === undefined && message.template.startsWith('reminder:')) {
+      // The provider may have accepted the email before its response was lost.
+      // Keep the durable claim rather than authorizing another provider call.
+      return { action: 'ack' }
+    }
     if (
       terminalReason === undefined &&
       providerAttempt < EMAIL_RETRY_POLICY.maxAttempts

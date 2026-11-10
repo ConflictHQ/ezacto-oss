@@ -1,4 +1,5 @@
 import { createCalendarOperatorCleanupStore } from '@ezacto/db/d1'
+import { runInvoiceFeedbackRecovery, runReminderReconciliation } from './reminder-reconciliation.js'
 import { createConfiguredCalendarServices } from '@ezacto/integrations'
 import { createCalendarOAuthStore } from '@ezacto/db/d1'
 import { createConfiguredBankFeedRuntime } from '@ezacto/integrations'
@@ -1316,6 +1317,10 @@ export const createRuntimeServices = async (
     harvestInvoices: moneyResources,
     bankDeposits: createBankDepositReviewService(drizzle),
     bankFeeds: createConfiguredBankFeedRuntime({store:createBankDepositIngestionService(drizzle),environment:credentials}),
+    ...(emailProvider instanceof MailgunMailer && !demo ? {
+      reminderReconciliation: { processDue: () => runReminderReconciliation({ store: emailLog, lookup: emailProvider }) },
+      invoiceFeedbackRecovery: { processDue: () => runInvoiceFeedbackRecovery({ ledger: createD1EmailFeedbackLedger(database), lookup: emailProvider }) },
+    } : {}),
     invoiceGeneration: createInvoiceGenerationService(drizzle),
     recurringInvoices: createRecurringInvoiceEngine(drizzle),
     reminders: { processDue: processDueReminders },
@@ -1575,6 +1580,8 @@ export const createRuntimeServices = async (
             signingKey: credentials.MAILGUN_WEBHOOK_SIGNING_KEY,
             log: emailLog,
             ledger: createD1EmailFeedbackLedger(database),
+            ...(emailProvider instanceof MailgunMailer ? { verifyHeldReminder: (input: Parameters<MailgunMailer['inspectReminderEvent']>[0]) => emailProvider.inspectReminderEvent(input) } : {}),
+            ...(emailProvider instanceof MailgunMailer ? { verifyInvoiceFeedback: (input: Parameters<MailgunMailer['inspectInvoiceFeedback']>[0]) => emailProvider.inspectInvoiceFeedback(input) } : {}),
           }),
         }),
     paymentRuns,

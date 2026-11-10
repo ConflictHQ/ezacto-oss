@@ -521,6 +521,8 @@ export interface RuntimeServices {
   timesheetApprovals: TimesheetApprovalService
   timesheetLockPolicy: TimesheetLockPolicyService
   bankFeeds?: {status():Promise<import('@ezacto/integrations').BankFeedStatus[]>;processDue():Promise<{checked:number;failed:number}>}
+  reminderReconciliation?: { processDue(): Promise<void> }
+  invoiceFeedbackRecovery?: { processDue(): Promise<void> }
   bankDeposits?: BankDepositReviewApi
   moneyResources: MoneyResourceRouteOptions['service']
   harvestInvoices?: HarvestInvoiceSource

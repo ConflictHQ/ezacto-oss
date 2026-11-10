@@ -2027,6 +2027,7 @@ export type EmailLog = {
   "related_type": string | null;
   "related_id": number | null;
   "attempt_count": number;
+  "reminder_attempt_lease_expires_at": string | null;
   "failure_code": "queue_unavailable" | "provider_timeout" | "provider_rejected" | null;
   "failure_reason": string | null;
   "viewed_at": string | null;

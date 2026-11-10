@@ -11,7 +11,7 @@ export const workerScheduledOperations = [
   'Stripe alert notice', 'scheduled manifest notice', 'scheduled run dispatch', 'scheduled run expiry',
   'nightly export', 'temporary backup cleanup', 'recurring invoice generation', 'payment reminders',
   'calendar sync', 'GitHub issue reconciliation', 'BILL reconciliation', 'QuickBooks catch-up', 'Deel time sync', 'Deel payment status',
-  'demo maintenance', 'demo sender seed', 'outbox drain',
+  'demo maintenance', 'demo sender seed', 'outbox drain', 'reminder reconciliation', 'invoice feedback recovery',
 ] as const
 export type WorkerScheduledOperation = (typeof workerScheduledOperations)[number]
 type WorkerFailureCode = 'd1_network_lost' | 'd1_overloaded' | 'd1_timeout' | 'd1_resource_limit' | 'worker_request_limit' | 'database_query_failed' | 'bill_http_401' | 'bill_http_403' | 'bill_http_429' | 'bill_http_4xx' | 'bill_http_5xx' | 'unknown'
