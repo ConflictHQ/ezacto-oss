@@ -124,7 +124,7 @@ const q = <E extends Element>(selector: string): E => {
 const text = (selector: string): string => q(selector).textContent ?? ''
 
 describe('the customer estimate page', () => {
-  it('[unit] spends the sign-in token from the fragment and removes it from the address bar first', async () => {
+  it('[security #740] removes the fragment and spends it only after explicit confirmation', async () => {
     const order: string[] = []
     const harness = await mount(
       (call) => {
@@ -139,6 +139,12 @@ describe('the customer estimate page', () => {
     expect(harness.replaceState).toHaveBeenCalledWith(null, '', '/portal/estimate-review')
     // Out of the address bar before the first request goes anywhere.
     expect(events[0]).toBe('replaceState')
+    expect(harness.calls).toEqual([])
+    expect(q<HTMLElement>('[data-portal-sign-in-confirm]').hidden).toBe(false)
+    expect(document.body.innerHTML).not.toContain('abc.def')
+    q<HTMLButtonElement>('[data-portal-confirm-link]').click()
+    q<HTMLButtonElement>('[data-portal-confirm-link]').click()
+    await settle()
     expect(order).toEqual(['/portal/verify', '/portal/estimates'])
     expect(harness.calls[0]).toMatchObject({method:'POST',body:{token:'abc.def'}})
     expect(harness.calls.every(call=>!call.path.includes('abc.def'))).toBe(true)
@@ -146,8 +152,20 @@ describe('the customer estimate page', () => {
     expect(text('[data-portal-status]')).toBe('1 to review.')
   })
 
+  it('[security #740] can decline the link without consuming or reading the account', async () => {
+    const harness = await mount(() => { throw new Error('No request is allowed') }, { hash: '#token=unrequested' })
+    q<HTMLButtonElement>('[data-portal-cancel-link]').click()
+    await settle()
+    expect(harness.calls).toEqual([])
+    expect(q<HTMLElement>('[data-portal-sign-in-confirm]').hidden).toBe(true)
+    expect(q<HTMLElement>('[data-portal-sign-in]').hidden).toBe(false)
+    expect(text('[data-portal-status]')).toContain('Nothing was signed in')
+  })
+
   it('[unit] says a spent or expired link is spent, and draws nothing', async () => {
     await mount(() => refusal(401, 'invalid_magic_link'), { hash: '#token=old' })
+    q<HTMLButtonElement>('[data-portal-confirm-link]').click()
+    await settle()
     expect(text('[data-portal-status]')).toContain('expired or was already used')
     expect(q<HTMLElement>('[data-portal-list-view]').hidden).toBe(true)
     expect(q<HTMLElement>('[data-portal-detail-view]').hidden).toBe(true)

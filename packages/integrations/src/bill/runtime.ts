@@ -126,6 +126,14 @@ const trimmed = (value: string | undefined): string | null => {
   return text === undefined || text === '' ? null : text
 }
 
+/** A provider cursor is opaque and must never be included in logs or errors. */
+const nextBillPage = (next: string | null, seen: Set<string>): string | undefined => {
+  if (next === null) return undefined
+  if (seen.has(next)) throw new Error('BILL pagination repeated a cursor')
+  seen.add(next)
+  return next
+}
+
 /**
  * BILL's v3 list refuses `invoiceNumber` as a filter field ("field
  * [invoiceNumber] is not supported in filter field"), which the first version
@@ -142,6 +150,7 @@ const findInvoiceByNumber = async (
 ): Promise<BillInvoice | null> => {
   const wanted = invoiceNumber.trim()
   let page: string | undefined
+  const seen = new Set<string>()
   do {
     const result = await client.listInvoices({
       filters: [billFilter('invoiceDate', 'gte', issueDate)],
@@ -151,7 +160,7 @@ const findInvoiceByNumber = async (
       (candidate) => (candidate.invoiceNumber ?? '').trim() === wanted,
     )
     if (match !== undefined) return match
-    page = result.nextPage ?? undefined
+    page = nextBillPage(result.nextPage, seen)
   } while (page !== undefined)
   return null
 }
@@ -329,6 +338,7 @@ export const createBillRuntime = (
 
       const collected: Parameters<typeof inboundPayments>[0]['payments'][number][] = []
       let page: string | undefined
+      const seen = new Set<string>()
       // Paged to the end rather than to the first page: a quiet week of BILL
       // activity can push our payment past the first hundred, and stopping
       // early would leave an invoice unpaid in our book and paid in theirs.
@@ -337,7 +347,7 @@ export const createBillRuntime = (
           page === undefined ? {} : { page },
         )
         collected.push(...result.results)
-        page = result.nextPage ?? undefined
+        page = nextBillPage(result.nextPage, seen)
       } while (page !== undefined)
 
       const settled = inboundPayments({ payments: collected, mirrored })

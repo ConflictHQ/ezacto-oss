@@ -58,6 +58,8 @@ test('[e2e:team-summary] never prints two utilization figures over one another',
   page,
   request,
 }) => {
+  // Includes an inactive person's retained hour. The active roster must keep
+  // all six exact figures while excluding that history, even in isolation.
   const seeded = await controlBrowserFixture(request, 'team-summary-seed')
   expect(seeded.status()).toBe(204)
 
