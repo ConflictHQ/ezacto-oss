@@ -214,7 +214,7 @@ export class MailgunMailer implements HttpEmailProvider {
   private readonly endpoint: string;
 
   /** Follow only domain-scoped Mailgun event links and bound work and memory. */
-  private async reminderEvidencePages(url: URL, signal: AbortSignal): Promise<{ items: unknown[]; complete: boolean }> {
+  private async reminderEvidencePages(url: URL, signal: AbortSignal): Promise<{ items: unknown[]; complete: boolean; pageLimit?: true }> {
     const items: unknown[] = [];
     const visited = new Set<string>();
     let current = url;
@@ -253,7 +253,7 @@ export class MailgunMailer implements HttpEmailProvider {
       }
       current = next;
     }
-    return { items, complete: false };
+    return { items, complete: false, pageLimit: true };
   }
 
   constructor(config: MailgunConfig, options: MailgunOptions = {}) {
@@ -339,7 +339,18 @@ export class MailgunMailer implements HttpEmailProvider {
     const url = new URL(`${baseUrl(this.region)}/v3/${encodeURIComponent(this.domain)}/events`);
     url.search = new URLSearchParams({ begin: String(input.begin), end: String(input.end), ascending: 'yes', limit: '100', tags: tag }).toString();
     const signal = input.signal === undefined ? AbortSignal.timeout(10_000) : AbortSignal.any([input.signal, AbortSignal.timeout(10_000)]);
-    const evidence = await this.reminderEvidencePages(url, signal);
+    let evidence = await this.reminderEvidencePages(url, signal);
+    if (evidence.pageLimit && input.end - input.begin > 1) {
+      // Retry a crowded shard in two bounded, overlapping time ranges. Both
+      // must finish: neither a partial traversal nor absence proves anything.
+      const middle = input.begin + Math.floor((input.end - input.begin) / 2);
+      const first = new URL(url), second = new URL(url);
+      first.searchParams.set('end', String(middle));
+      second.searchParams.set('begin', String(middle));
+      const left = await this.reminderEvidencePages(first, signal);
+      const right = await this.reminderEvidencePages(second, signal);
+      evidence = { items: [...left.items, ...right.items], complete: left.complete && right.complete };
+    }
     const messageIds = new Set<string>();
     let invalidTerminal = false;
     const feedback = new Map<string, { eventId: string; recipient: string; type: 'failed' | 'complained' }>();

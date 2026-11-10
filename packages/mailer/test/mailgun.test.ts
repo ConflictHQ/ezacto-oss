@@ -126,7 +126,36 @@ describe("held reminder evidence", () => {
       return response({ items: full, paging: { next: `https://api.mailgun.net/v3/mail.example.test/events?page=${page + 1}` } });
     });
     expect(await new MailgunMailer(config, { fetch: limited }).findReminderReceipt(lookup)).toBeNull();
-    expect(limited).toHaveBeenCalledTimes(5);
+    expect(limited).toHaveBeenCalledTimes(15);
+  });
+
+  it('splits a crowded range and requires both halves to finish', async () => {
+    const lookup = { deliveryId: scope.deliveryId, attemptId: scope.attemptId,
+      recipients: [scope.recipient], begin: scope.begin, end: scope.end };
+    const other = { ...event, 'user-variables': { ezacto_idempotency_key: 'other' } };
+    const fetch = vi.fn().mockImplementation(async (request: Request) => {
+      const url = new URL(request.url), page = Number(url.searchParams.get('page') ?? '1');
+      if (url.searchParams.get('begin') === '100' && url.searchParams.get('end') === '200') {
+        url.searchParams.set('page', String(page + 1));
+        return response({ items: Array.from({ length: 100 }, () => other), paging: { next: url.href } });
+      }
+      if (page > 1) return response({ items: [] });
+      const observed = url.searchParams.get('end') === '150' ? { ...event, event: 'accepted', timestamp: 140 } :
+        { ...event, event: 'failed', severity: 'permanent', timestamp: 160 };
+      url.searchParams.set('page', '2');
+      return response({ items: [observed], paging: { next: url.href } });
+    });
+    expect(await new MailgunMailer(config, { fetch }).findReminderReceipt(lookup)).toEqual({ messageId: 'mg-1',
+      feedback: [{ eventId: 'evt-1', recipient: 'owner@example.test', type: 'failed' }] });
+    expect(fetch).toHaveBeenCalledTimes(9);
+    const incomplete = vi.fn().mockImplementation(async (request: Request) => {
+      const url = new URL(request.url), page = Number(url.searchParams.get('page') ?? '1');
+      if (url.searchParams.get('begin') === '150') return response({ items: [event] });
+      if (url.searchParams.get('end') === '150') return response({ items: [] });
+      url.searchParams.set('page', String(page + 1));
+      return response({ items: Array.from({ length: 100 }, () => other), paging: { next: url.href } });
+    });
+    expect(await new MailgunMailer(config, { fetch: incomplete }).findReminderReceipt(lookup)).toBeNull();
   });
 
   it('follows short pages and refuses to treat an incomplete traversal as a receipt', async () => {
