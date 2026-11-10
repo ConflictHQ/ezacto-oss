@@ -1,5 +1,6 @@
 import { composeThankYou, type ThankYouInvoice } from '@ezacto/core'
 import { sql } from 'drizzle-orm'
+import { FollowUpDeliveryDeferred } from './follow-up-deferred.js'
 import {
   followUpHeaders,
   hasRetryableFollowUpDelivery,
@@ -103,7 +104,7 @@ export const createThankYouPort = (
 
     const recipients = await readThankYouRecipients(options.database, invoiceId)
     if (recipients.length === 0) {
-      if (await hasRetryableFollowUpDelivery(options.database, invoiceId)) throw new Error('invoice delivery is not ready for follow-up')
+      if (await hasRetryableFollowUpDelivery(options.database, invoiceId)) throw new FollowUpDeliveryDeferred()
       return null
     }
 
