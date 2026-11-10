@@ -140,6 +140,8 @@ export interface EmailLogRecord {
   relatedType: string | null
   relatedId: number | null
   attemptCount: number
+  /** Lease of an in-flight or held reminder attempt; null for other mail. */
+  reminderAttemptLeaseExpiresAt?: string | null
   failureCode: EmailFailureCode | null
   failureReason: string | null
   providerRequestId: string | null
@@ -898,6 +900,9 @@ export const processQueuedEmail = async (
   if (providerAttempt === null) {
     const current = await log.get(job.deliveryId)
     if (current === null) throw new Error('queued email log does not exist')
+    // A held reminder is durably visible for reconciliation; a duplicate queue
+    // job must not spin or authorize a second provider request.
+    if (current.status === 'queued' && current.template.startsWith('reminder:') && current.reminderAttemptLeaseExpiresAt != null) return { action: 'ack' }
     return current.status === 'queued'
       ? {
           action: 'retry',
@@ -921,6 +926,11 @@ export const processQueuedEmail = async (
     )
   } catch (error) {
     const terminalReason = safeFailureReason(error)
+    if (terminalReason === undefined && message.template.startsWith('reminder:')) {
+      // The provider may have accepted the email before its response was lost.
+      // Keep the durable claim rather than authorizing another provider call.
+      return { action: 'ack' }
+    }
     if (
       terminalReason === undefined &&
       providerAttempt < EMAIL_RETRY_POLICY.maxAttempts

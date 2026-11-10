@@ -46,6 +46,7 @@ interface EmailLogRow {
   relatedType: string | null
   relatedId: number | null
   attemptCount: number
+  reminderAttemptLeaseExpiresAt: string | null
   failureCode: EmailFailureCode | null
   failureReason: string | null
   createdAt: string
@@ -69,6 +70,8 @@ const columns = `id, from_json AS fromJson, reply_to_json AS replyToJson,
   provider_request_id AS providerRequestId, provider_latency_ms AS providerLatencyMs,
   status, related_type AS relatedType,
   related_id AS relatedId, attempt_count AS attemptCount,
+  CASE WHEN template LIKE 'reminder:%' AND status = 'queued' AND active_attempt_id IS NOT NULL
+    THEN attempt_lease_expires_at ELSE NULL END AS reminderAttemptLeaseExpiresAt,
   failure_code AS failureCode, failure_reason AS failureReason,
   created_at AS createdAt, updated_at AS updatedAt`
 
@@ -124,6 +127,7 @@ const rowRecord = (row: EmailLogRow | null): EmailLogRecord => {
     relatedType: row.relatedType,
     relatedId: row.relatedId,
     attemptCount: row.attemptCount,
+    reminderAttemptLeaseExpiresAt: row.reminderAttemptLeaseExpiresAt,
     failureCode: row.failureCode,
     failureReason: row.failureReason,
     createdAt: row.createdAt,
@@ -255,7 +259,7 @@ const createStore = (
            WHERE id = ? AND status = 'queued'
              AND (provider IS NULL OR provider = ?)
              AND (active_attempt_id IS NULL
-               OR julianday(attempt_lease_expires_at) <= julianday(?))
+               OR (template NOT LIKE 'reminder:%' AND julianday(attempt_lease_expires_at) <= julianday(?)))
            RETURNING attempt_count AS attemptCount, status`,
         [provider, attemptId, leaseExpiresAt, at, deliveryId, provider, at],
       )
@@ -274,7 +278,7 @@ const createStore = (
            SET active_attempt_id = NULL, attempt_lease_expires_at = NULL,
              updated_at = ?
            WHERE id = ? AND status = 'queued' AND provider = ?
-             AND active_attempt_id = ?
+             AND active_attempt_id = ? AND template NOT LIKE 'reminder:%'
            RETURNING 1 AS released`,
           [at, deliveryId, provider, attemptId],
         )) !== null
@@ -348,16 +352,16 @@ const createStore = (
       const at = timestamp()
       // `provider_rejected` is the one failure the schema carries a reason on.
       // The provider column is left as it is -- empty, for a message no
-      // provider was ever asked about -- which is what tells this apart. A lease
-      // that has run out is no attempt at all; one that has not is a provider
-      // call in flight, and refusing under it would race the send.
+      // provider was ever asked about -- which is what tells this apart. An
+      // expired reminder attempt remains uncertain, so a later queue refusal
+      // must not erase its provider evidence.
       const refused = await database.first<EmailLogRow>(
         `UPDATE email_log
          SET status = 'failed', failure_code = 'provider_rejected', failure_reason = ?,
            active_attempt_id = NULL, attempt_lease_expires_at = NULL, updated_at = ?
          WHERE id = ? AND status = 'queued'
            AND (active_attempt_id IS NULL
-             OR julianday(attempt_lease_expires_at) <= julianday(?))
+             OR (template NOT LIKE 'reminder:%' AND julianday(attempt_lease_expires_at) <= julianday(?)))
          RETURNING ${columns}`,
         [reason, at, deliveryId, at],
       )

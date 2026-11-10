@@ -56,6 +56,7 @@ export interface EmailLogRow {
   readonly subject: string
   readonly template: string
   readonly status: EmailLogStatus
+  readonly reminder_attempt_lease_expires_at: string | null
   readonly attempt_count: number
   readonly failure_code: string | null
   readonly failure_reason: string | null
@@ -322,7 +323,9 @@ export const createDeliveriesController = (api: DeliveriesApi): DeliveriesContro
             render: (row) =>
               row.subject === '' ? deliveryLabel(row.template) : row.subject,
           },
-          { key: 'status', label: 'Status', fit: true, render: (row) => deliveryLabel(row.status) },
+          { key: 'status', label: 'Status', fit: true, render: (row) =>
+            row.reminder_attempt_lease_expires_at && Date.parse(row.reminder_attempt_lease_expires_at) <= Date.now()
+              ? 'Delivery outcome unknown' : deliveryLabel(row.status) },
           { key: 'attempts', label: 'Attempts', fit: true, render: (row) => String(row.attempt_count) },
           {
             key: 'opened',

@@ -460,6 +460,20 @@ describe('queued mailer', () => {
     expect(log.markQueueFailed).toHaveBeenCalledWith(7)
   })
 
+  it('[money #1352] does not send a reminder twice after a lost provider reply', async () => {
+    const log = store()
+    vi.mocked(log.claimAttempt).mockResolvedValueOnce(1).mockResolvedValue(null)
+    vi.mocked(log.get).mockResolvedValue(record({ template: 'reminder:1', attemptCount: 1, reminderAttemptLeaseExpiresAt: '2026-08-28T20:00:30.000Z' }))
+    const reminder = { ...job, message: { ...message, template: 'reminder:1' } }
+    const provider: HttpEmailProvider = { name: 'test-http', send: vi.fn(async () => {
+      throw new Error('fixture: provider accepted but reply was lost')
+    }) }
+    await expect(processQueuedEmail(reminder, 1, log, provider)).resolves.toEqual({ action: 'ack' })
+    expect(log.releaseAttempt).not.toHaveBeenCalled()
+    await expect(processQueuedEmail(reminder, 2, log, provider)).resolves.toEqual({ action: 'ack' })
+    expect(provider.send).toHaveBeenCalledTimes(1)
+  })
+
   it('[unit] retries provider failure with the bounded queue policy, then records failed', async () => {
     const log = store()
     const provider: HttpEmailProvider = {

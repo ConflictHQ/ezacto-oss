@@ -1,6 +1,6 @@
 import BetterSqlite3 from 'better-sqlite3'
 import { Miniflare } from 'miniflare'
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import {
   EMAIL_LOG_KIND_TEMPLATES,
   EMAIL_RETRY_POLICY,
@@ -195,6 +195,34 @@ for (const [runtime, factory] of factories) {
       expect(JSON.stringify(await current.rows(`SELECT * FROM email_log`))).not.toContain(
         'ezacto_verify_secret',
       )
+    })
+
+    it('[money #1352] retains an uncertain reminder claim after its lease expires', async () => {
+      const current = await setup()
+      const queued = await current.store.createQueued({ ...message, template: 'reminder:1' })
+      expect(await current.store.claimAttempt(queued.id, 'http-provider', 'attempt-one', 30)).toBe(1)
+      expect(await current.store.releaseAttempt(queued.id, 'http-provider', 'attempt-one')).toBe(false)
+      current.setNow('2026-08-28T20:01:00.000Z')
+      expect(await current.store.claimAttempt(queued.id, 'http-provider', 'attempt-two', 30)).toBeNull()
+      await expect(current.store.markRefused(queued.id, 'demo_recipient_not_allowed')).rejects.toThrow()
+      expect(await current.store.get(queued.id)).toMatchObject({ reminderAttemptLeaseExpiresAt: '2026-08-28T20:00:30.000Z' })
+      expect(await current.store.markSent(queued.id, 'http-provider', { messageId: 'late-provider-receipt' }, 'attempt-one')).toMatchObject({ status: 'sent', reminderAttemptLeaseExpiresAt: null })
+    })
+
+    it('[money #1352] holds a lost provider reply without re-sending the queued reminder', async () => {
+      const current = await setup()
+      const reminder = { ...message, template: 'reminder:1' }
+      const queued = await current.store.createQueued(reminder)
+      const provider: HttpEmailProvider = { name: 'http-provider', send: vi.fn(async () => {
+        throw new Error('fixture accepted but reply lost')
+      }) }
+      const job: QueuedEmailJob = { schemaVersion: 1, deliveryId: queued.id, message: reminder }
+      expect(await processQueuedEmail(job, 1, current.store, provider)).toEqual({ action: 'ack' })
+      current.setNow('2026-08-28T20:01:00.000Z')
+      expect(await processQueuedEmail(job, 2, current.store, provider)).toEqual({ action: 'ack' })
+      expect(provider.send).toHaveBeenCalledTimes(1)
+      expect(await current.store.get(queued.id)).toMatchObject({ status: 'queued', attemptCount: 1,
+        reminderAttemptLeaseExpiresAt: '2026-08-28T20:00:30.000Z' })
     })
 
     it('[concurrency] leases one provider attempt and fences stale terminal writers', async () => {
