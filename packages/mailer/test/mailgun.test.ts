@@ -47,6 +47,11 @@ describe("held reminder evidence", () => {
     await expect(invalid.inspectReminderEvent(scope)).rejects.toThrow("Mailgun evidence response is invalid");
     const oversized = new MailgunMailer(config, { fetch: async () => new Response("x".repeat(1_000_001)) });
     await expect(oversized.inspectReminderEvent(scope)).rejects.toThrow("Mailgun evidence response exceeded size limit");
+    const controller = new AbortController();
+    const stalled = new MailgunMailer(config, { fetch: async () => new Response(new ReadableStream({ start() {} })) });
+    const pending = stalled.inspectReminderEvent({ ...scope, signal: controller.signal });
+    controller.abort();
+    await expect(pending).rejects.toThrow();
   });
 });
 

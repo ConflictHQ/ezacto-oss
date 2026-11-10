@@ -126,7 +126,7 @@ const parseBody = (text: string): Record<string, unknown> => {
 };
 
 /** Bound the provider evidence body while reading, not after allocation. */
-const readEvidenceBody = async (response: Response): Promise<string> => {
+const readEvidenceBody = async (response: Response, signal: AbortSignal): Promise<string> => {
   const length = response.headers.get("content-length");
   if (length !== null && /^\d+$/u.test(length) && Number(length) > responseLimit) {
     await response.body?.cancel();
@@ -135,10 +135,14 @@ const readEvidenceBody = async (response: Response): Promise<string> => {
   if (response.body === null) throw new Error("Mailgun evidence response is invalid");
   const reader = response.body.getReader();
   const decoder = new TextDecoder();
+  const abort = () => { void reader.cancel().catch(() => undefined); };
+  signal.addEventListener("abort", abort, { once: true });
   let bytes = 0, result = "";
   try {
     for (;;) {
+      signal.throwIfAborted();
       const part = await reader.read();
+      signal.throwIfAborted();
       if (part.done) break;
       bytes += part.value.byteLength;
       if (bytes > responseLimit) {
@@ -148,7 +152,7 @@ const readEvidenceBody = async (response: Response): Promise<string> => {
       result += decoder.decode(part.value, { stream: true });
     }
     return result + decoder.decode();
-  } finally { reader.releaseLock(); }
+  } finally { signal.removeEventListener("abort", abort); reader.releaseLock(); }
 };
 
 const attachmentSizeLimit = 25 * 1024 * 1024;
@@ -249,7 +253,7 @@ export class MailgunMailer implements HttpEmailProvider {
     const signal = input.signal === undefined ? AbortSignal.timeout(10_000) : AbortSignal.any([input.signal, AbortSignal.timeout(10_000)]);
     const response = await this.fetchImplementation(new Request(url, { method: 'GET', headers: { authorization: this.authorization }, redirect: 'error', signal }));
     if (!response.ok) throw new MailgunApiError(response.status);
-    const body = parseBody(await readEvidenceBody(response));
+    const body = parseBody(await readEvidenceBody(response, signal));
     if (!Array.isArray(body.items) || body.items.length > 100) throw new Error('Mailgun evidence response is invalid');
     return body.items.some(value => {
       if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
