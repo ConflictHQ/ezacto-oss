@@ -1,3 +1,7 @@
+import { createWorker } from '../../../entries/worker/src/index.js'
+import { createRuntimeServices } from '../../../entries/worker/src/runtime.js'
+import type { WorkerEnv } from '../../../entries/worker/src/app.js'
+import type { WorkerManagedWise } from '../../../entries/worker/src/managed-providers.js'
 import { copyFile, cp, mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -5,7 +9,7 @@ import { createServer, type Server } from 'node:http'
 import BetterSqlite3 from 'better-sqlite3'
 import { Miniflare } from 'miniflare'
 import { sql } from 'drizzle-orm'
-import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest'
+import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest'
 import { createContainerDatabase, createD1Database } from '../src/adapters.js'
 import { migrateContainer, migrateD1 } from '../src/migrate.js'
 import { createContainerSessionStore, createD1SessionStore } from '../src/sessions.js'
@@ -116,7 +120,10 @@ afterAll(async () => {
     await templateWorker?.dispose()
     if (server)
       await new Promise<void>((resolve, reject) =>
-        server.close((error) => (error ? reject(error) : resolve())),
+        server.close((error) => {
+          if (error && (error as NodeJS.ErrnoException).code !== 'ERR_SERVER_NOT_RUNNING') reject(error)
+          else resolve()
+        }),
       )
   } finally {
     if (templates) await rm(templates.root, { recursive: true, force: true })
@@ -141,7 +148,7 @@ const data = <T>(value: T | Response): T => {
   return value
 }
 const status = (value: unknown) => (value instanceof Response ? value.status : 0)
-const fixture = async (backend: 'sqlite' | 'd1', name = 'A', profileId = '111') => {
+const fixture = async (backend: 'sqlite' | 'd1', name = 'A', profileId = '111', instant = initial) => {
   const root = await mkdtemp(join(tmpdir(), 'wise-case-'))
   let native: BetterSqlite3.Database | undefined, mf: Miniflare | undefined
   closers.push(async () => {
@@ -155,8 +162,9 @@ const fixture = async (backend: 'sqlite' | 'd1', name = 'A', profileId = '111') 
   let db: ReturnType<typeof createContainerDatabase> | ReturnType<typeof createD1Database>
   let sessions:
     ReturnType<typeof createContainerSessionStore> | ReturnType<typeof createD1SessionStore>
-  let now = initial,
+  let now = instant,
     enabled = true
+  let binding: D1Database | undefined
   if (backend === 'sqlite') {
     const path = join(root, 'tenant.sqlite')
     await copyFile(templates.sqlite, path)
@@ -166,7 +174,7 @@ const fixture = async (backend: 'sqlite' | 'd1', name = 'A', profileId = '111') 
   } else {
     await cp(templates.d1, root, { recursive: true })
     mf = new Miniflare({ ...worker, d1Persist: root })
-    const binding = await mf.getD1Database('DB')
+    binding = await mf.getD1Database('DB')
     db = createD1Database(binding)
     sessions = createD1SessionStore(binding, { now: () => now })
   }
@@ -210,10 +218,11 @@ const fixture = async (backend: 'sqlite' | 'd1', name = 'A', profileId = '111') 
       expectedGeneration,
       credentials: { token: secret, profileId: selected },
     })
-  const accounts = createPayoutAccountStore(db)
-  const runtime = () =>
-    createManagedWiseRuntime({
-      store,
+  const runtime = (database?: D1Database) => {
+    const currentDb = database === undefined ? db : createD1Database(database)
+    const accounts = createPayoutAccountStore(currentDb)
+    return createManagedWiseRuntime({
+      store: database === undefined ? store : createManagedWiseConnectionStore(currentDb),
       open: vault.open,
       accounts: {
         listForUser: (userId) => accounts.listForUser(userId),
@@ -232,6 +241,7 @@ const fixture = async (backend: 'sqlite' | 'd1', name = 'A', profileId = '111') 
         return fetch(new Request(new URL(url.pathname + url.search, providerOrigin), request))
       },
     })
+  }
   const rows = (table: string) => db.all<Record<string, unknown>>(sql.raw(`SELECT * FROM ${table}`))
   const financial = async () =>
     Promise.all(
@@ -240,6 +250,8 @@ const fixture = async (backend: 'sqlite' | 'd1', name = 'A', profileId = '111') 
       ),
     )
   return {
+    binding,
+    isEnabled: () => enabled,
     db,
     sessions,
     admin,
@@ -442,4 +454,53 @@ describe.each(['sqlite', 'd1'] as const)('managed Wise read-only %s', (backend) 
     expect(await disabled.service.readStatus()).toBeNull()
     expect(calls).toHaveLength(count)
   })
+})
+
+it('[integration #1237] the actual Worker uses tenant Wise reads and suppresses all foreign deployment payment/feed credentials', async () => {
+  const instant = new Date().toISOString()
+  const tenants = [await fixture('d1', 'WORKER_A', '111', instant), await fixture('d1', 'WORKER_B', '222', instant)]
+  const scopes = new WeakMap<object, (typeof tenants)[number]>()
+  for (const tenant of tenants) { data(await tenant.configure()); scopes.set(tenant.binding!, tenant) }
+  const compose = vi.fn(async ({ scope, database }: Parameters<WorkerManagedWise['compose']>[0]) => {
+    const tenant = scopes.get(scope)
+    if (!tenant) throw new Error('Unknown trusted tenant scope')
+    return { ...(await tenant.runtime(database)), webhook: { receiveWebhook: vi.fn(async () => ({ accepted: true })) } }
+  })
+  const port: WorkerManagedWise = { configured: scope => scopes.get(scope)?.isEnabled() === true, compose }
+  const worker = createWorker({ managedWise: port })
+  const context = { waitUntil() {}, passThroughOnException() {}, props: {} } as unknown as ExecutionContext
+  for (const tenant of tenants) {
+    const env: WorkerEnv = { DB: tenant.binding!, ENVIRONMENT: 'test', RELEASE: 'a'.repeat(40),
+      API_CURSOR_SIGNING_KEY: key(3), APP_BASE_URL: 'https://owned.example',
+      WISE_TOKEN: 'PRIVATE_FOREIGN_DEPLOYMENT', WISE_PROFILE_ID: '999',
+      WISE_WEBHOOK_PUBLIC_KEY: 'PRIVATE_FOREIGN_WEBHOOK', WISE_MODE: 'full',
+      WISE_BANK_FEED_TOKEN: 'PRIVATE_FOREIGN_BANK_FEED', WISE_BANK_FEED_PROFILE_ID: '999',
+      WISE_BANK_FEED_BALANCE_ID: '999', WISE_BANK_FEED_CURRENCY: 'USD',
+    }
+    const before = calls.length
+    const response = await worker.fetch!(new Request('https://owned.example/api/v1/integrations/wise', {
+      headers: { cookie: `__Host-ezacto_session=${tenant.admin.token}` },
+    }) as Request<unknown, IncomingRequestCfProperties>, env, context)
+    expect(response.status).toBe(200)
+    expect(await response.json()).toMatchObject({ data: { configured: true, connection: { profile_id: tenant.profileId } } })
+    expect(calls.slice(before).every(call => call.profile === tenant.profileId && call.method === 'GET')).toBe(true)
+    const services = await createRuntimeServices(env, { managedWise: port })
+    expect(services.wiseWebhook).toBeUndefined()
+    await expect(services.paymentRuns!.preview({} as never, 2, 'owned-read', instant)).rejects.toThrow('Wise is not configured for this instance.')
+    expect(await services.bankFeeds!.status()).toContainEqual(expect.objectContaining({ provider: 'wise', configured: false }))
+    const absent = { configured: () => true, compose: vi.fn(async () => null) }
+    const unavailable = await createRuntimeServices(env, { managedWise: absent })
+    expect(unavailable.wise).toBeUndefined()
+    await expect(unavailable.paymentRuns!.preview({} as never, 2, 'owned-absent', instant)).rejects.toThrow('Wise is not configured for this instance.')
+    for (const extra of [{ DEMO_MODE: 'true', ENVIRONMENT: 'dev' }, { ACCOUNTING_ENABLED: 'false' }]) {
+      const count = compose.mock.calls.length, exchanges = calls.length
+      expect((await createRuntimeServices({ ...env, ...extra }, { managedWise: port })).wise).toBeUndefined()
+      expect(compose.mock.calls.length).toBe(count)
+      expect(calls).toHaveLength(exchanges)
+    }
+    tenant.disable()
+    const count = calls.length
+    expect((await createRuntimeServices(env, { managedWise: port })).wise).toBeUndefined()
+    expect(calls).toHaveLength(count)
+  }
 })

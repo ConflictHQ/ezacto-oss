@@ -1,3 +1,4 @@
+import type { WorkerManagedWise } from '../../worker/src/managed-providers.js'
 import { createCalendarOperatorCleanupStore } from '@ezacto/db'
 import { createConfiguredCalendarServices } from '@ezacto/integrations'
 import { createCalendarOAuthStore } from '@ezacto/db'
@@ -347,7 +348,16 @@ export interface ContainerRuntime {
   close(timeoutMs?: number): Promise<void>
 }
 
+export class ManagedWiseUnsupportedRuntimeError extends Error {
+  readonly code = 'capability_unsupported'
+  constructor() {
+    super('Managed Wise read capability is not supported by the container entry. Configure it through a supported host adapter.')
+    this.name = 'ManagedWiseUnsupportedRuntimeError'
+  }
+}
 export interface ContainerRuntimeOptions {
+  /** Explicit unsupported capability: fail before storage or environment fallback. */
+  managedWise?: WorkerManagedWise
   reportError?: WorkerErrorReporter
   calendarSources?: Parameters<typeof createCalendarSyncService>[0]['sources']
   emailProvider?: HttpEmailProvider
@@ -454,6 +464,7 @@ export const createContainerRuntime = async (
   config: ContainerConfig,
   options: ContainerRuntimeOptions = {},
 ): Promise<ContainerRuntime> => {
+  if (options.managedWise !== undefined) throw new ManagedWiseUnsupportedRuntimeError()
   await ensureDataDirectory(config.dataDirectory)
   await assertNoIncompletePrivacyRestore(config.dataDirectory)
   await assertDatabasePath(config.databasePath)

@@ -27,16 +27,18 @@ export interface ManagedWiseRuntimeOptions {
   now(): Date
 }
 
+export interface ManagedWiseRuntime {
+  service: Omit<WiseRuntime['service'], 'writable'> & { writable(): false }
+  status(): Promise<ManagedWiseConnectionState & { enabled: boolean; canExecute: false }>
+}
+
 /** Existing native read-only Wise service with tenant-owned, generation-bound
  * custody. No environment token, payment provider, webhook or token cache.
  * Every read reconstructs the native service after current custody/admission.
  */
 export const createManagedWiseRuntime = async (
   options: ManagedWiseRuntimeOptions,
-): Promise<{
-  service: WiseRuntime['service']
-  status(): Promise<ManagedWiseConnectionState & { enabled: boolean; canExecute: false }>
-}> => {
+): Promise<ManagedWiseRuntime> => {
   let configured = options.isEnabled() && (await options.store.state()).status !== 'disconnected'
   const unavailable = (): never => {
     throw new ManagedWiseUnavailableError()

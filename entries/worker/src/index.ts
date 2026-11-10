@@ -1,5 +1,5 @@
-import { managedQuickBooksAvailable } from './managed-providers.js'
-export type { WorkerManagedQuickBooks } from './managed-providers.js'
+import { managedQuickBooksAvailable, managedWiseAvailable } from './managed-providers.js'
+export type { WorkerManagedQuickBooks, WorkerManagedWise } from './managed-providers.js'
 import { createCsvWorkerRuntime, csvWorkerConfigured, verifyCsvQueueDatabase } from './csv-runtime.js'
 import { parseCursorSigningKey, ensureRuntimeDatabaseReady } from './runtime.js'
 import { AsyncLocalStorage } from 'node:async_hooks'
@@ -10,7 +10,7 @@ import * as Sentry from '@sentry/cloudflare'
 import { scheduleConfirmedRunWorkflows } from './scheduled-run-workflow-scheduler.js'
 import type { QueuedEmailJob } from '@ezacto/mailer'
 import { createApiIdempotencyAuthorization, isCsvStagingPath, moduleAvailability, withIdempotency } from '@ezacto/api'
-import { createApp, demoDeployment, demoMailDomains, type WorkerEnv } from './app.js'
+import { createApp, demoDeployment, demoMailDomains, type WorkerEnv, type AppEnv } from './app.js'
 import { isDataRequest } from './data-request.js'
 import { workerBrandAssetSurface } from './brand-assets.js'
 import { workerSignInMethodSurface } from './sign-in-methods.js'
@@ -161,8 +161,13 @@ export const createWorker = (options: WorkerOptions = {}): ExportedHandler<Worke
       else reportWorkerError(options.reportError, error, { ...context, traceId: runtimeTraceId() })
     },
   },
-    options.managedQuickBooks === undefined ? undefined : {
-      quickBooks: env => managedQuickBooksAvailable(options.managedQuickBooks!, env, (env as Partial<WorkerEnv>).DB),
+    options.managedQuickBooks === undefined && options.managedWise === undefined ? undefined : {
+      ...(options.managedQuickBooks === undefined ? {} : {
+        quickBooks: (env: AppEnv) => managedQuickBooksAvailable(options.managedQuickBooks!, env, (env as Partial<WorkerEnv>).DB),
+      }),
+      ...(options.managedWise === undefined ? {} : {
+        wise: (env: AppEnv) => managedWiseAvailable(options.managedWise!, env, (env as Partial<WorkerEnv>).DB),
+      }),
     },
   )
   return {
@@ -186,7 +191,7 @@ export const createWorker = (options: WorkerOptions = {}): ExportedHandler<Worke
         await publicApp.fetch(request, env, executionContext))
     }
     try {
-      const services = await createRuntimeServices(env, { reportError: report, ...(options.managedQuickBooks === undefined ? {} : { managedQuickBooks: options.managedQuickBooks }) })
+      const services = await createRuntimeServices(env, { reportError: report, ...(options.managedQuickBooks === undefined ? {} : { managedQuickBooks: options.managedQuickBooks }), ...(options.managedWise === undefined ? {} : { managedWise: options.managedWise }) })
       const app = createApp(
         services,
         workerBrandAssetSurface,
@@ -251,7 +256,7 @@ export const createWorker = (options: WorkerOptions = {}): ExportedHandler<Worke
     const services = await createRuntimeServices(env, {
       emailProvider: provider,
       reportError: report,
-      ...(options.managedQuickBooks === undefined ? {} : { managedQuickBooks: options.managedQuickBooks }),
+      ...(options.managedQuickBooks === undefined ? {} : { managedQuickBooks: options.managedQuickBooks }), ...(options.managedWise === undefined ? {} : { managedWise: options.managedWise }),
     })
     // The consumer fetches what a job names, immediately before sending. Bytes
     // never rode the queue to get here (issue 626).
@@ -276,7 +281,7 @@ export const createWorker = (options: WorkerOptions = {}): ExportedHandler<Worke
     // response was lost. Service construction/provider jobs are not retried.
     // Exhaustion propagates to withSentry once and marks this tick failed;
     // readiness is cached only on success, so the next tick can recover.
-    const services = await createRuntimeServices(env, { retryReadiness: true, reportError: report, ...(options.managedQuickBooks === undefined ? {} : { managedQuickBooks: options.managedQuickBooks }) })
+    const services = await createRuntimeServices(env, { retryReadiness: true, reportError: report, ...(options.managedQuickBooks === undefined ? {} : { managedQuickBooks: options.managedQuickBooks }), ...(options.managedWise === undefined ? {} : { managedWise: options.managedWise }) })
     if(controller.cron==='*/5 * * * *'){if(moduleAvailability(env).invoices)await services.bankFeeds?.processDue();return}
     if(!demoDeployment(env)&&csvWorkerConfigured(env)){for(const phase of ['purge','publish'] as const){try{await env.CSV_IMPORT_QUEUE!.send({kind:'csv-maintenance',phase})}catch{report(new Error('CSV maintenance publication deferred.'),{phase:'scheduled'})}}}
     // The operator's invoices switch (issue 1254): where it is off none of the
