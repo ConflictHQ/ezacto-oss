@@ -56,6 +56,7 @@ export interface BackupRunQuery {
 
 export interface QuickBooksConnectionView {
   configured: boolean
+  authorization?: 'ready' | 'pending' | 'unavailable'
   connection: {
     realm_id: string
     company_name: string | null

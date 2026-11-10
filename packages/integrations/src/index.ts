@@ -339,3 +339,5 @@ export { createGithubCommentSurface, type GithubCommentOptions } from './work-it
 export { GithubPublicationError, type GithubPublicationAuthority, type GithubPublicationPort, type GithubPublicationPreview, type GithubPublicationRow } from './work-items/github-publication-model.js'
 
 export * from './work-items/publication.js'
+
+export * from './quickbooks/managed-refresh.js'

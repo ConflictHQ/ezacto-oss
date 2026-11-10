@@ -8,6 +8,7 @@
  */
 
 import { sql } from 'drizzle-orm'
+import { ManagedQuickBooksRefreshUnavailableError } from '@ezacto/integrations'
 import { atomicStatements } from './atomic-statements.js'
 import type { InvoiceStateDatabase } from './invoice-state.js'
 import { quickBooksConnectionStatements } from './quickbooks-connection-command.js'
@@ -287,10 +288,20 @@ export const createQuickBooksStore = (database: Database): QuickBooksStore => ({
   },
 
   saveTokens: async (input) => {
-    await database.run(sql`UPDATE quickbooks_connections
+    try { await database.run(sql`UPDATE quickbooks_connections
        SET access_token = ${input.accessToken}, refresh_token = ${input.refreshToken}, access_token_expires_at = ${input.accessTokenExpiresAt},
          refresh_token_expires_at = ${input.refreshTokenExpiresAt}, updated_at = ${input.now}
-       WHERE id = 1 AND realm_id = ${input.realmId} AND disconnected_at IS NULL`)
+       WHERE id = 1 AND realm_id = ${input.realmId} AND disconnected_at IS NULL`) }
+    catch (error) {
+      // Drizzle's outer error includes bound credentials. A managed ownership
+      // refusal is expected, and must not reach API logs with those parameters.
+      let cause: unknown = error
+      for (let depth = 0; depth < 8 && cause instanceof Error; depth += 1) {
+        if (cause.message.includes('managed_quickbooks_refresh_owner_required')) throw new ManagedQuickBooksRefreshUnavailableError()
+        cause = cause.cause
+      }
+      throw error
+    }
   },
 
   setAllowOnlinePayment: async (input) => {

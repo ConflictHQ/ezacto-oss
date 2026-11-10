@@ -1110,6 +1110,43 @@ describe('company settings', () => {
     await vi.waitFor(() => expect(api.updateQuickBooksSettings).toHaveBeenCalledWith(true, expect.anything()))
   })
 
+  it.each(['pending', 'unavailable'] as const)('[browser #1235] shows QuickBooks authorization %s without offering accounting actions', async authorization => {
+    stubModulesEndpoint()
+    openCompanySettings('integrations')
+    const api = {
+      ...companyApi([senderIdentity()], []),
+      getQuickBooksConnection: vi.fn(async () => ({ configured: true, authorization, connection: {
+        realm_id: 'realm-a', company_name: 'Northpeak Books', scope: 'com.intuit.quickbooks.accounting',
+        allow_online_payment: false, connected_at: '2026-09-11T12:00:00.000Z',
+      } })),
+      getQuickBooksReconciliation: vi.fn(),
+    }
+    const controller = createModuleSettingsController(api as never)
+    await controller.activate(identity, new AbortController().signal, () => false)
+    const status = document.querySelector<HTMLElement>('[data-settings-quickbooks-status]')!
+    await vi.waitFor(() => expect(status.textContent).toContain(authorization === 'pending' ? 'authorization is pending' : 'needs recovery'))
+    expect(document.querySelector<HTMLButtonElement>('[data-quickbooks-connect]')!.hidden).toBe(true)
+    expect(document.querySelector<HTMLButtonElement>('[data-quickbooks-disconnect]')!.hidden).toBe(true)
+    expect(document.querySelector<HTMLElement>('[data-settings-quickbooks-facts]')!.textContent).toContain('Northpeak Books')
+    expect(api.getQuickBooksReconciliation).not.toHaveBeenCalled()
+  })
+
+  it('[browser #1235] withholds reconnect while disconnected QuickBooks authorization needs recovery', async () => {
+    stubModulesEndpoint()
+    openCompanySettings('integrations')
+    const api = {
+      ...companyApi([senderIdentity()], []),
+      getQuickBooksConnection: vi.fn(async () => ({ configured: true, authorization: 'unavailable', connection: null })),
+    }
+    const controller = createModuleSettingsController(api as never)
+    await controller.activate(identity, new AbortController().signal, () => false)
+    const status = document.querySelector<HTMLElement>('[data-settings-quickbooks-status]')!
+    await vi.waitFor(() => expect(status.textContent).toContain('needs recovery'))
+    expect(document.querySelector<HTMLButtonElement>('[data-quickbooks-connect]')!.hidden).toBe(true)
+    expect(document.querySelector<HTMLElement>('[data-quickbooks-payment-row]')!.hidden).toBe(true)
+    expect(document.querySelector<HTMLElement>('[data-quickbooks-reconcile-panel]')!.hidden).toBe(true)
+  })
+
   it('[security #104] offers no connect button to a profile the route would refuse', async () => {
     stubModulesEndpoint()
     openCompanySettings('integrations')

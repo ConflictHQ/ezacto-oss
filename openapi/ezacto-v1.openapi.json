@@ -49181,6 +49181,14 @@
                     "type": "null"
                   }
                 ]
+              },
+              "authorization": {
+                "type": "string",
+                "enum": [
+                  "ready",
+                  "pending",
+                  "unavailable"
+                ]
               }
             },
             "additionalProperties": false

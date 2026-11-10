@@ -1869,15 +1869,19 @@ export const createModuleSettingsController = (
           return
         }
         const connection = view.connection
+        const authorizationReady = view.authorization === undefined || view.authorization === 'ready'
+        const authorizationMessage = view.authorization === 'pending'
+          ? 'QuickBooks authorization is pending. Accounting actions are unavailable until it completes or is recovered.'
+          : 'QuickBooks authorization needs recovery before accounting actions can resume.'
         quickBooksActions.hidden = false
-        quickBooksConnect.hidden = connection !== null
-        quickBooksDisconnect.hidden = connection === null
-        quickBooksPaymentRow.hidden = connection === null
+        quickBooksConnect.hidden = connection !== null || !authorizationReady
+        quickBooksDisconnect.hidden = connection === null || !authorizationReady
+        quickBooksPaymentRow.hidden = connection === null || !authorizationReady
         quickBooksReconcilePanel.hidden =
-          connection === null || api.getQuickBooksReconciliation === undefined
+          connection === null || !authorizationReady || api.getQuickBooksReconciliation === undefined
         if (connection === null) {
           quickBooksFacts.hidden = true
-          quickBooksStatus.textContent = 'Not connected.'
+          quickBooksStatus.textContent = authorizationReady ? 'Not connected.' : authorizationMessage
           return
         }
         facts(quickBooksFacts, [
@@ -1887,7 +1891,7 @@ export const createModuleSettingsController = (
         ])
         quickBooksFacts.hidden = false
         quickBooksAllowPayment.checked = connection.allow_online_payment
-        quickBooksStatus.textContent = ''
+        quickBooksStatus.textContent = authorizationReady ? '' : authorizationMessage
       })
     } catch (error) {
       active.presentFailure(error, () => {

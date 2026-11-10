@@ -1,3 +1,4 @@
+import { ManagedQuickBooksRefreshUnavailableError, type ManagedQuickBooksRefresh } from './managed-refresh.js';
 /**
  * Assembling the QuickBooks connection from deployment configuration, the
  * store, and Intuit.
@@ -110,6 +111,7 @@ export interface QuickBooksService {
     realmId: string;
   }): Promise<QuickBooksConnectionStatus>;
   readStatus(): Promise<QuickBooksConnectionStatus | null>;
+  authorizationStatus?(): Promise<'ready' | 'pending' | 'unavailable'>;
   setAllowOnlinePayment(allow: boolean): Promise<void>;
   disconnect(): Promise<void>;
   receiveWebhook(input: {
@@ -429,6 +431,8 @@ const mirroredFromHere = (paymentId: number): string =>
 const maximumSkippedReasonLength = 255;
 
 export interface QuickBooksRuntimeOptions {
+  /** Durable managed ownership, composed outside replayable hosted SQL. */
+  readonly managedRefresh?: ManagedQuickBooksRefresh;
   readonly config: QuickBooksConfig;
   readonly store: QuickBooksConnectionStore;
   readonly source: QuickBooksMirrorSource;
@@ -549,9 +553,12 @@ export const createQuickBooksRuntime = (
     const connection = await store.readConnection();
     if (connection === null) return null;
     const now = options.now();
+    if (options.managedRefresh !== undefined && await options.managedRefresh.status() !== 'ready') {
+      throw new ManagedQuickBooksRefreshUnavailableError();
+    }
     let accessToken = connection.accessToken;
     if (accessTokenNeedsRefresh(connection, now)) {
-      const refreshed = await refreshAccessToken({
+      const exchange = async () => refreshAccessToken({
         clientId: clientId ?? "",
         clientSecret: requireSecret(),
         refreshToken: connection.refreshToken,
@@ -559,7 +566,9 @@ export const createQuickBooksRuntime = (
         fetch: options.fetch,
         now,
       });
-      await store.saveTokens({
+      const refreshed = options.managedRefresh === undefined ? await exchange()
+        : await options.managedRefresh.refresh(connection, exchange);
+      if (options.managedRefresh === undefined) await store.saveTokens({
         realmId: connection.realmId,
         accessToken: refreshed.accessToken,
         refreshToken: refreshed.refreshToken,
@@ -1131,6 +1140,7 @@ export const createQuickBooksRuntime = (
 
   const service: QuickBooksService = {
     configured: () => quickBooksConfigured(config),
+    ...(options.managedRefresh === undefined ? {} : { authorizationStatus: () => options.managedRefresh!.status() }),
     clientId: () => clientId,
     callbackUrl,
     settingsUrl: () => SETTINGS_PATH,

@@ -2288,6 +2288,7 @@ export type QuickBooksStatusEnvelope = {
   "data": {
   "configured": boolean;
   "connection": QuickBooksConnection | null;
+  "authorization"?: "ready" | "pending" | "unavailable";
 };
 };
 

@@ -1,3 +1,6 @@
+import { createHash } from 'node:crypto'
+import { atomicStatements } from '../src/atomic-statements.js'
+import { quickBooksConnectionStatements } from '../src/quickbooks-connection-command.js'
 import BetterSqlite3 from 'better-sqlite3'
 import { Miniflare } from 'miniflare'
 import { sql } from 'drizzle-orm'
@@ -118,6 +121,7 @@ const fixture = async (
   const rows = (table: string) => db.all<Record<string, unknown>>(sql.raw(`SELECT * FROM ${table}`))
   return {
     db,
+    legacy,
     upgrade,
     store,
     lifecycle,
@@ -155,12 +159,26 @@ const fence = (
   ...over,
 })
 const connect = async (f: Fixture) => {
-  expect(data(await f.commands.accept(f.request(), f.command))).toMatchObject({
-    connectionGeneration: 1,
-  })
+  if (f.legacy === '0180_github_publication') {
+    // Seed the actual pre0181 receipt/connection, not the current command whose
+    // refresh guard requires0183. No old-schema guards are disabled or mocked.
+    const c = f.command, t = c.tokens
+    const fingerprint = createHash('sha256').update(JSON.stringify([c.grantId,c.browserHash,c.credentialHash,
+      c.expectedActorUserId,c.expectedConnectionGeneration,c.expiresAt,t.realmId,t.companyName,t.scope,
+      t.accessToken,t.refreshToken,t.accessTokenExpiresAt,t.refreshTokenExpiresAt])).digest('hex')
+    await atomicStatements(f.db, [{ text: `INSERT INTO quickbooks_managed_grants
+      (grant_id,actor_id,authority_kind,session_id,browser_hash,credential_hash,command_fingerprint,
+       expected_generation,accepted_generation,realm_id,expires_at,recorded_at)
+      VALUES(?,2,'guarded-session',NULL,?,?,?,0,1,?,?,?) RETURNING grant_id`,
+      params: [c.grantId,c.browserHash,c.credentialHash,fingerprint,t.realmId,c.expiresAt,f.now()] },
+      ...quickBooksConnectionStatements({ ...t, connectedByUserId: 2, now: f.now() })])
+    expect(await f.rows('quickbooks_connection_generation')).toMatchObject([{ generation: 1 }])
+  } else {
+    expect(data(await f.commands.accept(f.request(), f.command))).toMatchObject({ connectionGeneration: 1 })
+  }
 }
 const status = (value: unknown) => (value instanceof Response ? value.status : 0)
-const everything = async (f: Fixture, excludeLedger = false) => {
+const everything = async (f: Fixture, excludeLedger = false, existingTables?: readonly string[]) => {
   const tables = await f.db.all<{ name: string }>(
     sql.raw(
       "SELECT name FROM sqlite_schema WHERE type='table' AND name NOT LIKE 'sqlite_%' AND name NOT LIKE '_cf_%'" +
@@ -168,7 +186,7 @@ const everything = async (f: Fixture, excludeLedger = false) => {
     ),
   )
   const dump: unknown[] = []
-  for (const { name } of tables) dump.push(await f.rows(`"${name}"`))
+  for (const { name } of tables) if (existingTables === undefined || existingTables.includes(name)) dump.push(await f.rows(`"${name}"`))
   return JSON.stringify(dump)
 }
 
@@ -270,14 +288,21 @@ describe.each(['sqlite', 'd1'] as const)('managed QuickBooks lifecycle fence %s'
     const f = await fixture(runtime, '0180_github_publication')
     await connect(f)
     data(await f.commands.fence(f.request(), fence(f)))
+    const existing = (await f.db.all<{ name: string }>(sql.raw("SELECT name FROM sqlite_schema WHERE type='table'"))).map(row => row.name)
     const before = await everything(f, true)
     await f.upgrade()
-    expect(await everything(f, true)).toBe(before)
+    expect(await everything(f, true, existing)).toBe(before)
+    const added = (await f.db.all<{ name: string }>(sql.raw("SELECT name FROM sqlite_schema WHERE type='table'")))
+      .map(row => row.name).filter(name => !existing.includes(name)).sort()
+    expect(added).toEqual(['quickbooks_refresh_attempts','wise_managed_commands','wise_managed_connection'])
+    expect(await f.rows('quickbooks_refresh_attempts')).toEqual([])
+    expect(await f.rows('wise_managed_commands')).toEqual([])
+    expect(await f.rows('wise_managed_connection')).toMatchObject([{ singleton: 1, generation: 0, status: 'disconnected' }])
     expect(status(await f.commands.prepare(f.request()))).toBe(409)
     await expect(
       f.canonical.saveConnection({ ...f.command.tokens, connectedByUserId: 2, now: f.now() }),
     ).rejects.toThrow()
-    expect(await everything(f, true)).toBe(before)
+    expect(await everything(f, true, existing)).toBe(before)
   })
 
   it('[migration #1236] refuses a pre-existing live/revoking overlap without changing its custody or ledger', async () => {

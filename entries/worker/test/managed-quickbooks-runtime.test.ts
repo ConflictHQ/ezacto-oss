@@ -7,10 +7,10 @@ import { Miniflare } from 'miniflare'
 import {
   createD1Database, createD1SessionStore, createManagedQuickBooksGrantStore,
   createQuickBooksStore, createQuickBooksMirrorSource, createQuickBooksReconciliationSource,
-  migrateD1,
+  migrateD1, createManagedQuickBooksRefreshStore,
 } from '@ezacto/db/d1'
 import { createApiSessionService, createManagedQuickBooksGrantCommands } from '@ezacto/api'
-import { createQuickBooksRuntime, type QuickBooksRuntime } from '@ezacto/integrations'
+import { createQuickBooksRuntime, createManagedQuickBooksRefresh, type QuickBooksRuntime } from '@ezacto/integrations'
 import { createRuntimeServices } from '../src/runtime.js'
 import { createApp, type WorkerEnv } from '../src/app.js'
 import { managedQuickBooksAvailable, type WorkerManagedQuickBooks } from '../src/managed-providers.js'
@@ -22,6 +22,10 @@ let fixtureRoot: string | undefined
 let server: Server
 let providerOrigin: string
 const calls: string[] = []
+const refreshCalls: string[] = []
+const accessTokens = new Map<string, string>()
+let onRefresh: (() => Promise<void>) | undefined
+let loseRefreshReply = false
 const tenants: { database: D1Database; cookie: string; member: string; realm: string; origin: string }[] = []
 const scopes = new WeakMap<object, (typeof tenants)[number]>()
 const runtimes = new WeakMap<object, QuickBooksRuntime>()
@@ -31,6 +35,7 @@ const compose = vi.fn(async ({ scope, database }: Parameters<WorkerManagedQuickB
   const db = createD1Database(database)
   const runtime = createQuickBooksRuntime({
     config: { clientId: 'shared-platform-app-id', clientSecret: 'PRIVATE_PLATFORM_SECRET', webhookVerifierToken: undefined, appBaseUrl: tenant.origin, environment: 'sandbox' },
+    managedRefresh: createManagedQuickBooksRefresh({ store: createManagedQuickBooksRefreshStore(db), admitted: () => scopes.has(scope), now: () => new Date() }),
     store: createQuickBooksStore(db), source: createQuickBooksMirrorSource(db, () => new Date()),
     reconciliation: createQuickBooksReconciliationSource(db), now: () => new Date(),
     fetch: request => {
@@ -52,15 +57,33 @@ const environment = (tenant: (typeof tenants)[number], extra: Partial<WorkerEnv>
 })
 
 beforeAll(async () => {
-  server = createServer((request, response) => {
+  server = createServer((request, response) => { void (async () => {
+    if (request.method === 'POST' && request.url === '/oauth2/v1/tokens/bearer') {
+      if (request.headers.authorization !== `Basic ${Buffer.from('shared-platform-app-id:PRIVATE_PLATFORM_SECRET').toString('base64')}`) {
+        response.writeHead(403); response.end('{}'); return
+      }
+      let body = ''
+      for await (const part of request) body += String(part)
+      const realm = /^PRIVATE_REFRESH_(111|222)$/.exec(new URLSearchParams(body).get('refresh_token') ?? '')?.[1]
+      if (!realm) { response.writeHead(403); response.end('{}'); return }
+      refreshCalls.push(realm)
+      await onRefresh?.()
+      const access = `PRIVATE_ROTATED_ACCESS_${realm}`
+      accessTokens.set(realm, access)
+      if (loseRefreshReply) { loseRefreshReply = false; response.destroy(); return }
+      response.writeHead(200, { 'content-type': 'application/json' })
+      response.end(JSON.stringify({ access_token: access, refresh_token: `PRIVATE_ROTATED_REFRESH_${realm}`,
+        token_type: 'bearer', expires_in: 3600, x_refresh_token_expires_in: 86400 }))
+      return
+    }
     const realm = /\/v3\/company\/(\d+)\/query/u.exec(request.url ?? '')?.[1]
-    if (request.method !== 'GET' || !realm || request.headers.authorization !== `Bearer PRIVATE_ACCESS_${realm}`) {
+    if (request.method !== 'GET' || !realm || request.headers.authorization !== `Bearer ${accessTokens.get(realm) ?? `PRIVATE_ACCESS_${realm}`}`) {
       response.writeHead(403); response.end('{}'); return
     }
     calls.push(realm)
     response.writeHead(200, { 'content-type': 'application/json' })
     response.end(JSON.stringify({ QueryResponse: { Invoice: [] } }))
-  })
+  })().catch(() => { response.writeHead(500); response.end('{}') }) })
   await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve))
   const address = server.address()
   if (address === null || typeof address === 'string') throw new Error('Local provider did not bind')
@@ -141,6 +164,64 @@ it('[integration #1235] composes the accepted native grant into authorized tenan
     expect(await tenant.database.prepare('SELECT count(*) AS count FROM invoices').first()).toEqual({ count: 0 })
     expect(await tenant.database.prepare('SELECT count(*) AS count FROM invoice_payments').first()).toEqual({ count: 0 })
   }
+})
+
+it('[integration #1235] owns one real HTTP refresh across competing Worker runtimes and a fresh restart', async () => {
+  const tenant = tenants[0]!, env = environment(tenant)
+  await tenant.database.prepare('UPDATE quickbooks_connections SET access_token_expires_at=? WHERE id=1')
+    .bind(new Date(Date.now() - 60_000).toISOString()).run()
+  const generation = await tenant.database.prepare('SELECT generation FROM quickbooks_connection_generation').first()
+  const before = refreshCalls.length
+  let entered!: () => void, release!: () => void
+  const started = new Promise<void>(resolve => { entered = resolve })
+  const released = new Promise<void>(resolve => { release = resolve })
+  onRefresh = async () => { entered(); await released }
+  const first = createApp(await createRuntimeServices(env, { managedQuickBooks: port }))
+  const second = createApp(await createRuntimeServices(env, { managedQuickBooks: port }))
+  const request = () => new Request(`${tenant.origin}/api/v1/integrations/quickbooks/reconciliation`, { headers: { cookie: tenant.cookie } })
+  const result = first.fetch(request(), env)
+  try {
+    await started
+    const pending = await second.fetch(new Request(`${tenant.origin}/api/v1/integrations/quickbooks`, { headers: { cookie: tenant.cookie } }), env)
+    expect(await pending.json()).toMatchObject({ data: { authorization: 'pending' } })
+    const refused = await second.fetch(request(), env)
+    expect(refused.status).toBe(409)
+    expect(await refused.text()).not.toContain('PRIVATE_')
+    expect(refreshCalls.length).toBe(before + 1)
+  } finally { release(); onRefresh = undefined }
+  expect((await result).status).toBe(200)
+  const restarted = createApp(await createRuntimeServices(env, { managedQuickBooks: port }))
+  expect((await restarted.fetch(request(), env)).status).toBe(200)
+  expect(refreshCalls.length).toBe(before + 1)
+  expect(await tenant.database.prepare('SELECT generation FROM quickbooks_connection_generation').first()).toEqual(generation)
+  expect(await tenant.database.prepare('SELECT count(*) AS n FROM invoices').first()).toEqual({ n: 0 })
+  const status = await restarted.fetch(new Request(`${tenant.origin}/api/v1/integrations/quickbooks`, { headers: { cookie: tenant.cookie } }), env)
+  const text = await status.text()
+  expect(JSON.parse(text)).toMatchObject({ data: { authorization: 'ready', connection: { realm_id: tenant.realm } } })
+  expect(text).not.toContain('PRIVATE_')
+})
+
+it('[integration #1235] retains a real HTTP lost-refresh outcome across Worker restart without repeating transport', async () => {
+  const tenant = tenants[1]!, env = environment(tenant)
+  await tenant.database.prepare('UPDATE quickbooks_connections SET access_token_expires_at=? WHERE id=1')
+    .bind(new Date(Date.now() - 60_000).toISOString()).run()
+  const before = refreshCalls.length, readBefore = calls.length
+  loseRefreshReply = true
+  const request = () => new Request(`${tenant.origin}/api/v1/integrations/quickbooks/reconciliation`, { headers: { cookie: tenant.cookie } })
+  const first = createApp(await createRuntimeServices(env, { managedQuickBooks: port }))
+  const response = await first.fetch(request(), env)
+  expect(response.status).toBe(409)
+  expect(await response.text()).not.toContain('PRIVATE_')
+  expect(refreshCalls.length).toBe(before + 1)
+  const restarted = createApp(await createRuntimeServices(env, { managedQuickBooks: port }))
+  const status = await restarted.fetch(new Request(`${tenant.origin}/api/v1/integrations/quickbooks`, { headers: { cookie: tenant.cookie } }), env)
+  const body = await status.text()
+  expect(JSON.parse(body)).toMatchObject({ data: { authorization: 'unavailable', connection: { realm_id: tenant.realm } } })
+  expect(body).not.toContain('PRIVATE_')
+  expect((await restarted.fetch(request(), env)).status).toBe(409)
+  expect(refreshCalls.length).toBe(before + 1)
+  expect(calls.length).toBe(readBefore)
+  expect(await tenant.database.prepare('SELECT status FROM quickbooks_refresh_attempts').first()).toEqual({ status: 'unknown' })
 })
 
 it('[integration #1235] explicit unavailable composition never falls back to the environment app', async () => {

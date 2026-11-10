@@ -228,3 +228,48 @@ Never delete a revocation receipt or alter the migration ledger to bypass that
 refusal. Reconcile the original provider outcome and connection ownership before
 retrying the normal upgrade. Local fixture tests do not authorize an actual
 provider revocation or tenant credential change.
+
+## Durable refresh ownership
+
+`createManagedQuickBooksRefresh` composes into `createQuickBooksRuntime` through
+`managedRefresh`. Its native repository, `createManagedQuickBooksRefreshStore`,
+requires independently committed operations. Do not supply the database adapter
+from a replayable hosted request transaction. The native Worker acceptance fixture
+uses the actual D1 binding; a hosted adapter still needs to establish the same
+per-operation durability and admission contract after public publication.
+Admission must cover the current tenant incarnation, grant generation and admitted
+effect lifetime through transport and response custody; an entitlement flag alone
+is not a drain or erasure fence. This change does not establish that hosted lease.
+
+Migration0183 records a non-expiring owner before token transport. Another
+runtime cannot refresh the same connection while that owner is attempting or
+unresolved. A provider failure or lost reply retains an unknown outcome; neither
+elapsed time nor a fresh process grants permission to repeat the exchange.
+Before transport begins, the owner can cancel only its own proven unsent nonce
+when admission changes or a claim acknowledgement is lost. Once transport starts,
+no clock expiry releases that owner. Native status reports
+`authorization: ready|pending|unavailable` without credentials
+or provider calls. A known ownership refusal becomes a static API409, rather
+than logging a database error containing bound token parameters.
+
+A returned replacement is staged and adopted in one native atomic command. The
+connection's realm, generation, connection timestamp and previous refresh token
+must still match. A database trigger rejects an unowned token replacement on a
+managed grant, including the legacy token setter. The exact result hash binds
+completion replay. A committed completion clears receipt token custody; a late
+result after disconnection retains its replacement refresh token for explicit
+cleanup and leaves the original revocation credential intact. Both the native
+grant command and SQL guards refuse reconnect over unresolved refresh custody.
+
+Unknown and orphaned outcomes are obligations, not successful revocations. There
+is no automatic expiry, retry, credential deletion or operator bypass here. A
+provider-observed recovery/cleanup protocol and its authorized owner acceptance
+remain required before hosted activation. Account closure inventories the
+receipt's administrator foreign key as billing/payment custody; a hosted drain
+must also account for unresolved refresh state before claiming erasure.
+
+This protocol addresses refresh ownership only. It does not make provider writes
+idempotent: invoice/customer/payment effects still require durable exact-payload
+ownership and provider request IDs, outside replayable SQL. No provider approval,
+actual hosted activation, real refresh/revocation or financial-history mutation
+is established by local native and HTTP fixtures.

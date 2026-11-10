@@ -594,3 +594,5 @@ export * from './github-reader-work.js'
 export * from './github-reader-service.js'
 
 export * from './github-app-setup.js'
+
+export { createManagedQuickBooksRefreshStore } from './quickbooks-refresh.js'
