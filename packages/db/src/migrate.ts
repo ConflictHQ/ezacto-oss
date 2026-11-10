@@ -1,4 +1,5 @@
 import { managedWiseConnectionMigration } from './migrations/0182_managed_wise_connection.js'
+import { quickBooksReconnectFenceMigration } from './migrations/0181_quickbooks_reconnect_fence.js'
 import { githubPublicationMigration } from './migrations/0180_github_publication.js'
 import { githubReaderMigration } from './migrations/0179_github_reader.js'
 import { calendarOperatorCleanupMigration } from './migrations/0178_calendar_operator_cleanup.js'
@@ -1720,6 +1721,7 @@ const migrations = [
   { id: '0178_calendar_operator_cleanup', statements: calendarOperatorCleanupMigration },
   { id: '0179_github_reader', statements: githubReaderMigration },
   { id: '0180_github_publication', statements: githubPublicationMigration },
+  { id: '0181_quickbooks_reconnect_fence', statements: quickBooksReconnectFenceMigration },
   { id: '0182_managed_wise_connection', statements: managedWiseConnectionMigration },
 ] as const
 

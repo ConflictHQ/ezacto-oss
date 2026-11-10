@@ -11,7 +11,10 @@ import {
 } from '../src/migrate.js'
 import { createContainerSessionStore, createD1SessionStore } from '../src/sessions.js'
 import { createQuickBooksStore } from '../src/quickbooks.js'
-import { createManagedQuickBooksGrantStore, createManagedQuickBooksLifecycleStore } from '../src/index.js'
+import {
+  createManagedQuickBooksGrantStore,
+  createManagedQuickBooksLifecycleStore,
+} from '../src/index.js'
 import { createApiSessionService } from '../../api/src/sessions.js'
 import { createManagedQuickBooksGrantCommands } from '../../api/src/index.js'
 import type { ManagedQuickBooksGrantCommand } from '@ezacto/core'
@@ -20,11 +23,12 @@ import { createAccountDeletionRequestRepository } from '../src/account-deletion-
 import { createAccountClosureRepository } from '../src/account-closure.js'
 
 const initial = '2026-10-24T18:00:00.000Z'
-let dispose: (() => Promise<void>) | undefined
+const disposers: (() => Promise<void>)[] = []
 afterEach(async () => {
-  await dispose?.()
-  dispose = undefined
+  const results = await Promise.allSettled(disposers.splice(0).map(dispose => dispose()))
   vi.restoreAllMocks()
+  const failed = results.filter(result => result.status === 'rejected')
+  if (failed.length) throw new AggregateError(failed.map(result => result.reason), 'QuickBooks fixture cleanup failed')
 })
 const fixture = async (runtime: 'sqlite' | 'd1', legacy = false) => {
   let upgrade!: () => Promise<void>
@@ -34,6 +38,7 @@ const fixture = async (runtime: 'sqlite' | 'd1', legacy = false) => {
   let now = initial
   if (runtime === 'sqlite') {
     const native = new BetterSqlite3(':memory:')
+    disposers.push(async () => { native.close() })
     if (legacy) migrateContainerThrough(native, '0156_wise_signed_deliveries')
     else migrateContainer(native)
     upgrade = async () => {
@@ -41,22 +46,21 @@ const fixture = async (runtime: 'sqlite' | 'd1', legacy = false) => {
     }
     db = createContainerDatabase(native)
     sessions = createContainerSessionStore(native, { now: () => now })
-    dispose = async () => {
-      native.close()
-    }
   } else {
     const mf = new Miniflare({
       modules: true,
       script: 'export default {fetch(){return new Response("ok")}}',
       d1Databases: ['DB'],
     })
+    // Own the worker before any await: a timed-out startup/migration must not
+    // leak a writer into subsequent cases or overwrite their disposer.
+    disposers.push(() => mf.dispose())
     const binding = await mf.getD1Database('DB')
     if (legacy) await migrateD1Through(binding, '0156_wise_signed_deliveries')
     else await migrateD1(binding)
     upgrade = () => migrateD1(binding)
     db = createD1Database(binding)
     sessions = createD1SessionStore(binding, { now: () => now })
-    dispose = () => mf.dispose()
   }
   const execute = (text: string) => db.run(sql.raw(text))
   await execute(
@@ -338,6 +342,10 @@ describe.each(['sqlite', 'd1'] as const)('managed QuickBooks native %s', (runtim
     })
     await fenceManaged(f, 2)
     await f.canonical.disconnect({ now: f.now() })
+    expect(((await f.commands.prepare(f.request())) as Response).status).toBe(409)
+    expect(await f.rows('quickbooks_connection_generation')).toMatchObject([{ generation: 4 }])
+    await f.lifecycle.beginRevocation('2'.repeat(64), f.now())
+    await f.lifecycle.settleRevocation('2'.repeat(64), 'revoked', f.now())
     expect(data(await f.commands.prepare(f.request()))).toMatchObject({
       connectionGeneration: 4,
       connected: false,
@@ -493,6 +501,13 @@ describe.each(['sqlite', 'd1'] as const)('managed QuickBooks native %s', (runtim
       grantId: 'e'.repeat(64),
       tokens: { ...one.tokens, realmId: 'different-company' },
     }
+    // Both callbacks remain fenced until the prior grant's revocation is
+    // observed. Then the original competing-grant race has exactly one winner.
+    expect(((await f.commands.accept(f.request(), one)) as Response).status).toBe(409)
+    expect(((await f.commands.accept(f.request(), two)) as Response).status).toBe(409)
+    expect(await f.rows('quickbooks_managed_grants')).toHaveLength(1)
+    await f.lifecycle.beginRevocation('1'.repeat(64), f.now())
+    await f.lifecycle.settleRevocation('1'.repeat(64), 'revoked', f.now())
     const competing = await race([one, two], 2)
     expect(
       competing.filter((value) => value instanceof Response && value.status === 409),
