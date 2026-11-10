@@ -45,7 +45,9 @@ or send provider requests. The ordinary self-host deployment path is unchanged
 when no managed option is supplied.
 
 The factory reuses `createManagedDeelSyncRuntime` and the canonical tenant
-credential/settings/transfer stores. Its credential source must recheck current
+credential/settings/transfer stores. A configured managed runtime refuses to bind
+without the transfer-intent interface; an unconfigured runtime still returns
+its normal unconfigured result without provider access. Its credential source must recheck current
 host availability on every read and reject lifecycle checks after suspension or
 erasure, including in an already-composed run. The host must make native intent
 and log operations durable individually, outside any transaction that can replay
