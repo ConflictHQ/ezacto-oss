@@ -276,3 +276,45 @@ idempotent: invoice/customer/payment effects still require durable exact-payload
 ownership and provider request IDs, outside replayable SQL. No provider approval,
 actual hosted activation, real refresh/revocation or financial-history mutation
 is established by local native and HTTP fixtures.
+
+
+## Managed accounting write custody
+
+Managed runtimes compose `createManagedQuickBooksWrites` with an independently
+committing native `createManagedQuickBooksWriteStore` and the actual hosted
+admission lease. The connection snapshot carries its native generation; the
+same runtime serves invoice events, manual-receipt mirrors and bounded scheduled
+recovery. Self-hosted clients retain their existing transport when this option is
+absent. A managed client refuses a write without a trusted native source context.
+
+Before transport, migration 0184 retains the company-scoped UUID request ID,
+resource, original native financial snapshot hash, invoice approval version,
+path, minor version and exact UTF-8 body. Immutable 64 KiB chunks retain large
+requests and responses; byte counts and SHA-256 are verified before use. Provider
+credentials and Authorization headers are excluded. Competing runtimes claim a
+bounded transport owner; expired ownership can replay the original request ID
+and original bytes. A changed financial snapshot refuses replay. Payment-driven
+state/version changes do not change the source hash, but the current native
+invoice version is still checked before each transport attempt.
+
+Each sending nonce keeps its own response observation. Late responses after a
+native lifecycle fence become retained orphaned custody. Inconsistent provider
+identities for one request become a conflict retaining both observations. A
+completed create also supplies the missing native link after a lost link-write
+acknowledgement; a renamed native document cannot silently create another copy.
+No accounting-write recovery changes native invoices, receipts, time or expenses.
+
+The per-minute scheduled phase recovers at most ten retained entities, through
+the same authorized client. It does not call global sync or import receipts.
+Recovery selection rotates across older intents so one refusal does not starve
+the queue. Write readiness is separate from token authorization: settings report
+pending/review-needed writes while read-only reconciliation remains available.
+
+This native protocol does not establish a hosted admission lease, publish a
+public package, activate provider credentials, or settle an unknown outcome by
+policy. The hosted incarnation/grant lease must cover transport through durable
+response custody. Public-version adoption, full host drain/cleanup and approved
+provider acceptance remain separate release requirements. No live provider write
+is part of the local verification.
+
+Provider replay contract: [Intuit request ID guidance](https://static.developer.intuit.com/output_html/qbo/docs/learn/learn-basic-field-definitions.html).

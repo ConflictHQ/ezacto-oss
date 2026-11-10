@@ -109,6 +109,8 @@ export interface QuickBooksService {
   }): Promise<QuickBooksConnectionStatus>
   readStatus(): Promise<QuickBooksConnectionStatus | null>
   authorizationStatus?(): Promise<'ready' | 'pending' | 'unavailable'>
+  recoverPendingWrites?(limit?: number): Promise<void>
+  writeStatus?(): Promise<'ready' | 'pending' | 'unavailable'>
   setAllowOnlinePayment(allow: boolean): Promise<void>
   disconnect(): Promise<void>
   /**
@@ -240,6 +242,10 @@ const requireConfigured = (service: Readonly<QuickBooksService>): {
 
 const quickBooksOperation = async <T>(operation: () => Promise<T>): Promise<T> => {
   try { return await operation() } catch (error) {
+    if (error instanceof Error && error.name === 'ManagedQuickBooksWriteUnavailableError') {
+      throw new ApiError({ status: 409, code: 'quickbooks_write_unavailable',
+        message: 'QuickBooks accounting write is pending or requires recovery.' })
+    }
     if (error instanceof Error && error.name === 'ManagedQuickBooksRefreshUnavailableError') {
       throw new ApiError({ status: 409, code: 'quickbooks_authorization_unavailable',
         message: 'QuickBooks authorization is pending or requires recovery.' })
@@ -269,6 +275,7 @@ export const installQuickBooksRoutes = <Bindings extends object>(
           configured: service.configured?.() ?? (service.clientId() !== null && service.callbackUrl() !== null),
           connection: status === null ? null : serialize(status),
           ...(service.authorizationStatus === undefined ? {} : { authorization: await service.authorizationStatus() }),
+          ...(service.writeStatus === undefined ? {} : { writes: await service.writeStatus() }),
         },
       },
       200,

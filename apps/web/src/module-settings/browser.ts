@@ -1891,7 +1891,11 @@ export const createModuleSettingsController = (
         ])
         quickBooksFacts.hidden = false
         quickBooksAllowPayment.checked = connection.allow_online_payment
-        quickBooksStatus.textContent = authorizationReady ? '' : authorizationMessage
+        const writesReady = view.writes === undefined || view.writes === 'ready'
+        quickBooksAllowPayment.disabled = !writesReady
+        quickBooksStatus.textContent = !authorizationReady ? authorizationMessage : writesReady ? ''
+          : view.writes === 'pending' ? 'QuickBooks accounting writes are awaiting recovery. Read-only reconciliation remains available.'
+          : 'QuickBooks accounting writes need review. Read-only reconciliation remains available.'
       })
     } catch (error) {
       active.presentFailure(error, () => {

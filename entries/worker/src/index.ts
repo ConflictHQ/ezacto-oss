@@ -456,6 +456,9 @@ export const createWorker = (options: WorkerOptions = {}): ExportedHandler<Worke
       })(),
           )
     }
+    if (controller.cron === '* * * * *' && services.quickBooks?.recoverPendingWrites !== undefined) {
+      await isolate('QuickBooks accounting write recovery', () => services.quickBooks!.recoverPendingWrites!(10))
+    }
     if (controller.cron === '0 * * * *' && services.quickBooks !== undefined) {
       // Payments QuickBooks changed that no webhook told us of (issue 1013).
       // Hourly, resuming from a stored cursor, so a missed delivery is found

@@ -1,3 +1,4 @@
+import { executeInvoiceEdit, recordInvoicePayment } from '../../../packages/db/src/invoice-state.js'
 import { cp, mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -7,10 +8,10 @@ import { Miniflare } from 'miniflare'
 import {
   createD1Database, createD1SessionStore, createManagedQuickBooksGrantStore,
   createQuickBooksStore, createQuickBooksMirrorSource, createQuickBooksReconciliationSource,
-  migrateD1, createManagedQuickBooksRefreshStore,
+  migrateD1, createManagedQuickBooksRefreshStore, createManagedQuickBooksWriteStore,
 } from '@ezacto/db/d1'
 import { createApiSessionService, createManagedQuickBooksGrantCommands } from '@ezacto/api'
-import { createQuickBooksRuntime, createManagedQuickBooksRefresh, type QuickBooksRuntime } from '@ezacto/integrations'
+import { createQuickBooksRuntime, createManagedQuickBooksRefresh, createManagedQuickBooksWrites, type QuickBooksRuntime } from '@ezacto/integrations'
 import { createRuntimeServices } from '../src/runtime.js'
 import { createApp, type WorkerEnv } from '../src/app.js'
 import { managedQuickBooksAvailable, type WorkerManagedQuickBooks } from '../src/managed-providers.js'
@@ -26,6 +27,12 @@ const refreshCalls: string[] = []
 const accessTokens = new Map<string, string>()
 let onRefresh: (() => Promise<void>) | undefined
 let loseRefreshReply = false
+let loseInvoiceReplyRealm: string | undefined
+let losePaymentReplyRealm: string | undefined
+let onInvoiceWrite: (() => Promise<void>) | undefined
+const writes: { realm: string; requestId: string; path: string; body: string }[] = []
+const providerResults = new Map<string, string>()
+const providerBodies = new Map<string, string>()
 const tenants: { database: D1Database; cookie: string; member: string; realm: string; origin: string }[] = []
 const scopes = new WeakMap<object, (typeof tenants)[number]>()
 const runtimes = new WeakMap<object, QuickBooksRuntime>()
@@ -35,6 +42,7 @@ const compose = vi.fn(async ({ scope, database }: Parameters<WorkerManagedQuickB
   const db = createD1Database(database)
   const runtime = createQuickBooksRuntime({
     config: { clientId: 'shared-platform-app-id', clientSecret: 'PRIVATE_PLATFORM_SECRET', webhookVerifierToken: undefined, appBaseUrl: tenant.origin, environment: 'sandbox' },
+    managedWrites: createManagedQuickBooksWrites({ store: createManagedQuickBooksWriteStore(db), admitted: () => scopes.has(scope), now: () => new Date() }),
     managedRefresh: createManagedQuickBooksRefresh({ store: createManagedQuickBooksRefreshStore(db), admitted: () => scopes.has(scope), now: () => new Date() }),
     store: createQuickBooksStore(db), source: createQuickBooksMirrorSource(db, () => new Date()),
     reconciliation: createQuickBooksReconciliationSource(db), now: () => new Date(),
@@ -75,6 +83,32 @@ beforeAll(async () => {
       response.end(JSON.stringify({ access_token: access, refresh_token: `PRIVATE_ROTATED_REFRESH_${realm}`,
         token_type: 'bearer', expires_in: 3600, x_refresh_token_expires_in: 86400 }))
       return
+    }
+    const writeUrl = new URL(request.url ?? '/', 'http://provider.test')
+    const write = /^\/v3\/company\/(\d+)\/(customer|invoice|payment)$/.exec(writeUrl.pathname)
+    if (request.method === 'POST' && write) {
+      const realm = write[1]!, kind = write[2]!
+      if (request.headers.authorization !== `Bearer ${accessTokens.get(realm) ?? `PRIVATE_ACCESS_${realm}`}`) {
+        response.writeHead(403); response.end('{}'); return
+      }
+      let body = ''; for await (const part of request) body += String(part)
+      const requestId = writeUrl.searchParams.get('requestid') ?? ''
+      if (!/^[a-f0-9-]{36}$/.test(requestId)) { response.writeHead(400); response.end('{}'); return }
+      writes.push({ realm, requestId, path: writeUrl.pathname + writeUrl.search, body })
+      const id = `${realm}:${requestId}`, key = kind[0]!.toUpperCase() + kind.slice(1)
+      if (providerBodies.has(id) && providerBodies.get(id) !== body) { response.writeHead(400); response.end('{}'); return }
+      providerBodies.set(id, body)
+      const value = JSON.stringify({ [key]: { Id: `qb-${kind}-${realm}`, SyncToken: '0', CustomerRef: { value: `qb-customer-${realm}` }, TotalAmt: kind === 'payment' ? (JSON.parse(body) as { TotalAmt: number }).TotalAmt : 1 } })
+      if (!providerResults.has(id)) providerResults.set(id, value)
+      if (kind === 'invoice') await onInvoiceWrite?.()
+      if (kind === 'invoice' && loseInvoiceReplyRealm === realm) { loseInvoiceReplyRealm = undefined; response.destroy(); return }
+      if (kind === 'payment' && losePaymentReplyRealm === realm) { losePaymentReplyRealm = undefined; response.destroy(); return }
+      response.writeHead(200, { 'content-type': 'application/json' }); response.end(providerResults.get(id)); return
+    }
+    const invoiceRead = /^\/v3\/company\/(\d+)\/invoice\/qb-invoice-\d+$/.exec(writeUrl.pathname)
+    if (request.method === 'GET' && invoiceRead && request.headers.authorization === `Bearer ${accessTokens.get(invoiceRead[1]!) ?? `PRIVATE_ACCESS_${invoiceRead[1]}`}`) {
+      response.writeHead(200, { 'content-type': 'application/json' })
+      response.end(JSON.stringify({ Invoice: { Id: `qb-invoice-${invoiceRead[1]}`, SyncToken: '0', CustomerRef: { value: `qb-customer-${invoiceRead[1]}` }, TotalAmt: 1 } })); return
     }
     const realm = /\/v3\/company\/(\d+)\/query/u.exec(request.url ?? '')?.[1]
     if (request.method !== 'GET' || !realm || request.headers.authorization !== `Bearer ${accessTokens.get(realm) ?? `PRIVATE_ACCESS_${realm}`}`) {
@@ -166,8 +200,89 @@ it('[integration #1235] composes the accepted native grant into authorized tenan
   }
 })
 
+it('[integration #1235] owns native invoice writes across competing Workers and recovers a lost HTTP response through the native scheduled port', async () => {
+  for (const tenant of tenants) {
+    await tenant.database.batch([
+      tenant.database.prepare("INSERT INTO clients(id,name,currency,created_at,updated_at) VALUES(1,'Owned Customer','USD',?,?)").bind(at,at),
+      tenant.database.prepare("INSERT INTO invoices(id,client_id,number,currency,issue_date,due_date,state,amount_cents,due_amount_cents,created_at,updated_at) VALUES(1,1,'Owned-1','USD','2026-11-10','2026-11-30','open',100,100,?,?)").bind(at,at),
+    ])
+    await executeInvoiceEdit(createD1Database(tenant.database), { invoiceId: 1, commandId: 'owned-native-line', actor: { type: 'user', id: 2 },
+      authorize: async () => true, expectedVersion: 0, occurredAt: at, eventIds: ['owned-native-line-event'],
+      edit: { type: 'line_insert', lineId: 1, position: 0, kind: 'Service', description: 'Owned work', quantity: 1, unitPriceCents: 100, amountCents: 100 } })
+    let before = await tenant.database.prepare('SELECT * FROM invoices').all()
+    const env = environment(tenant)
+    await createRuntimeServices(env, { managedQuickBooks: port })
+    const runtime = runtimes.get(tenant.database)!
+    const start = writes.length
+    if (tenant.realm === '111') {
+      let enter!: () => void, release!: () => void
+      const started = new Promise<void>(resolve => { enter = resolve })
+      const held = new Promise<void>(resolve => { release = resolve })
+      onInvoiceWrite = async () => { enter(); await held }
+      const first = runtime.mirror(1)
+      try {
+        await Promise.race([started, first.then(() => { throw new Error('Expected held invoice transport') })])
+        await createRuntimeServices(env, { managedQuickBooks: port })
+        await expect(runtimes.get(tenant.database)!.mirror(1)).rejects.toMatchObject({ code: 'provider_unavailable' })
+      } finally { release(); onInvoiceWrite = undefined }
+      await expect(first).resolves.toMatchObject({ kind: 'created' })
+      expect(writes.slice(start).map(write => write.path.split('?')[0])).toEqual(['/v3/company/111/customer','/v3/company/111/invoice'])
+      const native = createD1Database(tenant.database)
+      await recordInvoicePayment(native, { invoiceId: 1, commandId: 'owned-manual-receipt', actor: { type: 'user', id: 2 }, authorize: async () => true,
+        expectedVersion: 1, occurredAt: at, eventIds: ['owned-manual-receipt-event','owned-manual-receipt-status-event'], payment: { type: 'manual', id: 1, currency: 'USD', amountCents: 50, paidDate: '2026-11-10', paidAt: null } })
+      const financialBefore = await tenant.database.batch([tenant.database.prepare('SELECT * FROM invoices'),tenant.database.prepare('SELECT * FROM invoice_payments')])
+      const payment = (await createQuickBooksMirrorSource(native, () => new Date()).readPayments(1))[0]!
+      const paymentStart = writes.length
+      losePaymentReplyRealm = tenant.realm
+      await expect(runtime.mirrorPayment({ invoiceId: 1, payment })).rejects.toMatchObject({ code: 'provider_unavailable' })
+      const recovered = await createRuntimeServices(env, { managedQuickBooks: port })
+      const app = createApp(recovered)
+      const state = await app.fetch(new Request(`${tenant.origin}/api/v1/integrations/quickbooks`, { headers: { cookie: tenant.cookie } }), env)
+      expect(await state.json()).toMatchObject({ data: { writes: 'pending' } })
+      const report = await app.fetch(new Request(`${tenant.origin}/api/v1/integrations/quickbooks/reconciliation`, { headers: { cookie: tenant.cookie } }), env)
+      expect(report.status).toBe(200)
+      await recovered.quickBooks!.recoverPendingWrites!(10)
+      const paymentWrites = writes.slice(paymentStart).filter(write => write.path.includes('/payment'))
+      expect(paymentWrites).toHaveLength(2); expect(paymentWrites[1]).toEqual(paymentWrites[0])
+      const financialAfter = await tenant.database.batch([tenant.database.prepare('SELECT * FROM invoices'),tenant.database.prepare('SELECT * FROM invoice_payments')])
+      expect(financialAfter.map(row => row.results)).toEqual(financialBefore.map(row => row.results))
+
+    } else {
+      loseInvoiceReplyRealm = tenant.realm
+      await expect(runtime.mirror(1)).rejects.toMatchObject({ code: 'provider_unavailable' })
+      const unknown = await tenant.database.prepare("SELECT state FROM quickbooks_write_effects WHERE resource='invoice'").first()
+      expect(unknown).toEqual({ state: 'unknown' })
+      const restarted = await createRuntimeServices(env, { managedQuickBooks: port })
+      const native = createD1Database(tenant.database)
+      await executeInvoiceEdit(native, { invoiceId: 1, commandId: 'owned-change-after-send', actor: { type: 'user', id: 2 }, authorize: async () => true,
+        expectedVersion: 1, occurredAt: at, eventIds: ['owned-change-after-send-event'], edit: { type: 'header', notes: 'Changed after the provider accepted the request' } })
+      const changed = await tenant.database.prepare('SELECT * FROM invoices').all()
+      await restarted.quickBooks!.recoverPendingWrites!(10)
+      expect(writes.slice(start).filter(write => write.path.includes('/invoice'))).toHaveLength(1)
+      expect(await tenant.database.prepare("SELECT state FROM quickbooks_write_effects WHERE resource='invoice'").first()).toEqual({ state: 'unknown' })
+      expect((await tenant.database.prepare('SELECT * FROM invoices').all()).results).toEqual(changed.results)
+      // Explicit native commands restore the approved fixture payload. Recovery
+      // can then replay the retained bytes at the new native approval version.
+      await executeInvoiceEdit(native, { invoiceId: 1, commandId: 'owned-restore-approved-payload', actor: { type: 'user', id: 2 }, authorize: async () => true,
+        expectedVersion: 2, occurredAt: at, eventIds: ['owned-restore-approved-payload-event'], edit: { type: 'header', notes: null } })
+      before = await tenant.database.prepare('SELECT * FROM invoices').all()
+      await restarted.quickBooks!.recoverPendingWrites!(10)
+      const invoiceWrites = writes.slice(start).filter(write => write.path.includes('/invoice'))
+      expect(invoiceWrites).toHaveLength(2)
+      expect(invoiceWrites[1]).toEqual(invoiceWrites[0])
+      await restarted.quickBooks!.recoverPendingWrites!(10)
+      expect(writes.slice(start).filter(write => write.path.includes('/invoice'))).toHaveLength(2)
+      expect(await tenant.database.prepare("SELECT state FROM quickbooks_write_effects WHERE resource='invoice'").first()).toEqual({ state: 'completed' })
+      // Recovery did not plan a fresh update or invoke global receipt sync.
+      expect(await tenant.database.prepare('SELECT count(*) AS n FROM invoice_payments').first()).toEqual({ n: 0 })
+    }
+    if (tenant.realm === '222') expect((await tenant.database.prepare('SELECT * FROM invoices').all()).results).toEqual(before.results)
+  }
+})
+
 it('[integration #1235] owns one real HTTP refresh across competing Worker runtimes and a fresh restart', async () => {
   const tenant = tenants[0]!, env = environment(tenant)
+  const financialBefore = await tenant.database.batch([tenant.database.prepare('SELECT * FROM invoices'),tenant.database.prepare('SELECT * FROM invoice_payments')])
   const native = createD1Database(tenant.database)
   const current = (await createQuickBooksStore(native).readConnection())!
   const guarded = createManagedQuickBooksRefresh({ store: createManagedQuickBooksRefreshStore(native), admitted: () => true, now: () => new Date() })
@@ -203,7 +318,8 @@ it('[integration #1235] owns one real HTTP refresh across competing Worker runti
   expect((await restarted.fetch(request(), env)).status).toBe(200)
   expect(refreshCalls.length).toBe(before + 1)
   expect(await tenant.database.prepare('SELECT generation FROM quickbooks_connection_generation').first()).toEqual(generation)
-  expect(await tenant.database.prepare('SELECT count(*) AS n FROM invoices').first()).toEqual({ n: 0 })
+  const financialAfter = await tenant.database.batch([tenant.database.prepare('SELECT * FROM invoices'),tenant.database.prepare('SELECT * FROM invoice_payments')])
+  expect(financialAfter.map(row => row.results)).toEqual(financialBefore.map(row => row.results))
   const status = await restarted.fetch(new Request(`${tenant.origin}/api/v1/integrations/quickbooks`, { headers: { cookie: tenant.cookie } }), env)
   const text = await status.text()
   expect(JSON.parse(text)).toMatchObject({ data: { authorization: 'ready', connection: { realm_id: tenant.realm } } })

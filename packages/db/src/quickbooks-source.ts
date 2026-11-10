@@ -24,6 +24,7 @@ import type {
 type Database = InvoiceStateDatabase;
 
 interface InvoiceRow {
+  version: number;
   id: number;
   number: string;
   client_id: number;
@@ -74,7 +75,7 @@ export const createQuickBooksMirrorSource = (
 ): QuickBooksMirrorSource => ({
   readInvoice: async (invoiceId) => {
     const rows = await database.all<InvoiceRow>(sql`
-      SELECT id, number, client_id, currency, issue_date, due_date, subject, notes, amount_cents, state
+      SELECT id, number, client_id, currency, issue_date, due_date, subject, notes, amount_cents, state, version
       FROM invoices WHERE id = ${invoiceId}`);
     const invoice = rows[0];
     if (invoice === undefined) return null;
@@ -84,6 +85,7 @@ export const createQuickBooksMirrorSource = (
       ORDER BY position`);
     return {
       id: invoice.id,
+      version: invoice.version,
       number: invoice.number,
       clientId: invoice.client_id,
       currency: invoice.currency,

@@ -25,6 +25,7 @@ export interface MirrorInvoiceLine {
 }
 
 export interface MirrorInvoice {
+  readonly version?: number
   readonly id: number
   /** Our invoice number. Unique in our book, so it is what QuickBooks is told. */
   readonly number: string

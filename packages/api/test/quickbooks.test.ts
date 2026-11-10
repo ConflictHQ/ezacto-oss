@@ -444,6 +444,19 @@ describe('the invoice sync line and button (issue 819)', () => {
     expect(quickBooks.sync).toHaveBeenCalledWith(41)
   })
 
+  it('[api #1235] reports pending managed writes as a static 409 without exposing provider context', async () => {
+    const quickBooks = service({ sync: vi.fn(async () => {
+      const error = new Error('OWNED_PRIVATE_PROVIDER_CONTEXT')
+      error.name = 'ManagedQuickBooksWriteUnavailableError'
+      throw error
+    }) })
+    const response = await app(quickBooks).request('/invoices/41/quickbooks/sync', { method: 'POST' })
+    expect(response.status).toBe(409)
+    const body = await response.text()
+    expect(JSON.parse(body)).toMatchObject({ error: { code: 'quickbooks_write_unavailable', message: 'QuickBooks accounting write is pending or requires recovery.' } })
+    expect(body).not.toContain('OWNED_PRIVATE')
+  })
+
   it('[api] a refused mirror is a 409 that names the reason', async () => {
     const quickBooks = service({
       sync: vi.fn(async () => ({

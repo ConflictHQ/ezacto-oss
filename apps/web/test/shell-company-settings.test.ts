@@ -1131,6 +1131,28 @@ describe('company settings', () => {
     expect(api.getQuickBooksReconciliation).not.toHaveBeenCalled()
   })
 
+  it.each(['pending', 'unavailable'] as const)('[browser #1235] shows QuickBooks writes %s while keeping read-only reconciliation available', async writes => {
+    stubModulesEndpoint()
+    openCompanySettings('integrations')
+    const api = {
+      ...companyApi([senderIdentity()], []),
+      getQuickBooksConnection: vi.fn(async () => ({ configured: true, authorization: 'ready', writes, connection: {
+        realm_id: 'realm-a', company_name: 'Northpeak Books', scope: 'com.intuit.quickbooks.accounting',
+        allow_online_payment: false, connected_at: '2026-09-11T12:00:00.000Z',
+      } })),
+      getQuickBooksReconciliation: vi.fn(async () => ({ generated_at: '2026-11-10T04:00:00.000Z', counts: { matched: 0 }, rows: [], payment_divergences: [], recovery: null })),
+    }
+    const controller = createModuleSettingsController(api as never)
+    await controller.activate(identity, new AbortController().signal, () => false)
+    const status = document.querySelector<HTMLElement>('[data-settings-quickbooks-status]')!
+    await vi.waitFor(() => expect(status.textContent).toContain('Read-only reconciliation remains available'))
+    expect(document.querySelector<HTMLInputElement>('[data-quickbooks-allow-payment]')!.disabled).toBe(true)
+    expect(document.querySelector<HTMLElement>('[data-quickbooks-reconcile-panel]')!.hidden).toBe(false)
+    document.querySelector<HTMLButtonElement>('[data-quickbooks-reconcile]')!.click()
+    await vi.waitFor(() => expect(document.querySelector<HTMLElement>('[data-quickbooks-reconcile-result]')!.textContent).toContain('Everything agrees'))
+    expect(api.getQuickBooksReconciliation).toHaveBeenCalled()
+  })
+
   it('[browser #1235] withholds reconnect while disconnected QuickBooks authorization needs recovery', async () => {
     stubModulesEndpoint()
     openCompanySettings('integrations')

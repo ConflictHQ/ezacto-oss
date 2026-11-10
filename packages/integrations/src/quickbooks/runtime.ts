@@ -1,3 +1,6 @@
+import { invoiceWriteSource, customerWriteSource, paymentWriteSource } from './mirror.js';
+import { clientAncestry } from './mapping.js';
+import { ManagedQuickBooksWriteUnavailableError, type ManagedQuickBooksWrites } from './managed-writes.js';
 import { ManagedQuickBooksRefreshUnavailableError, type ManagedQuickBooksRefresh } from './managed-refresh.js';
 /**
  * Assembling the QuickBooks connection from deployment configuration, the
@@ -94,6 +97,8 @@ export interface QuickBooksSyncResult {
 
 /** Likewise structural: what the routes call, without importing the routes. */
 export interface QuickBooksService {
+  recoverPendingWrites?(limit?: number): Promise<void>;
+  writeStatus?(): Promise<'ready' | 'pending' | 'unavailable'>;
   /** Local connect readiness; absent on older/custom service ports. Never makes a provider request. */
   configured?(): boolean;
   clientId(): string | null;
@@ -137,6 +142,7 @@ export interface QuickBooksService {
    * recording the failure, so the caller reports it; the cursor has not moved.
    */
   catchUp(): Promise<QuickBooksCatchUp | null>;
+  recoverPendingWrites?(limit?: number): Promise<void>;
 }
 
 /** How the last catch-up run came to rest. */
@@ -434,6 +440,7 @@ const maximumSkippedReasonLength = 255;
 export interface QuickBooksRuntimeOptions {
   /** Durable managed ownership, composed outside replayable hosted SQL. */
   readonly managedRefresh?: ManagedQuickBooksRefresh;
+  readonly managedWrites?: ManagedQuickBooksWrites;
   readonly config: QuickBooksConfig;
   readonly store: QuickBooksConnectionStore;
   readonly source: QuickBooksMirrorSource;
@@ -500,6 +507,7 @@ export interface QuickBooksRuntime {
   syncState(invoiceId: number): Promise<QuickBooksInvoiceSyncState | null>;
   reconcile(): Promise<QuickBooksReconciliation | null>;
   catchUp(): Promise<QuickBooksCatchUp | null>;
+  recoverPendingWrites?(limit?: number): Promise<void>;
 }
 
 /** The same local connect prerequisites as the native runtime, without constructing a client. */
@@ -579,7 +587,11 @@ export const createQuickBooksRuntime = (
       });
       accessToken = refreshed.accessToken;
     }
+    if (options.managedWrites !== undefined && connection.connectionGeneration === undefined) throw new ManagedQuickBooksWriteUnavailableError();
     return new QuickBooksClient({
+      ...(options.managedWrites === undefined ? {} : { managedWrites: options.managedWrites.session({
+        realmId: connection.realmId, connectedAt: connection.connectedAt, connectionGeneration: connection.connectionGeneration!,
+      }) }),
       now: options.now,
       realmId: connection.realmId,
       accessToken,
@@ -753,8 +765,12 @@ export const createQuickBooksRuntime = (
         reason: "QuickBooks no longer holds the invoice; it was deleted there since it was mirrored",
       };
     }
+    const nativeInvoice = await source.readInvoice(input.invoiceId);
+    if (nativeInvoice === null || notADocumentOfRecord(nativeInvoice.state) !== null) return { kind: 'refused', reason: 'the native invoice is not open or paid' };
     const realmId = connection.realmId;
     return mirrorPayment({
+      invoiceId: input.invoiceId,
+      invoiceVersion: nativeInvoice.version,
       payment: input.payment,
       invoiceQuickBooksId,
       customerQuickBooksId: quickBooksInvoice.CustomerRef.value,
@@ -1140,6 +1156,7 @@ export const createQuickBooksRuntime = (
   };
 
   const service: QuickBooksService = {
+    ...(options.managedWrites === undefined ? {} : { recoverPendingWrites: (limit?: number) => recoverPendingWrites(limit), writeStatus: () => options.managedWrites!.status() }),
     configured: () => quickBooksConfigured(config),
     ...(options.managedRefresh === undefined ? {} : { authorizationStatus: () => options.managedRefresh!.status() }),
     clientId: () => clientId,
@@ -1322,7 +1339,40 @@ export const createQuickBooksRuntime = (
     catchUp,
   };
 
-  return { service, mirror, mirrorPayment: mirrorPaymentOnto, sync, syncState, reconcile, catchUp };
+  const recoverPendingWrites = async (limit = 10): Promise<void> => {
+    if (options.managedWrites === undefined) return;
+    const connection = await store.readConnection();
+    if (connection === null || connection.connectionGeneration === undefined) return;
+    const pending = await options.managedWrites.pendingWrites({ realmId: connection.realmId, connectedAt: connection.connectedAt,
+      connectionGeneration: connection.connectionGeneration }, limit);
+    const failures: unknown[] = [];
+    for (const write of pending) {
+      try {
+        const invoice = await source.readInvoice(write.invoiceId);
+        if (invoice === null || notADocumentOfRecord(invoice.state) !== null) continue;
+        const client = await authorizedClient();
+        if (client === null) return;
+        // Recover the retained entity only. Global sync and the ordinary mirror
+        // may also plan fresh writes or import provider receipts.
+        if (write.resource === 'payment') {
+          const payment = (await source.readPayments(write.invoiceId)).find(payment => payment.id === write.nativeId);
+          if (payment !== undefined && payment.provider !== 'quickbooks') await client.recoverSource(await paymentWriteSource(payment, invoice.id, invoice.version));
+        } else if (write.resource === 'invoice') await client.recoverSource(await invoiceWriteSource(invoice, connection.allowOnlinePayment));
+        else {
+          const clients = await source.readClients(invoice.clientId);
+          const chain = clientAncestry(invoice.clientId, clients);
+          const index = chain.findIndex(customer => customer.id === write.nativeId);
+          if (index >= 0) await client.recoverSource(await customerWriteSource(chain.slice(0, index + 1), invoice));
+        }
+      } catch (error) {
+        // A retained pending/refused effect is an expected recovery state. The
+        // ledger and write status keep it visible without a cron error storm.
+        if (!(error instanceof ManagedQuickBooksWriteUnavailableError) && !(error instanceof ManagedQuickBooksRefreshUnavailableError)) failures.push(error);
+      }
+    }
+    if (failures.length) throw new Error('QuickBooks accounting write recovery failed');
+  };
+  return { recoverPendingWrites, service, mirror, mirrorPayment: mirrorPaymentOnto, sync, syncState, reconcile, catchUp };
 };
 
 /**
