@@ -72,6 +72,50 @@ export const hasReminderDelivery = async (
   return rows.length > 0
 }
 
+/** Recover the exact persisted message after an enqueue failure or lost reply.
+ * Queue consumers claim the same deliveryId and refuse another provider call
+ * after a recorded success. Never rebuild a historical audience; an unknown
+ * provider result still needs the mailer's own reconciliation policy. */
+const readPendingReminderDelivery = async (database: InvoiceStateDatabase,
+  reminder: Readonly<ScheduledReminderRecord>): Promise<ReminderPortMessage | null> => {
+  const rows = await database.all<{
+    deliveryId: number; senderIdentityId: number; senderIdentityVersion: number; senderEvidenceVersion: number
+    fromName: string; fromEmail: string; replyToEmail: string | null; toJson: string; ccJson: string | null
+    templateVersion: number; subject: string; textBody: string; htmlBody: string | null
+  }>(sql`SELECT delivery.delivery_id AS deliveryId, delivery.sender_identity_id AS senderIdentityId,
+      delivery.sender_identity_version AS senderIdentityVersion, delivery.sender_evidence_version AS senderEvidenceVersion,
+      delivery.from_name AS fromName, delivery.from_email AS fromEmail, delivery.reply_to_email AS replyToEmail,
+      log.to_json AS toJson, log.cc_json AS ccJson, delivery.template_version AS templateVersion,
+      delivery.subject AS subject, delivery.text_body AS textBody, delivery.html_body AS htmlBody
+    FROM invoice_reminder_deliveries delivery
+    JOIN scheduled_reminders scheduled ON scheduled.id = delivery.scheduled_reminder_id AND scheduled.invoice_id = delivery.invoice_id
+    JOIN invoices invoice ON invoice.id = delivery.invoice_id
+    JOIN email_log log ON log.id = delivery.delivery_id
+    WHERE delivery.scheduled_reminder_id = ${reminder.id} AND delivery.invoice_id = ${reminder.invoiceId}
+      AND scheduled.status = 'pending' AND invoice.state = 'open' AND invoice.due_amount_cents > 0
+      AND log.status IN ('queued', 'sent')`)
+  const row = rows[0]
+  if (!row) return null
+  const mailboxes = (value: string | null): { name: string; email: string }[] => {
+    if (value === null) return []
+    const parsed: unknown = JSON.parse(value)
+    if (!Array.isArray(parsed) || parsed.length > 100) throw new Error('persisted reminder audience is invalid')
+    return parsed.map(person => {
+      if (!person || typeof person !== 'object' || typeof person.email !== 'string' ||
+          (person.name !== undefined && typeof person.name !== 'string')) throw new Error('persisted reminder audience is invalid')
+      return { name: person.name ?? '', email: person.email }
+    })
+  }
+  const to = mailboxes(row.toJson), cc = mailboxes(row.ccJson)
+  if (!to.length) throw new Error('persisted reminder audience is invalid')
+  const current = followUpHeaders(await readThankYouRecipients(database, reminder.invoiceId))
+  if (JSON.stringify(current.to) !== JSON.stringify(to) || JSON.stringify(current.cc) !== JSON.stringify(cc)) return null
+  return { deliveryId: row.deliveryId, senderIdentityId: row.senderIdentityId,
+    senderIdentityVersion: row.senderIdentityVersion, senderEvidenceVersion: row.senderEvidenceVersion,
+    fromName: row.fromName, fromEmail: row.fromEmail, replyToEmail: row.replyToEmail,
+    templateVersion: row.templateVersion, subject: row.subject, textBody: row.textBody, htmlBody: row.htmlBody, to, cc }
+}
+
 /** What an invoice has been sent, for the detail screen. */
 export interface ReminderDeliveryRecord {
   readonly scheduledReminderId: number
@@ -102,7 +146,7 @@ export const createReminderPort = (
 ): { prepare(reminder: Readonly<ScheduledReminderRecord>): Promise<ReminderPortMessage | null> } => ({
   async prepare(reminder) {
     const { database } = options
-    if (await hasReminderDelivery(database, reminder.id)) return null
+    if (await hasReminderDelivery(database, reminder.id)) return readPendingReminderDelivery(database, reminder)
 
     // The balance and state at send time, not when the row was scheduled: a
     // part payment since then changes what the reminder should say, and a

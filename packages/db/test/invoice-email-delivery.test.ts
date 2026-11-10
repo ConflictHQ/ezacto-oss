@@ -6,7 +6,7 @@ import { executeInvoiceLifecycleCommand, type InvoiceStateDatabase } from '../sr
 import { migrateContainer, migrateD1 } from '../src/migrate.js'
 import { createMoneyResourceRepository } from '../src/money-resources.js'
 import { followUpAudienceGuard, readThankYouRecipients } from '../src/automatic-thank-you.js'
-import { recordReminderDelivery } from '../src/reminder-port.js'
+import { createReminderPort, recordReminderDelivery } from '../src/reminder-port.js'
 
 interface Harness {
   orm: InvoiceStateDatabase
@@ -239,6 +239,22 @@ for (const [name, factory] of [['SQLite', container], ['real D1', d1]] as const)
       expect(await readThankYouRecipients(database.orm, 1)).toEqual(audience)
       const binding = JSON.stringify(audience)
       expect(await database.rows(`SELECT CASE WHEN ${followUpAudienceGuard} THEN 1 ELSE 0 END AS allowed`, 1, 1, binding, binding)).toEqual([{ allowed: 1 }])
+      await database.run(`INSERT INTO scheduled_reminders (id, invoice_id, scheduled_at, interval_days, causation_event_id, created_at, updated_at)
+        VALUES (87, 1, ?, 7, 'recovery-fixture', ?, ?)`, at, at, at)
+      expect(await recordReminderDelivery(database.orm, {
+        scheduledReminderId: 87, invoiceId: 1, deliveryId: 702, recipients: audience,
+        templateVersion: 1, senderIdentityId: 10, senderIdentityVersion: 0, senderEvidenceVersion: 1,
+        fromName: 'Delivery Org', fromEmail: 'billing@example.com', replyToEmail: null,
+        subject: 'Reminder', textBody: 'Please review.', htmlBody: null, daysPastDue: 0, now: at,
+      })).toBe('recorded')
+      const port = createReminderPort({ database: database.orm, configuration: {
+        getTemplate: async () => { throw new Error('unexpected template read') },
+        listSenderIdentities: async () => { throw new Error('unexpected sender read') },
+      }, invoices: { read: async () => { throw new Error('unexpected invoice read') }, paymentUrl: async () => null }, now: () => at })
+      expect(await port.prepare({ id: 87, invoiceId: 1, scheduledAt: at, intervalDays: 7, status: 'pending',
+        template: 'reminder', causationEventId: 'recovery-fixture', createdAt: at, updatedAt: at })).toMatchObject({
+        deliveryId: 702, to: [{ name: 'Client', email: 'client@example.net' }], cc,
+      })
       await database.run(`UPDATE email_log SET status = 'bounced' WHERE id = 700`)
       expect(await database.rows(`SELECT CASE WHEN ${followUpAudienceGuard} THEN 1 ELSE 0 END AS allowed`, 1, 1, binding, binding)).toEqual([{ allowed: 0 }])
       await database.run(`INSERT INTO scheduled_reminders (id, invoice_id, scheduled_at, interval_days, causation_event_id, created_at, updated_at)

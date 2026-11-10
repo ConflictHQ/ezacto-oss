@@ -229,6 +229,40 @@ describe('an overdue invoice is reminded', () => {
     expect(await port.prepare(next[0]!)).toBeNull()
   })
 
+  it('[money #1352] recovers the same saved delivery after enqueue fails', async () => {
+    const { orm, scheduler, outbox, port } = await fixture()
+    await setOrganizationReminderPolicy(orm, { first_after_days: 14, every_days: 7 }, sentAt)
+    await sendTo(orm, [{ name: 'AP', email: 'ap@example.test' }])
+    await outbox.drain()
+    const now = new Date().toISOString(), attempts: number[] = []
+    await scheduler.processReminders({ now, send: async reminder => {
+      const message = await port.prepare(reminder)
+      expect(message).not.toBeNull(); attempts.push(message!.deliveryId)
+      throw new Error('synthetic queue unavailable')
+    } })
+    expect(await scheduler.listPending(1)).toHaveLength(1)
+    await scheduler.processReminders({ now, send: async reminder => {
+      const message = await port.prepare(reminder)
+      expect(message).not.toBeNull(); attempts.push(message!.deliveryId)
+      expect(message!.to).toEqual([{ name: 'AP', email: 'ap@example.test' }])
+    } })
+    expect(attempts).toHaveLength(2)
+    expect(attempts[1]).toBe(attempts[0])
+    expect(await listReminderDeliveries(orm, 1)).toHaveLength(1)
+  })
+
+  it('[money #1352] refuses replay of a saved reminder after the invoice audience changes', async () => {
+    const { orm, scheduler, outbox, port } = await fixture()
+    await setOrganizationReminderPolicy(orm, { first_after_days: 14, every_days: 7 }, sentAt)
+    await sendTo(orm, [{ name: 'Old AP', email: 'old@example.test' }])
+    await outbox.drain()
+    const [pending] = await scheduler.listPending(1)
+    expect(await port.prepare(pending!)).not.toBeNull()
+    await sendTo(orm, [{ name: 'New AP', email: 'new@example.test' }], null, { messageId: 2, expectedVersion: 1 })
+    expect(await port.prepare(pending!)).toBeNull()
+    expect(await listReminderDeliveries(orm, 1)).toHaveLength(1)
+  })
+
   it('[money #1352] withholds follow-ups for an unaccepted or failed latest delivery', async () => {
     const { database, orm } = await fixture()
     await sendTo(orm, [{ name: 'AP', email: 'ap@example.test' }], null, { pending: true })
@@ -312,7 +346,7 @@ describe('an overdue invoice is reminded', () => {
     expect(message!.cc).toEqual(copies)
     const log = database.prepare('SELECT to_json, cc_json FROM email_log WHERE id = ?').get(message!.deliveryId) as { to_json: string; cc_json: string }
     expect(JSON.parse(log.cc_json)).toEqual(copies)
-    expect(await port.prepare(pending[0]!)).toBeNull()
+    expect((await port.prepare(pending[0]!))?.deliveryId).toBe(message!.deliveryId)
     expect(await listReminderDeliveries(orm, 1)).toHaveLength(1)
   })
 
