@@ -49193,6 +49193,22 @@
                     "type": "null"
                   }
                 ]
+              },
+              "authorization": {
+                "type": "string",
+                "enum": [
+                  "ready",
+                  "pending",
+                  "unavailable"
+                ]
+              },
+              "writes": {
+                "type": "string",
+                "enum": [
+                  "ready",
+                  "pending",
+                  "unavailable"
+                ]
               }
             },
             "additionalProperties": false

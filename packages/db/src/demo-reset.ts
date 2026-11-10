@@ -192,6 +192,9 @@ export const PRESERVED_TABLES: ReadonlySet<string> = new Set([
   // The migration seeds this singleton and its retain trigger refuses deletion.
   // The wipe advances its generation and disconnects it (issue 1252).
   'bill_managed_connection',
+  // Wise custody has a migration-seeded singleton too. Erase its credential
+  // and advance its generation in the wipe instead of deleting the row.
+  'wise_managed_connection',
   'calendar_sync_instance',
   'github_publication_instance',
   'github_publication_dispatch',
@@ -259,6 +262,7 @@ const wipeStatements = (objects: DemoSchemaObjects, now: string): readonly DemoS
   // The wipe emptied the users and links this connection was bound to. Drop the
   // sealed credential and binding; the generation advances, so no stale command applies.
   { text: "UPDATE bill_managed_connection SET generation = generation + 1, status = 'disconnected', company_id = NULL, binding_company_id = NULL, sealed_credential = NULL, connected_by_user_id = NULL, health_at = NULL WHERE singleton = 1", bindings: [] },
+  { text: "UPDATE wise_managed_connection SET generation = generation + 1, status = 'disconnected', profile_id = NULL, sealed_credential = NULL, connected_by_user_id = NULL, health_at = NULL, updated_at = NULL WHERE singleton = 1", bindings: [] },
   { text: "UPDATE calendar_sync_instance SET nonce=lower(hex(randomblob(32))) WHERE singleton=1", bindings: [] },
   { text: "UPDATE github_publication_instance SET nonce=lower(hex(randomblob(32))) WHERE singleton=1", bindings: [] },
   { text: "UPDATE github_publication_dispatch SET token=NULL,expires_at=0 WHERE id=1", bindings: [] },

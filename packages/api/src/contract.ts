@@ -4774,6 +4774,8 @@ export const apiContractSchemas: Readonly<Record<string, JsonSchema>> = {
         properties: {
           configured: { type: "boolean" },
           connection: nullable(reference("QuickBooksConnection")),
+          authorization: { type: "string", enum: ["ready", "pending", "unavailable"] },
+          writes: { type: "string", enum: ["ready", "pending", "unavailable"] },
         },
         additionalProperties: false,
       },

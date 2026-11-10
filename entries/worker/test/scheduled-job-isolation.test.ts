@@ -67,6 +67,7 @@ const minute = [
   "dispatch",
   "expiry",
   "backupCleanup",
+  "quickbooksWrite",
   "deelPayment",
   "maintenance",
   "outbox",
@@ -79,7 +80,7 @@ const expectedOperation: Record<string, string> = {
   notice: 'scheduled manifest notice', dispatch: 'scheduled run dispatch', expiry: 'scheduled run expiry',
   maintenance: 'demo maintenance', outbox: 'outbox drain', export: 'nightly export',
   recurring: 'recurring invoice generation', reminder: 'payment reminders', bill: 'BILL reconciliation',
-  quickbooks: 'QuickBooks catch-up', deelStatus: 'Deel time sync', deel: 'Deel time sync',
+  quickbooksWrite: 'QuickBooks accounting write recovery', quickbooks: 'QuickBooks catch-up', deelStatus: 'Deel time sync', deel: 'Deel time sync',
   deelPayment: 'Deel payment status',
   backupCleanup: 'temporary backup cleanup',
 };
@@ -134,7 +135,7 @@ it.each([
       recurringInvoices: { generateDue: job("recurring", undefined) },
       reminders: { processDue: job("reminder", undefined) },
       bill: { reconcilePayments: job("bill", undefined) },
-      quickBooks: { catchUp: job("quickbooks", undefined) },
+      quickBooks: { catchUp: job("quickbooks", undefined), recoverPendingWrites: job("quickbooksWrite", undefined) },
       deelPaymentStatus: { refresh: job("deelPayment", { configured: true, checked: 0, failed: 0, remaining: 0 }) },
       deelSync: {
         status() {

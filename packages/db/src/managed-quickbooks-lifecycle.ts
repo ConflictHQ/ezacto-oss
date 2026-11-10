@@ -99,6 +99,27 @@ export const createManagedQuickBooksLifecycleStore = (
     return row!
   }
   return {
+    currentGrant: async (authority, now) => {
+      validAuthority(authority, now)
+      const result = await atomic([{ text: `SELECT g.generation,
+        (EXISTS(SELECT 1 FROM users WHERE id=? AND is_active=1 AND profile='administrator') AND
+          (?=1 OR EXISTS(SELECT 1 FROM sessions WHERE id=? AND user_id=? AND revoked_at IS NULL
+            AND julianday(idle_expires_at)>julianday(?) AND julianday(absolute_expires_at)>julianday(?) AND profile_snapshot='administrator'))) AS authorized,
+        EXISTS(SELECT 1 FROM migration_loads WHERE status<>'completed' AND (status<>'cancelled' OR started_at IS NOT NULL)) AS blocked,
+        c.realm_id, c.disconnected_at, receipt.grant_id
+        FROM quickbooks_connection_generation g LEFT JOIN quickbooks_connections c ON c.id=1
+        LEFT JOIN quickbooks_managed_grants receipt ON receipt.accepted_generation=g.generation
+          AND receipt.realm_id=c.realm_id AND receipt.recorded_at=c.connected_at
+        WHERE g.singleton=1`, params: [authority.userId, authority.kind === 'guarded-session' ? 1 : 0,
+          authority.kind === 'native-session' ? authority.sessionId : 0, authority.userId, now, now] }])
+      const rows = result[0] ?? []
+      const row = rows[0] as { generation: number; authorized: number; blocked: number; realm_id: string | null; disconnected_at: string | null; grant_id: string | null } | undefined
+      if (!row || rows.length !== 1 || !Number.isSafeInteger(row.generation) || row.generation < 0 || row.blocked) fail('conflict')
+      if (!row.authorized) fail('forbidden')
+      if (row.realm_id === null || row.disconnected_at !== null) return null
+      if (!hex(row.grant_id)) fail('conflict')
+      return { grantId: row.grant_id, connectionGeneration: row.generation }
+    },
     fence: async (command: ManagedQuickBooksFenceCommand, authority, now) => {
       command = { ...command }
       authority = { ...authority }
@@ -197,6 +218,14 @@ export const createManagedQuickBooksLifecycleStore = (
     readRevocation: async (revocationId) => {
       if (!hex(revocationId)) fail('invalid')
       const row = await read(revocationId)
+      return row ? receipt(row) : null
+    },
+    nextUnresolved: async () => {
+      const rows = await atomic([
+        { text: `SELECT ${columns} FROM quickbooks_revocations WHERE status='pending' ORDER BY fenced_at,revocation_id LIMIT 1`, params: [] },
+        { text: `SELECT ${columns} FROM quickbooks_revocations WHERE status='attempting' ORDER BY fenced_at,revocation_id LIMIT 1`, params: [] },
+      ])
+      const row = (rows[0]?.[0] ?? rows[1]?.[0]) as Row | undefined
       return row ? receipt(row) : null
     },
     listUnresolved: async () =>

@@ -62,6 +62,7 @@ export interface ManagedBillRuntimeOptions {
 }
 
 export interface ManagedBillStatus extends ManagedBillState {
+  readonly configured: boolean
   readonly enabled: boolean
   /** Whether the platform's own developer key is configured; tenant credentials cannot stand in for it. */
   readonly platformKeyConfigured: boolean
@@ -158,7 +159,10 @@ export const createManagedBillRuntime = (
   return {
     status: async () => {
       const state = await options.store.state()
-      return { ...state, enabled: await enabled(), platformKeyConfigured: devKey !== null }
+      const active = await enabled()
+      const configured = active && devKey !== null && state.status !== 'disconnected'
+      return { ...state, enabled: active, platformKeyConfigured: devKey !== null,
+        configured, canSendFromBill: configured && state.canSendFromBill }
     },
     mirror: (invoiceId: number): Promise<BillMirrorOutcome> =>
       run<BillMirrorOutcome>(

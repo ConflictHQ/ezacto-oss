@@ -1,3 +1,7 @@
+import { readManagedQuickBooksOutboxAdmission } from '@ezacto/db/d1'
+import { createManagedQuickBooksOutboxSubscriber } from './managed-quickbooks-outbox.js'
+import type { WiseRuntime } from '@ezacto/integrations'
+import { managedQuickBooksAvailable, managedWiseAvailable, managedBillAvailable, type WorkerManagedQuickBooks, type WorkerManagedWise, type WorkerManagedBill } from './managed-providers.js'
 import { createCalendarOperatorCleanupStore } from '@ezacto/db/d1'
 import { runInvoiceFeedbackRecovery, runReminderReconciliation } from './reminder-reconciliation.js'
 import { createConfiguredCalendarServices } from '@ezacto/integrations'
@@ -717,6 +721,10 @@ const readOnlyObjects = (objects: AttachmentObjectPort): AttachmentObjectPort =>
 export const createRuntimeServices = async (
   env: WorkerEnv,
   options: {
+    /** Trusted tenant runtime; an explicit null never falls back to environment credentials. */
+    managedQuickBooks?: WorkerManagedQuickBooks;
+    managedWise?: WorkerManagedWise;
+    managedBill?: WorkerManagedBill;
     calendarSources?: Parameters<typeof createCalendarSyncService>[0]['sources'];
     emailProvider?: HttpEmailProvider;
     ses?: SesMailerOptions;
@@ -734,7 +742,20 @@ export const createRuntimeServices = async (
   // Stable per binding, so the readiness cache below still keys on it.
   const database = createIdempotentD1(binding);
   const demo = demoDeployment(env);
-  const credentials = providerCredentials(env);
+  // Explicit managed capabilities withhold all matching deployment
+  // credentials, including auxiliary Wise and BILL mail/payment paths.
+  const credentials = {
+    ...providerCredentials(env),
+    ...(options.managedWise === undefined ? {} : {
+      WISE_TOKEN: undefined, WISE_PROFILE_ID: undefined, WISE_WEBHOOK_PUBLIC_KEY: undefined,
+      WISE_BANK_FEED_TOKEN: undefined, WISE_BANK_FEED_PROFILE_ID: undefined,
+      WISE_BANK_FEED_BALANCE_ID: undefined, WISE_BANK_FEED_CURRENCY: undefined,
+    }),
+    ...(options.managedBill === undefined ? {} : {
+      BILL_DEV_KEY: undefined, BILL_COMPANY_ID: undefined, BILL_USERNAME: undefined,
+      BILL_PASSWORD: undefined, BILL_REPLY_TO_USER_ID: undefined,
+    }),
+  };
   const cursorSigningKey = parseCursorSigningKey(env.API_CURSOR_SIGNING_KEY);
   const csv = !demo && csvWorkerConfigured(env) ? createCsvWorkerRuntime(binding,env.ATTACHMENTS!,env.CSV_IMPORT_QUEUE!,cursorSigningKey,error=>reportWorkerError(options.reportError,error,{phase:'queue',traceId:runtimeTraceId()})) : undefined;
   // Portal magic-link auth is opt-in on the presence of its key. An install
@@ -923,8 +944,11 @@ export const createRuntimeServices = async (
   // QuickBooks routes are not mounted at all, because a connect button that
   // cannot connect is worse than no button -- `entry-surface.ts` declares that
   // gating so both halves of the contract guard know about it.
-  const quickBooks =
-    credentials.QUICKBOOKS_CLIENT_ID === undefined ||
+  const quickBooks = options.managedQuickBooks !== undefined
+    ? managedQuickBooksAvailable(options.managedQuickBooks, env, binding)
+      ? await options.managedQuickBooks.compose({ scope: binding, database })
+      : null
+    : credentials.QUICKBOOKS_CLIENT_ID === undefined ||
     credentials.QUICKBOOKS_CLIENT_SECRET === undefined
       ? null
       : createQuickBooksRuntime({
@@ -947,7 +971,7 @@ export const createRuntimeServices = async (
   // the contract guard agree.
   // Only the exact value opts a token out of payments; a typo must not
   // silently leave the money-moving path mounted, so any other value fails.
-  const wiseMode = parseWiseMode(env.WISE_MODE)
+  const wiseMode = options.managedWise === undefined ? parseWiseMode(env.WISE_MODE) : 'read_only'
   const paymentRuns = createPaymentRunsService(
     drizzle,
     credentials.WISE_TOKEN === undefined || wiseMode !== 'full'
@@ -961,8 +985,14 @@ export const createRuntimeServices = async (
       reportWorkerError(options.reportError, error, { phase: 'payment', traceId: runtimeTraceId() })
     },
   )
-  const wise =
-    credentials.WISE_TOKEN === undefined
+  const managedWise = options.managedWise === undefined ? undefined
+    : managedWiseAvailable(options.managedWise, env, binding)
+      ? await options.managedWise.compose({ scope: binding, database }) : null
+  // Accept only the read service. Extra properties from a custom host factory
+  // cannot accidentally install webhook/settlement or payment capabilities.
+  const wise: WiseRuntime | null = options.managedWise !== undefined
+    ? managedWise == null ? null : { service: managedWise.service }
+    : credentials.WISE_TOKEN === undefined
       ? null
       : createWiseRuntime({
           mode: wiseMode,
@@ -995,11 +1025,16 @@ export const createRuntimeServices = async (
           now: () => new Date(),
         });
 
+  if (options.managedWise !== undefined && wise !== null && wise.service.writable() !== false)
+    throw new Error('A managed Wise runtime must provide read-only capability.')
+
   // Composed whenever the deployment carries BILL credentials. Unlike
   // QuickBooks there is nothing to connect -- BILL has no OAuth -- so the
   // routes mount either way and say whether they can reach anything; what
   // changes with the credential is only whether a mirror can run.
-  const bill = createBillRuntime({
+  const managedBill = options.managedBill !== undefined && managedBillAvailable(options.managedBill, env, binding)
+    ? await options.managedBill.compose({ scope: binding, database }) : null
+  const bill = managedBill ?? createBillRuntime({
     config: {
       devKey: credentials.BILL_DEV_KEY,
       companyId: credentials.BILL_COMPANY_ID,
@@ -1208,8 +1243,23 @@ export const createRuntimeServices = async (
             ),
           ]),
       reminders.subscriber,
-      ...(quickBooks === null ? [] : [createQuickBooksMirrorSubscriber(quickBooks)]),
-      createBillMirrorSubscriber(bill),
+      ...(options.managedQuickBooks === undefined
+        ? quickBooks === null ? [] : [createQuickBooksMirrorSubscriber(quickBooks)]
+        : [createManagedQuickBooksOutboxSubscriber({ runtime: quickBooks,
+          available: () => managedQuickBooksAvailable(options.managedQuickBooks!, env, binding),
+          readAdmission: eventId => readManagedQuickBooksOutboxAdmission(drizzle, eventId),
+        })]),
+      { ...createBillMirrorSubscriber({ mirror: (invoiceId: number) => bill.mirror(invoiceId) }),
+        ...(options.managedBill === undefined ? {} : {
+          available: async (event: Readonly<{ aggregateType: string; eventType: string; aggregateId: number }>) => {
+            if (event.aggregateType !== 'invoice' || event.eventType !== 'invoice.sent') return true
+            const source = createBillMirrorSource(drizzle, () => new Date())
+            const invoice = await source.readInvoice(event.aggregateId)
+            if (invoice === null || !(await source.isOptedIn(invoice.clientId))) return true
+            return managedBillAvailable(options.managedBill!, env, binding) && (await bill.status()).configured
+          },
+        }),
+      },
     ],
   });
   const twoFactor = createTwoFactorService({

@@ -108,6 +108,9 @@ export interface QuickBooksService {
     realmId: string
   }): Promise<QuickBooksConnectionStatus>
   readStatus(): Promise<QuickBooksConnectionStatus | null>
+  authorizationStatus?(): Promise<'ready' | 'pending' | 'unavailable'>
+  recoverPendingWrites?(limit?: number): Promise<void>
+  writeStatus?(): Promise<'ready' | 'pending' | 'unavailable'>
   setAllowOnlinePayment(allow: boolean): Promise<void>
   disconnect(): Promise<void>
   /**
@@ -237,6 +240,20 @@ const requireConfigured = (service: Readonly<QuickBooksService>): {
   return { clientId, callbackUrl }
 }
 
+const quickBooksOperation = async <T>(operation: () => Promise<T>): Promise<T> => {
+  try { return await operation() } catch (error) {
+    if (error instanceof Error && error.name === 'ManagedQuickBooksWriteUnavailableError') {
+      throw new ApiError({ status: 409, code: 'quickbooks_write_unavailable',
+        message: 'QuickBooks accounting write is pending or requires recovery.' })
+    }
+    if (error instanceof Error && error.name === 'ManagedQuickBooksRefreshUnavailableError') {
+      throw new ApiError({ status: 409, code: 'quickbooks_authorization_unavailable',
+        message: 'QuickBooks authorization is pending or requires recovery.' })
+    }
+    throw error
+  }
+}
+
 const serialize = (status: QuickBooksConnectionStatus) => ({
   realm_id: status.realmId,
   company_name: status.companyName,
@@ -257,6 +274,8 @@ export const installQuickBooksRoutes = <Bindings extends object>(
         data: {
           configured: service.configured?.() ?? (service.clientId() !== null && service.callbackUrl() !== null),
           connection: status === null ? null : serialize(status),
+          ...(service.authorizationStatus === undefined ? {} : { authorization: await service.authorizationStatus() }),
+          ...(service.writeStatus === undefined ? {} : { writes: await service.writeStatus() }),
         },
       },
       200,
@@ -270,7 +289,7 @@ export const installQuickBooksRoutes = <Bindings extends object>(
   // document.
   api.get('/integrations/quickbooks/reconciliation', async (context) => {
     requireAccountant(context)
-    const report = await service.reconcile()
+    const report = await quickBooksOperation(() => service.reconcile())
     if (report === null) {
       throw new ApiError({
         status: 409,
@@ -401,7 +420,7 @@ export const installQuickBooksRoutes = <Bindings extends object>(
 
   api.delete('/integrations/quickbooks', async (context) => {
     requireAdministrator(context)
-    await service.disconnect()
+    await quickBooksOperation(() => service.disconnect())
     return context.body(null, 204)
   })
 
@@ -427,7 +446,7 @@ export const installQuickBooksRoutes = <Bindings extends object>(
   api.post('/invoices/:id/quickbooks/sync', async (context) => {
     requireMoneyWriter(context)
     const invoiceId = invoiceIdOf(context)
-    const result = await service.sync(invoiceId)
+    const result = await quickBooksOperation(() => service.sync(invoiceId))
     if (result === null) invoiceNotFound()
     if (result!.invoice.kind === 'refused') {
       throw new ApiError({

@@ -1,3 +1,4 @@
+import type { WorkerManagedQuickBooks, WorkerManagedWise, WorkerManagedBill } from './managed-providers.js'
 import * as Sentry from '@sentry/cloudflare'
 import { ApiError } from '@ezacto/api'
 import { BillApiError, BillAuthError } from '@ezacto/integrations'
@@ -10,7 +11,7 @@ export const workerScheduledOperations = [
   'off-site backup checkpoint', 'scheduled job proposal sweep',
   'Stripe alert notice', 'scheduled manifest notice', 'scheduled run dispatch', 'scheduled run expiry',
   'nightly export', 'temporary backup cleanup', 'recurring invoice generation', 'payment reminders',
-  'calendar sync', 'GitHub issue reconciliation', 'BILL reconciliation', 'QuickBooks catch-up', 'Deel time sync', 'Deel payment status',
+  'calendar sync', 'GitHub issue reconciliation', 'BILL reconciliation', 'QuickBooks catch-up', 'QuickBooks accounting write recovery', 'Deel time sync', 'Deel payment status',
   'demo maintenance', 'demo sender seed', 'outbox drain', 'reminder reconciliation', 'invoice feedback recovery',
 ] as const
 export type WorkerScheduledOperation = (typeof workerScheduledOperations)[number]
@@ -28,7 +29,12 @@ export interface WorkerErrorContext {
 }
 /** Trusted, process-local integration port. Never serialize the original error. */
 export type WorkerErrorReporter = (error: Error, context: WorkerErrorContext) => void | Promise<void>
-export interface WorkerOptions { readonly reportError?: WorkerErrorReporter }
+export interface WorkerOptions {
+  readonly reportError?: WorkerErrorReporter
+  readonly managedQuickBooks?: WorkerManagedQuickBooks
+  readonly managedWise?: WorkerManagedWise
+  readonly managedBill?: WorkerManagedBill
+}
 
 const phases = new Set<unknown>(['api', 'bootstrap', 'readiness', 'idempotency', 'scheduled', 'queue', 'payment'])
 const classes = new Set(['Error', 'TypeError', 'RangeError', 'SyntaxError', 'ReferenceError', 'URIError', 'AggregateError', 'ApiError'])

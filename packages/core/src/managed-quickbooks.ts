@@ -109,6 +109,8 @@ export interface ManagedQuickBooksRevocationCustody {
   refreshToken: string
 }
 export interface ManagedQuickBooksLifecycleStore {
+  /** Current accepted grant identity, available only to a freshly authorized administrator. */
+  currentGrant(authority: ManagedQuickBooksAuthority, now: string): Promise<{ grantId: string; connectionGeneration: number } | null>
   fence(
     command: ManagedQuickBooksFenceCommand,
     authority: ManagedQuickBooksAuthority,
@@ -116,6 +118,8 @@ export interface ManagedQuickBooksLifecycleStore {
   ): Promise<ManagedQuickBooksFenceResult>
   /** Safe status, never a credential. */
   readRevocation(revocationId: string): Promise<ManagedQuickBooksRevocationReceipt | null>
+  /** Oldest pending attempt, or oldest uncertain attempt when none is pending. */
+  nextUnresolved(): Promise<ManagedQuickBooksRevocationReceipt | null>
   /** Revocations whose provider outcome is not yet recorded. */
   listUnresolved(): Promise<ManagedQuickBooksRevocationReceipt[]>
   /** Moves pending to attempting and returns the credential once. An attempting

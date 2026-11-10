@@ -1584,7 +1584,8 @@ export const createShellApi = (client: EzactoClient): ShellApi => ({
         ...withSignal(signal),
       })
     ).data,
-  disconnectQuickBooks: (signal) => client.disconnectQuickBooks(withSignal(signal)),
+  disconnectQuickBooks: (signal, idempotencyKey) => client.disconnectQuickBooks({ ...withSignal(signal),
+    ...(idempotencyKey === undefined ? {} : { headers: { 'Idempotency-Key': idempotencyKey } }) }),
   getQuickBooksReconciliation: async (signal) =>
     (await client.getQuickBooksReconciliation(withSignal(signal))).data,
   // Bound here because this is the only place the real client reaches the

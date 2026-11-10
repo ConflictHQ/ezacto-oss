@@ -145,3 +145,198 @@ revoked or erased: only a recorded provider outcome sets `complete: true`.
 - Demo resets, which never hold real grants, wipe the table with the rest.
 - Real revocation, deletion and provider/account changes are not exercised here;
   that evidence belongs to hosted440's owned sandbox acceptance.
+
+## Trusted Worker runtime composition
+
+`createWorker` accepts the process-local `managedQuickBooks` capability, whose
+public type is `WorkerManagedQuickBooks`. This capability is passed through
+fetch, email-queue service construction and scheduled service construction.
+It is never a serialized Worker binding, HTTP input or browser configuration.
+
+The capability has two methods:
+
+- `configured(scope)` returns side-effect-free app/entitlement availability. It
+  receives the original database binding's object identity for a trusted host
+  lookup. It must perform no database or provider request. The service-free HTML
+  shell uses this same metadata, so a managed connection can be discoverable
+  without copying platform credentials into environment variables.
+- `compose({ scope, database })` constructs one complete `QuickBooksRuntime` for
+  the invocation or returns `null` when unavailable. The database is the native
+  idempotency-aware D1 binding. The original scope exposes no SQL contract; use
+  it only to find host-owned tenant/incarnation policy. The same runtime supplies
+  native API services, the invoice/payment outbox subscriber and scheduled
+  catch-up. Construction must perform no provider effects.
+
+Demo and accounting-disabled deployments invoke neither method. An explicit
+unavailable result never selects deployment-level QuickBooks credentials.
+When no managed capability is supplied, self-host Worker configuration retains
+its existing behavior; the container composition is unchanged.
+
+The capability carries authority to compose a service, not authority to bypass
+native session, Origin, role, financial deduplication or webhook validation.
+A host must supply real tenant-bound grant/link stores and the managed OAuth
+and lifecycle behavior appropriate to its connection broker.
+
+### Hosted effect and acceptance boundary
+
+These native hooks alone do not complete hosted adoption. The host must keep
+provider effects outside replayable whole-request/outbox transactions and use
+durable ownership, connection-generation fencing and explicit recovery for
+rotating refresh tokens, mirrored writes and ambiguous replies. The existing
+self-host refresh implementation does not establish those hosted guarantees.
+Do not expose that implementation directly inside a replayable S3lite callback.
+Retain late/ambiguous credential custody for lifecycle reconciliation and
+revocation inventory; a disconnected or erased connection must not be revived
+by a stale worker.
+
+The host must also preserve fresh tenant admission, incarnation/source fences,
+per-call SQL durability, directory acknowledgements and final response checks.
+Public source publication and a real hosted consumer with two-tenant provider
+and failure/recovery acceptance are required before #1235 can close. Actual
+central realm webhook routing and provider approval retain their own hosted
+acceptance gates.
+
+Intuit documents a company-scoped `requestid` query parameter for write replay,
+with a 50-character limit for individual operations. A durable effect record
+must retain that ID together with the exact original payload; `DocNumber`
+adoption alone is not a concurrent-create fence. The current client does not
+supply request IDs, so this is a required part of the remaining managed effect
+implementation, not an already-delivered guarantee. See
+[Intuit request ID semantics](https://static.developer.intuit.com/output_html/qbo/docs/learn/learn-basic-field-definitions.html).
+
+## Reconnect while revocation is outstanding
+
+A fenced connection still owes provider revocation while its receipt is
+`pending` or `attempting`. A fresh administrator session and a new connection
+generation must not authorize a new OAuth flow over that unresolved obligation.
+The managed prepare/inspect/accept boundary returns its ordinary static conflict;
+read the existing safe revocation status to explain the pending work. No
+credential is exposed in that status.
+
+Migration0181 adds native SQL guards to both managed grant insertion and live
+connection insertion/update. These apply to native OAuth writes too, so a
+caller cannot bypass the pending-revocation fence by changing its entry path.
+`not_revoked` keeps the obligation pending. Only an observed, recorded `revoked`
+result permits fresh connection work; an already-completed revocation never
+hands its credential to a later worker again.
+
+The migration preserves existing custody, generations and financial records. If
+an earlier version already stored a live connection alongside an unresolved
+revocation, migration refuses atomically for explicit provider reconciliation.
+It does not erase tokens, mark revocation complete or silently hide the overlap.
+Never delete a revocation receipt or alter the migration ledger to bypass that
+refusal. Reconcile the original provider outcome and connection ownership before
+retrying the normal upgrade. Local fixture tests do not authorize an actual
+provider revocation or tenant credential change.
+
+## Durable refresh ownership
+
+`createManagedQuickBooksRefresh` composes into `createQuickBooksRuntime` through
+`managedRefresh`. Its native repository, `createManagedQuickBooksRefreshStore`,
+requires independently committed operations. Do not supply the database adapter
+from a replayable hosted request transaction. The native Worker acceptance fixture
+uses the actual D1 binding; a hosted adapter still needs to establish the same
+per-operation durability and admission contract after public publication.
+Admission must cover the current tenant incarnation, grant generation and admitted
+effect lifetime through transport and response custody; an entitlement flag alone
+is not a drain or erasure fence. This change does not establish that hosted lease.
+
+Canonical connection reads also carry `connectionGeneration`. A managed claim
+refuses a missing or different generation even when the realm, timestamp and
+credential bytes match; custom self-host readers remain unchanged when managed
+refresh is not selected. Migration0183 records a non-expiring owner before token transport. Another
+runtime cannot refresh the same connection while that owner is attempting or
+unresolved. A provider failure or lost reply retains an unknown outcome; neither
+elapsed time nor a fresh process grants permission to repeat the exchange.
+Before transport begins, the owner can cancel only its own proven unsent nonce
+when admission changes or a claim acknowledgement is lost. Once transport starts,
+no clock expiry releases that owner. Native status reports
+`authorization: ready|pending|unavailable` without credentials
+or provider calls. A known ownership refusal becomes a static API409, rather
+than logging a database error containing bound token parameters.
+
+A returned replacement is staged and adopted in one native atomic command. The
+connection's realm, generation, connection timestamp and previous refresh token
+must still match. A database trigger rejects an unowned token replacement on a
+managed grant, including the legacy token setter. The exact result hash binds
+completion replay. A committed completion clears receipt token custody; a late
+result after disconnection retains its replacement refresh token for explicit
+cleanup and leaves the original revocation credential intact. Both the native
+grant command and SQL guards refuse reconnect over unresolved refresh custody.
+
+Unknown and orphaned outcomes are obligations, not successful revocations. There
+is no automatic expiry, retry, credential deletion or operator bypass here. A
+provider-observed recovery/cleanup protocol and its authorized owner acceptance
+remain required before hosted activation. Account closure inventories the
+receipt's administrator foreign key as billing/payment custody; a hosted drain
+must also account for unresolved refresh state before claiming erasure.
+
+This protocol addresses refresh ownership only. It does not make provider writes
+idempotent: invoice/customer/payment effects still require durable exact-payload
+ownership and provider request IDs, outside replayable SQL. No provider approval,
+actual hosted activation, real refresh/revocation or financial-history mutation
+is established by local native and HTTP fixtures.
+
+
+## Managed accounting write custody
+
+Managed runtimes compose `createManagedQuickBooksWrites` with an independently
+committing native `createManagedQuickBooksWriteStore` and the actual hosted
+admission lease. The connection snapshot carries its native generation; the
+same runtime serves invoice events, manual-receipt mirrors and bounded scheduled
+recovery. Self-hosted clients retain their existing transport when this option is
+absent. A managed client refuses a write without a trusted native source context.
+
+Before transport, migration 0185 retains the company-scoped UUID request ID,
+resource, original native financial snapshot hash, invoice approval version,
+path, minor version and exact UTF-8 body. Immutable 64 KiB chunks retain large
+requests and responses; byte counts and SHA-256 are verified before use. Provider
+credentials and Authorization headers are excluded. Competing runtimes claim a
+bounded transport owner; expired ownership can replay the original request ID
+and original bytes. A changed financial snapshot refuses replay. Payment-driven
+state/version changes do not change the source hash, but the current native
+invoice version is still checked before each transport attempt.
+
+Each sending nonce keeps its own response observation. Late responses after a
+native lifecycle fence become retained orphaned custody. Inconsistent provider
+identities for one request become a conflict retaining both observations. A
+completed create also supplies the missing native link after a lost link-write
+acknowledgement; a renamed native document cannot silently create another copy.
+No accounting-write recovery changes native invoices, receipts, time or expenses.
+
+The per-minute scheduled phase recovers at most ten retained entities, through
+the same authorized client. It does not call global sync or import receipts.
+Recovery selection rotates across older intents so one refusal does not starve
+the queue. Write readiness is separate from token authorization: settings report
+pending/review-needed writes while read-only reconciliation remains available.
+
+This native protocol does not establish a hosted admission lease, publish a
+public package, activate provider credentials, or settle an unknown outcome by
+policy. The hosted incarnation/grant lease must cover transport through durable
+response custody. Public-version adoption, full host drain/cleanup and approved
+provider acceptance remain separate release requirements. No live provider write
+is part of the local verification.
+
+Provider replay contract: [Intuit request ID guidance](https://static.developer.intuit.com/output_html/qbo/docs/learn/learn-basic-field-definitions.html).
+
+
+## Paused outbox admission
+
+An explicitly managed Worker keeps `quickbooks_mirror` enrolled while its host
+capability or token authorization is unavailable. The common outbox admission
+mechanism retains pending receipts without spending attempts, keeps unrelated
+consumers moving and resumes through the same runtime after admission returns.
+Safe unknown accounting writes remain recoverable with their original request
+IDs; custody requiring review stays withheld.
+
+Migration 0186 captures the accepted native grant ID and generation in the same
+commit as each accounting event. It also records when no grant existed. These
+bindings are immutable while the event exists, and contain no credential.
+An old event cannot target a newer grant even when realm IDs and timestamps are
+identical. Pre-upgrade queued events without a binding remain withheld for review;
+there is no guessed historical attribution. Canonical privacy closure may remove
+transient grant receipts while the event retains its opaque historical identity.
+
+Managed receipt mirrors compare the queued receipt against the canonical native
+amount, payment day and provider before any provider request. A changed or removed
+receipt is left for review; recovery does not overwrite the native financial record.

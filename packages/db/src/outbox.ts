@@ -72,6 +72,11 @@ export interface OutboxSubscriberContext {
 
 export interface OutboxSubscriber {
   readonly id: string
+  /** Local admission only, before claiming an event. False retains a pending
+   * receipt without consuming an attempt. Keep the subscriber in the registry
+   * so another delivery cannot publish its still-pending intent away.
+   */
+  available?(event: Readonly<OutboxEventRecord>): boolean | Promise<boolean>
   deliver(
     event: Readonly<OutboxEventRecord>,
     context: Readonly<OutboxSubscriberContext>,
@@ -402,6 +407,7 @@ const candidate = async (
   database: PortableDatabase,
   subscriberId: string,
   at: string,
+  freshOnly = false,
 ): Promise<OutboxEventRow | null> =>
   database.first<OutboxEventRow>(
     `SELECT ${eventColumns}
@@ -409,6 +415,7 @@ const candidate = async (
      LEFT JOIN outbox_delivery_receipts receipt
        ON receipt.subscriber_id = ? AND receipt.event_id = event.id
      WHERE event.published_at IS NULL
+       ${freshOnly ? 'AND receipt.next_attempt_at IS NULL' : ''}
        AND julianday(event.available_at) <= julianday(?)
        AND (
          receipt.event_id IS NULL
@@ -436,6 +443,29 @@ const candidate = async (
      LIMIT 1`,
     [subscriberId, at, at, at, subscriberId],
   )
+
+// Deferral is admission, not a failed delivery. Persist it before moving to
+// another event, retaining the registry's required receipt and retry budget.
+// Fresh work is selected before deferred rows, so an unavailable provider
+// cannot starve unrelated events. An expired owner cannot later acknowledge it.
+const deferUnavailable = async (
+  database: PortableDatabase, subscriberId: string, eventId: string, at: string,
+): Promise<void> => {
+  const next = new Date(Date.parse(at) + 60_000).toISOString()
+  await database.atomic([
+    { query: `INSERT INTO outbox_delivery_receipts
+        (subscriber_id,event_id,status,attempt_count,next_attempt_at,created_at,updated_at)
+        SELECT ?,id,'pending',0,?,?,? FROM event_outbox event WHERE id=? AND published_at IS NULL
+          AND NOT EXISTS(SELECT 1 FROM outbox_delivery_receipts current
+            WHERE current.subscriber_id=? AND current.event_id=event.id)`,
+      bindings: [subscriberId,next,at,at,eventId,subscriberId] },
+    { query: `UPDATE outbox_delivery_receipts SET status='pending',next_attempt_at=?,
+        active_attempt_id=NULL,attempt_lease_expires_at=NULL,updated_at=?
+        WHERE subscriber_id=? AND event_id=? AND (status='pending'
+          OR (status='processing' AND julianday(attempt_lease_expires_at)<=julianday(?)))`,
+      bindings: [next,at,subscriberId,eventId,at] },
+  ])
+}
 
 const claim = async (
   database: PortableDatabase,
@@ -508,7 +538,7 @@ const claim = async (
     },
     {
       query: `UPDATE outbox_delivery_receipts
-        SET status = 'failed', active_attempt_id = NULL,
+        SET status = 'failed', active_attempt_id = NULL, next_attempt_at = NULL,
           attempt_lease_expires_at = NULL, last_error_code = 'subscriber_timeout',
           failed_at = ?, updated_at = ?
         WHERE subscriber_id = ? AND event_id = ? AND attempt_count >= ?
@@ -736,18 +766,34 @@ const createService = (
         let selected:
           | { subscriber: OutboxSubscriber; row: OutboxEventRow }
           | undefined
-        for (let offset = 0; offset < subscribers.length; offset += 1) {
-          const index = (subscriberIndex + offset) % subscribers.length
+        let deferred = false
+        const startIndex = subscriberIndex
+        for (let offset = 0; offset < subscribers.length && summary.examined < limit; offset += 1) {
+          const index = (startIndex + offset) % subscribers.length
           const subscriber = subscribers[index]!
           const at = timestamp()
-          const row = await candidate(database, subscriber.id, at)
+          // Preserve the ordinary indexed ordering. Only admission-aware
+          // subscribers prioritize fresh work before deferred/retry receipts.
+          const fresh = subscriber.available !== undefined
+          const row = await candidate(database, subscriber.id, at, fresh)
+            ?? (fresh ? await candidate(database, subscriber.id, at) : null)
           if (row !== null) {
+            if (subscriber.available !== undefined && !(await subscriber.available(eventRecord(row)))) {
+              await deferUnavailable(database, subscriber.id, row.id, at)
+              summary.examined += 1
+              subscriberIndex = (index + 1) % subscribers.length
+              deferred = true
+              continue
+            }
             selected = { subscriber, row }
             subscriberIndex = (index + 1) % subscribers.length
             break
           }
         }
-        if (selected === undefined) break
+        if (selected === undefined) {
+          if (deferred && summary.examined < limit) continue
+          break
+        }
 
         summary.examined += 1
         const at = timestamp()

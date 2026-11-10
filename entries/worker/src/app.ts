@@ -44,7 +44,7 @@ import type { ContractorReviewStore, StaffPaymentStore } from '@ezacto/core'
 import { installMyPaymentRoutes } from '@ezacto/api'
 import type { MyPaymentsStore } from '@ezacto/core'
 import { apiFailureStatus, reportWorkerError, runtimeTraceId } from './error-reporting.js'
-import type { BillRuntime, DeelSyncRuntime, QuickBooksService, WiseRuntime,
+import type { BillRuntime, ManagedBillRuntime, DeelSyncRuntime, QuickBooksService, WiseRuntime,
 } from "@ezacto/integrations";
 import type {
   InvoiceDocumentPreferenceService,
@@ -695,7 +695,7 @@ export interface RuntimeServices {
   /** A person's own reminder and digest preferences, edited under Settings. */
   profileNotifications?: ProfileNotificationsPort
   recurringRepair?: RecurringRepairService
-  bill?: BillRuntime
+  bill?: BillRuntime | ManagedBillRuntime
   /** Deel time sync, run from the daily cron. Absent on the demo. */
   deelPaymentStatus?: DeelPaymentStatusRuntime
   githubReader?: GithubReaderApiPort & GithubReaderWebhookPort & { tick(): Promise<void>; publishTimeNotes?(): Promise<void> }
@@ -789,6 +789,8 @@ export const createApp = (
    */
   signInMethods?: { read(env: AppEnv): Promise<readonly SignInMethodState[] | null> },
   telemetry?: { reportError?: (error: Error, requestId: string) => void | Promise<void> },
+  /** Local metadata only; no tenant SQL, credentials or provider health probes. */
+  providerAvailability?: { quickBooks?: (env: AppEnv) => boolean; wise?: (env: AppEnv) => boolean; bill?: (env: AppEnv) => boolean },
 ) => {
   const cleanupPorts = ([services?.nativeAppleLifecycle, services?.appleWebCleanup] as (AppleCleanupPort | undefined)[]).filter((port): port is AppleCleanupPort => port !== undefined)
   const appleCleanup: AppleCleanupPort | undefined = cleanupPorts.length === 0 ? undefined : {
@@ -860,10 +862,20 @@ export const createApp = (
     // Keep QuickBooks separate: another configured provider must not wake its invoice requests.
     const providers: AccountingProviderAvailability = modules.accounting && !demoDeployment(env)
       ? services === undefined
-        ? configuredAccountingProviders(env)
+        ? { ...configuredAccountingProviders(env),
+            ...(providerAvailability?.quickBooks === undefined ? {} : {
+              quickbooks: providerAvailability.quickBooks(env),
+            }),
+            ...(providerAvailability?.wise === undefined ? {} : {
+              wise: providerAvailability.wise(env),
+            }),
+            ...(providerAvailability?.bill === undefined ? {} : {
+              bill: providerAvailability.bill(env),
+            }),
+          }
         : {
             quickbooks: services.quickBooks?.configured?.() ?? (services.quickBooks !== undefined && services.quickBooks.clientId() !== null && services.quickBooks.callbackUrl() !== null),
-            bill: services.bill?.status().configured === true,
+            bill: (await services.bill?.status())?.configured === true,
             wise: services.wise?.configured() === true,
             deel: (await services.deelSync?.status())?.configured === true,
           }

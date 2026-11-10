@@ -43,30 +43,38 @@ const credentials = (company = '008OWNEDONE', over: Partial<ManagedBillCredentia
 const d1Worker = { modules: true,
   script: 'export default { fetch() { return new Response("ok") } }', d1Databases: ['DB'] } as const
 let templates: { root: string; sqlite: string; d1: string } | undefined
+const templateOwnership = { worker: undefined as Miniflare | undefined, disposal: undefined as Promise<void> | undefined }
+const disposeTemplate = () => templateOwnership.disposal ??= templateOwnership.worker?.dispose() ?? Promise.resolve()
+let templatesClosed = false
 beforeAll(async () => {
   const root = await mkdtemp(join(tmpdir(), 'ezacto-bill-templates-'))
   const sqlite = join(root, 'template.sqlite')
   const d1 = join(root, 'd1')
+  templates = { root, sqlite, d1 }
   let native: BetterSqlite3.Database | undefined
   let miniflare: Miniflare | undefined
   try {
+    if (templatesClosed) throw new Error('BILL fixture setup was closed')
     native = new BetterSqlite3(sqlite)
     migrateContainer(native)
     native.close()
     native = undefined
     miniflare = new Miniflare({ ...d1Worker, d1Persist: d1 })
+    templateOwnership.worker = miniflare
     await migrateD1(await miniflare.getD1Database('DB'))
     // Checkpoint the WAL and close all writers before any physical copy.
-    await miniflare.dispose()
+    await disposeTemplate()
     miniflare = undefined
-    templates = { root, sqlite, d1 }
+    if (templatesClosed) throw new Error('BILL fixture setup was closed')
   } catch (error) {
-    try { native?.close(); await miniflare?.dispose() } finally { await rm(root, { recursive: true, force: true }) }
+    try { native?.close(); await disposeTemplate() } finally { await rm(root, { recursive: true, force: true }) }
     throw error
   }
 }, 120_000)
 afterAll(async () => {
-  if (templates) await rm(templates.root, { recursive: true, force: true })
+  templatesClosed = true
+  try { await disposeTemplate() }
+  finally { if (templates) await rm(templates.root, { recursive: true, force: true }) }
 })
 
 let closers: (() => Promise<void>)[] = []
@@ -443,10 +451,7 @@ describe.each(['sqlite', 'd1'] as const)('managed tenant BILL connection (%s)', 
       authentication: { sessions: createApiSessionService(t.sessions) },
       installApi: (hono) =>
         installBillRoutes(hono, {
-          status: async () => {
-            const s = await t.runtime.status()
-            return { configured: s.status !== 'disconnected', companyId: s.companyId, environment: s.environment, canSendFromBill: s.canSendFromBill }
-          },
+          status: () => t.runtime.status(),
           isOptedIn: async () => true,
           setOptedIn: async (_id, enabled) => {
             opts.push(enabled)

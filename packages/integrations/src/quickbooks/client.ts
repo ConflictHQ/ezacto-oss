@@ -1,3 +1,4 @@
+import { ManagedQuickBooksWriteUnavailableError, type ManagedQuickBooksWriteSession, type QuickBooksWriteIntent, type QuickBooksWriteSource, type QuickBooksWriteResource, type QuickBooksStoredWrite } from './managed-writes.js'
 /**
  * QuickBooks Online `/v3` client, narrowed to what a one-way invoice mirror and
  * a payment read need.
@@ -152,6 +153,7 @@ export interface QuickBooksPaymentChanges {
 export const QUICKBOOKS_CDC_PAGE_SIZE = 1000
 
 export interface QuickBooksClientOptions {
+  readonly managedWrites?: ManagedQuickBooksWriteSession
   readonly realmId: string
   /**
    * Supplied per call rather than held, because it expires. The caller owns
@@ -204,6 +206,7 @@ export class QuickBooksClient {
   readonly #accessToken: string
   readonly #fetch: (request: Request) => Promise<Response>
   readonly #baseUrl: string
+  readonly #managedWrites: ManagedQuickBooksWriteSession | undefined
   readonly #now: () => Date
 
   constructor(options: Readonly<QuickBooksClientOptions>) {
@@ -213,6 +216,7 @@ export class QuickBooksClient {
     if (options.accessToken.trim() === '') {
       throw new QuickBooksResponseError('accessToken is required')
     }
+    this.#managedWrites = options.managedWrites
     this.#realmId = options.realmId
     this.#accessToken = options.accessToken
     this.#fetch = options.fetch
@@ -270,6 +274,24 @@ export class QuickBooksClient {
         ...(init.headers as Record<string, string> | undefined),
       },
     })
+  }
+
+  #transportWrite = (input: QuickBooksStoredWrite & { readonly requestId: string }): Promise<Record<string, unknown>> =>
+    this.#send(this.#request(input.path, { method: 'POST', body: input.body }, { requestid: input.requestId, minorversion: input.minorVersion }))
+
+  async #write(path: QuickBooksStoredWrite['path'], input: Record<string, unknown>, intent?: QuickBooksWriteIntent): Promise<Record<string, unknown>> {
+    const request = { path, minorVersion: QUICKBOOKS_MINOR_VERSION, body: JSON.stringify(input) }
+    if (this.#managedWrites === undefined) return this.#send(this.#request(path, { method: 'POST', body: request.body }))
+    if (intent === undefined) throw new ManagedQuickBooksWriteUnavailableError()
+    return this.#managedWrites.execute(intent, request, this.#transportWrite)
+  }
+
+  async recoverSource(source: QuickBooksWriteSource): Promise<void> {
+    await this.#managedWrites?.recover(source, this.#transportWrite)
+  }
+
+  async knownCreatedLink(resource: QuickBooksWriteResource, nativeId: number) {
+    return this.#managedWrites?.knownCreatedLink(resource, nativeId) ?? null
   }
 
   /**
@@ -347,10 +369,8 @@ export class QuickBooksClient {
     }
   }
 
-  async createCustomer(input: Record<string, unknown>): Promise<QuickBooksCustomer> {
-    const body = await this.#send(
-      this.#request('/customer', { method: 'POST', body: JSON.stringify(input) }),
-    )
+  async createCustomer(input: Record<string, unknown>, intent?: QuickBooksWriteIntent): Promise<QuickBooksCustomer> {
+    const body = await this.#write('/customer', input, intent)
     return object(body['Customer'], 'Customer') as unknown as QuickBooksCustomer
   }
 
@@ -359,21 +379,20 @@ export class QuickBooksClient {
    * stale one, which is optimistic concurrency and the reason the link table
    * stores the token beside the id.
    */
-  async updateCustomer(input: Record<string, unknown>): Promise<QuickBooksCustomer> {
-    const body = await this.#send(
-      this.#request('/customer', { method: 'POST', body: JSON.stringify(input) }),
-    )
+  async updateCustomer(input: Record<string, unknown>, intent?: QuickBooksWriteIntent): Promise<QuickBooksCustomer> {
+    const body = await this.#write('/customer', input, intent)
     return object(body['Customer'], 'Customer') as unknown as QuickBooksCustomer
   }
 
   /**
    * The adopt half of "a retry never duplicates".
    *
-   * QuickBooks has no idempotency key on create. If a mirror wrote an invoice
-   * and then failed before its local link was stored, the retry has to find
-   * what the first attempt made rather than make a second one. `DocNumber`
-   * carries our invoice number, which is unique in our book, so it is the
-   * handle to find it by.
+   * If a mirror wrote an invoice and lost its local link, DocNumber is the
+   * existing adoption lookup. It is not a provider idempotency key. Intuit also
+   * supports the requestid query parameter for writes; a managed effect ledger
+   * must retain the exact request ID and payload across an ambiguous reply.
+   * See Intuit's basic ID/field definitions, "Request ID". A DocNumber lookup
+   * alone does not fence concurrent provider creates.
    */
   async findInvoiceByDocNumber(docNumber: string): Promise<QuickBooksInvoice | null> {
     const rows = await this.query<QuickBooksInvoice>(
@@ -421,17 +440,13 @@ export class QuickBooksClient {
     }
   }
 
-  async createInvoice(input: Record<string, unknown>): Promise<QuickBooksInvoice> {
-    const body = await this.#send(
-      this.#request('/invoice', { method: 'POST', body: JSON.stringify(input) }),
-    )
+  async createInvoice(input: Record<string, unknown>, intent?: QuickBooksWriteIntent): Promise<QuickBooksInvoice> {
+    const body = await this.#write('/invoice', input, intent)
     return object(body['Invoice'], 'Invoice') as unknown as QuickBooksInvoice
   }
 
-  async updateInvoice(input: Record<string, unknown>): Promise<QuickBooksInvoice> {
-    const body = await this.#send(
-      this.#request('/invoice', { method: 'POST', body: JSON.stringify(input) }),
-    )
+  async updateInvoice(input: Record<string, unknown>, intent?: QuickBooksWriteIntent): Promise<QuickBooksInvoice> {
+    const body = await this.#write('/invoice', input, intent)
     return object(body['Invoice'], 'Invoice') as unknown as QuickBooksInvoice
   }
 
@@ -449,10 +464,8 @@ export class QuickBooksClient {
     return rows[0] ?? null
   }
 
-  async createPayment(input: Record<string, unknown>): Promise<QuickBooksPayment> {
-    const body = await this.#send(
-      this.#request('/payment', { method: 'POST', body: JSON.stringify(input) }),
-    )
+  async createPayment(input: Record<string, unknown>, intent?: QuickBooksWriteIntent): Promise<QuickBooksPayment> {
+    const body = await this.#write('/payment', input, intent)
     return object(body['Payment'], 'Payment') as unknown as QuickBooksPayment
   }
 
