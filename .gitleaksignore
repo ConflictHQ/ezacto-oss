@@ -73,25 +73,3 @@ ebbbacf79c2f758f0a81b0ae6def0aa0c9117fde:scripts/restore-drill.test.mjs:generic-
 22b64f4c58800d7ceefdb96ebc9828d087548bec:entries/container/test/stripe-acceptance.test.ts:stripe-access-token:37
 # Canonical public-history translation of reviewed private commit 22b64f4c58800d7ceefdb96ebc9828d087548bec.
 5ce1656d06bd2ee117c4cdc968cc5b56544d3a6b:entries/container/test/stripe-acceptance.test.ts:stripe-access-token:37
-# #1352 reminder-reconciliation tests: deterministic idempotency-key fixtures (ezacto-reminder-<id>-<uuid>), not credentials.
-23d589bb5cfea2a1da6ecbc322bfc725328e259f:packages/mailer/test/mailgun.test.ts:generic-api-key:25
-4c69e3de00a1f8e811594dc83015463d12a2afc8:packages/mailer/test/mailer.test.ts:generic-api-key:476
-63c99962c86956619c6ea8a1a366c8c6d6a52fc4:entries/worker/test/reminder-reconciliation.test.ts:generic-api-key:152
-63c99962c86956619c6ea8a1a366c8c6d6a52fc4:entries/worker/test/reminder-reconciliation.test.ts:generic-api-key:166
-b2056f2245d7d0c1d5f7036e1f4c00ce6d9eaa29:entries/worker/test/reminder-reconciliation.test.ts:generic-api-key:44
-b2056f2245d7d0c1d5f7036e1f4c00ce6d9eaa29:entries/worker/test/reminder-reconciliation.test.ts:generic-api-key:90
-b2056f2245d7d0c1d5f7036e1f4c00ce6d9eaa29:packages/mailer/test/mailgun.test.ts:generic-api-key:25
-b6313cce14895f194c227a3af927d003ed35ebbe:entries/worker/test/reminder-reconciliation.test.ts:generic-api-key:114
-b6313cce14895f194c227a3af927d003ed35ebbe:entries/worker/test/reminder-reconciliation.test.ts:generic-api-key:124
-b6313cce14895f194c227a3af927d003ed35ebbe:entries/worker/test/reminder-reconciliation.test.ts:generic-api-key:138
-b6313cce14895f194c227a3af927d003ed35ebbe:entries/worker/test/reminder-reconciliation.test.ts:generic-api-key:152
-b6313cce14895f194c227a3af927d003ed35ebbe:entries/worker/test/reminder-reconciliation.test.ts:generic-api-key:166
-b6313cce14895f194c227a3af927d003ed35ebbe:entries/worker/test/reminder-reconciliation.test.ts:generic-api-key:60
-b6313cce14895f194c227a3af927d003ed35ebbe:packages/db/test/invoice-email-delivery.test.ts:generic-api-key:327
-b6313cce14895f194c227a3af927d003ed35ebbe:packages/db/test/invoice-email-delivery.test.ts:generic-api-key:328
-b6313cce14895f194c227a3af927d003ed35ebbe:packages/mailer/test/mailer.test.ts:generic-api-key:476
-b6313cce14895f194c227a3af927d003ed35ebbe:packages/mailer/test/mailgun.test.ts:generic-api-key:25
-cdd339fbd97656445a2fc8565a8a488a0a5effa6:entries/worker/test/reminder-reconciliation.test.ts:generic-api-key:124
-cdd339fbd97656445a2fc8565a8a488a0a5effa6:entries/worker/test/reminder-reconciliation.test.ts:generic-api-key:138
-cdd339fbd97656445a2fc8565a8a488a0a5effa6:packages/db/test/invoice-email-delivery.test.ts:generic-api-key:303
-cdd339fbd97656445a2fc8565a8a488a0a5effa6:packages/db/test/invoice-email-delivery.test.ts:generic-api-key:304
