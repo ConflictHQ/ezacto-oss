@@ -208,22 +208,20 @@ delete process.env.EZACTO_BROWSER_FIXTURE_PASSWORD
 
 const timestamp = fixtureInstant
 const spentDate = localDateAt(fixtureDate, fixtureTimeZone)
-// The team summary reads one week, Monday to Sunday, around the fixture's own
-// day -- the same range `teamWeekRange` derives in the browser from the
-// organization's `week_start_day`, which is `monday` by default and is left at
-// the default here. The roster seed asserts its totals over exactly this range,
-// so the range has to be computed rather than written down: move the fixture
-// instant and a hardcoded week would silently start measuring an empty week.
-const rosterWeek = (() => {
+// Earlier settings/approval journeys can change the organization's week start.
+// Read that setting when seeding, just as the Team page does when loading.
+const teamRosterWeek = (weekStartDay) => {
   const day = new Date(`${spentDate}T00:00:00.000Z`)
-  const mondayOffset = (day.getUTCDay() + 6) % 7
-  const from = new Date(day.valueOf() - mondayOffset * 86_400_000)
+  const startDay = { saturday: 6, sunday: 0, monday: 1 }[weekStartDay]
+  if (startDay === undefined) throw new Error('Unknown team roster week start')
+  const offset = (day.getUTCDay() - startDay + 7) % 7
+  const from = new Date(day.valueOf() - offset * 86_400_000)
   const to = new Date(from.valueOf() + 6 * 86_400_000)
   return {
     from: from.toISOString().slice(0, 10),
     to: to.toISOString().slice(0, 10),
   }
-})()
+}
 
 const run = async (statement, ...bindings) => {
   await database.prepare(statement).bind(...bindings).run()
@@ -1316,6 +1314,8 @@ const fixtureControl = async (request, response) => {
         .bind(timestamp, timestamp),
     ])
   } else if (action === 'team-summary-seed') {
+    const organization = await database.prepare('SELECT week_start_day FROM organizations WHERE id=1').first()
+    const rosterWeek = teamRosterWeek(organization.week_start_day)
     /**
      * A roster, not a lone owner.
      *
