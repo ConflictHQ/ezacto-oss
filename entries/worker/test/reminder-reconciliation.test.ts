@@ -21,6 +21,7 @@ describe('held Mailgun reminder reconciliation', () => {
   it.each([
     ['SQLite', 'accepted', 'sent'], ['D1', 'accepted', 'sent'],
     ['SQLite', 'failed', 'bounced'], ['D1', 'complained', 'complained'],
+    ['SQLite', 'split-failed', 'bounced'], ['D1', 'split-failed', 'bounced'],
   ] as const)('records %s provider event %s as %s without sending mail', async (backend, event, expected) => {
     const db = backend === 'SQLite' ? new BetterSqlite3(':memory:') : null
     const miniflare = backend === 'D1' ? new Miniflare({ modules: true,
@@ -35,15 +36,24 @@ describe('held Mailgun reminder reconciliation', () => {
         to: [{ email: 'to@example.test' }], cc: [{ email: 'cc@example.test' }],
         template: 'reminder:payment', subject: 'Reminder', text: 'Reminder' })
       await log.claimAttempt(queued.id, 'mailgun', attemptId, 60)
-      now = '2026-08-28T20:02:00.000Z'
+      now = event === 'split-failed' ? '2026-08-29T09:00:00.000Z' : '2026-08-28T20:02:00.000Z'
       const fetch = vi.fn().mockImplementation(async (request: Request) => {
         expect(request.method).toBe('GET')
-        if (new URL(request.url).pathname.endsWith('/events/W3siY3Vyc29y')) return new Response(JSON.stringify({ items: [] }))
-        return new Response(JSON.stringify({ items: [{ id: 'event-terminal', event, severity: 'permanent', timestamp: Date.parse('2026-08-28T20:00:01.000Z') / 1000,
+        const url = new URL(request.url), begin = Number(url.searchParams.get('begin')), end = Number(url.searchParams.get('end'))
+        const page = Number(url.searchParams.get('page') ?? '1')
+        if (event === 'split-failed' && end - begin === 86_400) {
+          url.searchParams.set('page', String(page + 1))
+          return new Response(JSON.stringify({ items: Array.from({ length: 100 }, () => ({})), paging: { next: url.href } }))
+        }
+        if (page > 1 || url.pathname.endsWith('/events/W3siY3Vyc29y')) return new Response(JSON.stringify({ items: [] }))
+        const actualEvent = event === 'split-failed' ? (end - begin === 43_200 && page === 1 && begin > Date.parse('2026-08-28T20:00:00.000Z') / 1000 ? 'failed' : 'accepted') : event
+        const timestamp = event === 'split-failed' && actualEvent === 'failed' ? begin + 1 : Date.parse('2026-08-28T20:00:01.000Z') / 1000
+        if (event === 'split-failed') url.searchParams.set('page', '2')
+        return new Response(JSON.stringify({ items: [{ id: 'event-terminal', event: actualEvent, severity: 'permanent', timestamp,
           recipient: 'cc@example.test', tags: [`ezacto-reminder-${attemptId.slice(0, 2)}`],
           'user-variables': { ezacto_idempotency_key: `ezacto-reminder-${queued.id}-${attemptId}` },
           message: { headers: { 'message-id': '<mailgun-id>' } } }],
-          paging: { next: 'https://api.mailgun.net/v3/mail.example.test/events/W3siY3Vyc29y' } }))
+          paging: { next: event === 'split-failed' ? url.href : 'https://api.mailgun.net/v3/mail.example.test/events/W3siY3Vyc29y' } }))
       })
       const lookup = new MailgunMailer({ apiKey: 'test-key', domain: 'mail.example.test' }, { fetch })
       await runReminderReconciliation({ store: log, lookup, token: '7acbff11-1395-4011-a881-c299dad9e890' })
@@ -51,10 +61,10 @@ describe('held Mailgun reminder reconciliation', () => {
       if (event !== 'accepted') {
         const rows = db !== null ? db.prepare('SELECT address, reason FROM email_suppression_events').all() :
           (await d1!.prepare('SELECT address, reason FROM email_suppression_events').all()).results
-        expect(rows).toEqual([{ address: 'cc@example.test', reason: event === 'failed' ? 'bounce' : 'complaint' }])
+        expect(rows).toEqual([{ address: 'cc@example.test', reason: event === 'failed' || event === 'split-failed' ? 'bounce' : 'complaint' }])
       }
       expect(await log.heldReminderAttempts(0, 10)).toEqual([])
-      expect(fetch).toHaveBeenCalledTimes(2)
+      expect(fetch).toHaveBeenCalledTimes(event === 'split-failed' ? 9 : 2)
       expect(await log.claimReminderSweep(attemptId)).toBeNull()
     } finally { db?.close(); await miniflare?.dispose() }
   })
