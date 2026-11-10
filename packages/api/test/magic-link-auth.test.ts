@@ -188,28 +188,37 @@ describe('magic-link authentication routes', () => {
     expect(body.error.fields.some((f) => f.field === 'extra')).toBe(true)
   })
 
-  it('[api] GET /portal/verify creates a session for a valid token', async () => {
-    const app = createHarness()
-    const response = await app.request('/portal/verify?token=valid-magic-token')
-    expect(response.status).toBe(200)
-    const body = await response.json()
-    expect(body).toMatchObject({
-      data: {
-        status: 'authenticated',
-        contact_id: 1,
-        client_id: 10,
-      },
-    })
-    expect(response.headers.get('set-cookie')).toContain('__Host-ezacto_portal')
-    expect(response.headers.get('cache-control')).toBe('no-store')
+  it('[security #740] scanner GET and HEAD show confirmation without consuming or issuing a session', async () => {
+    const verifyAndConsume = vi.fn(async () => null)
+    const app = createHarness({ verifyAndConsume })
+    for (const method of ['GET', 'GET', 'HEAD']) {
+      const response = await app.request('/portal/verify?token=valid-magic-token', { method })
+      expect(response.status).toBe(200)
+      expect(response.headers.get('set-cookie')).toBeNull()
+      expect(response.headers.get('cache-control')).toBe('no-store')
+      expect(response.headers.get('referrer-policy')).toBe('no-referrer')
+      expect(response.headers.get('content-security-policy')).toContain("form-action 'self'")
+      if (method === 'GET') {
+        const html = await response.text()
+        expect(html).toContain('<form method="post" action="/portal/verify">')
+        expect(html).toContain('name="token" value="valid-magic-token"')
+        expect(html).not.toContain('<script')
+      }
+    }
+    expect(verifyAndConsume).not.toHaveBeenCalled()
   })
 
-  it('[api] GET /portal/verify returns 401 for invalid/expired/used token', async () => {
-    const app = createHarness()
-    const response = await app.request('/portal/verify?token=bogus-token')
-    expect(response.status).toBe(401)
-    const body = (await response.json()) as { error: { code: string } }
-    expect(body.error.code).toBe('invalid_magic_link')
+  it('[security #740] treats unknown tokens as confirmation only and escapes reflected attributes', async () => {
+    const verifyAndConsume = vi.fn(async () => null)
+    const app = createHarness({ verifyAndConsume })
+    const token = '"><script>alert(1)</script>&'
+    const response = await app.request(`/portal/verify?token=${encodeURIComponent(token)}`)
+    expect(response.status).toBe(200)
+    const html = await response.text()
+    expect(html).toContain('&quot;&gt;&lt;script&gt;alert(1)&lt;/script&gt;&amp;')
+    expect(html).not.toContain('<script>')
+    expect(verifyAndConsume).not.toHaveBeenCalled()
+    expect((await app.request(`/portal/verify?token=${'x'.repeat(8193)}`)).status).toBe(400)
   })
 
   it('[api] GET /portal/verify returns 400 for missing token', async () => {
@@ -395,6 +404,34 @@ describe('portal credential exchange without URL credentials', () => {
     expect(response.headers.get('set-cookie')).toContain('__Host-ezacto_portal=')
     expect(verifyAndConsume).toHaveBeenCalledExactlyOnceWith('valid-magic-token')
     expect(JSON.stringify(await response.json())).not.toContain('valid-magic-token')
+  })
+  it('[security #740] a legacy link confirms once by same-origin form POST and keeps JSON exchange available', async () => {
+    let consumed = false
+    const verifyAndConsume = vi.fn(async (token: string) => {
+      if (token !== 'valid-magic-token' || consumed) return null
+      consumed = true
+      return { contactId: 1, clientId: 10, contactEmail: 'alice@acme.test' }
+    })
+    const app = createHarness({ verifyAndConsume })
+    const postForm = (body = 'token=valid-magic-token', origin: string | null = 'http://localhost') => app.request('/portal/verify', {
+      method: 'POST', headers: { 'content-type': 'application/x-www-form-urlencoded', ...(origin === null ? {} : { origin }) }, body,
+    })
+    await app.request('/portal/verify?token=valid-magic-token')
+    expect((await postForm(undefined, 'https://foreign.test')).status).toBe(403)
+    expect((await postForm(undefined, null)).status).toBe(403)
+    expect((await postForm('token=a&token=b')).status).toBe(422)
+    expect((await postForm('token=a&return_url=https://foreign.test')).status).toBe(422)
+    expect((await postForm(`token=${'x'.repeat(8193)}`)).status).toBe(413)
+    expect(verifyAndConsume).not.toHaveBeenCalled()
+    const confirmed = await postForm()
+    expect(confirmed.status).toBe(303)
+    expect(confirmed.headers.get('location')).toBe('/portal/estimate-review')
+    expect(confirmed.headers.get('set-cookie')).toContain('__Host-ezacto_portal=')
+    expect(confirmed.headers.get('cache-control')).toBe('no-store')
+    expect(confirmed.headers.get('referrer-policy')).toBe('no-referrer')
+    expect(verifyAndConsume).toHaveBeenCalledExactlyOnceWith('valid-magic-token')
+    expect((await postForm()).status).toBe(401)
+    expect((await exchange(app, { token: 'valid-magic-token' })).status).toBe(401)
   })
   it('[api #1010] rejects missing, extra and invalid body credentials before consumption', async () => {
     const verifyAndConsume = vi.fn(async () => null)
