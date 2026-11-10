@@ -122,7 +122,7 @@ afterAll(async () => {
     if (templates) await rm(templates.root, { recursive: true, force: true })
   }
 })
-let closers: (() => Promise<void>)[] = []
+const closers: (() => Promise<void>)[] = []
 afterEach(async () => {
   const results = await Promise.allSettled(closers.splice(0).map((close) => close()))
   credentials.clear()
