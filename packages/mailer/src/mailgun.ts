@@ -248,7 +248,8 @@ export class MailgunMailer implements HttpEmailProvider {
     if (!messageId || !emailPattern.test(recipient) || !['delivered', 'failed', 'complained'].includes(input.eventType)) {
       throw new TypeError('Mailgun reminder evidence scope is invalid');
     }
-    const tag = `ezacto_idempotency_key:ezacto-reminder-${input.deliveryId}-${input.attemptId}`;
+    const key = `ezacto-reminder-${input.deliveryId}-${input.attemptId}`;
+    const tag = `ezacto-reminder-${input.attemptId.slice(0, 2)}`;
     const url = new URL(`${baseUrl(this.region)}/v3/${encodeURIComponent(this.domain)}/events`);
     url.search = new URLSearchParams({ begin: String(input.begin), end: String(input.end), ascending: 'yes', limit: '100', tags: tag }).toString();
     const signal = input.signal === undefined ? AbortSignal.timeout(10_000) : AbortSignal.any([input.signal, AbortSignal.timeout(10_000)]);
@@ -261,13 +262,73 @@ export class MailgunMailer implements HttpEmailProvider {
       const item = value as Record<string, unknown>;
       const message = item.message && typeof item.message === 'object' && !Array.isArray(item.message) ? item.message as Record<string, unknown> : null;
       const headers = message?.headers && typeof message.headers === 'object' && !Array.isArray(message.headers) ? message.headers as Record<string, unknown> : null;
+      const variables = item['user-variables'] && typeof item['user-variables'] === 'object' && !Array.isArray(item['user-variables']) ? item['user-variables'] as Record<string, unknown> : null;
       const rawId = typeof headers?.['message-id'] === 'string' ? headers['message-id'].replace(/^<|>$/gu, '') : null;
       return item.id === eventId && item.event === input.eventType &&
         (input.eventType !== 'failed' || item.severity === 'permanent') && rawId === messageId &&
         typeof item.timestamp === 'number' && Number.isFinite(item.timestamp) && item.timestamp >= input.begin && item.timestamp <= input.end &&
         typeof item.recipient === 'string' && item.recipient.toLowerCase() === recipient &&
-        Array.isArray(item.tags) && item.tags.includes(tag);
+        Array.isArray(item.tags) && item.tags.includes(tag) && variables?.ezacto_idempotency_key === key;
     });
+  }
+
+  /**
+   * Find positive provider evidence for an expired reminder claim without
+   * relying on a webhook. A missing result (including a truncated page) says
+   * nothing about whether Mailgun accepted the request.
+   */
+  async findReminderReceipt(input: {
+    deliveryId: number; attemptId: string; recipients: readonly string[];
+    begin: number; end: number; signal?: AbortSignal;
+  }): Promise<{ messageId: string } | null> {
+    if (!Number.isSafeInteger(input.deliveryId) || input.deliveryId < 1 ||
+        !/^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/u.test(input.attemptId) ||
+        !Number.isSafeInteger(input.begin) || !Number.isSafeInteger(input.end) ||
+        input.end <= input.begin || input.end - input.begin > 86_400 ||
+        !Array.isArray(input.recipients) || input.recipients.length < 1 || input.recipients.length > 1_000) {
+      throw new TypeError('Mailgun reminder evidence scope is invalid');
+    }
+    const recipients = new Set(input.recipients.map(value => {
+      const recipient = bounded(value, 'Mailgun recipient', 254).toLowerCase();
+      if (!emailPattern.test(recipient)) throw new TypeError('Mailgun reminder evidence scope is invalid');
+      return recipient;
+    }));
+    const key = `ezacto-reminder-${input.deliveryId}-${input.attemptId}`;
+    const tag = `ezacto-reminder-${input.attemptId.slice(0, 2)}`;
+    const url = new URL(`${baseUrl(this.region)}/v3/${encodeURIComponent(this.domain)}/events`);
+    url.search = new URLSearchParams({ begin: String(input.begin), end: String(input.end), ascending: 'yes', limit: '100', tags: tag }).toString();
+    const signal = input.signal === undefined ? AbortSignal.timeout(10_000) : AbortSignal.any([input.signal, AbortSignal.timeout(10_000)]);
+    const response = await this.fetchImplementation(new Request(url, { method: 'GET', headers: { authorization: this.authorization }, redirect: 'error', signal }));
+    if (!response.ok) throw new MailgunApiError(response.status);
+    const body = parseBody(await readEvidenceBody(response, signal));
+    if (!Array.isArray(body.items) || body.items.length > 100) throw new Error('Mailgun evidence response is invalid');
+    const messageIds = new Set<string>();
+    let terminalFeedback = false;
+    for (const value of body.items) {
+      if (!value || typeof value !== 'object' || Array.isArray(value)) continue;
+      const item = value as Record<string, unknown>;
+      const message = item.message && typeof item.message === 'object' && !Array.isArray(item.message) ? item.message as Record<string, unknown> : null;
+      const headers = message?.headers && typeof message.headers === 'object' && !Array.isArray(message.headers) ? message.headers as Record<string, unknown> : null;
+      const variables = item['user-variables'] && typeof item['user-variables'] === 'object' && !Array.isArray(item['user-variables']) ? item['user-variables'] as Record<string, unknown> : null;
+      const flags = item.flags && typeof item.flags === 'object' && !Array.isArray(item.flags) ? item.flags as Record<string, unknown> : null;
+      if (!['accepted', 'delivered', 'failed', 'complained'].includes(String(item.event)) ||
+          (item.event === 'failed' && item.severity !== 'permanent') ||
+          flags?.['is-test-mode'] === true ||
+          typeof item.timestamp !== 'number' || !Number.isFinite(item.timestamp) || item.timestamp < input.begin || item.timestamp > input.end ||
+          typeof item.recipient !== 'string' || !recipients.has(item.recipient.toLowerCase()) ||
+          !Array.isArray(item.tags) || !item.tags.includes(tag) || variables?.ezacto_idempotency_key !== key || typeof headers?.['message-id'] !== 'string') continue;
+      try {
+        const messageId = bounded(headers['message-id'], 'Mailgun message id', 512).replace(/^<|>$/gu, '');
+        if (messageId) {
+          messageIds.add(messageId);
+          // Reconciliation here records provider acceptance only. A known
+          // bounce or complaint needs the feedback/suppression path; don't
+          // flatten that stronger outcome into a sent record.
+          if (item.event === 'failed' || item.event === 'complained') terminalFeedback = true;
+        }
+      } catch { /* An invalid provider item cannot establish a receipt. */ }
+    }
+    return messageIds.size === 1 && !terminalFeedback ? { messageId: [...messageIds][0]! } : null;
   }
 
   /**
@@ -346,7 +407,13 @@ export class MailgunMailer implements HttpEmailProvider {
       );
     }
     params.set("h:X-Ezacto-Idempotency-Key", idempotencyKey);
-    params.set("o:tag", `ezacto_idempotency_key:${idempotencyKey}`);
+    const reminder = /^ezacto-reminder-[1-9][0-9]*-([a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12})$/u.exec(idempotencyKey);
+    if (reminder) {
+      // A bounded shard supports provider searches without creating one
+      // permanent analytics tag per delivery. The exact attempt is metadata.
+      params.set("o:tag", `ezacto-reminder-${reminder[1]!.slice(0, 2)}`);
+      params.set("v:ezacto_idempotency_key", idempotencyKey);
+    } else params.set("o:tag", `ezacto_idempotency_key:${idempotencyKey}`);
 
     // Validated before the first byte is sent, so a bad filename or an empty
     // file is a refusal rather than a half-built request Mailgun rejects.

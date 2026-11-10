@@ -11,11 +11,11 @@ import {
   type HttpEmailProvider,
   type QueuedEmailJob,
 } from '@ezacto/mailer'
-import { createContainerEmailLogStore, createD1EmailLogStore } from '../src/email-log.js'
+import { createContainerEmailLogStore, createD1EmailLogStore, type HeldReminderAttempts } from '../src/email-log.js'
 import { migrateContainer, migrateD1, migrationIds } from '../src/migrate.js'
 
 interface Harness {
-  store: EmailLogStore & EmailLogPager
+  store: EmailLogStore & EmailLogPager & HeldReminderAttempts
   rows<T>(query: string, ...bindings: unknown[]): Promise<T[]>
   run(query: string, ...bindings: unknown[]): Promise<void>
   migrateAgain(): Promise<void>
@@ -105,6 +105,47 @@ for (const [runtime, factory] of factories) {
     afterEach(async () => harness?.close())
 
     const setup = async () => (harness = await factory())
+
+    it('[security #1352] leases and advances reminder reconciliation progress without stale owners', async () => {
+      const current = await setup()
+      const first = 'b5f88b55-bc30-4bf2-94f5-350849e4b6c0'
+      const second = '7acbff11-1395-4011-a881-c299dad9e890'
+      expect(await current.store.claimReminderSweep(first)).toBe(0)
+      expect(await current.store.claimReminderSweep(second)).toBeNull()
+      current.setNow('2026-08-28T20:03:01.000Z')
+      expect(await current.store.claimReminderSweep(second)).toBe(0)
+      expect(await current.store.finishReminderSweep(first, 999, true)).toBe(false)
+      expect(await current.store.finishReminderSweep(second, 15, true)).toBe(true)
+      expect(await current.store.claimReminderSweep(first)).toBeNull()
+      current.setNow('2026-08-28T20:08:02.000Z')
+      expect(await current.store.claimReminderSweep(first)).toBe(15)
+      expect(await current.store.finishReminderSweep(first, 0, false)).toBe(true)
+      current.setNow('2026-08-28T20:13:03.000Z')
+      expect(await current.store.claimReminderSweep(second)).toBeNull()
+      current.setNow('2026-08-28T21:08:03.000Z')
+      expect(await current.store.claimReminderSweep(second)).toBe(0)
+    })
+
+    it('[security #1352] pages only expired held Mailgun reminder attempts for reconciliation', async () => {
+      const current = await setup()
+      const reminder = { ...message, template: 'reminder:payment' }
+      const first = await current.store.createQueued(reminder)
+      const second = await current.store.createQueued(reminder)
+      const other = await current.store.createQueued(message)
+      const attempt = 'b5f88b55-bc30-4bf2-94f5-350849e4b6c0'
+      await current.store.claimAttempt(first.id, 'mailgun', attempt, 60)
+      await current.store.claimAttempt(second.id, 'mailgun', attempt, 60)
+      await current.store.claimAttempt(other.id, 'mailgun', attempt, 60)
+      expect(await current.store.heldReminderAttempts(0, 1)).toEqual([])
+      current.setNow('2026-08-28T20:01:01.000Z')
+      const page = await current.store.heldReminderAttempts(0, 1)
+      expect(page).toHaveLength(1)
+      expect(page[0]).toMatchObject({ record: { id: first.id }, attemptId: attempt, claimedAt: now })
+      expect((await current.store.heldReminderAttempts(first.id, 10)).map(value => value.record.id)).toEqual([second.id])
+      await current.store.markSent(second.id, 'mailgun', { messageId: 'provider-id' }, attempt)
+      expect(await current.store.heldReminderAttempts(first.id, 10)).toEqual([])
+      await expect(current.store.heldReminderAttempts(0, 101)).rejects.toThrow()
+    })
 
     it('[unit] registers 0015 through 0018 in order and migrates idempotently', async () => {
       const current = await setup()

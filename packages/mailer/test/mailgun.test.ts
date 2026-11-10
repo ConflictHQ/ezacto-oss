@@ -22,9 +22,19 @@ const response = (body: unknown, status = 200): Response =>
 describe("held reminder evidence", () => {
   const scope = { deliveryId: 7, attemptId: "b5f88b55-bc30-4bf2-94f5-350849e4b6c0", eventId: "evt-1",
     messageId: "mg-1", recipient: "owner@example.test", eventType: "delivered" as const, begin: 100, end: 200 };
-  const tag = "ezacto_idempotency_key:ezacto-reminder-7-b5f88b55-bc30-4bf2-94f5-350849e4b6c0";
+  const key = "ezacto-reminder-7-b5f88b55-bc30-4bf2-94f5-350849e4b6c0";
+  const tag = "ezacto-reminder-b5";
   const event = { id: "evt-1", event: "delivered", timestamp: 150, recipient: "owner@example.test",
-    tags: [tag], message: { headers: { "message-id": "<mg-1>" } } };
+    tags: [tag], "user-variables": { ezacto_idempotency_key: key }, message: { headers: { "message-id": "<mg-1>" } } };
+
+  it("uses a bounded tag shard and keeps the exact attempt as metadata", async () => {
+    let request: Request | undefined;
+    const provider = new MailgunMailer(config, { fetch: async value => { request = value; return response({ id: "<mg-1>" }); } });
+    await provider.send(message, { signal: AbortSignal.timeout(1_000), idempotencyKey: key });
+    const body = new URLSearchParams(await request!.text());
+    expect(body.get("o:tag")).toBe(tag);
+    expect(body.get("v:ezacto_idempotency_key")).toBe(key);
+  });
 
   it("[security #1352] accepts only an exact authenticated domain-scoped observation", async () => {
     let request: Request | undefined;
@@ -54,6 +64,29 @@ describe("held reminder evidence", () => {
     controller.abort();
     await expect(pending).rejects.toThrow();
     expect(cancel).toHaveBeenCalledOnce();
+  });
+
+  it("[security #1352] finds positive held-attempt evidence without a webhook", async () => {
+    const lookup = { deliveryId: scope.deliveryId, attemptId: scope.attemptId,
+      recipients: ["owner@example.test"], begin: scope.begin, end: scope.end };
+    let request: Request | undefined;
+    const query = async (items: unknown[]) => {
+      const provider = new MailgunMailer(config, { fetch: async value => { request = value; return response({ items }); } });
+      return provider.findReminderReceipt(lookup);
+    };
+    expect(await query([{ ...event, event: "accepted" }])).toEqual({ messageId: "mg-1" });
+    expect(new URL(request!.url).searchParams.get("tags")).toBe(tag);
+    expect(request!.url).not.toContain(lookup.recipients[0]);
+    expect(await query([])).toBeNull();
+    expect(await query([{ ...event, recipient: "other@example.test" }])).toBeNull();
+    expect(await query([{ ...event, tags: ["other"] }])).toBeNull();
+    expect(await query([{ ...event, "user-variables": { ezacto_idempotency_key: "other" } }])).toBeNull();
+    expect(await query([{ ...event, timestamp: 201 }])).toBeNull();
+    expect(await query([{ ...event, event: "failed", severity: "temporary" }])).toBeNull();
+    expect(await query([{ ...event, flags: { "is-test-mode": true } }])).toBeNull();
+    expect(await query([event, { ...event, message: { headers: { "message-id": "other" } } }])).toBeNull();
+    expect(await query([{ ...event, event: "failed", severity: "permanent" }])).toBeNull();
+    expect(await query([event, { ...event, event: "complained" }])).toBeNull();
   });
 });
 

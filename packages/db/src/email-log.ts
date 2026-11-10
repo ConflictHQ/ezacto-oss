@@ -25,6 +25,17 @@ export interface EmailLogStoreOptions {
   kindTemplates?: EmailLogKindTemplates
 }
 
+/** Internal reconciliation input; never expose attempt tokens through the API. */
+export interface HeldReminderAttempts {
+  heldReminderAttempts(afterId: number, limit: number): Promise<Array<{
+    record: EmailLogRecord
+    attemptId: string
+    claimedAt: string
+  }>>
+  claimReminderSweep(token: string): Promise<number | null>
+  finishReminderSweep(token: string, afterId: number, more: boolean): Promise<boolean>
+}
+
 interface PortableDatabase {
   first<T>(query: string, bindings?: readonly unknown[]): Promise<T | null>
   all<T>(query: string, bindings?: readonly unknown[]): Promise<T[]>
@@ -201,7 +212,7 @@ const stripeAlertRecipientAuthorized = `(template <> 'stripe-payment-alert' OR E
 const createStore = (
   database: PortableDatabase,
   options: EmailLogStoreOptions,
-): EmailLogStore & EmailLogPager => {
+): EmailLogStore & EmailLogPager & HeldReminderAttempts => {
   const now = options.now ?? (() => new Date().toISOString())
   const timestamp = (): string => {
     const value = now()
@@ -209,6 +220,45 @@ const createStore = (
     return value
   }
   return {
+    async claimReminderSweep(token) {
+      if (!/^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/u.test(token)) {
+        throw new TypeError('invalid reminder sweep token')
+      }
+      const seconds = Math.floor(Date.parse(timestamp()) / 1000)
+      const row = await database.first<{ afterId: number }>(
+        `UPDATE reminder_reconciliation_cursor SET lease_token = ?, lease_expires_at = ?
+         WHERE id = 1 AND next_due <= ? AND (lease_token IS NULL OR lease_expires_at <= ?)
+         RETURNING after_id AS afterId`, [token, seconds + 180, seconds, seconds],
+      )
+      return row?.afterId ?? null
+    },
+    async finishReminderSweep(token, afterId, more) {
+      if (!/^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/u.test(token) ||
+          !Number.isSafeInteger(afterId) || afterId < 0 || typeof more !== 'boolean') {
+        throw new TypeError('invalid reminder sweep completion')
+      }
+      const seconds = Math.floor(Date.parse(timestamp()) / 1000)
+      const row = await database.first<{ id: number }>(
+        `UPDATE reminder_reconciliation_cursor SET after_id = ?, next_due = ?, lease_token = NULL,
+          lease_expires_at = NULL WHERE id = 1 AND lease_token = ? RETURNING id`,
+        [afterId, seconds + (more ? 300 : 3600), token],
+      )
+      return row !== null
+    },
+    async heldReminderAttempts(afterId, limit) {
+      if (!Number.isSafeInteger(afterId) || afterId < 0 ||
+          !Number.isSafeInteger(limit) || limit < 1 || limit > 100) {
+        throw new RangeError('invalid held reminder page')
+      }
+      const rows = await database.all<EmailLogRow & { attemptId: string; claimedAt: string }>(
+        `SELECT ${columns}, active_attempt_id AS attemptId, updated_at AS claimedAt
+         FROM email_log WHERE id > ? AND provider = 'mailgun' AND status = 'queued'
+           AND template LIKE 'reminder:%' AND active_attempt_id IS NOT NULL
+           AND julianday(attempt_lease_expires_at) <= julianday(?)
+         ORDER BY id ASC LIMIT ?`, [afterId, timestamp(), limit],
+      )
+      return rows.map(row => ({ record: rowRecord(row), attemptId: row.attemptId, claimedAt: row.claimedAt }))
+    },
     async createQueued(message) {
       const at = timestamp()
       return rowRecord(
@@ -522,7 +572,7 @@ const createStore = (
 export const createContainerEmailLogStore = (
   database: BetterSqlite3.Database,
   options: EmailLogStoreOptions = {},
-): EmailLogStore & EmailLogPager => {
+): EmailLogStore & EmailLogPager & HeldReminderAttempts => {
   database.pragma('foreign_keys = ON')
   return createStore(
     {
@@ -538,7 +588,7 @@ export const createContainerEmailLogStore = (
 export const createD1EmailLogStore = (
   database: D1Database,
   options: EmailLogStoreOptions = {},
-): EmailLogStore & EmailLogPager =>
+): EmailLogStore & EmailLogPager & HeldReminderAttempts =>
   createStore(
     {
       first: async (query, bindings = []) =>

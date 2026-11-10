@@ -166,7 +166,10 @@ export const createMailgunFeedbackService = (
       // Mailgun signs its timestamp and token, not this body. A correlation tag
       // can only delay discarding an event; it cannot establish a receipt.
       const tags = Array.isArray(data['tags']) ? data['tags'] : []
-      const hints = tags.flatMap(tag => {
+      const variables = asObject(data['user-variables'])
+      const metadata = text(variables?.['ezacto_idempotency_key'], 128)
+      const candidates = [...tags, ...(metadata === null ? [] : [`ezacto_idempotency_key:${metadata}`])]
+      const hints = candidates.flatMap(tag => {
         if (typeof tag !== 'string') return []
         const match = /^ezacto_idempotency_key:ezacto-reminder-([1-9][0-9]{0,15})-([a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12})$/u.exec(tag)
         if (!match || !Number.isSafeInteger(Number(match[1]))) return []

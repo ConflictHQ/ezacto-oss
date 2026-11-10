@@ -100,6 +100,7 @@ interface EventInput {
   key?: string
   reason?: string
   tags?: string[]
+  variables?: Record<string, string>
 }
 
 const post = (input: EventInput): string => {
@@ -114,6 +115,7 @@ const post = (input: EventInput): string => {
       recipient: input.recipient ?? 'owner@example.test',
       ...(input.reason === undefined ? {} : { reason: input.reason }),
       ...(input.tags === undefined ? {} : { tags: input.tags }),
+      ...(input.variables === undefined ? {} : { 'user-variables': input.variables }),
       message: { headers: { 'message-id': input.messageId ?? 'mg-a' } },
     },
   })
@@ -468,17 +470,19 @@ for (const [runtime, factory] of [
       const attempt = 'b5f88b55-bc30-4bf2-94f5-350849e4b6c0'
       const queued = await current.log.createQueued({ ...message('a@example.test'), template: 'reminder:1' })
       await current.log.claimAttempt(queued.id, 'mailgun', attempt, 30)
-      const tag = `ezacto_idempotency_key:ezacto-reminder-${queued.id}-${attempt}`
+      const tag = `ezacto-reminder-${attempt.slice(0, 2)}`
+      const key = `ezacto-reminder-${queued.id}-${attempt}`
       const fetch = vi.fn(async (request: Request) => {
         expect(request.method).toBe('GET')
         expect(new URL(request.url).searchParams.get('tags')).toBe(tag)
         return Response.json({ items: [{ id: 'auth-event', event: 'failed', severity: 'permanent', timestamp: seconds,
-          recipient: 'owner@example.test', tags: [tag], message: { headers: { 'message-id': '<mg-a>' } } }] })
+          recipient: 'owner@example.test', tags: [tag], 'user-variables': { ezacto_idempotency_key: key },
+          message: { headers: { 'message-id': '<mg-a>' } } }] })
       })
       const provider = new MailgunMailer({ apiKey: 'fixture-key', domain: 'mail.example.test' }, { fetch })
       const service = createMailgunFeedbackService({ signingKey: fixtureKey, log: current.log, ledger: current.ledger,
         now: () => new Date(Date.parse(instant) + 60_000), verifyHeldReminder: input => provider.inspectReminderEvent(input) })
-      const event = post({ id: 'auth-event', tags: [tag] })
+      const event = post({ id: 'auth-event', tags: [tag], variables: { ezacto_idempotency_key: key } })
       expect(await service.receive(event)).toEqual({ kind: 'applied', outcome: 'bounced' })
       expect(await current.log.get(queued.id)).toMatchObject({ status: 'bounced', providerMessageId: 'mg-a' })
       expect(fetch).toHaveBeenCalledTimes(1)

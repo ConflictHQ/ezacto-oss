@@ -1,4 +1,5 @@
 import { createCalendarOperatorCleanupStore } from '@ezacto/db/d1'
+import { runReminderReconciliation } from './reminder-reconciliation.js'
 import { createConfiguredCalendarServices } from '@ezacto/integrations'
 import { createCalendarOAuthStore } from '@ezacto/db/d1'
 import { createConfiguredBankFeedRuntime } from '@ezacto/integrations'
@@ -1316,6 +1317,9 @@ export const createRuntimeServices = async (
     harvestInvoices: moneyResources,
     bankDeposits: createBankDepositReviewService(drizzle),
     bankFeeds: createConfiguredBankFeedRuntime({store:createBankDepositIngestionService(drizzle),environment:credentials}),
+    ...(emailProvider instanceof MailgunMailer && !demo ? {
+      reminderReconciliation: { processDue: () => runReminderReconciliation({ store: emailLog, lookup: emailProvider }) },
+    } : {}),
     invoiceGeneration: createInvoiceGenerationService(drizzle),
     recurringInvoices: createRecurringInvoiceEngine(drizzle),
     reminders: { processDue: processDueReminders },
