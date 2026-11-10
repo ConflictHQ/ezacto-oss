@@ -1,3 +1,4 @@
+import { quickBooksWriteIntentsMigration } from './migrations/0184_quickbooks_write_intents.js'
 import { quickBooksRefreshOwnershipMigration } from './migrations/0183_quickbooks_refresh_ownership.js'
 import { managedWiseConnectionMigration } from './migrations/0182_managed_wise_connection.js'
 import { quickBooksReconnectFenceMigration } from './migrations/0181_quickbooks_reconnect_fence.js'
@@ -1725,6 +1726,7 @@ const migrations = [
   { id: '0181_quickbooks_reconnect_fence', statements: quickBooksReconnectFenceMigration },
   { id: '0182_managed_wise_connection', statements: managedWiseConnectionMigration },
   { id: '0183_quickbooks_refresh_ownership', statements: quickBooksRefreshOwnershipMigration },
+  { id: '0184_quickbooks_write_intents', statements: quickBooksWriteIntentsMigration },
 ] as const
 
 // Fixtures assert against this rather than re-listing ids: a hand-copied ledger merges

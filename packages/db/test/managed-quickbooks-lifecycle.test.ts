@@ -294,7 +294,7 @@ describe.each(['sqlite', 'd1'] as const)('managed QuickBooks lifecycle fence %s'
     expect(await everything(f, true, existing)).toBe(before)
     const added = (await f.db.all<{ name: string }>(sql.raw("SELECT name FROM sqlite_schema WHERE type='table'")))
       .map(row => row.name).filter(name => !existing.includes(name)).sort()
-    expect(added).toEqual(['quickbooks_refresh_attempts','wise_managed_commands','wise_managed_connection'])
+    expect(added).toEqual(['quickbooks_refresh_attempts','quickbooks_write_attempts','quickbooks_write_effects','quickbooks_write_request_chunks','quickbooks_write_response_chunks','wise_managed_commands','wise_managed_connection'])
     expect(await f.rows('quickbooks_refresh_attempts')).toEqual([])
     expect(await f.rows('wise_managed_commands')).toEqual([])
     expect(await f.rows('wise_managed_connection')).toMatchObject([{ singleton: 1, generation: 0, status: 'disconnected' }])

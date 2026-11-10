@@ -341,3 +341,5 @@ export { GithubPublicationError, type GithubPublicationAuthority, type GithubPub
 export * from './work-items/publication.js'
 
 export * from './quickbooks/managed-refresh.js'
+
+export * from './quickbooks/managed-writes.js'
