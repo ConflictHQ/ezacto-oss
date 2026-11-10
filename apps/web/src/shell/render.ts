@@ -1077,9 +1077,7 @@ ${instancePalette ? `  <link rel="stylesheet" href="${INSTANCE_THEME_STYLESHEET_
         <div><dt>Due</dt><dd data-invoice-detail-due-date>—</dd></div>
         <div><dt>Period</dt><dd data-invoice-detail-period>—</dd></div>
         <div><dt>Purchase order</dt><dd data-invoice-detail-purchase-order>—</dd></div>
-        <div data-invoice-rounding-fact hidden><dt>Time rounding</dt><dd><span data-invoice-detail-rounding></span> <small class="hint">The rule today. Hours already on this invoice keep the rounding they were saved with.</small></dd></div>
-        <div data-invoice-quickbooks-fact hidden><dt>QuickBooks</dt><dd data-invoice-detail-quickbooks>—</dd></div>
-        <div data-invoice-reminders-fact hidden><dt>Reminders</dt><dd><span data-invoice-detail-reminders>—</span> <label class="invoice-reminders-switch"><input type="checkbox" data-invoice-reminders-toggle> Send payment reminders</label></dd></div>
+
       </dl>
       ${renderInvoiceLineEditor()}
       <div class="invoice-line-wrap">
@@ -1111,6 +1109,13 @@ ${instancePalette ? `  <link rel="stylesheet" href="${INSTANCE_THEME_STYLESHEET_
         <ul data-invoice-detail-messages></ul>
       </section>
     </article>
+    <aside class="invoice-internal" data-invoice-internal aria-label="Internal invoice settings">
+      <dl class="invoice-facts">
+        <div data-invoice-rounding-fact hidden><dt>Time rounding</dt><dd><span data-invoice-detail-rounding></span> <small class="hint">The rule today. Hours already on this invoice keep the rounding they were saved with.</small></dd></div>
+        <div data-invoice-quickbooks-fact hidden><dt>QuickBooks</dt><dd data-invoice-detail-quickbooks>—</dd></div>
+        <div data-invoice-reminders-fact hidden><dt>Reminders</dt><dd><span data-invoice-detail-reminders>—</span> <label class="invoice-reminders-switch"><input type="checkbox" data-invoice-reminders-toggle> Send payment reminders</label></dd></div>
+      </dl>
+    </aside>
   </main>
   ${renderInvoiceEditPage(view)}
   <!--
