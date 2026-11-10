@@ -16,6 +16,7 @@ import { createDeelStagingRuntime } from '@ezacto/integrations'
 import { createCsvImportApply } from './csv-apply-service.js'
 import { createCsvApplyRunStore } from '@ezacto/db'
 import { reportWorkerError, runtimeTraceId, type WorkerErrorReporter } from '../../worker/src/error-reporting.js'
+import type { WorkerManagedBill } from '../../worker/src/managed-providers.js'
 import { moduleAvailability } from '@ezacto/api'
 import { createOrganizationHolidayRepository } from '@ezacto/db'
 import { demoDeployment } from '../../worker/src/app.js'
@@ -347,7 +348,15 @@ export interface ContainerRuntime {
   close(timeoutMs?: number): Promise<void>
 }
 
+export class ManagedBillUnsupportedRuntimeError extends Error {
+  readonly code = 'capability_unsupported'
+  constructor() {
+    super('Managed BILL is not supported by the container entry. Configure it through a supported host adapter.')
+    this.name = 'ManagedBillUnsupportedRuntimeError'
+  }
+}
 export interface ContainerRuntimeOptions {
+  managedBill?: WorkerManagedBill
   reportError?: WorkerErrorReporter
   calendarSources?: Parameters<typeof createCalendarSyncService>[0]['sources']
   emailProvider?: HttpEmailProvider
@@ -454,6 +463,7 @@ export const createContainerRuntime = async (
   config: ContainerConfig,
   options: ContainerRuntimeOptions = {},
 ): Promise<ContainerRuntime> => {
+  if (options.managedBill !== undefined) throw new ManagedBillUnsupportedRuntimeError()
   await ensureDataDirectory(config.dataDirectory)
   await assertNoIncompletePrivacyRestore(config.dataDirectory)
   await assertDatabasePath(config.databasePath)

@@ -97,11 +97,11 @@ it('does not report expected 4xx API errors and observes asynchronous API-port r
   await expect(Promise.all(pending)).resolves.toEqual([undefined])
 })
 
-it('[#1235] passes the trusted managed composition to fetch, queue and scheduled without serializing it', async () => {
+it.each(['managedQuickBooks', 'managedBill'] as const)('passes %s to fetch, queue and scheduled without serializing it', async option => {
   const failure = new Error('Owned composition boundary stop')
   vi.mocked(createRuntimeServices).mockRejectedValue(failure)
-  const managedQuickBooks = { configured: () => false, compose: vi.fn(async () => null) }
-  const worker = createWorker({ managedQuickBooks })
+  const port = { configured: () => false, compose: vi.fn(async () => null) }
+  const worker = createWorker({ [option]: port })
   const { ctx } = context()
   const configured = { ...env, MAILGUN_API_KEY: 'fixture-key', MAILGUN_DOMAIN: 'example.test', MAIL_FROM: 'mail@example.test' }
   expect((await worker.fetch!(incoming('https://fixture.invalid/api/v1/profile'), configured, ctx)).status).toBe(503)
@@ -109,8 +109,21 @@ it('[#1235] passes the trusted managed composition to fetch, queue and scheduled
   await expect(worker.scheduled!({ cron: '0 * * * *', scheduledTime: Date.now(), noRetry() {} }, configured, ctx)).rejects.toBe(failure)
   expect(createRuntimeServices).toHaveBeenCalledTimes(3)
   for (const [bindings, options] of vi.mocked(createRuntimeServices).mock.calls) {
-    expect(options?.managedQuickBooks).toBe(managedQuickBooks)
-    expect(bindings).not.toHaveProperty('managedQuickBooks')
+    expect(options?.[option]).toBe(port)
+    expect(bindings).not.toHaveProperty(option)
   }
-  expect(managedQuickBooks.compose).not.toHaveBeenCalled()
+  expect(port.compose).not.toHaveBeenCalled()
+})
+
+it('[#1252] the service-free shell reads pure tenant BILL availability without composing a runtime', async () => {
+  const binding = {} as D1Database
+  const managedBill = { configured: vi.fn((scope: object) => scope === binding), compose: vi.fn(async () => null) }
+  const worker = createWorker({ managedBill })
+  const { ctx } = context()
+  const response = await worker.fetch!(incoming('https://fixture.invalid/invoices'), { ...env, DB: binding }, ctx)
+  expect(response.status).toBe(200)
+  expect(await response.text()).toContain('data-accounting-provider="bill" data-provider-available="true"')
+  expect(managedBill.configured).toHaveBeenCalledWith(binding)
+  expect(managedBill.compose).not.toHaveBeenCalled()
+  expect(createRuntimeServices).not.toHaveBeenCalled()
 })

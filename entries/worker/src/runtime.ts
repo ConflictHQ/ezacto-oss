@@ -1,4 +1,4 @@
-import { managedQuickBooksAvailable, type WorkerManagedQuickBooks } from './managed-providers.js'
+import { managedQuickBooksAvailable, managedBillAvailable, type WorkerManagedQuickBooks, type WorkerManagedBill } from './managed-providers.js'
 import { createCalendarOperatorCleanupStore } from '@ezacto/db/d1'
 import { createConfiguredCalendarServices } from '@ezacto/integrations'
 import { createCalendarOAuthStore } from '@ezacto/db/d1'
@@ -719,6 +719,7 @@ export const createRuntimeServices = async (
   options: {
     /** Trusted tenant runtime; an explicit null never falls back to environment credentials. */
     managedQuickBooks?: WorkerManagedQuickBooks;
+    managedBill?: WorkerManagedBill;
     calendarSources?: Parameters<typeof createCalendarSyncService>[0]['sources'];
     emailProvider?: HttpEmailProvider;
     ses?: SesMailerOptions;
@@ -736,7 +737,10 @@ export const createRuntimeServices = async (
   // Stable per binding, so the readiness cache below still keys on it.
   const database = createIdempotentD1(binding);
   const demo = demoDeployment(env);
-  const credentials = providerCredentials(env);
+  const credentials = options.managedBill === undefined ? providerCredentials(env) : {
+    ...providerCredentials(env), BILL_DEV_KEY: undefined, BILL_COMPANY_ID: undefined,
+    BILL_USERNAME: undefined, BILL_PASSWORD: undefined, BILL_REPLY_TO_USER_ID: undefined,
+  };
   const cursorSigningKey = parseCursorSigningKey(env.API_CURSOR_SIGNING_KEY);
   const csv = !demo && csvWorkerConfigured(env) ? createCsvWorkerRuntime(binding,env.ATTACHMENTS!,env.CSV_IMPORT_QUEUE!,cursorSigningKey,error=>reportWorkerError(options.reportError,error,{phase:'queue',traceId:runtimeTraceId()})) : undefined;
   // Portal magic-link auth is opt-in on the presence of its key. An install
@@ -1004,7 +1008,9 @@ export const createRuntimeServices = async (
   // QuickBooks there is nothing to connect -- BILL has no OAuth -- so the
   // routes mount either way and say whether they can reach anything; what
   // changes with the credential is only whether a mirror can run.
-  const bill = createBillRuntime({
+  const managedBill = options.managedBill !== undefined && managedBillAvailable(options.managedBill, env, binding)
+    ? await options.managedBill.compose({ scope: binding, database }) : null
+  const bill = managedBill ?? createBillRuntime({
     config: {
       devKey: credentials.BILL_DEV_KEY,
       companyId: credentials.BILL_COMPANY_ID,
@@ -1214,7 +1220,17 @@ export const createRuntimeServices = async (
           ]),
       reminders.subscriber,
       ...(quickBooks === null ? [] : [createQuickBooksMirrorSubscriber(quickBooks)]),
-      createBillMirrorSubscriber(bill),
+      { ...createBillMirrorSubscriber({ mirror: (invoiceId: number) => bill.mirror(invoiceId) }),
+        ...(options.managedBill === undefined ? {} : {
+          available: async (event: Readonly<{ aggregateType: string; eventType: string; aggregateId: number }>) => {
+            if (event.aggregateType !== 'invoice' || event.eventType !== 'invoice.sent') return true
+            const source = createBillMirrorSource(drizzle, () => new Date())
+            const invoice = await source.readInvoice(event.aggregateId)
+            if (invoice === null || !(await source.isOptedIn(invoice.clientId))) return true
+            return managedBillAvailable(options.managedBill!, env, binding) && (await bill.status()).configured
+          },
+        }),
+      },
     ],
   });
   const twoFactor = createTwoFactorService({

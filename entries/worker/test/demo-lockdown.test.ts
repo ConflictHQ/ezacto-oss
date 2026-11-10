@@ -301,13 +301,13 @@ describe('the public demo (ENVIRONMENT=dev, DEMO_MODE=true)', () => {
 
   afterAll(async () => fixture.miniflare.dispose())
 
-  it('[security] composes no provider, whatever secrets the deployment holds', () => {
+  it('[security] composes no provider, whatever secrets the deployment holds', async () => {
     expect(providerCredentials(fixture.env)).toEqual({})
     expect(fixture.services.quickBooks).toBeUndefined()
     expect(fixture.services.wise).toBeUndefined()
     expect(fixture.services.wiseWebhook).toBeUndefined()
     expect(fixture.services.stripe!.configured()).toBe(false)
-    expect(fixture.services.bill!.status().configured).toBe(false)
+    expect((await fixture.services.bill!.status()).configured).toBe(false)
   })
 
   it('[security] seeds the deployment’s own sender, attested without calling anyone', async () => {
@@ -966,7 +966,7 @@ describe('production with DEMO_MODE left on (ENVIRONMENT=prod)', () => {
 
   afterAll(async () => fixture.miniflare.dispose())
 
-  it('[security] composes every provider it holds secrets for', () => {
+  it('[security] composes every provider it holds secrets for', async () => {
     expect(providerCredentials(fixture.env)).toMatchObject({
       QUICKBOOKS_CLIENT_ID: 'quickbooks-fixture-id',
       STRIPE_API_KEY: 'sk_test_fixture',
@@ -974,7 +974,7 @@ describe('production with DEMO_MODE left on (ENVIRONMENT=prod)', () => {
     expect(fixture.services.quickBooks).toBeDefined()
     expect(fixture.services.wise).toBeDefined()
     expect(fixture.services.stripe!.configured()).toBe(true)
-    expect(fixture.services.bill!.status().configured).toBe(true)
+    expect((await fixture.services.bill!.status()).configured).toBe(true)
   })
 
   it('[contract] mounts every route the demo refuses, so none of the list is stale', () => {
