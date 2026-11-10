@@ -13,7 +13,8 @@ import {
 } from './runtime.js'
 
 export interface ManagedWiseRuntimeOptions {
-  store: ManagedWiseConnectionStore
+  /** Read/health operations may be backed by separate short host transactions. */
+  store: Pick<ManagedWiseConnectionStore, 'state' | 'readSealed' | 'recordHealth'>
   open: ManagedWiseVault['open']
   accounts: Pick<
     WiseRuntimeOptions['accounts'],

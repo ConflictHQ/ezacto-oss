@@ -205,13 +205,14 @@ export const createManagedWiseConnectionStore = (
     },
     recordHealth: async (generation, healthy, now) => {
       if (!validTime(now) || !Number.isSafeInteger(generation)) return fail('invalid')
-      await atomic([
+      const rows = await atomic([
         {
           text: `UPDATE wise_managed_connection SET status=?,health_at=? WHERE singleton=1 AND generation=?
             AND status IN ('configured','connected','unavailable') RETURNING generation`,
           params: [healthy ? 'connected' : 'unavailable', now, generation],
         },
       ])
+      if (rows[0]?.[0]?.generation !== generation) fail('conflict')
     },
     erase: async (now) => {
       if (!validTime(now)) return fail('invalid')

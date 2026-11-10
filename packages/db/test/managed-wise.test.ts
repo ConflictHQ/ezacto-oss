@@ -183,6 +183,13 @@ describe.each(['sqlite', 'd1'] as const)('managed Wise read-only %s', (backend) 
     )
     expect(await t.store.state()).toMatchObject({ generation: 4, status: 'unavailable' })
   })
+  it('refuses stale health updates after the credential generation changes', async () => {
+    const t = await fixture(backend)
+    data(await t.configure())
+    data(await t.configure('b'.repeat(64), 1, 'PRIVATE_ROTATED'))
+    await expect(t.store.recordHealth(1, true, t.now())).rejects.toMatchObject({ kind: 'conflict' })
+    expect(await t.store.state()).toMatchObject({ generation: 2, status: 'configured' })
+  })
   it('performs no provider I/O while disabled/disconnected/erased and rejects a foreign profile', async () => {
     const t = await fixture(backend),
       runtime = await t.runtime()
