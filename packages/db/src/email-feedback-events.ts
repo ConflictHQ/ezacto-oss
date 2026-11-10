@@ -22,8 +22,8 @@ interface PortableDatabase {
 
 export interface InvoiceFeedbackRecoveryLedger extends EmailFeedbackLedger {
   claimInvoiceFeedbackSweep(token: string, now: string): Promise<string | null>
-  unverifiedInvoiceFeedback(afterId: string, limit: number): Promise<Array<{
-    eventId: string; messageId: string; recipient: string; eventType: 'failed' | 'complained'; receivedAt: string
+  scanInvoiceFeedback(afterId: string, limit: number): Promise<Array<{
+    eventId: string; messageId: string | null; recipient: string | null; eventType: string; receivedAt: string; eligible: number
   }>>
   finishInvoiceFeedbackSweep(token: string, afterId: string, more: boolean, now: string): Promise<boolean>
   recordInvoiceEvidence(eventId: string, now: string): Promise<void>
@@ -141,20 +141,22 @@ const createLedger = (database: PortableDatabase): InvoiceFeedbackRecoveryLedger
     )
     return row?.afterId ?? null
   },
-  async unverifiedInvoiceFeedback(afterId, limit) {
-    if (typeof afterId !== 'string' || afterId.length > 255 || !Number.isSafeInteger(limit) || limit < 1 || limit > 10) {
+  async scanInvoiceFeedback(afterId, limit) {
+    if (typeof afterId !== 'string' || afterId.length > 255 || !Number.isSafeInteger(limit) || limit < 1 || limit > 100) {
       throw new TypeError('invalid invoice feedback sweep page')
     }
-    return database.all<{ eventId: string; messageId: string; recipient: string; eventType: 'failed' | 'complained'; receivedAt: string }>(
-      `SELECT f.event_id AS eventId, f.provider_message_id AS messageId, f.recipient AS recipient,
-        f.event_type AS eventType, f.received_at AS receivedAt
-       FROM email_feedback_events f JOIN email_log e ON e.id = f.delivery_id
-       WHERE f.event_id > ? AND f.processed_at IS NOT NULL AND e.provider = 'mailgun' AND e.template LIKE 'invoice:%'
-         AND e.provider_message_id = f.provider_message_id
-         AND (f.event_type = 'complained' OR (f.event_type = 'failed' AND f.severity = 'permanent'))
-         AND EXISTS (SELECT 1 FROM invoice_email_recipients r WHERE r.delivery_id = e.id AND lower(r.email) = lower(f.recipient))
-         AND NOT EXISTS (SELECT 1 FROM invoice_feedback_provider_evidence p WHERE p.event_id = f.event_id)
-       ORDER BY f.event_id LIMIT ?`, [afterId, limit],
+    return database.all<{ eventId: string; messageId: string | null; recipient: string | null; eventType: string; receivedAt: string; eligible: number }>(
+      `WITH page AS MATERIALIZED (SELECT * FROM email_feedback_events WHERE event_id > ? AND processed_at IS NOT NULL
+        AND (event_type = 'complained' OR (event_type = 'failed' AND severity = 'permanent')) ORDER BY event_id LIMIT ?)
+       SELECT f.event_id AS eventId, f.provider_message_id AS messageId, f.recipient AS recipient,
+        f.event_type AS eventType, f.received_at AS receivedAt,
+        CASE WHEN f.processed_at IS NOT NULL AND e.provider = 'mailgun' AND e.template LIKE 'invoice:%'
+          AND e.provider_message_id = f.provider_message_id
+          AND (f.event_type = 'complained' OR (f.event_type = 'failed' AND f.severity = 'permanent'))
+          AND EXISTS (SELECT 1 FROM invoice_email_recipients r WHERE r.delivery_id = e.id AND lower(r.email) = lower(f.recipient))
+          AND NOT EXISTS (SELECT 1 FROM invoice_feedback_provider_evidence p WHERE p.event_id = f.event_id)
+        THEN 1 ELSE 0 END AS eligible
+       FROM page f LEFT JOIN email_log e ON e.id = f.delivery_id ORDER BY f.event_id`, [afterId, limit],
     )
   },
   async finishInvoiceFeedbackSweep(token, afterId, more, now) {

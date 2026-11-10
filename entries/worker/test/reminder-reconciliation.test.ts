@@ -123,9 +123,9 @@ describe('held Mailgun reminder reconciliation', () => {
   it('records only verified invoice events and retains unmatched evidence for another pass', async () => {
     const token = '7acbff11-1395-4011-a881-c299dad9e890', now = () => '2026-08-28T20:02:00.000Z'
     const ledger = { claimInvoiceFeedbackSweep: vi.fn().mockResolvedValue(''),
-      unverifiedInvoiceFeedback: vi.fn().mockResolvedValue([
-        { eventId: 'event-a', messageId: 'message-a', recipient: 'to@example.test', eventType: 'failed', receivedAt: now() },
-        { eventId: 'event-b', messageId: 'message-b', recipient: 'cc@example.test', eventType: 'complained', receivedAt: now() },
+      scanInvoiceFeedback: vi.fn().mockResolvedValue([
+        { eventId: 'event-a', messageId: 'message-a', recipient: 'to@example.test', eventType: 'failed', receivedAt: now(), eligible: 1 },
+        { eventId: 'event-b', messageId: 'message-b', recipient: 'cc@example.test', eventType: 'complained', receivedAt: now(), eligible: 1 },
       ]), recordInvoiceEvidence: vi.fn(), finishInvoiceFeedbackSweep: vi.fn().mockResolvedValue(true) }
     const lookup = { inspectInvoiceFeedback: vi.fn().mockResolvedValueOnce(true).mockRejectedValueOnce(new Error('fixture provider unavailable')) }
     await runInvoiceFeedbackRecovery({ ledger: ledger as unknown as InvoiceFeedbackRecoveryLedger, lookup, token, now })
@@ -137,14 +137,41 @@ describe('held Mailgun reminder reconciliation', () => {
   it('advances one full invoice evidence page even when provider results are unavailable', async () => {
     const token = '7acbff11-1395-4011-a881-c299dad9e890', now = () => '2026-08-28T20:02:00.000Z'
     const ledger = { claimInvoiceFeedbackSweep: vi.fn().mockResolvedValue('old'),
-      unverifiedInvoiceFeedback: vi.fn().mockResolvedValue(Array.from({ length: 10 }, (_, index) => ({
+      scanInvoiceFeedback: vi.fn().mockResolvedValue(Array.from({ length: 10 }, (_, index) => ({
         eventId: `event-${String(index).padStart(2, '0')}`, messageId: 'message', recipient: 'to@example.test',
-        eventType: 'failed', receivedAt: now(),
+        eventType: 'failed', receivedAt: now(), eligible: 1,
       }))), recordInvoiceEvidence: vi.fn(), finishInvoiceFeedbackSweep: vi.fn().mockResolvedValue(true) }
     const lookup = { inspectInvoiceFeedback: vi.fn().mockResolvedValue(false) }
     await runInvoiceFeedbackRecovery({ ledger: ledger as unknown as InvoiceFeedbackRecoveryLedger, lookup, token, now })
     expect(ledger.recordInvoiceEvidence).not.toHaveBeenCalled()
     expect(ledger.finishInvoiceFeedbackSweep).toHaveBeenCalledExactlyOnceWith(token, 'event-09', true, now())
     expect(lookup.inspectInvoiceFeedback).toHaveBeenCalledTimes(10)
+  })
+
+  it('advances past a bounded page of unrelated feedback without provider calls', async () => {
+    const token = '7acbff11-1395-4011-a881-c299dad9e890', now = () => '2026-08-28T20:02:00.000Z'
+    const ledger = { claimInvoiceFeedbackSweep: vi.fn().mockResolvedValue(''),
+      scanInvoiceFeedback: vi.fn().mockResolvedValue(Array.from({ length: 100 }, (_, index) => ({
+        eventId: `event-${String(index).padStart(3, '0')}`, messageId: null, recipient: null,
+        eventType: 'failed', receivedAt: now(), eligible: 0,
+      }))), recordInvoiceEvidence: vi.fn(), finishInvoiceFeedbackSweep: vi.fn().mockResolvedValue(true) }
+    const lookup = { inspectInvoiceFeedback: vi.fn() }
+    await runInvoiceFeedbackRecovery({ ledger: ledger as unknown as InvoiceFeedbackRecoveryLedger, lookup, token, now })
+    expect(lookup.inspectInvoiceFeedback).not.toHaveBeenCalled()
+    expect(ledger.scanInvoiceFeedback).toHaveBeenCalledExactlyOnceWith('', 100)
+    expect(ledger.finishInvoiceFeedbackSweep).toHaveBeenCalledExactlyOnceWith(token, 'event-099', true, now())
+  })
+
+  it('stops at ten provider lookups without skipping the rest of a scanned page', async () => {
+    const token = '7acbff11-1395-4011-a881-c299dad9e890', now = () => '2026-08-28T20:02:00.000Z'
+    const ledger = { claimInvoiceFeedbackSweep: vi.fn().mockResolvedValue(''),
+      scanInvoiceFeedback: vi.fn().mockResolvedValue(Array.from({ length: 100 }, (_, index) => ({
+        eventId: `event-${String(index).padStart(3, '0')}`, messageId: 'message', recipient: 'to@example.test',
+        eventType: 'failed', receivedAt: now(), eligible: 1,
+      }))), recordInvoiceEvidence: vi.fn(), finishInvoiceFeedbackSweep: vi.fn().mockResolvedValue(true) }
+    const lookup = { inspectInvoiceFeedback: vi.fn().mockResolvedValue(false) }
+    await runInvoiceFeedbackRecovery({ ledger: ledger as unknown as InvoiceFeedbackRecoveryLedger, lookup, token, now })
+    expect(lookup.inspectInvoiceFeedback).toHaveBeenCalledTimes(10)
+    expect(ledger.finishInvoiceFeedbackSweep).toHaveBeenCalledExactlyOnceWith(token, 'event-009', true, now())
   })
 })

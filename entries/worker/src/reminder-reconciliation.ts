@@ -96,10 +96,15 @@ export const runInvoiceFeedbackRecovery = async (input: {
   const token = input.token ?? crypto.randomUUID()
   const afterId = await input.ledger.claimInvoiceFeedbackSweep(token, now())
   if (afterId === null) return
-  const page = await input.ledger.unverifiedInvoiceFeedback(afterId, 10)
+  const page = await input.ledger.scanInvoiceFeedback(afterId, 100)
+  let lastId = afterId, lookups = 0, stoppedEarly = false
   for (const item of page) {
+    lastId = item.eventId
+    if (item.eligible !== 1 || item.messageId === null || item.recipient === null ||
+        (item.eventType !== 'failed' && item.eventType !== 'complained')) continue
     const received = Math.floor(Date.parse(item.receivedAt) / 1000)
     if (!Number.isSafeInteger(received)) continue
+    lookups += 1
     let verified = false
     try {
       verified = await input.lookup.inspectInvoiceFeedback({ eventId: item.eventId, messageId: item.messageId,
@@ -108,7 +113,8 @@ export const runInvoiceFeedbackRecovery = async (input: {
       // Keep this exact record unverified; do not log provider or recipient data.
     }
     if (verified) await input.ledger.recordInvoiceEvidence(item.eventId, now())
+    if (lookups === 10) { stoppedEarly = true; break }
   }
-  const more = page.length === 10
-  await input.ledger.finishInvoiceFeedbackSweep(token, more ? page[page.length - 1]!.eventId : '', more, now())
+  const more = stoppedEarly || page.length === 100
+  await input.ledger.finishInvoiceFeedbackSweep(token, more ? lastId : '', more, now())
 }

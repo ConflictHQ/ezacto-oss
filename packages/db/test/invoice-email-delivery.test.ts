@@ -18,6 +18,13 @@ interface Harness {
 }
 
 const at = '2026-09-02T12:00:00.000Z'
+let startingD1: Miniflare | undefined
+
+const timedD1Setup = async <T>(stage: string, work: () => Promise<T>): Promise<T> => {
+  const notice = setTimeout(() => console.warn(`[invoice-delivery-fixture] ${stage} has not completed after 30 seconds`), 30_000)
+  notice.unref()
+  try { return await work() } finally { clearTimeout(notice) }
+}
 
 const container = async (): Promise<Harness> => {
   const sqlite = new BetterSqlite3(':memory:')
@@ -38,15 +45,26 @@ const d1 = async (): Promise<Harness> => {
     script: 'export default { fetch() { return new Response("ok") } }',
     d1Databases: ['DB'],
   })
-  const database = await miniflare.getD1Database('DB')
-  await migrateD1(database)
-  return {
-    orm: createD1Database(database),
-    ledger: createD1EmailFeedbackLedger(database),
-    run: async (sql, ...bindings) => void await database.prepare(sql).bind(...bindings).run(),
-    rows: async <T>(sql: string, ...bindings: unknown[]) =>
-      (await database.prepare(sql).bind(...bindings).all<T>()).results,
-    close: async () => miniflare.dispose(),
+  startingD1 = miniflare
+  try {
+    const database = await timedD1Setup('D1 binding', () => miniflare.getD1Database('DB'))
+    await timedD1Setup('D1 migrations', () => migrateD1(database))
+    if (startingD1 !== miniflare) throw new Error('D1 fixture setup was closed')
+    startingD1 = undefined
+    return {
+      orm: createD1Database(database),
+      ledger: createD1EmailFeedbackLedger(database),
+      run: async (sql, ...bindings) => void await database.prepare(sql).bind(...bindings).run(),
+      rows: async <T>(sql: string, ...bindings: unknown[]) =>
+        (await database.prepare(sql).bind(...bindings).all<T>()).results,
+      close: async () => miniflare.dispose(),
+    }
+  } catch (error) {
+    if (startingD1 === miniflare) {
+      startingD1 = undefined
+      await miniflare.dispose()
+    }
+    throw error
   }
 }
 
@@ -133,7 +151,13 @@ const command = (
 for (const [name, factory] of [['SQLite', container], ['real D1', d1]] as const) {
   describe(`invoice email persistence (${name})`, () => {
     let database: Harness | undefined
-    afterEach(async () => database?.close())
+    afterEach(async () => {
+      await database?.close()
+      database = undefined
+      const pending = startingD1
+      startingD1 = undefined
+      await pending?.dispose()
+    })
 
     it('atomically persists the immutable version snapshot, event, and recipient receipt', async () => {
       database = await factory()
@@ -304,12 +328,12 @@ for (const [name, factory] of [['SQLite', container], ['real D1', d1]] as const)
       const nextToken = '12345678-1234-4abc-8def-123456789abc'
       expect(await database.ledger.claimInvoiceFeedbackSweep(token, at)).toBe('')
       expect(await database.ledger.claimInvoiceFeedbackSweep(nextToken, at)).toBeNull()
-      expect(await database.ledger.unverifiedInvoiceFeedback('', 10)).toMatchObject([{ eventId: 'bounce-proof', recipient: 'bad@example.net' }])
+      expect(await database.ledger.scanInvoiceFeedback('', 10)).toMatchObject([{ eventId: 'bounce-proof', recipient: 'bad@example.net', eligible: 1 }])
       const later = new Date(Date.parse(at) + 181_000).toISOString()
       expect(await database.ledger.claimInvoiceFeedbackSweep(nextToken, later)).toBe('')
       expect(await database.ledger.finishInvoiceFeedbackSweep(token, '', false, later)).toBe(false)
       await database.ledger.recordInvoiceEvidence('bounce-proof', at)
-      expect(await database.ledger.unverifiedInvoiceFeedback('', 10)).toEqual([])
+      expect(await database.ledger.scanInvoiceFeedback('', 10)).toMatchObject([{ eventId: 'bounce-proof', eligible: 0 }])
       expect(await database.ledger.finishInvoiceFeedbackSweep(nextToken, '', false, later)).toBe(true)
       const eligible = [{ name: 'Client', email: 'client@example.net', role: 'to' },
         { name: 'Good', email: 'good@example.net', role: 'cc' }]

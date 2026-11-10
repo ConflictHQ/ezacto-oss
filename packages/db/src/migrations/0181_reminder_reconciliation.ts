@@ -15,6 +15,8 @@ export const reminderReconciliationMigration = [
     CHECK ((lease_token IS NULL) = (lease_expires_at IS NULL))
   ) STRICT`,
   `INSERT INTO invoice_feedback_recovery_cursor(id) VALUES(1)`,
+  `CREATE INDEX invoice_feedback_recovery_candidates ON email_feedback_events(event_id)
+    WHERE processed_at IS NOT NULL AND (event_type = 'complained' OR (event_type = 'failed' AND severity = 'permanent'))`,
   `CREATE INDEX email_log_held_mailgun_id ON email_log(id)
     WHERE status = 'queued' AND provider = 'mailgun' AND active_attempt_id IS NOT NULL`,
   `CREATE TABLE reminder_reconciliation_feedback (
