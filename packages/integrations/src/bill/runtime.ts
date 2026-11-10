@@ -12,6 +12,7 @@ import {
   inboundPayments,
   mirrorInvoice,
   type BillDelivery,
+  type BillEffectFence,
   type BillLinkStore,
   type BillMirrorOutcome,
   type MirrorBill,
@@ -100,6 +101,8 @@ export interface BillRuntimeOptions {
   readonly source: BillMirrorSource
   readonly fetch: (request: Request) => Promise<Response>
   readonly now: () => Date
+  /** Durable holds around provider effects; set for a tenant-owned connection. */
+  readonly fence?: BillEffectFence
 }
 
 export interface BillRuntime {
@@ -277,6 +280,7 @@ export const createBillRuntime = (
         links,
         bill: mirrorBill(await signedIn()),
         delivery: delivery(),
+        ...(options.fence === undefined ? {} : { fence: options.fence }),
       })
     },
 
@@ -292,6 +296,7 @@ export const createBillRuntime = (
         links,
         bill: mirrorBill(await signedIn()),
         delivery: delivery(),
+        ...(options.fence === undefined ? {} : { fence: options.fence }),
       })
       return outcome.kind === 'refused' ? null : outcome.paymentLink
     },

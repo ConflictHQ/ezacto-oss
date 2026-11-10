@@ -8,7 +8,7 @@ import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest
 import { createContainerDatabase, createD1Database } from '../src/adapters.js'
 import { migrateContainer, migrateD1 } from '../src/migrate.js'
 import { createContainerSessionStore, createD1SessionStore } from '../src/sessions.js'
-import { createBillLinkStore } from '../src/bill.js'
+import { createBillEffectFenceStore, createBillLinkStore } from '../src/bill.js'
 import { createManagedBillConnectionStore } from '../src/index.js'
 import { createApiSessionService } from '../../api/src/sessions.js'
 import { createManagedBillConnectionCommands, createApiApp } from '../../api/src/index.js'
@@ -199,6 +199,7 @@ const tenant = async (runtime: 'sqlite' | 'd1', name: string, company: string) =
       open: (sealed, generation) => vault.open(sealed, generation),
       isEnabled: async () => enabled,
       links,
+      fence: (generation) => createBillEffectFenceStore(db, generation, () => new Date(now)),
       source,
       fetch: bill.fetch,
       now: () => new Date(now),

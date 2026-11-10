@@ -3,7 +3,7 @@ import {
   type BillMirrorSource,
   type BillRuntime,
 } from './runtime.js'
-import type { BillLinkStore, BillMirrorOutcome } from './mirror.js'
+import type { BillEffectFence, BillLinkStore, BillMirrorOutcome } from './mirror.js'
 
 /**
  * A tenant-owned BILL connection composed from the same runtime a self-hosted
@@ -56,6 +56,8 @@ export interface ManagedBillRuntimeOptions {
   /** False while the capability is disabled or the tenant is suspended or closing. */
   readonly isEnabled?: () => Promise<boolean>
   readonly links: BillLinkStore
+  /** Holds bound to the stored connection generation they were taken under. */
+  readonly fence: (generation: number) => BillEffectFence
   readonly source: BillMirrorSource
   readonly fetch: (request: Request) => Promise<Response>
   readonly now: () => Date
@@ -123,6 +125,7 @@ export const createManagedBillRuntime = (
           environment: credentials.environment,
         },
         links: options.links,
+        fence: options.fence(sealed.generation),
         source: options.source,
         fetch,
         now: options.now,
