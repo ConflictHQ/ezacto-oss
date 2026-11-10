@@ -24,7 +24,7 @@ describe("held reminder evidence", () => {
     messageId: "mg-1", recipient: "owner@example.test", eventType: "delivered" as const, begin: 100, end: 200 };
   const key = "ezacto-reminder-7-b5f88b55-bc30-4bf2-94f5-350849e4b6c0";
   const tag = "ezacto-reminder-b5";
-  const event = { id: "evt-1", event: "delivered", timestamp: 150, recipient: "owner@example.test",
+  const event = { id: "evt-1", event: "delivered", timestamp: 150, recipient: "owner@example.test", flags: { 'is-test-mode': false },
     tags: [tag], "user-variables": { ezacto_idempotency_key: key }, message: { headers: { "message-id": "<mg-1>" } } };
 
   it("uses a bounded tag shard and keeps the exact attempt as metadata", async () => {
@@ -49,7 +49,7 @@ describe("held reminder evidence", () => {
 
   it("[security #1352] does not infer acceptance from missing or mismatched evidence", async () => {
     for (const item of [null, { ...event, recipient: "other@example.test" }, { ...event, id: "other" },
-      { ...event, tags: ["other"] }, { ...event, timestamp: 201 }, { ...event, flags: { "is-test-mode": true } },
+      { ...event, tags: ["other"] }, { ...event, timestamp: 201 }, { ...event, flags: { "is-test-mode": true } }, { ...event, flags: {} },
       { ...event, message: { headers: { "message-id": "other" } } }]) {
       const provider = new MailgunMailer(config, { fetch: async () => response({ items: item === null ? [] : [item] }) });
       expect(await provider.inspectReminderEvent(scope)).toBe(false);
@@ -90,6 +90,8 @@ describe("held reminder evidence", () => {
     expect(await query([{ ...event, timestamp: 201 }])).toBeNull();
     expect(await query([{ ...event, event: "failed", severity: "temporary" }])).toBeNull();
     expect(await query([{ ...event, flags: { "is-test-mode": true } }])).toBeNull();
+    expect(await query([{ ...event, flags: {} }])).toBeNull();
+    expect(await query([event, { ...event, event: 'failed', severity: 'permanent', flags: {} }])).toBeNull();
     expect(await query([event, { ...event, message: { headers: { "message-id": "other" } } }])).toBeNull();
     expect(await query([{ ...event, event: "failed", severity: "permanent" }])).toEqual({ messageId: "mg-1",
       feedback: [{ eventId: "evt-1", recipient: "owner@example.test", type: "failed" }] });
@@ -186,6 +188,24 @@ describe("held reminder evidence", () => {
       const unsafe = vi.fn().mockResolvedValue(paging(next));
       expect(await new MailgunMailer(config, { fetch: unsafe }).findReminderReceipt(lookup)).toBeNull();
       expect(unsafe).toHaveBeenCalledOnce();
+    }
+  });
+
+  it('independently verifies an invoice terminal event without trusting webhook fields alone', async () => {
+    const input = { eventId: 'evt-1', messageId: 'mg-1', recipient: 'owner@example.test',
+      eventType: 'failed' as const, begin: 100, end: 200 };
+    const terminal = { ...event, event: 'failed', severity: 'permanent' };
+    let request: Request | undefined;
+    const lookup = async (item: unknown) => new MailgunMailer(config, { fetch: async value => {
+      request = value; return response({ items: item === null ? [] : [item] });
+    } }).inspectInvoiceFeedback(input);
+    expect(await lookup(terminal)).toBe(true);
+    expect(new URL(request!.url).searchParams.get('message-id')).toBe('mg-1');
+    expect(request!.url).not.toContain(input.recipient);
+    for (const item of [null, { ...terminal, id: 'another' }, { ...terminal, recipient: 'other@example.test' },
+      { ...terminal, severity: 'temporary' }, { ...terminal, timestamp: 201 },
+      { ...terminal, flags: { 'is-test-mode': true } }, { ...terminal, flags: {} }, { ...terminal, message: { headers: { 'message-id': 'other' } } }]) {
+      expect(await lookup(item)).toBe(false);
     }
   });
 });

@@ -23,6 +23,22 @@ export const reminderReconciliationMigration = [
     signature_token TEXT PRIMARY KEY CHECK(length(trim(signature_token)) BETWEEN 1 AND 255),
     event_id TEXT NOT NULL REFERENCES email_feedback_events(event_id) ON DELETE RESTRICT
   ) STRICT`,
+  `CREATE TABLE invoice_feedback_provider_evidence (
+    event_id TEXT PRIMARY KEY REFERENCES email_feedback_events(event_id) ON DELETE RESTRICT,
+    verified_at TEXT NOT NULL
+  ) STRICT`,
+  `CREATE TRIGGER invoice_feedback_provider_evidence_guard BEFORE INSERT ON invoice_feedback_provider_evidence
+    BEGIN SELECT CASE WHEN NOT EXISTS (
+      SELECT 1 FROM email_feedback_events f JOIN email_log e ON e.id = f.delivery_id
+      JOIN invoice_email_recipients r ON r.delivery_id = e.id AND lower(r.email) = lower(f.recipient)
+      WHERE f.event_id = NEW.event_id AND e.template LIKE 'invoice:%' AND e.provider = 'mailgun'
+        AND e.provider_message_id IS NOT NULL AND e.provider_message_id = f.provider_message_id
+        AND (f.event_type = 'complained' OR (f.event_type = 'failed' AND f.severity = 'permanent'))
+    ) THEN RAISE(ABORT, 'invoice feedback evidence mismatch') END; END`,
+  `CREATE TRIGGER invoice_feedback_provider_evidence_immutable BEFORE UPDATE ON invoice_feedback_provider_evidence
+    BEGIN SELECT RAISE(ABORT, 'invoice feedback evidence is immutable'); END`,
+  `CREATE TRIGGER invoice_feedback_provider_evidence_append_only BEFORE DELETE ON invoice_feedback_provider_evidence
+    BEGIN SELECT RAISE(ABORT, 'invoice feedback evidence is append-only'); END`,
   `CREATE TRIGGER reminder_reconciliation_feedback_guard BEFORE INSERT ON reminder_reconciliation_feedback
     BEGIN
       SELECT CASE WHEN NOT EXISTS (SELECT 1 FROM email_log e WHERE e.id = NEW.delivery_id

@@ -114,6 +114,12 @@ const createLedger = (database: PortableDatabase): EmailFeedbackLedger => ({
         AND template LIKE 'reminder:%' AND active_attempt_id = ? LIMIT 1`, [deliveryId, provider, attemptId])
     return row !== null
   },
+  async recordInvoiceEvidence(eventId, now) {
+    await database.all(
+      `INSERT INTO invoice_feedback_provider_evidence(event_id, verified_at) VALUES (?, ?)
+       ON CONFLICT(event_id) DO NOTHING RETURNING event_id`, [eventId, now],
+    )
+  },
   async attemptInFlight(provider, now) {
     const row = await database.first<{ held: number }>(
       `SELECT 1 AS held FROM email_log

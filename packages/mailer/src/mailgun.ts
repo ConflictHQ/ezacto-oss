@@ -306,10 +306,45 @@ export class MailgunMailer implements HttpEmailProvider {
       const flags = item.flags && typeof item.flags === 'object' && !Array.isArray(item.flags) ? item.flags as Record<string, unknown> : null;
       const rawId = typeof headers?.['message-id'] === 'string' ? headers['message-id'].replace(/^<|>$/gu, '') : null;
       return item.id === eventId && item.event === input.eventType &&
-        (input.eventType !== 'failed' || item.severity === 'permanent') && flags?.['is-test-mode'] !== true && rawId === messageId &&
+        (input.eventType !== 'failed' || item.severity === 'permanent') && flags?.['is-test-mode'] === false && rawId === messageId &&
         typeof item.timestamp === 'number' && Number.isFinite(item.timestamp) && item.timestamp >= input.begin && item.timestamp <= input.end &&
         typeof item.recipient === 'string' && item.recipient.toLowerCase() === recipient &&
         Array.isArray(item.tags) && item.tags.includes(tag) && variables?.ezacto_idempotency_key === key;
+    });
+  }
+
+  /** Independently verify one invoice feedback event against the configured
+   * Mailgun domain. A positive result is evidence of this event only, not an
+   * authorization to change an audience or a claim that other mail delivered. */
+  async inspectInvoiceFeedback(input: {
+    eventId: string; messageId: string; recipient: string;
+    eventType: 'failed' | 'complained'; begin: number; end: number; signal?: AbortSignal;
+  }): Promise<boolean> {
+    if (!Number.isSafeInteger(input.begin) || !Number.isSafeInteger(input.end) ||
+        input.end <= input.begin || input.end - input.begin > 86_400 ||
+        !['failed', 'complained'].includes(input.eventType)) {
+      throw new TypeError('Mailgun invoice feedback scope is invalid');
+    }
+    const eventId = bounded(input.eventId, 'Mailgun event id', 255);
+    const messageId = bounded(input.messageId, 'Mailgun message id', 512).replace(/^<|>$/gu, '');
+    const recipient = bounded(input.recipient, 'Mailgun recipient', 254).toLowerCase();
+    if (!messageId || !emailPattern.test(recipient)) throw new TypeError('Mailgun invoice feedback scope is invalid');
+    const url = new URL(`${baseUrl(this.region)}/v3/${encodeURIComponent(this.domain)}/events`);
+    url.search = new URLSearchParams({ begin: String(input.begin), end: String(input.end), ascending: 'yes',
+      limit: '100', 'message-id': messageId }).toString();
+    const signal = input.signal === undefined ? AbortSignal.timeout(10_000) : AbortSignal.any([input.signal, AbortSignal.timeout(10_000)]);
+    const evidence = await this.reminderEvidencePages(url, signal);
+    return evidence.items.some(value => {
+      if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
+      const item = value as Record<string, unknown>;
+      const message = item.message && typeof item.message === 'object' && !Array.isArray(item.message) ? item.message as Record<string, unknown> : null;
+      const headers = message?.headers && typeof message.headers === 'object' && !Array.isArray(message.headers) ? message.headers as Record<string, unknown> : null;
+      const flags = item.flags && typeof item.flags === 'object' && !Array.isArray(item.flags) ? item.flags as Record<string, unknown> : null;
+      const rawId = typeof headers?.['message-id'] === 'string' ? headers['message-id'].replace(/^<|>$/gu, '') : null;
+      return item.id === eventId && item.event === input.eventType &&
+        (input.eventType !== 'failed' || item.severity === 'permanent') && flags?.['is-test-mode'] === false && rawId === messageId &&
+        typeof item.timestamp === 'number' && Number.isFinite(item.timestamp) && item.timestamp >= input.begin && item.timestamp <= input.end &&
+        typeof item.recipient === 'string' && item.recipient.toLowerCase() === recipient;
     });
   }
 
@@ -361,12 +396,16 @@ export class MailgunMailer implements HttpEmailProvider {
       const headers = message?.headers && typeof message.headers === 'object' && !Array.isArray(message.headers) ? message.headers as Record<string, unknown> : null;
       const variables = item['user-variables'] && typeof item['user-variables'] === 'object' && !Array.isArray(item['user-variables']) ? item['user-variables'] as Record<string, unknown> : null;
       const flags = item.flags && typeof item.flags === 'object' && !Array.isArray(item.flags) ? item.flags as Record<string, unknown> : null;
+      const terminal = item.event === 'failed' || item.event === 'complained';
+      if (terminal && flags?.['is-test-mode'] !== true && flags?.['is-test-mode'] !== false &&
+          (item.event !== 'failed' || item.severity === 'permanent') &&
+          typeof item.timestamp === 'number' && Number.isFinite(item.timestamp) && item.timestamp >= input.begin && item.timestamp <= input.end &&
+          Array.isArray(item.tags) && item.tags.includes(tag) && variables?.ezacto_idempotency_key === key) invalidTerminal = true;
       if (!['accepted', 'delivered', 'failed', 'complained'].includes(String(item.event)) ||
           (item.event === 'failed' && item.severity !== 'permanent') ||
-          flags?.['is-test-mode'] === true ||
+          flags?.['is-test-mode'] !== false ||
           typeof item.timestamp !== 'number' || !Number.isFinite(item.timestamp) || item.timestamp < input.begin || item.timestamp > input.end ||
           !Array.isArray(item.tags) || !item.tags.includes(tag) || variables?.ezacto_idempotency_key !== key) continue;
-      const terminal = item.event === 'failed' || item.event === 'complained';
       if (typeof item.recipient !== 'string' || !recipients.has(item.recipient.toLowerCase()) || typeof headers?.['message-id'] !== 'string') {
         if (terminal) invalidTerminal = true;
         continue;

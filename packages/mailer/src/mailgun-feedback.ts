@@ -51,6 +51,8 @@ export interface EmailFeedbackLedger {
   attemptInFlight(provider: string, now: string): Promise<boolean>
   /** Untrusted correlation is only a hint to delay disposition, never evidence. */
   heldReminderAttempt?(provider: string, deliveryId: number, attemptId: string): Promise<boolean>
+  /** Called only after an independent provider lookup verifies the exact event. */
+  recordInvoiceEvidence?(eventId: string, now: string): Promise<void>
 }
 
 export type MailgunFeedbackResult =
@@ -76,6 +78,8 @@ export interface MailgunFeedbackOptions {
   /** Authenticated provider observation; false never proves absence. */
   verifyHeldReminder?: (input: { deliveryId: number; attemptId: string; eventId: string; messageId: string; recipient: string;
     eventType: 'delivered' | 'failed' | 'complained'; begin: number; end: number }) => Promise<boolean>
+  verifyInvoiceFeedback?: (input: { eventId: string; messageId: string; recipient: string;
+    eventType: 'failed' | 'complained'; begin: number; end: number }) => Promise<boolean>
 }
 
 const encoder = new TextEncoder()
@@ -234,6 +238,21 @@ export const createMailgunFeedbackService = (
         now: at,
       })
       if (claim === 'token_reused') return { kind: 'replayed' }
+      // The webhook signature authenticates its token, not its body. Store
+      // recipient-level evidence only after an authenticated provider lookup.
+      if (record?.template.startsWith('invoice:') && record.provider === 'mailgun' && providerMessageId !== null && recipient !== null &&
+          (eventType === 'complained' || (eventType === 'failed' && severity === 'permanent')) &&
+          [...record.to, ...record.cc].some(person => person.email.toLowerCase() === recipient) &&
+          options.verifyInvoiceFeedback !== undefined && options.ledger.recordInvoiceEvidence !== undefined) {
+        try {
+          const seconds = Math.floor(current.getTime() / 1000)
+          if (await options.verifyInvoiceFeedback({ eventId, messageId: providerMessageId, recipient, eventType,
+            begin: seconds - 86_100, end: seconds + 300 })) await options.ledger.recordInvoiceEvidence(eventId, at)
+        } catch {
+          // Ordinary feedback processing remains available, but it cannot be
+          // used as recipient-level proof until a later independent lookup.
+        }
+      }
       if (claim === 'duplicate') return { kind: 'duplicate' }
 
       const finish = async (

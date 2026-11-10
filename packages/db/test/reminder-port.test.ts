@@ -1,8 +1,12 @@
 import BetterSqlite3 from 'better-sqlite3'
+import { createHmac } from 'node:crypto'
 import { afterEach, describe, expect, it } from 'vitest'
+import { createMailgunFeedbackService, MailgunMailer } from '@ezacto/mailer'
 import { createContainerDatabase } from '../src/adapters.js'
 import { migrateContainer } from '../src/migrate.js'
 import { createContainerEmailConfigurationStore } from '../src/email-configuration.js'
+import { createContainerEmailFeedbackLedger } from '../src/email-feedback-events.js'
+import { createContainerEmailLogStore } from '../src/email-log.js'
 import { executeInvoiceLifecycleCommand, recordInvoicePayment } from '../src/invoice-state.js'
 import { createContainerOutboxService } from '../src/outbox.js'
 import { createContainerReminderScheduler } from '../src/reminders.js'
@@ -283,7 +287,38 @@ describe('an overdue invoice is reminded', () => {
     expect(await readThankYouRecipients(orm, 1)).toEqual([])
     expect(await hasRetryableFollowUpDelivery(orm, 1)).toBe(true)
     database.prepare(`UPDATE email_feedback_events SET processed_at = ?, outcome = 'bounced' WHERE event_id = 'pending-bounce'`).run(sentAt)
-    expect(await hasRetryableFollowUpDelivery(orm, 1)).toBe(false)
+    expect(await hasRetryableFollowUpDelivery(orm, 1)).toBe(true)
+  })
+
+  it('[money #1352] restores only unaffected recipients after independent provider verification', async () => {
+    const { database, orm, scheduler, outbox, port } = await fixture()
+    await setOrganizationReminderPolicy(orm, { first_after_days: 14, every_days: 7 }, sentAt)
+    await sendTo(orm, [{ name: 'AP', email: 'ap@example.test' }], null,
+      { cc: [{ name: 'Bad copy', email: 'bad@example.test' }, { name: 'Good copy', email: 'good@example.test' }] })
+    await outbox.drain()
+    const timestamp = String(Date.parse(sentAt) / 1000), token = 'fixture-token', signingKey = 'fixture-signing-key'
+    const event = { id: 'fixture-bounce', event: 'failed', severity: 'permanent', recipient: 'bad@example.test',
+      timestamp: Number(timestamp), flags: { 'is-test-mode': false }, message: { headers: { 'message-id': 'fixture-70' } } }
+    const payload = JSON.stringify({ signature: { timestamp, token,
+      signature: createHmac('sha256', signingKey).update(timestamp + token).digest('hex') }, 'event-data': event })
+    let verified = false
+    const provider = new MailgunMailer({ apiKey: 'fixture-key', domain: 'mail.example.test' },
+      { fetch: async () => new Response(JSON.stringify({ items: verified ? [event] : [] })) })
+    const log = createContainerEmailLogStore(database, { now: () => sentAt })
+    const ledger = createContainerEmailFeedbackLedger(database)
+    const service = createMailgunFeedbackService({ signingKey, log, ledger, now: () => new Date(sentAt),
+      verifyInvoiceFeedback: input => provider.inspectInvoiceFeedback(input) })
+    expect(await service.receive(payload)).toMatchObject({ kind: 'applied', outcome: 'bounced' })
+    expect(await readThankYouRecipients(orm, 1)).toEqual([])
+    verified = true
+    expect(await service.receive(payload)).toEqual({ kind: 'duplicate' })
+    expect(await readThankYouRecipients(orm, 1)).toEqual([
+      { name: 'AP', email: 'ap@example.test', role: 'to' },
+      { name: 'Good copy', email: 'good@example.test', role: 'cc' },
+    ])
+    const [pending] = await scheduler.listPending(1)
+    expect(await port.prepare(pending!)).toMatchObject({ to: [{ name: 'AP', email: 'ap@example.test' }],
+      cc: [{ name: 'Good copy', email: 'good@example.test' }] })
   })
 
   it('[money #1352] does not fall back to an old address while a corrected resend is pending', async () => {

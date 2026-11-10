@@ -1580,6 +1580,7 @@ export const createRuntimeServices = async (
             log: emailLog,
             ledger: createD1EmailFeedbackLedger(database),
             ...(emailProvider instanceof MailgunMailer ? { verifyHeldReminder: (input: Parameters<MailgunMailer['inspectReminderEvent']>[0]) => emailProvider.inspectReminderEvent(input) } : {}),
+            ...(emailProvider instanceof MailgunMailer ? { verifyInvoiceFeedback: (input: Parameters<MailgunMailer['inspectInvoiceFeedback']>[0]) => emailProvider.inspectInvoiceFeedback(input) } : {}),
           }),
         }),
     paymentRuns,

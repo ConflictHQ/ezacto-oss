@@ -73,6 +73,29 @@ export interface ThankYouRecipient {
   readonly role: 'to' | 'cc'
 }
 
+/** Shared by read and write fences. A terminal event must have independently
+ * verified provider evidence; unverified or unfinished feedback holds all. */
+const followUpRecipientEligible = `
+  NOT EXISTS (SELECT 1 FROM email_feedback_events pending
+    WHERE delivery.provider = 'mailgun' AND pending.delivery_id = delivery.id
+      AND pending.provider_message_id = delivery.provider_message_id
+      AND (pending.event_type = 'complained' OR (pending.event_type = 'failed' AND pending.severity = 'permanent'))
+      AND EXISTS (SELECT 1 FROM invoice_email_recipients addressed
+        WHERE addressed.delivery_id = delivery.id AND lower(addressed.email) = lower(pending.recipient))
+      AND (pending.processed_at IS NULL OR NOT EXISTS
+        (SELECT 1 FROM invoice_feedback_provider_evidence evidence WHERE evidence.event_id = pending.event_id)))
+  AND (delivery.status = 'sent' OR (delivery.status IN ('bounced', 'complained')
+    AND delivery.provider = 'mailgun' AND delivery.provider_message_id IS NOT NULL
+    AND EXISTS (SELECT 1 FROM email_feedback_events proof
+      JOIN invoice_feedback_provider_evidence evidence ON evidence.event_id = proof.event_id
+      WHERE proof.delivery_id = delivery.id AND proof.provider_message_id = delivery.provider_message_id
+        AND proof.processed_at IS NOT NULL)))
+  AND NOT EXISTS (SELECT 1 FROM email_feedback_events feedback
+    JOIN invoice_feedback_provider_evidence evidence ON evidence.event_id = feedback.event_id
+    WHERE delivery.provider = 'mailgun' AND feedback.delivery_id = delivery.id
+      AND feedback.provider_message_id = delivery.provider_message_id AND feedback.processed_at IS NOT NULL
+      AND lower(feedback.recipient) = lower(recipient.email))`
+
 /** Revalidate the immutable audience and provider acceptance in the same
  * transaction that records a follow-up. A newer intent must prevent a stale
  * audience from being recorded, even when that newer delivery is still queued. */
@@ -89,12 +112,12 @@ export const followUpAudienceGuard = `EXISTS (
       ORDER BY latest_event.aggregate_sequence DESC LIMIT 1
     )
     AND (SELECT count(*) FROM invoice_email_recipients recipient
-      JOIN email_log delivery ON delivery.id = recipient.delivery_id AND delivery.status = 'sent'
-      WHERE recipient.invoice_message_id = message.id) = json_array_length(?)
+      JOIN email_log delivery ON delivery.id = recipient.delivery_id
+      WHERE recipient.invoice_message_id = message.id AND ${followUpRecipientEligible}) = json_array_length(?)
     AND NOT EXISTS (
       SELECT 1 FROM invoice_email_recipients recipient
-      JOIN email_log delivery ON delivery.id = recipient.delivery_id AND delivery.status = 'sent'
-      WHERE recipient.invoice_message_id = message.id AND NOT EXISTS (
+      JOIN email_log delivery ON delivery.id = recipient.delivery_id
+      WHERE recipient.invoice_message_id = message.id AND ${followUpRecipientEligible} AND NOT EXISTS (
         SELECT 1 FROM json_each(?) candidate
         WHERE json_extract(candidate.value, '$.name') = recipient.name
           AND json_extract(candidate.value, '$.email') = recipient.email
@@ -333,7 +356,7 @@ export const readThankYouRecipients = async (
   database.all<ThankYouRecipient>(
     sql`SELECT recipient.name AS name, recipient.email AS email, recipient.role AS role
         FROM invoice_email_recipients recipient
-        JOIN email_log delivery ON delivery.id = recipient.delivery_id AND delivery.status = 'sent'
+        JOIN email_log delivery ON delivery.id = recipient.delivery_id
         WHERE recipient.invoice_message_id = (
           SELECT message.id FROM invoice_messages message
           JOIN invoice_email_intents intent ON intent.invoice_message_id = message.id
@@ -341,6 +364,7 @@ export const readThankYouRecipients = async (
           WHERE message.invoice_id = ${invoiceId} AND message.event_type = 'send'
           ORDER BY event.aggregate_sequence DESC LIMIT 1
         )
+        AND ${sql.raw(followUpRecipientEligible)}
         ORDER BY recipient.recipient_index`,
   )
 
@@ -353,8 +377,11 @@ export const hasRetryableFollowUpDelivery = async (database: InvoiceStateDatabas
     WHERE (delivery.status IN ('queued', 'sent') OR (delivery.status IN ('bounced', 'complained')
       AND delivery.provider = 'mailgun' AND EXISTS (SELECT 1 FROM email_feedback_events pending
         WHERE pending.delivery_id = delivery.id AND pending.provider_message_id = delivery.provider_message_id
-          AND pending.processed_at IS NULL AND (pending.event_type = 'complained'
-            OR (pending.event_type = 'failed' AND pending.severity = 'permanent')))))
+          AND (pending.event_type = 'complained' OR (pending.event_type = 'failed' AND pending.severity = 'permanent'))
+          AND EXISTS (SELECT 1 FROM invoice_email_recipients addressed
+            WHERE addressed.delivery_id = delivery.id AND lower(addressed.email) = lower(pending.recipient))
+          AND (pending.processed_at IS NULL OR NOT EXISTS
+            (SELECT 1 FROM invoice_feedback_provider_evidence evidence WHERE evidence.event_id = pending.event_id)))))
     AND recipient.invoice_message_id = (
       SELECT message.id FROM invoice_messages message
       JOIN invoice_email_intents intent ON intent.invoice_message_id = message.id

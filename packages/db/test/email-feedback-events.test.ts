@@ -495,7 +495,7 @@ for (const [runtime, factory] of [
       const fetch = vi.fn(async (request: Request) => {
         expect(request.method).toBe('GET')
         expect(new URL(request.url).searchParams.get('tags')).toBe(tag)
-        return Response.json({ items: [{ id: 'auth-event', event: 'failed', severity: 'permanent', timestamp: seconds,
+        return Response.json({ items: [{ id: 'auth-event', event: 'failed', severity: 'permanent', timestamp: seconds, flags: { 'is-test-mode': false },
           recipient: 'owner@example.test', tags: [tag], 'user-variables': { ezacto_idempotency_key: key },
           message: { headers: { 'message-id': '<mg-a>' } } }] })
       })

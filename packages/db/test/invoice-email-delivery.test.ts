@@ -284,6 +284,35 @@ for (const [name, factory] of [['SQLite', container], ['real D1', d1]] as const)
       )).toEqual([{ sender_identity_id: 10, sender_evidence_version: 1 }])
     })
 
+    it('[money #1352] fences a partial audience on independently verified feedback', async () => {
+      database = await factory()
+      await seed(database, true)
+      await command(database, 1, [{ name: 'Bad', email: 'bad@example.net' }, { name: 'Good', email: 'good@example.net' }])
+      await database.run(`UPDATE email_log SET status = 'sent', provider = 'mailgun', provider_message_id = 'fixture-accepted' WHERE id = 700`)
+      const before = await readThankYouRecipients(database.orm, 1), oldBinding = JSON.stringify(before)
+      await database.run(`INSERT INTO email_feedback_events(event_id, signature_token, event_type, severity, recipient,
+        provider_message_id, delivery_id, received_at) VALUES ('bounce-proof', 'token-proof', 'failed', 'permanent',
+        'bad@example.net', 'fixture-accepted', 700, ?)`, at)
+      await database.run(`UPDATE email_log SET status = 'bounced' WHERE id = 700`)
+      await database.run(`UPDATE email_feedback_events SET processed_at = ?, outcome = 'bounced' WHERE event_id = 'bounce-proof'`, at)
+      expect(await readThankYouRecipients(database.orm, 1)).toEqual([])
+      await database.run(`INSERT INTO invoice_feedback_provider_evidence(event_id, verified_at) VALUES ('bounce-proof', ?)`, at)
+      const eligible = [{ name: 'Client', email: 'client@example.net', role: 'to' },
+        { name: 'Good', email: 'good@example.net', role: 'cc' }]
+      expect(await readThankYouRecipients(database.orm, 1)).toEqual(eligible)
+      const binding = JSON.stringify(eligible)
+      expect(await database.rows(`SELECT CASE WHEN ${followUpAudienceGuard} THEN 1 ELSE 0 END AS allowed`,
+        1, 1, oldBinding, oldBinding)).toEqual([{ allowed: 0 }])
+      expect(await database.rows(`SELECT CASE WHEN ${followUpAudienceGuard} THEN 1 ELSE 0 END AS allowed`,
+        1, 1, binding, binding)).toEqual([{ allowed: 1 }])
+      await expect(database.run(`UPDATE invoice_feedback_provider_evidence SET verified_at = ? WHERE event_id = 'bounce-proof'`, at)).rejects.toThrow()
+      await database.run(`INSERT INTO email_feedback_events(event_id, signature_token, event_type, severity, recipient,
+        provider_message_id, delivery_id, received_at) VALUES ('foreign-recipient', 'foreign-token', 'failed', 'permanent',
+        'other@example.net', 'fixture-accepted', 700, ?)`, at)
+      await expect(database.run(`INSERT INTO invoice_feedback_provider_evidence(event_id, verified_at) VALUES ('foreign-recipient', ?)`, at)).rejects.toThrow()
+      expect(await readThankYouRecipients(database.orm, 1)).toEqual(eligible)
+    })
+
     it('rolls back the message, state, event, and log if exact evidence is absent', async () => {
       database = await factory()
       await seed(database)

@@ -49,7 +49,7 @@ describe('held Mailgun reminder reconciliation', () => {
         const actualEvent = event === 'split-failed' ? (end - begin === 43_200 && page === 1 && begin > Date.parse('2026-08-28T20:00:00.000Z') / 1000 ? 'failed' : 'accepted') : event
         const timestamp = event === 'split-failed' && actualEvent === 'failed' ? begin + 1 : Date.parse('2026-08-28T20:00:01.000Z') / 1000
         if (event === 'split-failed') url.searchParams.set('page', '2')
-        return new Response(JSON.stringify({ items: [{ id: 'event-terminal', event: actualEvent, severity: 'permanent', timestamp,
+        return new Response(JSON.stringify({ items: [{ id: 'event-terminal', event: actualEvent, severity: 'permanent', timestamp, flags: { 'is-test-mode': false },
           recipient: 'cc@example.test', tags: [`ezacto-reminder-${attemptId.slice(0, 2)}`],
           'user-variables': { ezacto_idempotency_key: `ezacto-reminder-${queued.id}-${attemptId}` },
           message: { headers: { 'message-id': '<mailgun-id>' } } }],
