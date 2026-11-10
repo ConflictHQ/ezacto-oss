@@ -4,7 +4,7 @@ import { Buffer } from 'node:buffer'
 import http from 'node:http'
 import { resolve } from 'node:path'
 import { URL } from 'node:url'
-import { createBankDepositIngestionService, createD1PasswordAuthService, createD1Database, createAccountDeletionRequestRepository, createMoneyResourceRepository } from '@ezacto/db/d1'
+import { createTimesheetApprovalRepository, createTimesheetLockPolicyRepository, createBankDepositIngestionService, createD1PasswordAuthService, createD1Database, createAccountDeletionRequestRepository, createMoneyResourceRepository } from '@ezacto/db/d1'
 import { build } from 'esbuild'
 import { Miniflare, NoOpLog } from 'miniflare'
 
@@ -208,22 +208,20 @@ delete process.env.EZACTO_BROWSER_FIXTURE_PASSWORD
 
 const timestamp = fixtureInstant
 const spentDate = localDateAt(fixtureDate, fixtureTimeZone)
-// The team summary reads one week, Monday to Sunday, around the fixture's own
-// day -- the same range `teamWeekRange` derives in the browser from the
-// organization's `week_start_day`, which is `monday` by default and is left at
-// the default here. The roster seed asserts its totals over exactly this range,
-// so the range has to be computed rather than written down: move the fixture
-// instant and a hardcoded week would silently start measuring an empty week.
-const rosterWeek = (() => {
+// Earlier settings/approval journeys can change the organization's week start.
+// Read that setting when seeding, just as the Team page does when loading.
+const teamRosterWeek = (weekStartDay) => {
   const day = new Date(`${spentDate}T00:00:00.000Z`)
-  const mondayOffset = (day.getUTCDay() + 6) % 7
-  const from = new Date(day.valueOf() - mondayOffset * 86_400_000)
+  const startDay = { saturday: 6, sunday: 0, monday: 1 }[weekStartDay]
+  if (startDay === undefined) throw new Error('Unknown team roster week start')
+  const offset = (day.getUTCDay() - startDay + 7) % 7
+  const from = new Date(day.valueOf() - offset * 86_400_000)
   const to = new Date(from.valueOf() + 6 * 86_400_000)
   return {
     from: from.toISOString().slice(0, 10),
     to: to.toISOString().slice(0, 10),
   }
-})()
+}
 
 const run = async (statement, ...bindings) => {
   await database.prepare(statement).bind(...bindings).run()
@@ -892,6 +890,29 @@ const fixtureControl = async (request, response) => {
          WHERE id = 1`,
       ),
     ])
+  } else if (action === 'approval-reset') {
+    // A failed browser can leave its own period approved/locked. Recover via
+    // native guarded transitions before the next scenario reseeds those rows.
+    // Never drop guards or erase audit/financial history to clean up a test.
+    const db = createD1Database(database)
+    const approvals = createTimesheetApprovalRepository(db)
+    const policy = createTimesheetLockPolicyRepository(db)
+    const actor = { userId: 1, profile: 'administrator' }
+    const locks = (await database.prepare("SELECT id FROM timesheet_lock_windows WHERE unlocked_at IS NULL AND lock_reason IN ('Monthly close verification','Audit fixture lock')").all()).results
+    for (const lock of locks) await policy.unlock(actor, lock.id, 'Owned browser fixture recovery', timestamp)
+    const submissions = (await database.prepare("SELECT id,status,rejection_reason FROM timesheet_submissions WHERE user_id=1 AND period_start='2026-08-16' AND period_end='2026-08-22'").all()).results
+    for (const submission of submissions) {
+      if (submission.status === 'approved') {
+        await approvals.withdraw(actor, submission.id, 'Owned browser fixture recovery', timestamp)
+      }
+      if (submission.status === 'submitted') {
+        await approvals.unsubmit(actor, submission.id, timestamp)
+      } else if (submission.status === 'approved' || submission.rejection_reason !== null) {
+        // Clear a rejected/reopened review through a genuine resubmit/take-back.
+        await approvals.submit(1, '2026-08-16', '2026-08-22', timestamp)
+        await approvals.unsubmit(actor, submission.id, timestamp)
+      }
+    }
   } else if (action === 'approval-seed') {
     await clearFixtureTimers()
     await database.batch([
@@ -1314,6 +1335,8 @@ const fixtureControl = async (request, response) => {
         .bind(timestamp, timestamp),
     ])
   } else if (action === 'team-summary-seed') {
+    const organization = await database.prepare('SELECT week_start_day FROM organizations WHERE id=1').first()
+    const rosterWeek = teamRosterWeek(organization.week_start_day)
     /**
      * A roster, not a lone owner.
      *
@@ -1337,7 +1360,7 @@ const fixtureControl = async (request, response) => {
      * `$28,450.00` -- measured, not guessed. `invoice-generation-seed` already
      * owns this shape, so this follows it.
      *
-     * Ids 9001–9008 belong to this roster. Other browser fixtures use higher
+     * Ids 9001–9009 belong to this roster (9009 is inactive). Other browser fixtures use higher
      * ranges, including retained closure history, so cleanup owns only these ids.
      */
     const rosterTargets = {
@@ -1373,12 +1396,26 @@ const fixtureControl = async (request, response) => {
      * minus what is already there, the totals stay exact, and the assertion
      * below stays an equality.
      */
+    // Team's default directory excludes inactive people. Keep an owned hour
+    // from an inactive person in this week so isolated and whole-suite runs
+    // exercise the same boundary: that retained history must not reduce the
+    // active roster's absorption or appear in its strict summary totals.
+    await run(`INSERT INTO users(id,first_name,last_name,timezone,is_active,weekly_capacity,profile,manager_grants,created_at,updated_at)
+      VALUES(9009,'Inactive','Roster',?,1,126000,'member','[]',?,?)`, fixtureTimeZone, timestamp, timestamp)
+    await run(`INSERT INTO user_assignments(id,project_id,user_id,created_at,updated_at)
+      VALUES(9009,1,9009,?,?)`, timestamp, timestamp)
+    await run(`INSERT INTO time_entries(id,user_id,project_id,task_id,user_assignment_id,task_assignment_id,
+      spent_date,seconds,seconds_without_timer,rounded_seconds,billable,billable_rate_cents,cost_rate_cents,budgeted,notes,created_at,updated_at)
+      VALUES(90091,9009,1,1,9009,1,?,3600,3600,3600,1,10000,5000,1,'Inactive roster history',?,?)`, spentDate, timestamp, timestamp)
+    await run('UPDATE users SET is_active=0 WHERE id=9009')
+
     const existing = await database
       .prepare(
         `SELECT
            coalesce(sum(CASE WHEN billable = 1 THEN rounded_seconds ELSE 0 END), 0) AS billable,
            coalesce(sum(CASE WHEN billable = 0 THEN rounded_seconds ELSE 0 END), 0) AS nonBillable
-         FROM time_entries WHERE spent_date BETWEEN ? AND ?`,
+         FROM time_entries WHERE spent_date BETWEEN ? AND ?
+           AND EXISTS(SELECT 1 FROM users WHERE users.id=time_entries.user_id AND users.is_active=1)`,
       )
       .bind(rosterWeek.from, rosterWeek.to)
       .first()
@@ -1491,7 +1528,8 @@ const fixtureControl = async (request, response) => {
            (SELECT sum(weekly_capacity) FROM users WHERE is_active = 1) AS capacity,
            coalesce(sum(rounded_seconds), 0) AS tracked,
            coalesce(sum(CASE WHEN billable = 1 THEN rounded_seconds ELSE 0 END), 0) AS billable
-         FROM time_entries WHERE spent_date BETWEEN ? AND ?`,
+         FROM time_entries WHERE spent_date BETWEEN ? AND ?
+           AND EXISTS(SELECT 1 FROM users WHERE users.id=time_entries.user_id AND users.is_active=1)`,
       )
       .bind(rosterWeek.from, rosterWeek.to)
       .first()
@@ -1507,10 +1545,10 @@ const fixtureControl = async (request, response) => {
     }
   } else if (action === 'team-summary-cleanup') {
     await database.batch([
-      database.prepare('DELETE FROM time_entries WHERE user_id BETWEEN 9001 AND 9008'),
-      database.prepare('DELETE FROM user_assignments WHERE user_id BETWEEN 9001 AND 9008'),
-      database.prepare('DELETE FROM user_emails WHERE user_id BETWEEN 9001 AND 9008'),
-      database.prepare('DELETE FROM users WHERE id BETWEEN 9001 AND 9008'),
+      database.prepare('DELETE FROM time_entries WHERE user_id BETWEEN 9001 AND 9009'),
+      database.prepare('DELETE FROM user_assignments WHERE user_id BETWEEN 9001 AND 9009'),
+      database.prepare('DELETE FROM user_emails WHERE user_id BETWEEN 9001 AND 9009'),
+      database.prepare('DELETE FROM users WHERE id BETWEEN 9001 AND 9009'),
       database.prepare(`DELETE FROM auth_rate_limits WHERE action = 'sign_in'`),
     ])
   } else if (action === 'teammate-time-seed' || action === 'teammate-time-cleanup') {

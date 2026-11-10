@@ -277,8 +277,15 @@ describe('money display preference', () => {
     toggle().click()
     expect(globalThis.localStorage.getItem('ezacto.money-display')).toBe('hidden')
 
-    // A second mount of the same document is the next page load.
-    document.documentElement.removeAttribute('data-money')
+  })
+
+  it('[browser] restores a saved choice when a fresh page mounts', async () => {
+    // A real next visit starts one controller on a new page. Mounting the
+    // entire shell twice on the same DOM duplicates its listeners and spends
+    // two complete startup budgets inside one assertion. The browser scenario
+    // also proves the write -> actual reload -> read chain without this shim.
+    writeShell()
+    globalThis.localStorage.setItem('ezacto.money-display', 'hidden')
     await mountShell(shellApi())
     await vi.waitFor(() =>
       expect(document.documentElement.getAttribute('data-money')).toBe('hidden'),
