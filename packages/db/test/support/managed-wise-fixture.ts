@@ -36,6 +36,21 @@ let setupClosed = false
 export const credentials = new Map<string, string>()
 export const calls: { profile: string; path: string; method: string }[] = []
 export const providerState: { beforeResponse: (() => Promise<void>) | undefined; failure: boolean } = { beforeResponse: undefined, failure: false }
+/** Name the blocked setup step before Vitest's hook timeout without changing
+ * its budget or retrying a failed fixture. No provider or tenant data is logged. */
+const timedSetup = async <T>(stage: string, work: () => Promise<T>): Promise<T> => {
+  const started = performance.now()
+  const notice = setTimeout(() => {
+    console.warn(`[wise-fixture] ${stage} has not completed after 30 seconds`)
+  }, 30_000)
+  notice.unref()
+  try {
+    return await work()
+  } finally {
+    clearTimeout(notice)
+    if (performance.now() - started >= 30_000) console.warn(`[wise-fixture] ${stage} completed after the slow-setup threshold`)
+  }
+}
 beforeAll(async () => {
   const root = await mkdtemp(join(tmpdir(), 'wise-templates-'))
   templates = { root, sqlite: join(root, 'empty.sqlite'), d1: join(root, 'd1') }
@@ -48,7 +63,8 @@ beforeAll(async () => {
   const mf = new Miniflare({ ...worker, d1Persist: templates.d1 })
   templateWorker = mf
   try {
-    await migrateD1(await mf.getD1Database('DB'))
+    const binding = await timedSetup('D1 binding', () => mf.getD1Database('DB'))
+    await timedSetup('D1 migrations', () => migrateD1(binding))
   } finally {
     await mf.dispose()
     templateWorker = undefined
