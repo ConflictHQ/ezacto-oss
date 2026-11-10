@@ -151,10 +151,7 @@ describe('demo reset', () => {
       now,
     )
     const pending = { ...command, grantId: 'd'.repeat(64), expectedConnectionGeneration: 2 }
-    expect(await grants.prepare(authority, now)).toEqual({
-      connectionGeneration: 2,
-      connected: false,
-    })
+    await expect(grants.prepare(authority, now)).rejects.toMatchObject({ kind: 'conflict' })
     expect(count(client, 'quickbooks_managed_grants')).toBe(1)
     expect(count(client, 'quickbooks_revocations')).toBe(1)
 

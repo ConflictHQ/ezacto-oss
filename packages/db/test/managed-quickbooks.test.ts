@@ -501,6 +501,13 @@ describe.each(['sqlite', 'd1'] as const)('managed QuickBooks native %s', (runtim
       grantId: 'e'.repeat(64),
       tokens: { ...one.tokens, realmId: 'different-company' },
     }
+    // Both callbacks remain fenced until the prior grant's revocation is
+    // observed. Then the original competing-grant race has exactly one winner.
+    expect(((await f.commands.accept(f.request(), one)) as Response).status).toBe(409)
+    expect(((await f.commands.accept(f.request(), two)) as Response).status).toBe(409)
+    expect(await f.rows('quickbooks_managed_grants')).toHaveLength(1)
+    await f.lifecycle.beginRevocation('1'.repeat(64), f.now())
+    await f.lifecycle.settleRevocation('1'.repeat(64), 'revoked', f.now())
     const competing = await race([one, two], 2)
     expect(
       competing.filter((value) => value instanceof Response && value.status === 409),
