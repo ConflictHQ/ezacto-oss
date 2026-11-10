@@ -367,6 +367,16 @@ describe('an overdue invoice is reminded', () => {
     expect((await scheduler.listPending(1))[0]!.scheduledAt).toBe('2026-08-05T00:00:00.000Z')
   })
 
+  it('[money #1352] attributes a later named date to its own send when the first has no policy', async () => {
+    const { orm, scheduler, outbox } = await fixture()
+    await sendTo(orm, [{ name: 'AP', email: 'ap@example.test' }], null, { messageId: 2 })
+    await sendTo(orm, [{ name: 'AP', email: 'ap@example.test' }], '2026-08-12', { messageId: 70, expectedVersion: 1 })
+    await outbox.drain()
+    expect(await scheduler.listPending(1)).toMatchObject([
+      { scheduledAt: '2026-08-12T00:00:00.000Z', causationEventId: 'evt-70' },
+    ])
+  })
+
   it('[unit] a date named on the send with no policy anywhere books it, weekly after', async () => {
     const { orm, scheduler, outbox } = await fixture()
     await sendTo(orm, [{ name: 'AP', email: 'ap@kestrel.example' }], '2026-08-05')
