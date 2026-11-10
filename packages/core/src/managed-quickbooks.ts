@@ -109,6 +109,8 @@ export interface ManagedQuickBooksRevocationCustody {
   refreshToken: string
 }
 export interface ManagedQuickBooksLifecycleStore {
+  /** Current accepted grant identity, available only to a freshly authorized administrator. */
+  currentGrant(authority: ManagedQuickBooksAuthority, now: string): Promise<{ grantId: string; connectionGeneration: number } | null>
   fence(
     command: ManagedQuickBooksFenceCommand,
     authority: ManagedQuickBooksAuthority,

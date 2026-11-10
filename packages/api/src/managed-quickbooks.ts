@@ -194,6 +194,12 @@ export const createManagedQuickBooksGrantCommands = (
       invoke(request, (authority, now) =>
         options.store.accept(command, authority, now),
       ),
+    /** Safe identity used to bind a subsequent managed lifecycle fence. */
+    currentGrant: (request: Request) => {
+      const lifecycle = options.lifecycle
+      if (!lifecycle) throw new Error('Managed QuickBooks lifecycle store is not configured')
+      return invoke(request, async (authority, now) => ({ grant: await lifecycle.currentGrant(authority, now) }))
+    },
     /** Fresh administrator authority fences the connection and records revocation intent. */
     fence: (request: Request, command: ManagedQuickBooksFenceCommand) => {
       const lifecycle = options.lifecycle

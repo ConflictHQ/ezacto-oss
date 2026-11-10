@@ -191,6 +191,27 @@ const everything = async (f: Fixture, excludeLedger = false, existingTables?: re
 }
 
 describe.each(['sqlite', 'd1'] as const)('managed QuickBooks lifecycle fence %s', (runtime) => {
+  it('returns only the current grant identity to an authenticated administrator', async () => {
+    const f = await fixture(runtime)
+    expect(data(await f.commands.currentGrant(f.request())).grant).toBeNull()
+    expect(status(await f.commands.currentGrant(f.request(f.member.token)))).toBe(403)
+    expect(status(await f.commands.currentGrant(f.request(f.admin.token, 'https://evil.example')))).toBe(403)
+    data(await f.commands.accept(f.request(), f.command))
+    const result = data(await f.commands.currentGrant(f.request()))
+    expect(result.grant).toEqual({ grantId: f.command.grantId, connectionGeneration: 1 })
+    expect(JSON.stringify(result)).not.toContain('PRIVATE_')
+    data(await f.commands.fence(f.request(), fence(f)))
+    expect(data(await f.commands.currentGrant(f.request())).grant).toBeNull()
+  })
+
+  it('refuses an unbound live connection and a revoked administrator session', async () => {
+    const f = await fixture(runtime)
+    await f.canonical.saveConnection({ ...f.command.tokens, connectedByUserId: 2, now: f.now() })
+    expect(status(await f.commands.currentGrant(f.request()))).toBe(409)
+    await f.sessions.revoke(2, f.admin.session.id)
+    expect(status(await f.commands.currentGrant(f.request()))).toBe(401)
+  })
+
   it('fences, retains only the refresh token, and refuses stale grant/refresh/native writes', async () => {
     const f = await fixture(runtime)
     await connect(f)
