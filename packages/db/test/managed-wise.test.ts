@@ -4,11 +4,24 @@ import { createAccountRetentionRepository } from '../src/account-retention.js'
 import { createAccountDeletionRequestRepository } from '../src/account-deletion-requests.js'
 import { createApiApp } from '../../api/src/index.js'
 import { createApiSessionService } from '../../api/src/sessions.js'
+import { wipeAndSeedDemo } from '../src/demo-reset.js'
 import { installWiseRoutes } from '../../api/src/wise.js'
 import { ManagedWiseUnavailableError } from '@ezacto/core'
 import { fixture, calls, credentials, data, status, providerState } from './support/managed-wise-fixture.js'
 
 describe.each(['sqlite', 'd1'] as const)('managed Wise read-only %s', (backend) => {
+  it('erases Wise custody and receipts but retains an advanced singleton after an interrupted demo rebuild', async () => {
+    const t = await fixture(backend)
+    data(await t.configure())
+    const runtime = await t.runtime(), exchanges = calls.length
+    await expect(wipeAndSeedDemo({
+      ...t.resetDriver, bootstrap: async () => { throw new Error('Owned interrupted rebuild') },
+    }, { now: t.now(), years: 0.01, confirm: 'wipe-and-reload' })).rejects.toThrow('Owned interrupted rebuild')
+    expect(await t.store.state()).toEqual({ generation: 2, status: 'disconnected', profileId: null })
+    expect(await t.store.inventory()).toEqual({ sealedCredentials: 0, commandReceipts: 0 })
+    expect(await runtime.service.readStatus()).toBeNull()
+    expect(calls).toHaveLength(exchanges)
+  })
   it('isolates two native tenants through real API reads and never exposes payment or secret capability', async () => {
     const a = await fixture(backend, 'A', '111'),
       b = await fixture(backend, 'B', '222')
@@ -26,14 +39,14 @@ describe.each(['sqlite', 'd1'] as const)('managed Wise read-only %s', (backend) 
         authentication: { sessions: createApiSessionService(t.sessions) },
         installApi: (api) => installWiseRoutes(api, runtime.service),
       })
-      const call = (path: string, token = t.admin.token, method = 'GET') =>
+      const call = (path: string, token = t.admin.token, method = 'GET', payload?: unknown) =>
         app.fetch(
           new Request(`https://owned.example/api/v1/integrations/wise${path}`, {
             method,
             headers: { origin: 'https://owned.example', cookie: `__Host-ezacto_session=${token}`,
               ...(method === 'POST' ? { 'content-type': 'application/json' } : {}),
             },
-            ...(method === 'POST' ? { body: '{}' } : {}),
+            ...(method === 'POST' ? { body: JSON.stringify(payload ?? {}) } : {}),
           }),
         )
       const initialCalls = calls.length
@@ -53,8 +66,12 @@ describe.each(['sqlite', 'd1'] as const)('managed Wise read-only %s', (backend) 
       expect(text).toContain('ending in 2345')
       expect(text).toContain('9007199254740993123')
       expect(text).not.toMatch(/PRIVATE_|123456789012345|accountSummary|accountNumber/)
-      for (const path of ['/recipients/link', '/recipients', '/contacts'])
-        expect((await call(path, t.admin.token, 'POST')).status).toBe(403)
+      for (const [path, payload] of [
+        ['/recipients/link', { user_id: 2, recipient_id: '9007199254740993123' }],
+        ['/recipients', { user_id: 2, email: 'owned@example.test', legal_name: 'Owned', currency: 'USD' }],
+        ['/contacts', { user_id: 2, identifier: 'owned@example.test', currency: 'USD' }],
+      ] as const)
+        expect((await call(path, t.admin.token, 'POST', payload)).status).toBe(403)
       expect(
         calls
           .slice(initialCalls)

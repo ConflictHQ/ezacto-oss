@@ -11,6 +11,8 @@ import { migrateContainer, migrateD1 } from '../../src/migrate.js'
 import { createContainerSessionStore, createD1SessionStore } from '../../src/sessions.js'
 import { createManagedWiseConnectionStore } from '../../src/managed-wise.js'
 import { createPayoutAccountStore } from '../../src/payout-accounts.js'
+import { createContainerDemoResetDriver, createD1DemoResetDriver } from '../../src/demo-reset.js'
+import type { InvoiceGenerationDatabase } from '../../src/invoice-generation.js'
 import { createApiSessionService } from '../../../api/src/sessions.js'
 import { createManagedWiseConnectionCommands } from '../../../api/src/index.js'
 import { createManagedWiseRuntime } from '../../../integrations/src/wise/managed.js'
@@ -241,6 +243,8 @@ export const fixture = async (backend: 'sqlite' | 'd1', name = 'A', profileId = 
       ),
     )
   return {
+    resetDriver: backend === 'd1' ? createD1DemoResetDriver(binding!)
+      : createContainerDemoResetDriver(native!, db as InvoiceGenerationDatabase, migrateContainer),
     binding,
     isEnabled: () => enabled,
     db,
