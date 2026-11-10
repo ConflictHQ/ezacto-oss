@@ -137,6 +137,7 @@ const readEvidenceBody = async (response: Response, signal: AbortSignal): Promis
   const decoder = new TextDecoder();
   const abort = () => { void reader.cancel().catch(() => undefined); };
   signal.addEventListener("abort", abort, { once: true });
+  if (signal.aborted) abort();
   let bytes = 0, result = "";
   try {
     for (;;) {
