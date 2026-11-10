@@ -36,7 +36,7 @@ afterEach(async () => {
 })
 const fixture = async (
   runtime: 'sqlite' | 'd1',
-  legacy: boolean | '0180_github_publication' | '0186_quickbooks_outbox_grants' = false,
+  legacy: boolean | '0181_reminder_reconciliation' | '0186_quickbooks_outbox_grants' = false,
 ) => {
   let upgrade!: () => Promise<void>
   let db: ReturnType<typeof createContainerDatabase> | ReturnType<typeof createD1Database>
@@ -160,7 +160,7 @@ const fence = (
   ...over,
 })
 const connect = async (f: Fixture) => {
-  if (f.legacy === '0180_github_publication') {
+  if (f.legacy === '0181_reminder_reconciliation') {
     // Seed the actual pre0182 receipt/connection, not the current command whose
     // refresh guard requires0184. No old-schema guards are disabled or mocked.
     const c = f.command, t = c.tokens
@@ -365,7 +365,7 @@ describe.each(['sqlite', 'd1'] as const)('managed QuickBooks lifecycle fence %s'
   })
 
   it('[migration #1236] retains all data while fencing an unresolved prior connection on upgrade', async () => {
-    const f = await fixture(runtime, '0180_github_publication')
+    const f = await fixture(runtime, '0181_reminder_reconciliation')
     await connect(f)
     data(await f.commands.fence(f.request(), fence(f)))
     const existing = (await f.db.all<{ name: string }>(sql.raw("SELECT name FROM sqlite_schema WHERE type='table'"))).map(row => row.name)
@@ -386,7 +386,7 @@ describe.each(['sqlite', 'd1'] as const)('managed QuickBooks lifecycle fence %s'
   })
 
   it('[migration #1236] refuses a pre-existing live/revoking overlap without changing its custody or ledger', async () => {
-    const f = await fixture(runtime, '0180_github_publication')
+    const f = await fixture(runtime, '0181_reminder_reconciliation')
     await connect(f)
     data(await f.commands.fence(f.request(), fence(f)))
     // This is the actual write accepted by the old schema; no guards are dropped.
