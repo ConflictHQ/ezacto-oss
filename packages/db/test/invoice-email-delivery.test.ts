@@ -169,6 +169,9 @@ for (const [name, factory] of [['SQLite', container], ['real D1', d1]] as const)
     it('sends one email To the client and Cc everyone copied, each recorded against it', async () => {
       database = await factory()
       await seed(database)
+      await database.run(`INSERT INTO invoice_line_items
+        (invoice_id, position, kind, description, quantity, unit_price_cents, amount_cents, created_at, updated_at)
+        VALUES (1, 0, 'Service', 'Fixture work', 1, 1234, 1234, ?, ?)`, at, at)
       const cc = [
         { name: 'Pat Example', email: 'pat@example.net' },
         { name: '', email: 'finance@example.com' },
@@ -247,6 +250,9 @@ for (const [name, factory] of [['SQLite', container], ['real D1', d1]] as const)
         fromName: 'Delivery Org', fromEmail: 'billing@example.com', replyToEmail: null,
         subject: 'Reminder', textBody: 'Please review.', htmlBody: null, daysPastDue: 0, now: at,
       })).toBe('recorded')
+      expect(await database.rows(`SELECT i.state, i.due_amount_cents AS due, r.status AS reminder_status, l.status AS delivery_status
+        FROM invoices i JOIN scheduled_reminders r ON r.invoice_id = i.id JOIN invoice_reminder_deliveries d ON d.scheduled_reminder_id = r.id
+        JOIN email_log l ON l.id = d.delivery_id WHERE r.id = 87`)).toEqual([{ state: 'open', due: 1234, reminder_status: 'pending', delivery_status: 'queued' }])
       const port = createReminderPort({ database: database.orm, configuration: {
         getTemplate: async () => { throw new Error('unexpected template read') },
         listSenderIdentities: async () => { throw new Error('unexpected sender read') },
