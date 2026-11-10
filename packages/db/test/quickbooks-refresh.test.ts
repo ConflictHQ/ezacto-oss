@@ -251,4 +251,16 @@ describe.each(['sqlite', 'd1'] as const)('managed QuickBooks refresh ownership %
     ])
   })
 
+  it('refuses a different grant generation even when the realm, timestamps and credentials match', async () => {
+    const f = await fixture(); let calls = 0
+    expect(f.connection.connectionGeneration).toBe(1)
+    const exchange = async () => { calls += 1; return replacement }
+    await expect(f.compose().refresh({ ...f.connection, connectionGeneration: 0 }, exchange)).rejects.toMatchObject({ code: 'provider_unavailable' })
+    const { connectionGeneration, ...missingGeneration } = f.connection
+    expect(connectionGeneration).toBe(1)
+    await expect(f.compose().refresh(missingGeneration, exchange)).rejects.toMatchObject({ code: 'provider_unavailable' })
+    expect(calls).toBe(0)
+    expect((await f.execute('SELECT count(*) AS n FROM quickbooks_refresh_attempts'))[0]).toEqual([{ n: 0 }])
+  })
+
 })

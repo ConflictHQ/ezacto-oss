@@ -241,7 +241,10 @@ Admission must cover the current tenant incarnation, grant generation and admitt
 effect lifetime through transport and response custody; an entitlement flag alone
 is not a drain or erasure fence. This change does not establish that hosted lease.
 
-Migration0183 records a non-expiring owner before token transport. Another
+Canonical connection reads also carry `connectionGeneration`. A managed claim
+refuses a missing or different generation even when the realm, timestamp and
+credential bytes match; custom self-host readers remain unchanged when managed
+refresh is not selected. Migration0183 records a non-expiring owner before token transport. Another
 runtime cannot refresh the same connection while that owner is attempting or
 unresolved. A provider failure or lost reply retains an unknown outcome; neither
 elapsed time nor a fresh process grants permission to repeat the exchange.

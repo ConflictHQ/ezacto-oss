@@ -4,6 +4,8 @@ export type QuickBooksAuthorizationState = 'ready' | 'pending' | 'unavailable'
 export interface QuickBooksRefreshSnapshot extends QuickBooksTokens {
   readonly realmId: string
   readonly connectedAt: string
+  /** Canonical native readers supply this; managed stores refuse its absence. */
+  readonly connectionGeneration?: number
 }
 
 /** Each operation must commit independently of any replayable application work.

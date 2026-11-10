@@ -197,6 +197,7 @@ export interface QuickBooksConnectionStore {
         refreshToken: string;
         accessTokenExpiresAt: string;
         refreshTokenExpiresAt: string;
+        connectionGeneration?: number;
       })
     | null
   >;

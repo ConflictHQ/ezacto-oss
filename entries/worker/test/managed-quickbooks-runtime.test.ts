@@ -168,6 +168,15 @@ it('[integration #1235] composes the accepted native grant into authorized tenan
 
 it('[integration #1235] owns one real HTTP refresh across competing Worker runtimes and a fresh restart', async () => {
   const tenant = tenants[0]!, env = environment(tenant)
+  const native = createD1Database(tenant.database)
+  const current = (await createQuickBooksStore(native).readConnection())!
+  const guarded = createManagedQuickBooksRefresh({ store: createManagedQuickBooksRefreshStore(native), admitted: () => true, now: () => new Date() })
+  let forbiddenExchanges = 0
+  await expect(guarded.refresh({ ...current, connectionGeneration: current.connectionGeneration - 1 }, async () => {
+    forbiddenExchanges += 1; return current
+  })).rejects.toMatchObject({ code: 'provider_unavailable' })
+  expect(forbiddenExchanges).toBe(0)
+  expect(await tenant.database.prepare('SELECT count(*) AS n FROM quickbooks_refresh_attempts').first()).toEqual({ n: 0 })
   await tenant.database.prepare('UPDATE quickbooks_connections SET access_token_expires_at=? WHERE id=1')
     .bind(new Date(Date.now() - 60_000).toISOString()).run()
   const generation = await tenant.database.prepare('SELECT generation FROM quickbooks_connection_generation').first()

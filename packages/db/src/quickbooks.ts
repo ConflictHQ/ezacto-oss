@@ -19,6 +19,7 @@ import type * as schema from './schema.js'
 type Database = BetterSQLite3Database<typeof schema> | DrizzleD1Database<typeof schema>
 
 export interface QuickBooksConnectionRecord {
+  readonly connectionGeneration: number
   readonly realmId: string
   readonly companyName: string | null
   readonly accessToken: string
@@ -70,6 +71,7 @@ export interface QuickBooksLinkRecord {
 }
 
 interface ConnectionRow {
+  connection_generation: number
   realm_id: string
   company_name: string | null
   access_token: string
@@ -84,6 +86,7 @@ interface ConnectionRow {
 }
 
 const connection = (row: ConnectionRow): QuickBooksConnectionRecord => ({
+  connectionGeneration: row.connection_generation,
   realmId: row.realm_id,
   companyName: row.company_name,
   accessToken: row.access_token,
@@ -258,7 +261,8 @@ export const createQuickBooksStore = (database: Database): QuickBooksStore => ({
   readConnection: async () => {
     const rows = await database.all<ConnectionRow>(sql`SELECT realm_id, company_name, access_token, refresh_token,
          access_token_expires_at, refresh_token_expires_at, scope,
-         allow_online_payment, connected_by_user_id, connected_at, disconnected_at
+         allow_online_payment, connected_by_user_id, connected_at, disconnected_at,
+         (SELECT generation FROM quickbooks_connection_generation WHERE singleton=1) AS connection_generation
        FROM quickbooks_connections WHERE id = 1 AND disconnected_at IS NULL`)
     return rows[0] === undefined ? null : connection(rows[0])
   },

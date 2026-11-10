@@ -29,20 +29,22 @@ export const createManagedQuickBooksRefreshStore = (database: InvoiceStateDataba
   },
   claim: async ({ attemptId, connection, now }) => {
     validate(attemptId, now)
+    const generation = connection.connectionGeneration
+    if (typeof generation !== 'number' || !Number.isSafeInteger(generation) || generation < 0) return false
     const hash = await digest([connection.realmId, connection.connectedAt, connection.refreshToken, connection.accessToken, connection.accessTokenExpiresAt])
     const result = await atomicStatements(database, [{ text: `INSERT INTO quickbooks_refresh_attempts
       (attempt_id,generation,realm_id,connected_at,actor_id,credential_hash,status,expected_refresh_token,created_at,updated_at)
       SELECT ?,generation.generation,c.realm_id,c.connected_at,c.connected_by_user_id,?,'attempting',c.refresh_token,?,?
       FROM quickbooks_connections c JOIN quickbooks_connection_generation generation ON generation.singleton=1
       WHERE c.id=1 AND c.disconnected_at IS NULL AND c.realm_id=? AND c.connected_at=? AND c.refresh_token=?
-        AND c.access_token=? AND c.access_token_expires_at=?
+        AND c.access_token=? AND c.access_token_expires_at=? AND generation.generation=?
         AND NOT EXISTS(SELECT 1 FROM migration_loads WHERE status<>'completed' AND (status<>'cancelled' OR started_at IS NOT NULL))
         AND EXISTS(SELECT 1 FROM quickbooks_managed_grants grant_receipt WHERE grant_receipt.realm_id=c.realm_id
           AND grant_receipt.recorded_at=c.connected_at AND grant_receipt.accepted_generation=generation.generation)
         AND NOT EXISTS(SELECT 1 FROM quickbooks_refresh_attempts WHERE status NOT IN ('completed','cancelled'))
         AND NOT EXISTS(SELECT 1 FROM quickbooks_refresh_attempts previous WHERE previous.generation=generation.generation AND previous.credential_hash=? AND previous.status<>'cancelled')
       RETURNING attempt_id`, params: [attemptId,hash,now,now,connection.realmId,connection.connectedAt,connection.refreshToken,
-      connection.accessToken,connection.accessTokenExpiresAt,hash] }])
+      connection.accessToken,connection.accessTokenExpiresAt,generation,hash] }])
     return result[0]?.[0]?.attempt_id === attemptId
   },
   unknown: async ({ attemptId, now }) => {
