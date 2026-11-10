@@ -145,3 +145,61 @@ revoked or erased: only a recorded provider outcome sets `complete: true`.
 - Demo resets, which never hold real grants, wipe the table with the rest.
 - Real revocation, deletion and provider/account changes are not exercised here;
   that evidence belongs to hosted440's owned sandbox acceptance.
+
+## Trusted Worker runtime composition
+
+`createWorker` accepts the process-local `managedQuickBooks` capability, whose
+public type is `WorkerManagedQuickBooks`. This capability is passed through
+fetch, email-queue service construction and scheduled service construction.
+It is never a serialized Worker binding, HTTP input or browser configuration.
+
+The capability has two methods:
+
+- `configured(scope)` returns side-effect-free app/entitlement availability. It
+  receives the original database binding's object identity for a trusted host
+  lookup. It must perform no database or provider request. The service-free HTML
+  shell uses this same metadata, so a managed connection can be discoverable
+  without copying platform credentials into environment variables.
+- `compose({ scope, database })` constructs one complete `QuickBooksRuntime` for
+  the invocation or returns `null` when unavailable. The database is the native
+  idempotency-aware D1 binding. The original scope exposes no SQL contract; use
+  it only to find host-owned tenant/incarnation policy. The same runtime supplies
+  native API services, the invoice/payment outbox subscriber and scheduled
+  catch-up. Construction must perform no provider effects.
+
+Demo and accounting-disabled deployments invoke neither method. An explicit
+unavailable result never selects deployment-level QuickBooks credentials.
+When no managed capability is supplied, self-host Worker configuration retains
+its existing behavior; the container composition is unchanged.
+
+The capability carries authority to compose a service, not authority to bypass
+native session, Origin, role, financial deduplication or webhook validation.
+A host must supply real tenant-bound grant/link stores and the managed OAuth
+and lifecycle behavior appropriate to its connection broker.
+
+### Hosted effect and acceptance boundary
+
+These native hooks alone do not complete hosted adoption. The host must keep
+provider effects outside replayable whole-request/outbox transactions and use
+durable ownership, connection-generation fencing and explicit recovery for
+rotating refresh tokens, mirrored writes and ambiguous replies. The existing
+self-host refresh implementation does not establish those hosted guarantees.
+Do not expose that implementation directly inside a replayable S3lite callback.
+Retain late/ambiguous credential custody for lifecycle reconciliation and
+revocation inventory; a disconnected or erased connection must not be revived
+by a stale worker.
+
+The host must also preserve fresh tenant admission, incarnation/source fences,
+per-call SQL durability, directory acknowledgements and final response checks.
+Public source publication and a real hosted consumer with two-tenant provider
+and failure/recovery acceptance are required before #1235 can close. Actual
+central realm webhook routing and provider approval retain their own hosted
+acceptance gates.
+
+Intuit documents a company-scoped `requestid` query parameter for write replay,
+with a 50-character limit for individual operations. A durable effect record
+must retain that ID together with the exact original payload; `DocNumber`
+adoption alone is not a concurrent-create fence. The current client does not
+supply request IDs, so this is a required part of the remaining managed effect
+implementation, not an already-delivered guarantee. See
+[Intuit request ID semantics](https://static.developer.intuit.com/output_html/qbo/docs/learn/learn-basic-field-definitions.html).

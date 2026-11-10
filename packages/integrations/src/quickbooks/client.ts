@@ -369,11 +369,12 @@ export class QuickBooksClient {
   /**
    * The adopt half of "a retry never duplicates".
    *
-   * QuickBooks has no idempotency key on create. If a mirror wrote an invoice
-   * and then failed before its local link was stored, the retry has to find
-   * what the first attempt made rather than make a second one. `DocNumber`
-   * carries our invoice number, which is unique in our book, so it is the
-   * handle to find it by.
+   * If a mirror wrote an invoice and lost its local link, DocNumber is the
+   * existing adoption lookup. It is not a provider idempotency key. Intuit also
+   * supports the requestid query parameter for writes; a managed effect ledger
+   * must retain the exact request ID and payload across an ambiguous reply.
+   * See Intuit's basic ID/field definitions, "Request ID". A DocNumber lookup
+   * alone does not fence concurrent provider creates.
    */
   async findInvoiceByDocNumber(docNumber: string): Promise<QuickBooksInvoice | null> {
     const rows = await this.query<QuickBooksInvoice>(

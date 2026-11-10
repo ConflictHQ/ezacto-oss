@@ -1,3 +1,4 @@
+import { managedQuickBooksAvailable, type WorkerManagedQuickBooks } from './managed-providers.js'
 import { createCalendarOperatorCleanupStore } from '@ezacto/db/d1'
 import { createConfiguredCalendarServices } from '@ezacto/integrations'
 import { createCalendarOAuthStore } from '@ezacto/db/d1'
@@ -716,6 +717,8 @@ const readOnlyObjects = (objects: AttachmentObjectPort): AttachmentObjectPort =>
 export const createRuntimeServices = async (
   env: WorkerEnv,
   options: {
+    /** Trusted tenant runtime; an explicit null never falls back to environment credentials. */
+    managedQuickBooks?: WorkerManagedQuickBooks;
     calendarSources?: Parameters<typeof createCalendarSyncService>[0]['sources'];
     emailProvider?: HttpEmailProvider;
     ses?: SesMailerOptions;
@@ -922,8 +925,11 @@ export const createRuntimeServices = async (
   // QuickBooks routes are not mounted at all, because a connect button that
   // cannot connect is worse than no button -- `entry-surface.ts` declares that
   // gating so both halves of the contract guard know about it.
-  const quickBooks =
-    credentials.QUICKBOOKS_CLIENT_ID === undefined ||
+  const quickBooks = options.managedQuickBooks !== undefined
+    ? managedQuickBooksAvailable(options.managedQuickBooks, env, binding)
+      ? await options.managedQuickBooks.compose({ scope: binding, database })
+      : null
+    : credentials.QUICKBOOKS_CLIENT_ID === undefined ||
     credentials.QUICKBOOKS_CLIENT_SECRET === undefined
       ? null
       : createQuickBooksRuntime({

@@ -787,6 +787,8 @@ export const createApp = (
    */
   signInMethods?: { read(env: AppEnv): Promise<readonly SignInMethodState[] | null> },
   telemetry?: { reportError?: (error: Error, requestId: string) => void | Promise<void> },
+  /** Local metadata only; no tenant SQL, credentials or provider health probes. */
+  providerAvailability?: { quickBooks?: (env: AppEnv) => boolean },
 ) => {
   const cleanupPorts = ([services?.nativeAppleLifecycle, services?.appleWebCleanup] as (AppleCleanupPort | undefined)[]).filter((port): port is AppleCleanupPort => port !== undefined)
   const appleCleanup: AppleCleanupPort | undefined = cleanupPorts.length === 0 ? undefined : {
@@ -858,7 +860,11 @@ export const createApp = (
     // Keep QuickBooks separate: another configured provider must not wake its invoice requests.
     const providers: AccountingProviderAvailability = modules.accounting && !demoDeployment(env)
       ? services === undefined
-        ? configuredAccountingProviders(env)
+        ? { ...configuredAccountingProviders(env),
+            ...(providerAvailability?.quickBooks === undefined ? {} : {
+              quickbooks: providerAvailability.quickBooks(env),
+            }),
+          }
         : {
             quickbooks: services.quickBooks?.configured?.() ?? (services.quickBooks !== undefined && services.quickBooks.clientId() !== null && services.quickBooks.callbackUrl() !== null),
             bill: services.bill?.status().configured === true,
