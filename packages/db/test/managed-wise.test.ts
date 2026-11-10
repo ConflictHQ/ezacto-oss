@@ -33,6 +33,8 @@ const worker = {
 } as const
 let templates: { root: string; sqlite: string; d1: string }
 let server: Server, providerOrigin: string
+let templateWorker: Miniflare | undefined
+let setupClosed = false
 const credentials = new Map<string, string>()
 const calls: { profile: string; path: string; method: string }[] = []
 let beforeResponse: (() => Promise<void>) | undefined
@@ -47,11 +49,14 @@ beforeAll(async () => {
     native.close()
   }
   const mf = new Miniflare({ ...worker, d1Persist: templates.d1 })
+  templateWorker = mf
   try {
     await migrateD1(await mf.getD1Database('DB'))
   } finally {
     await mf.dispose()
+    templateWorker = undefined
   }
+  if (setupClosed) throw new Error('Wise fixture setup was closed')
   server = createServer((request, response) => {
     void (async () => {
       const profile = credentials.get(request.headers.authorization ?? '')
@@ -106,7 +111,9 @@ beforeAll(async () => {
   providerOrigin = `http://127.0.0.1:${address.port}`
 }, 120_000)
 afterAll(async () => {
+  setupClosed = true
   try {
+    await templateWorker?.dispose()
     if (server)
       await new Promise<void>((resolve, reject) =>
         server.close((error) => (error ? reject(error) : resolve())),
