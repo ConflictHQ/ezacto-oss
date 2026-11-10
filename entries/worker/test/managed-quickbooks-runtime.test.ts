@@ -11,7 +11,7 @@ import {
   migrateD1, createManagedQuickBooksRefreshStore, createManagedQuickBooksWriteStore,
 } from '@ezacto/db/d1'
 import { createApiSessionService, createManagedQuickBooksGrantCommands } from '@ezacto/api'
-import { createQuickBooksRuntime, createManagedQuickBooksRefresh, createManagedQuickBooksWrites, type QuickBooksRuntime } from '@ezacto/integrations'
+import { createQuickBooksRuntime, createManagedQuickBooksRefresh, createManagedQuickBooksWrites, refreshAccessToken, QUICKBOOKS_DEFAULT_ENDPOINTS, type QuickBooksRuntime } from '@ezacto/integrations'
 import { createRuntimeServices } from '../src/runtime.js'
 import { createApp, type WorkerEnv } from '../src/app.js'
 import { managedQuickBooksAvailable, type WorkerManagedQuickBooks } from '../src/managed-providers.js'
@@ -26,6 +26,7 @@ const calls: string[] = []
 const providerRequests: string[] = []
 const pausedScopes = new WeakSet<object>()
 const refreshCalls: string[] = []
+const refreshAttemptIds: string[] = []
 const accessTokens = new Map<string, string>()
 let onRefresh: (() => Promise<void>) | undefined
 let loseRefreshReply = false
@@ -45,7 +46,15 @@ const compose = vi.fn(async ({ scope, database }: Parameters<WorkerManagedQuickB
   if (!tenant) throw new Error('Unrecognized trusted tenant scope')
   const db = createD1Database(database)
   const runtime = createQuickBooksRuntime({
-    config: { clientId: 'shared-platform-app-id', clientSecret: 'PRIVATE_PLATFORM_SECRET', webhookVerifierToken: undefined, appBaseUrl: tenant.origin, environment: 'sandbox' },
+    config: { clientId: 'shared-platform-app-id', clientSecret: undefined, webhookVerifierToken: undefined, appBaseUrl: tenant.origin, environment: 'sandbox' },
+    managedRefreshExchange: (connection, now, attemptId) => {
+      refreshAttemptIds.push(attemptId)
+      return refreshAccessToken({
+        clientId: 'shared-platform-app-id', clientSecret: 'PRIVATE_PLATFORM_SECRET',
+        refreshToken: connection.refreshToken, now, endpoints: QUICKBOOKS_DEFAULT_ENDPOINTS,
+        fetch: request => fetch(new URL(new URL(request.url).pathname, providerOrigin), request),
+      })
+    },
     managedWrites: createManagedQuickBooksWrites({ store: createManagedQuickBooksWriteStore(db), admitted: () => scopes.has(scope) && !pausedScopes.has(scope), now: () => new Date() }),
     managedRefresh: createManagedQuickBooksRefresh({ store: createManagedQuickBooksRefreshStore(db), admitted: () => scopes.has(scope) && !pausedScopes.has(scope), now: () => new Date() }),
     store: createQuickBooksStore(db), source: createQuickBooksMirrorSource(db, () => new Date()),
@@ -349,6 +358,7 @@ it('[integration #1235] owns one real HTTP refresh across competing Worker runti
     .bind(new Date(Date.now() - 60_000).toISOString()).run()
   const generation = await tenant.database.prepare('SELECT generation FROM quickbooks_connection_generation').first()
   const before = refreshCalls.length
+  const attemptBefore = refreshAttemptIds.length
   let entered!: () => void, release!: () => void
   const started = new Promise<void>(resolve => { entered = resolve })
   const released = new Promise<void>(resolve => { release = resolve })
@@ -365,6 +375,9 @@ it('[integration #1235] owns one real HTTP refresh across competing Worker runti
     expect(refused.status).toBe(409)
     expect(await refused.text()).not.toContain('PRIVATE_')
     expect(refreshCalls.length).toBe(before + 1)
+    const owner = refreshAttemptIds[attemptBefore]
+    expect(owner).toMatch(/^[a-f0-9-]{36}$/)
+    expect(await tenant.database.prepare('SELECT attempt_id FROM quickbooks_refresh_attempts WHERE attempt_id=?').bind(owner).first()).toEqual({ attempt_id: owner })
   } finally { release(); onRefresh = undefined }
   expect((await result).status).toBe(200)
   const restarted = createApp(await createRuntimeServices(env, { managedQuickBooks: port }))

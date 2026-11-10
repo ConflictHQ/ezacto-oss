@@ -27,7 +27,7 @@ export class ManagedQuickBooksRefreshUnavailableError extends Error {
 
 export interface ManagedQuickBooksRefresh {
   status(): Promise<QuickBooksAuthorizationState>
-  refresh(connection: QuickBooksRefreshSnapshot, exchange: () => Promise<QuickBooksTokens>): Promise<QuickBooksTokens>
+  refresh(connection: QuickBooksRefreshSnapshot, exchange: (attemptId: string) => Promise<QuickBooksTokens>): Promise<QuickBooksTokens>
 }
 
 /** Provider transport runs only after the durable owner is committed. No retry
@@ -68,7 +68,7 @@ export const createManagedQuickBooksRefresh = (input: {
       }
       let tokens: QuickBooksTokens
       try {
-        const received = await exchange()
+        const received = await exchange(attemptId)
         tokens = { accessToken: received.accessToken, refreshToken: received.refreshToken,
           accessTokenExpiresAt: received.accessTokenExpiresAt, refreshTokenExpiresAt: received.refreshTokenExpiresAt }
       } catch {

@@ -1,7 +1,8 @@
 import { invoiceWriteSource, customerWriteSource, paymentWriteSource } from './mirror.js';
 import { clientAncestry } from './mapping.js';
 import { ManagedQuickBooksWriteUnavailableError, type ManagedQuickBooksWrites } from './managed-writes.js';
-import { ManagedQuickBooksRefreshUnavailableError, type ManagedQuickBooksRefresh } from './managed-refresh.js';
+import { ManagedQuickBooksRefreshUnavailableError, type ManagedQuickBooksRefresh, type QuickBooksRefreshSnapshot } from './managed-refresh.js';
+import type { QuickBooksTokens } from './oauth.js';
 /**
  * Assembling the QuickBooks connection from deployment configuration, the
  * store, and Intuit.
@@ -440,6 +441,9 @@ const maximumSkippedReasonLength = 255;
 export interface QuickBooksRuntimeOptions {
   /** Durable managed ownership, composed outside replayable hosted SQL. */
   readonly managedRefresh?: ManagedQuickBooksRefresh;
+  /** Trusted in-process transport, invoked only inside the durable refresh owner.
+   * Hosted credentials stay in the host; never serialize this capability. */
+  readonly managedRefreshExchange?: (connection: QuickBooksRefreshSnapshot, now: Date, attemptId: string) => Promise<QuickBooksTokens>;
   readonly managedWrites?: ManagedQuickBooksWrites;
   /** Trusted host coordinator, bound to the authenticated request and durable revocation custody. */
   readonly managedDisconnect?: () => Promise<void>;
@@ -522,6 +526,9 @@ export const quickBooksConfigured = (config: Pick<QuickBooksConfig, 'clientId' |
 export const createQuickBooksRuntime = (
   options: Readonly<QuickBooksRuntimeOptions>,
 ): QuickBooksRuntime => {
+  if (options.managedRefreshExchange !== undefined && options.managedRefresh === undefined) {
+    throw new Error("Managed QuickBooks refresh transport requires durable ownership");
+  }
   const { config, store, source } = options;
   const clientId = trimmed(config.clientId);
   const clientSecret = trimmed(config.clientSecret);
@@ -569,14 +576,20 @@ export const createQuickBooksRuntime = (
     }
     let accessToken = connection.accessToken;
     if (accessTokenNeedsRefresh(connection, now)) {
-      const exchange = async () => refreshAccessToken({
-        clientId: clientId ?? "",
-        clientSecret: requireSecret(),
-        refreshToken: connection.refreshToken,
-        endpoints: await endpoints(),
-        fetch: options.fetch,
-        now,
-      });
+      const exchange = async (attemptId?: string) => {
+        if (options.managedRefreshExchange !== undefined) {
+          if (attemptId === undefined) throw new Error("Managed refresh owner is required");
+          return options.managedRefreshExchange(connection, now, attemptId);
+        }
+        return refreshAccessToken({
+          clientId: clientId ?? "",
+          clientSecret: requireSecret(),
+          refreshToken: connection.refreshToken,
+          endpoints: await endpoints(),
+          fetch: options.fetch,
+          now,
+        });
+      };
       const refreshed = options.managedRefresh === undefined ? await exchange()
         : await options.managedRefresh.refresh(connection, exchange);
       if (options.managedRefresh === undefined) await store.saveTokens({
@@ -1167,23 +1180,27 @@ export const createQuickBooksRuntime = (
 
   const service: QuickBooksService = {
     ...(options.managedWrites === undefined ? {} : { recoverPendingWrites: (limit?: number) => recoverPendingWrites(limit), writeStatus: () => options.managedWrites!.status() }),
-    configured: () => quickBooksConfigured(config),
+    configured: () => options.managedRefreshExchange === undefined ? quickBooksConfigured(config)
+      : clientId !== null && appBaseUrl !== null && (() => { try { new URL(CALLBACK_PATH, appBaseUrl); return true; } catch { return false; } })(),
     ...(options.managedRefresh === undefined ? {} : { authorizationStatus: () => options.managedRefresh!.status() }),
     clientId: () => clientId,
     callbackUrl,
     settingsUrl: () => SETTINGS_PATH,
     newState: options.newState ?? randomState,
 
-    authorizeUrl: async ({ state, redirectUri }) =>
-      authorizeUrl({
+    authorizeUrl: async ({ state, redirectUri }) => {
+      if (options.managedRefreshExchange !== undefined) throw new ManagedQuickBooksRefreshUnavailableError();
+      return authorizeUrl({
         clientId: clientId ?? "",
         redirectUri,
         state,
         scopes: [QUICKBOOKS_ACCOUNTING_SCOPE],
         endpoints: await endpoints(),
-      }),
+      });
+    },
 
     beginAuthorization: async ({ state, userId, redirectUri }) => {
+      if (options.managedRefreshExchange !== undefined) throw new ManagedQuickBooksRefreshUnavailableError();
       const now = options.now();
       await store.beginAuthorization({
         state,
@@ -1195,6 +1212,7 @@ export const createQuickBooksRuntime = (
     },
 
     completeAuthorization: async ({ state, code, realmId }) => {
+      if (options.managedRefreshExchange !== undefined) throw new ManagedQuickBooksRefreshUnavailableError();
       const now = options.now();
       // Consumed first. Everything after this is done on behalf of a request
       // this instance actually started.
