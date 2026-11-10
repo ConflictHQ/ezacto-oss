@@ -4,7 +4,7 @@ import { Buffer } from 'node:buffer'
 import http from 'node:http'
 import { resolve } from 'node:path'
 import { URL } from 'node:url'
-import { createBankDepositIngestionService, createD1PasswordAuthService, createD1Database, createAccountDeletionRequestRepository, createMoneyResourceRepository } from '@ezacto/db/d1'
+import { createTimesheetApprovalRepository, createTimesheetLockPolicyRepository, createBankDepositIngestionService, createD1PasswordAuthService, createD1Database, createAccountDeletionRequestRepository, createMoneyResourceRepository } from '@ezacto/db/d1'
 import { build } from 'esbuild'
 import { Miniflare, NoOpLog } from 'miniflare'
 
@@ -892,6 +892,29 @@ const fixtureControl = async (request, response) => {
          WHERE id = 1`,
       ),
     ])
+  } else if (action === 'approval-reset') {
+    // A failed browser can leave its own period approved/locked. Recover via
+    // native guarded transitions before the next scenario reseeds those rows.
+    // Never drop guards or erase audit/financial history to clean up a test.
+    const db = createD1Database(database)
+    const approvals = createTimesheetApprovalRepository(db)
+    const policy = createTimesheetLockPolicyRepository(db)
+    const actor = { userId: 1, profile: 'administrator' }
+    const locks = (await database.prepare("SELECT id FROM timesheet_lock_windows WHERE unlocked_at IS NULL AND lock_reason IN ('Monthly close verification','Audit fixture lock')").all()).results
+    for (const lock of locks) await policy.unlock(actor, lock.id, 'Owned browser fixture recovery', timestamp)
+    const submissions = (await database.prepare("SELECT id,status,rejection_reason FROM timesheet_submissions WHERE user_id=1 AND period_start='2026-08-16' AND period_end='2026-08-22'").all()).results
+    for (const submission of submissions) {
+      if (submission.status === 'approved') {
+        await approvals.withdraw(actor, submission.id, 'Owned browser fixture recovery', timestamp)
+      }
+      if (submission.status === 'submitted') {
+        await approvals.unsubmit(actor, submission.id, timestamp)
+      } else if (submission.status === 'approved' || submission.rejection_reason !== null) {
+        // Clear a rejected/reopened review through a genuine resubmit/take-back.
+        await approvals.submit(1, '2026-08-16', '2026-08-22', timestamp)
+        await approvals.unsubmit(actor, submission.id, timestamp)
+      }
+    }
   } else if (action === 'approval-seed') {
     await clearFixtureTimers()
     await database.batch([
