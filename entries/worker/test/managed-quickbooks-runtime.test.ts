@@ -1,4 +1,4 @@
-import { executeInvoiceEdit, recordInvoicePayment } from '../../../packages/db/src/invoice-state.js'
+import { executeInvoiceEdit, recordInvoicePayment, executeInvoiceLifecycleCommand } from '../../../packages/db/src/invoice-state.js'
 import { cp, mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -23,6 +23,8 @@ let fixtureRoot: string | undefined
 let server: Server
 let providerOrigin: string
 const calls: string[] = []
+const providerRequests: string[] = []
+const pausedScopes = new WeakSet<object>()
 const refreshCalls: string[] = []
 const accessTokens = new Map<string, string>()
 let onRefresh: (() => Promise<void>) | undefined
@@ -34,6 +36,8 @@ const writes: { realm: string; requestId: string; path: string; body: string }[]
 const providerResults = new Map<string, string>()
 const providerBodies = new Map<string, string>()
 const tenants: { database: D1Database; cookie: string; member: string; realm: string; origin: string }[] = []
+const writeTenants: (typeof tenants)[number][] = []
+let pauseTenant: (typeof tenants)[number]
 const scopes = new WeakMap<object, (typeof tenants)[number]>()
 const runtimes = new WeakMap<object, QuickBooksRuntime>()
 const compose = vi.fn(async ({ scope, database }: Parameters<WorkerManagedQuickBooks['compose']>[0]) => {
@@ -42,20 +46,21 @@ const compose = vi.fn(async ({ scope, database }: Parameters<WorkerManagedQuickB
   const db = createD1Database(database)
   const runtime = createQuickBooksRuntime({
     config: { clientId: 'shared-platform-app-id', clientSecret: 'PRIVATE_PLATFORM_SECRET', webhookVerifierToken: undefined, appBaseUrl: tenant.origin, environment: 'sandbox' },
-    managedWrites: createManagedQuickBooksWrites({ store: createManagedQuickBooksWriteStore(db), admitted: () => scopes.has(scope), now: () => new Date() }),
-    managedRefresh: createManagedQuickBooksRefresh({ store: createManagedQuickBooksRefreshStore(db), admitted: () => scopes.has(scope), now: () => new Date() }),
+    managedWrites: createManagedQuickBooksWrites({ store: createManagedQuickBooksWriteStore(db), admitted: () => scopes.has(scope) && !pausedScopes.has(scope), now: () => new Date() }),
+    managedRefresh: createManagedQuickBooksRefresh({ store: createManagedQuickBooksRefreshStore(db), admitted: () => scopes.has(scope) && !pausedScopes.has(scope), now: () => new Date() }),
     store: createQuickBooksStore(db), source: createQuickBooksMirrorSource(db, () => new Date()),
     reconciliation: createQuickBooksReconciliationSource(db), now: () => new Date(),
     fetch: request => {
       // A genuine local HTTP transport, with the native parser and authorization.
       const url = new URL(request.url)
+      providerRequests.push(request.method + ' ' + url.pathname)
       return fetch(new URL(url.pathname + url.search, providerOrigin), request)
     },
   })
   runtimes.set(scope, runtime)
   return runtime
 })
-const port: WorkerManagedQuickBooks = { configured: scope => scopes.has(scope), compose }
+const port: WorkerManagedQuickBooks = { configured: scope => scopes.has(scope) && !pausedScopes.has(scope), compose }
 const environment = (tenant: (typeof tenants)[number], extra: Partial<WorkerEnv> = {}): WorkerEnv => ({
   DB: tenant.database, API_CURSOR_SIGNING_KEY: cursor, ENVIRONMENT: 'test', RELEASE: 'managed-runtime-fixture',
   APP_BASE_URL: tenant.origin,
@@ -132,7 +137,7 @@ beforeAll(async () => {
   // its physical snapshot, workerd, users, sessions, grants and connection.
   await template.dispose()
   miniflares.splice(miniflares.indexOf(template), 1)
-  for (const [index, name] of ['ONE', 'TWO'].entries()) {
+  for (const [index, name] of ['ONE', 'TWO', 'WRITE-ONE', 'WRITE-TWO', 'PAUSED'].entries()) {
     const path = join(fixtureRoot, name)
     await cp(templatePath, path, { recursive: true })
     const miniflare = new Miniflare({ ...options, d1Persist: path })
@@ -160,7 +165,10 @@ beforeAll(async () => {
     })
     if (accepted instanceof Response) throw new Error(`Native grant refused with ${accepted.status}`)
     expect(accepted.outcome).toBe('accepted')
-    tenants.push(tenant); scopes.set(database, tenant)
+    if (index < 2) tenants.push(tenant)
+    else if (index < 4) writeTenants.push(tenant)
+    else pauseTenant = tenant
+    scopes.set(database, tenant)
   }
 }, 120_000)
 afterAll(async () => {
@@ -201,7 +209,7 @@ it('[integration #1235] composes the accepted native grant into authorized tenan
 })
 
 it('[integration #1235] owns native invoice writes across competing Workers and recovers a lost HTTP response through the native scheduled port', async () => {
-  for (const tenant of tenants) {
+  for (const [index, tenant] of writeTenants.entries()) {
     await tenant.database.batch([
       tenant.database.prepare("INSERT INTO clients(id,name,currency,created_at,updated_at) VALUES(1,'Owned Customer','USD',?,?)").bind(at,at),
       tenant.database.prepare("INSERT INTO invoices(id,client_id,number,currency,issue_date,due_date,state,amount_cents,due_amount_cents,created_at,updated_at) VALUES(1,1,'Owned-1','USD','2026-11-10','2026-11-30','open',100,100,?,?)").bind(at,at),
@@ -214,7 +222,7 @@ it('[integration #1235] owns native invoice writes across competing Workers and 
     await createRuntimeServices(env, { managedQuickBooks: port })
     const runtime = runtimes.get(tenant.database)!
     const start = writes.length
-    if (tenant.realm === '111') {
+    if (index === 0) {
       let enter!: () => void, release!: () => void
       const started = new Promise<void>(resolve => { enter = resolve })
       const held = new Promise<void>(resolve => { release = resolve })
@@ -226,7 +234,7 @@ it('[integration #1235] owns native invoice writes across competing Workers and 
         await expect(runtimes.get(tenant.database)!.mirror(1)).rejects.toMatchObject({ code: 'provider_unavailable' })
       } finally { release(); onInvoiceWrite = undefined }
       await expect(first).resolves.toMatchObject({ kind: 'created' })
-      expect(writes.slice(start).map(write => write.path.split('?')[0])).toEqual(['/v3/company/111/customer','/v3/company/111/invoice'])
+      expect(writes.slice(start).map(write => write.path.split('?')[0])).toEqual([`/v3/company/${tenant.realm}/customer`,`/v3/company/${tenant.realm}/invoice`])
       const native = createD1Database(tenant.database)
       await recordInvoicePayment(native, { invoiceId: 1, commandId: 'owned-manual-receipt', actor: { type: 'user', id: 2 }, authorize: async () => true,
         expectedVersion: 1, occurredAt: at, eventIds: ['owned-manual-receipt-event','owned-manual-receipt-status-event'], payment: { type: 'manual', id: 1, currency: 'USD', amountCents: 50, paidDate: '2026-11-10', paidAt: null } })
@@ -246,6 +254,10 @@ it('[integration #1235] owns native invoice writes across competing Workers and 
       expect(paymentWrites).toHaveLength(2); expect(paymentWrites[1]).toEqual(paymentWrites[0])
       const financialAfter = await tenant.database.batch([tenant.database.prepare('SELECT * FROM invoices'),tenant.database.prepare('SELECT * FROM invoice_payments')])
       expect(financialAfter.map(row => row.results)).toEqual(financialBefore.map(row => row.results))
+      const networkBefore = providerRequests.length
+      await expect(runtime.mirrorPayment({ invoiceId: 1, payment: { ...payment, amountCents: payment.amountCents + 1 } })).resolves.toMatchObject({ kind: 'refused', reason: 'The native receipt changed after it was recorded; review it before mirroring.' })
+      expect(providerRequests).toHaveLength(networkBefore)
+
 
     } else {
       loseInvoiceReplyRealm = tenant.realm
@@ -276,8 +288,49 @@ it('[integration #1235] owns native invoice writes across competing Workers and 
       // Recovery did not plan a fresh update or invoke global receipt sync.
       expect(await tenant.database.prepare('SELECT count(*) AS n FROM invoice_payments').first()).toEqual({ n: 0 })
     }
-    if (tenant.realm === '222') expect((await tenant.database.prepare('SELECT * FROM invoices').all()).results).toEqual(before.results)
+    if (index === 1) expect((await tenant.database.prepare('SELECT * FROM invoices').all()).results).toEqual(before.results)
   }
+})
+
+it('[integration #1235] preserves accepted accounting outbox intent across a disabled Worker composition and resumes it once', async () => {
+  const tenant = pauseTenant, env = environment(tenant), eventId = 'owned-paused-quickbooks'
+  // This journey owns a separate native database and works when run alone.
+  await tenant.database.batch([
+    tenant.database.prepare("INSERT INTO clients(id,name,currency,created_at,updated_at) VALUES(1,'Owned Pause Customer','USD',?,?)").bind(at,at),
+    tenant.database.prepare("INSERT INTO invoices(id,client_id,number,currency,issue_date,due_date,state,created_at,updated_at) VALUES(1,1,'Owned-Pause','USD','2026-11-10','2026-11-30','open',?,?)").bind(at,at),
+  ])
+  await executeInvoiceEdit(createD1Database(tenant.database),{invoiceId:1,commandId:'owned-pause-line',actor:{type:'user',id:2},authorize:async()=>true,expectedVersion:0,occurredAt:at,eventIds:['owned-pause-line-event'],
+    edit:{type:'line_insert',lineId:1,position:0,kind:'Service',description:'Owned work',quantity:1,unitPriceCents:100,amountCents:100}})
+  // The native resend command creates the queued accounting fact through
+  // its normal ledger; no email snapshot/provider is configured in this fixture.
+  const version = (await tenant.database.prepare('SELECT version FROM invoices WHERE id=1').first())!.version as number
+  await executeInvoiceLifecycleCommand(createD1Database(tenant.database), { invoiceId:1,commandId:'owned-paused-send',command:'send',actor:{type:'user',id:2},authorize:async()=>true,
+    expectedVersion:version,occurredAt:new Date().toISOString(),messageId:99,eventId })
+  const financialBefore = await tenant.database.batch([tenant.database.prepare('SELECT * FROM invoices'),tenant.database.prepare('SELECT * FROM invoice_payments')])
+  const before = providerRequests.length
+  pausedScopes.add(tenant.database)
+  try {
+    const paused = await createRuntimeServices(env, { managedQuickBooks: port })
+    expect(paused.quickBooks).toBeUndefined()
+    await paused.outbox.drain(100)
+    expect(providerRequests).toHaveLength(before)
+    expect(await tenant.database.prepare("SELECT status,attempt_count FROM outbox_delivery_receipts WHERE subscriber_id='quickbooks_mirror' AND event_id=?").bind(eventId).first())
+      .toEqual({status:'pending',attempt_count:0})
+    expect((await tenant.database.prepare('SELECT published_at FROM event_outbox WHERE id=?').bind(eventId).first())?.published_at).toBeNull()
+  } finally { pausedScopes.delete(tenant.database) }
+  vi.useFakeTimers({toFake:['Date']});vi.setSystemTime(Date.now()+61_000)
+  try {
+    const resumed = await createRuntimeServices(env, { managedQuickBooks: port })
+    const writeBefore = writes.length
+    await resumed.outbox.drain(100)
+    expect(await tenant.database.prepare("SELECT status,attempt_count FROM outbox_delivery_receipts WHERE subscriber_id='quickbooks_mirror' AND event_id=?").bind(eventId).first())
+      .toEqual({status:'delivered',attempt_count:1})
+    expect(writes.slice(writeBefore).filter(write=>write.path.includes('/invoice'))).toHaveLength(1)
+    await (await createRuntimeServices(env,{managedQuickBooks:port})).outbox.drain(100)
+    expect(writes.slice(writeBefore).filter(write=>write.path.includes('/invoice'))).toHaveLength(1)
+    const financialAfter = await tenant.database.batch([tenant.database.prepare('SELECT * FROM invoices'),tenant.database.prepare('SELECT * FROM invoice_payments')])
+    expect(financialAfter.map(row=>row.results)).toEqual(financialBefore.map(row=>row.results))
+  } finally {vi.useRealTimers()}
 })
 
 it('[integration #1235] owns one real HTTP refresh across competing Worker runtimes and a fresh restart', async () => {

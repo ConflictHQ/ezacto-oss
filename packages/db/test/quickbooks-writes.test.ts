@@ -1,3 +1,4 @@
+import { readManagedQuickBooksOutboxAdmission } from '../src/quickbooks-outbox.js'
 import BetterSqlite3 from 'better-sqlite3'
 import { cp, mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
@@ -8,7 +9,7 @@ import { createManagedQuickBooksWrites, quickBooksWriteSourceHash, type QuickBoo
 import { createContainerDatabase, createD1Database } from '../src/adapters.js'
 import { migrateContainer, migrateD1 } from '../src/migrate.js'
 import { atomicStatements } from '../src/atomic-statements.js'
-import { recordInvoicePayment, executeInvoiceEdit } from '../src/invoice-state.js'
+import { recordInvoicePayment, executeInvoiceEdit, executeInvoiceLifecycleCommand } from '../src/invoice-state.js'
 import type { InvoiceStateDatabase } from '../src/invoice-state.js'
 import { createManagedQuickBooksGrantStore } from '../src/managed-quickbooks.js'
 import { createManagedQuickBooksLifecycleStore } from '../src/managed-quickbooks-lifecycle.js'
@@ -40,7 +41,7 @@ describe.each(['sqlite','d1'] as const)('native managed QuickBooks accounting wr
   })
   afterEach(async () => { await Promise.all(closers.splice(0).map(close => close())) })
   afterAll(async () => { await Promise.all(closers.splice(0).map(close => close())); if (root) await rm(root,{recursive:true,force:true}) })
-  const fixture = async () => {
+  const fixture = async (beforeGrantEvent = false) => {
     let db: InvoiceStateDatabase
     if (backend === 'sqlite') {
       const native = new BetterSqlite3(Buffer.from(snapshot));native.pragma('foreign_keys=ON')
@@ -59,6 +60,8 @@ describe.each(['sqlite','d1'] as const)('native managed QuickBooks accounting wr
       VALUES(1,1,'Owned-1','USD','2026-11-10','2026-11-30','open',100,100,?,?)`,[at,at])
     await executeInvoiceEdit(db,{invoiceId:1,commandId:'owned-fixture-line',actor:{type:'user',id:2},expectedVersion:0,occurredAt:at,
       authorize:async()=>true,eventIds:['owned-fixture-line-event'],edit:{type:'line_insert',lineId:1,position:0,kind:'Service',description:'Owned work',quantity:1,unitPriceCents:100,amountCents:100}})
+    if (beforeGrantEvent) await executeInvoiceLifecycleCommand(db,{invoiceId:1,commandId:'owned-before-grant-send',command:'send',actor:{type:'user',id:2},authorize:async()=>true,
+      expectedVersion:1,occurredAt:at,messageId:98,eventId:'owned-before-grant-event'})
     await createManagedQuickBooksGrantStore(db).accept({grantId,browserHash:'b'.repeat(64),credentialHash:'c'.repeat(64),expectedActorUserId:2,
       expectedConnectionGeneration:0,expiresAt:Date.parse(at)+600000,tokens:{realmId:'111',companyName:'Owned',accessToken:'OWNED_ACCESS',refreshToken:'OWNED_REFRESH',
       accessTokenExpiresAt:'2026-11-11T04:00:00.000Z',refreshTokenExpiresAt:'2027-01-01T00:00:00.000Z',scope:'com.intuit.quickbooks.accounting'}},authority,at)
@@ -187,6 +190,43 @@ describe.each(['sqlite','d1'] as const)('native managed QuickBooks accounting wr
     const second=await f.store.pendingWrites({connection:f.connection,limit:1,now:'2026-11-10T04:02:00.000Z'})
     expect(first).toHaveLength(1);expect(second).toHaveLength(1);expect(first[0]!.resource).not.toBe(second[0]!.resource)
     expect(await f.execute('SELECT state FROM quickbooks_write_effects ORDER BY resource')).toEqual([{state:'unknown'},{state:'unknown'}])
+  })
+  it('binds outbox intent to the original native generation even when a new grant has identical realm and timestamps',async()=>{
+    const f=await fixture(),eventId='owned-bound-accounting-event'
+    await executeInvoiceLifecycleCommand(f.db,{invoiceId:1,commandId:'owned-bound-send',command:'send',actor:{type:'user',id:2},authorize:async()=>true,expectedVersion:1,occurredAt:at,messageId:99,eventId})
+    expect(await readManagedQuickBooksOutboxAdmission(f.db,eventId)).toEqual({kind:'current',realmId:'111',generation:1,connectedAt:at})
+    expect(JSON.stringify(await readManagedQuickBooksOutboxAdmission(f.db,eventId))).not.toContain('OWNED_')
+    await expect(f.execute('DELETE FROM quickbooks_outbox_grants WHERE event_id=?',[eventId])).rejects.toThrow('managed_quickbooks_outbox_grant_retained')
+    await expect(f.execute('UPDATE quickbooks_outbox_grants SET generation=3 WHERE event_id=?',[eventId])).rejects.toThrow('managed_quickbooks_outbox_grant_immutable')
+    await f.lifecycle.fence({revocationId:'d'.repeat(64),grantId,expectedActorUserId:2,expectedConnectionGeneration:1,environment:'sandbox',reason:'disconnect'},authority,at)
+    expect(await readManagedQuickBooksOutboxAdmission(f.db,eventId)).toEqual({kind:'stale'})
+    await f.lifecycle.beginRevocation('d'.repeat(64),at);await f.lifecycle.settleRevocation('d'.repeat(64),'revoked',at)
+    await createManagedQuickBooksGrantStore(f.db).accept({grantId:'e'.repeat(64),browserHash:'f'.repeat(64),credentialHash:'c'.repeat(64),expectedActorUserId:2,
+      expectedConnectionGeneration:2,expiresAt:Date.parse(at)+600000,tokens:{realmId:'111',companyName:'Owned',accessToken:'OWNED_ACCESS',refreshToken:'OWNED_REFRESH',
+      accessTokenExpiresAt:'2026-11-11T04:00:00.000Z',refreshTokenExpiresAt:'2027-01-01T00:00:00.000Z',scope:'com.intuit.quickbooks.accounting'}},authority,at)
+    expect((await createQuickBooksStore(f.db).readConnection())!.connectionGeneration).toBe(3)
+    expect(await readManagedQuickBooksOutboxAdmission(f.db,eventId)).toEqual({kind:'stale'})
+    expect(await readManagedQuickBooksOutboxAdmission(f.db,'unbound-pre-upgrade-event')).toEqual({kind:'unavailable'})
+  })
+  it('keeps events created before grant acceptance unbound to that later company',async()=>{
+    const f=await fixture(true)
+    expect(await readManagedQuickBooksOutboxAdmission(f.db,'owned-before-grant-event')).toEqual({kind:'absent'})
+    expect(await f.execute('SELECT state,generation,grant_id FROM quickbooks_outbox_grants WHERE event_id=?',['owned-before-grant-event']))
+      .toEqual([{state:'absent',generation:0,grant_id:null}])
+  })
+  it('retains event grant identity while canonical account closure removes transient grant receipts',async()=>{
+    const f=await fixture(),eventId='owned-closure-accounting-event'
+    await executeInvoiceLifecycleCommand(f.db,{invoiceId:1,commandId:'owned-closure-send',command:'send',actor:{type:'user',id:2},authorize:async()=>true,expectedVersion:1,occurredAt:at,messageId:99,eventId})
+    await createAccountRetentionRepository(f.db).publish({actorUserId:1,expectedVersion:0,now:at,
+      policy:{frameworks:[],retained_records:(['audit_and_security','billing_and_payments'] as const).map(category=>({category,reason:'Owned fixture review.',period:'One year then review.',review_after_days:30})),
+        response_target_days:14,operator_contact:'privacy@example.test',user_notice:'Reviewed closure.',backup_handling:'Replay closure.',acknowledged:true}})
+    await createAccountDeletionRequestRepository(f.db).request({userId:2,id:'owned-outbox-closure',now:at,expectedPolicyVersion:1})
+    const closure=createAccountClosureRepository(f.db),preview=await closure.preview(1,'owned-outbox-closure')
+    expect(preview.uncovered_categories).toEqual([])
+    await closure.close({actorUserId:1,id:'owned-outbox-closure',reviewToken:preview.review_token,expectedVersion:1,expectedPolicyVersion:1,now:at,acknowledged:true})
+    expect(await f.execute('SELECT grant_id FROM quickbooks_managed_grants')).toEqual([])
+    expect(await f.execute('SELECT generation,grant_id FROM quickbooks_outbox_grants WHERE event_id=?',[eventId])).toEqual([{generation:1,grant_id:grantId}])
+    expect(await readManagedQuickBooksOutboxAdmission(f.db,eventId)).not.toMatchObject({kind:'current'})
   })
   it('includes unresolved accounting custody in account closure inventory without exposing financial payloads',async()=>{
     const f=await fixture()

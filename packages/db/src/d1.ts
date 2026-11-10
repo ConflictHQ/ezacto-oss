@@ -598,3 +598,5 @@ export * from './github-app-setup.js'
 export { createManagedQuickBooksRefreshStore } from './quickbooks-refresh.js'
 
 export { createManagedQuickBooksWriteStore } from './quickbooks-writes.js'
+
+export { readManagedQuickBooksOutboxAdmission, type ManagedQuickBooksOutboxAdmission } from './quickbooks-outbox.js'

@@ -731,6 +731,14 @@ export const createQuickBooksRuntime = (
     invoiceId: number;
     payment: MirrorPayment;
   }): Promise<MirrorPaymentOutcome> => {
+    if (options.managedWrites !== undefined) {
+      const current = (await source.readPayments(input.invoiceId)).find(payment => payment.id === input.payment.id);
+      if (current === undefined || current.amountCents !== input.payment.amountCents || current.paidOn !== input.payment.paidOn || current.provider !== input.payment.provider) {
+        return { kind: 'refused', reason: 'The native receipt changed after it was recorded; review it before mirroring.' };
+      }
+      if (current.provider === 'quickbooks') return { kind: 'refused', reason: 'the payment came from QuickBooks' };
+      if (current.amountCents <= 0) return { kind: 'refused', reason: 'QuickBooks takes receipts, not refunds' };
+    }
     const connection = await store.readConnection();
     if (connection === null) {
       return { kind: "refused", reason: "QuickBooks is not connected" };
@@ -1387,6 +1395,23 @@ export const createQuickBooksRuntime = (
  * Failures throw. The outbox retries, and the mirror is safe to retry: that is
  * what the adopt path and the link table are for.
  */
+export interface QuickBooksMirrorEvent {
+  readonly eventType: string
+  readonly aggregateType: string
+  readonly aggregateId: number
+  readonly payload?: Readonly<Record<string, unknown>>
+}
+
+/** The same event selection as the existing mirror, exposed for preclaim
+ * admission so unrelated events never depend on provider availability. */
+export const quickBooksMirrorEventNeedsProvider = (event: QuickBooksMirrorEvent): boolean => {
+  if (event.aggregateType !== 'invoice') return false
+  if (event.eventType === 'invoice.sent') return true
+  if (event.eventType !== 'payment.recorded') return false
+  const payment = recordedPayment(event.payload)
+  return payment !== null && payment.provider !== 'quickbooks'
+}
+
 export const createQuickBooksMirrorSubscriber = (
   runtime: Readonly<QuickBooksRuntime>,
 ): {
@@ -1402,7 +1427,7 @@ export const createQuickBooksMirrorSubscriber = (
 } => ({
   id: "quickbooks_mirror",
   async deliver(event) {
-    if (event.aggregateType !== "invoice") return;
+    if (!quickBooksMirrorEventNeedsProvider(event)) return;
     if (event.eventType === "invoice.sent") {
       // A refusal is a decision, not a failure: no connection, or a document in
       // QuickBooks this mirror did not write. Retrying cannot change either, so

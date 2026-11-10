@@ -318,3 +318,25 @@ provider acceptance remain separate release requirements. No live provider write
 is part of the local verification.
 
 Provider replay contract: [Intuit request ID guidance](https://static.developer.intuit.com/output_html/qbo/docs/learn/learn-basic-field-definitions.html).
+
+
+## Paused outbox admission
+
+An explicitly managed Worker keeps `quickbooks_mirror` enrolled while its host
+capability or token authorization is unavailable. The common outbox admission
+mechanism retains pending receipts without spending attempts, keeps unrelated
+consumers moving and resumes through the same runtime after admission returns.
+Safe unknown accounting writes remain recoverable with their original request
+IDs; custody requiring review stays withheld.
+
+Migration 0185 captures the accepted native grant ID and generation in the same
+commit as each accounting event. It also records when no grant existed. These
+bindings are immutable while the event exists, and contain no credential.
+An old event cannot target a newer grant even when realm IDs and timestamps are
+identical. Pre-upgrade queued events without a binding remain withheld for review;
+there is no guessed historical attribution. Canonical privacy closure may remove
+transient grant receipts while the event retains its opaque historical identity.
+
+Managed receipt mirrors compare the queued receipt against the canonical native
+amount, payment day and provider before any provider request. A changed or removed
+receipt is left for review; recovery does not overwrite the native financial record.

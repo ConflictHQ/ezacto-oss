@@ -1,3 +1,5 @@
+import { readManagedQuickBooksOutboxAdmission } from '@ezacto/db/d1'
+import { createManagedQuickBooksOutboxSubscriber } from './managed-quickbooks-outbox.js'
 import type { WiseRuntime } from '@ezacto/integrations'
 import { managedQuickBooksAvailable, managedWiseAvailable, managedBillAvailable, type WorkerManagedQuickBooks, type WorkerManagedWise, type WorkerManagedBill } from './managed-providers.js'
 import { createCalendarOperatorCleanupStore } from '@ezacto/db/d1'
@@ -1240,7 +1242,12 @@ export const createRuntimeServices = async (
             ),
           ]),
       reminders.subscriber,
-      ...(quickBooks === null ? [] : [createQuickBooksMirrorSubscriber(quickBooks)]),
+      ...(options.managedQuickBooks === undefined
+        ? quickBooks === null ? [] : [createQuickBooksMirrorSubscriber(quickBooks)]
+        : [createManagedQuickBooksOutboxSubscriber({ runtime: quickBooks,
+          available: () => managedQuickBooksAvailable(options.managedQuickBooks!, env, binding),
+          readAdmission: eventId => readManagedQuickBooksOutboxAdmission(drizzle, eventId),
+        })]),
       { ...createBillMirrorSubscriber({ mirror: (invoiceId: number) => bill.mirror(invoiceId) }),
         ...(options.managedBill === undefined ? {} : {
           available: async (event: Readonly<{ aggregateType: string; eventType: string; aggregateId: number }>) => {

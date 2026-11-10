@@ -265,6 +265,8 @@ export {
 } from './quickbooks/reconcile.js'
 export {
   createQuickBooksMirrorSubscriber,
+  quickBooksMirrorEventNeedsProvider,
+  type QuickBooksMirrorEvent,
   createQuickBooksRuntime,
   quickBooksConfigured,
   type QuickBooksCatchUp,
