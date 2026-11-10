@@ -5,7 +5,7 @@ import { createServer, type Server } from 'node:http'
 import { afterAll, beforeAll, expect, it, vi } from 'vitest'
 import { Miniflare } from 'miniflare'
 import { createD1Database, createD1SessionStore, createManagedBillConnectionStore,
-  createBillLinkStore, createBillMirrorSource, executeInvoiceLifecycleCommand, migrateD1 } from '@ezacto/db/d1'
+  createBillLinkStore, createBillMirrorSource, createBillEffectFenceStore, executeInvoiceLifecycleCommand, migrateD1 } from '@ezacto/db/d1'
 import { createApiSessionService, createManagedBillConnectionCommands } from '@ezacto/api'
 import { createManagedBillVault } from '@ezacto/core'
 import { createManagedBillRuntime } from '@ezacto/integrations'
@@ -29,7 +29,8 @@ const composeRuntime = async ({ scope, database }: Parameters<WorkerManagedBill[
   return createManagedBillRuntime({
     store: createManagedBillConnectionStore(db), open: tenant.vault.open, platformDevKey,
     isEnabled: async () => tenant.enabled,
-    links: createBillLinkStore(db, () => new Date()), source: createBillMirrorSource(db, () => new Date()),
+    links: createBillLinkStore(db, () => new Date()),
+    fence: generation => createBillEffectFenceStore(db, generation, () => new Date()), source: createBillMirrorSource(db, () => new Date()),
     now: () => new Date(),
     fetch: request => {
       const url = new URL(request.url)

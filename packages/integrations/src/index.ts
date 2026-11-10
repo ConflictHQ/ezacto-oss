@@ -32,6 +32,8 @@ export {
   inboundPayments as billInboundPayments,
   mirrorInvoice as mirrorBillInvoice,
   type BillDelivery,
+  type BillEffectFence,
+  type BillEffectKind,
   type BillInboundPayment,
   type BillLink,
   type BillLinkKind,

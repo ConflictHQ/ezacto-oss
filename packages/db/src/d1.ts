@@ -208,6 +208,7 @@ export {
   type InstanceThemeWrite,
 } from './instance-theme.js'
 export {
+  createBillEffectFenceStore,
   createBillLinkStore,
   createBillMirrorSource,
   setBillDelivery } from './bill.js'

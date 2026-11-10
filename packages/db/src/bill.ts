@@ -15,6 +15,8 @@ import { sql } from 'drizzle-orm'
 import { recordCheckoutPayment } from './checkout-payments.js'
 import type { InvoiceStateDatabase } from './invoice-state.js'
 import type {
+  BillEffectFence,
+  BillEffectKind,
   BillLink,
   BillLinkKind,
   BillLinkStore,
@@ -78,6 +80,54 @@ export const createBillLinkStore = (
         updated_at = excluded.updated_at`)
   },
 })
+
+/**
+ * Durable holds around BILL provider effects for a tenant-owned connection
+ * (issue 1252, migration 0188). Each statement is its own committed write, so a
+ * hold exists before the provider is called and survives a crash or a lost
+ * reply. The schema refuses a hold under any connection generation but the
+ * stored one, and refuses edits to the native fields a held request used.
+ */
+export const createBillEffectFenceStore = (
+  database: Database,
+  generation: number,
+  now: () => Date,
+  newId: () => string = () => globalThis.crypto.randomUUID(),
+): BillEffectFence => {
+  const owner = newId()
+  return {
+    hold: async (effect) => {
+      const held = await database.all<{ effect_id: string; request_digest: string }>(sql`
+        SELECT effect_id, request_digest FROM bill_effect_fences
+        WHERE state = 'held' AND invoice_id = ${effect.invoiceId} AND kind = ${effect.kind}
+          AND connection_generation = ${generation}`)
+      const existing = held[0]
+      if (existing !== undefined) {
+        // The held request's source is frozen, so a different digest means the
+        // provider request is not the one that may be in flight: refuse.
+        if (existing.request_digest !== effect.requestDigest) throw new Error('bill_effect_fence_request_changed')
+        return { effectId: existing.effect_id }
+      }
+      const effectId = newId()
+      await database.run(sql`
+        INSERT INTO bill_effect_fences
+          (effect_id, owner_id, invoice_id, client_id, connection_generation, kind, request_digest, state, created_at)
+        VALUES (${effectId}, ${owner}, ${effect.invoiceId}, ${effect.clientId}, ${generation}, ${effect.kind},
+          ${effect.requestDigest}, 'held', ${now().toISOString()})`)
+      return { effectId }
+    },
+    release: async (effectId) => {
+      await database.run(sql`
+        UPDATE bill_effect_fences SET state = 'released' WHERE effect_id = ${effectId} AND state = 'held'`)
+    },
+    releaseHeld: async (invoiceId: number, kinds: readonly BillEffectKind[]) => {
+      if (kinds.length === 0) return
+      await database.run(sql`
+        UPDATE bill_effect_fences SET state = 'released'
+        WHERE invoice_id = ${invoiceId} AND state = 'held' AND kind IN (${sql.join(kinds.map((kind) => sql`${kind}`), sql`, `)})`)
+    },
+  }
+}
 
 /**
  * Names the one `payment_provider_accounts` row BILL payments are filed
