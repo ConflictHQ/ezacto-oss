@@ -468,10 +468,12 @@ describe('queued mailer', () => {
     const provider: HttpEmailProvider = { name: 'test-http', send: vi.fn(async () => {
       throw new Error('fixture: provider accepted but reply was lost')
     }) }
-    await expect(processQueuedEmail(reminder, 1, log, provider)).resolves.toEqual({ action: 'ack' })
+    const options = { createAttemptId: () => 'b5f88b55-bc30-4bf2-94f5-350849e4b6c0' }
+    await expect(processQueuedEmail(reminder, 1, log, provider, options)).resolves.toEqual({ action: 'ack' })
     expect(log.releaseAttempt).not.toHaveBeenCalled()
-    await expect(processQueuedEmail(reminder, 2, log, provider)).resolves.toEqual({ action: 'ack' })
+    await expect(processQueuedEmail(reminder, 2, log, provider, options)).resolves.toEqual({ action: 'ack' })
     expect(provider.send).toHaveBeenCalledTimes(1)
+    expect(provider.send).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({ idempotencyKey: 'ezacto-reminder-7-b5f88b55-bc30-4bf2-94f5-350849e4b6c0' }))
   })
 
   it('[unit] retries provider failure with the bounded queue policy, then records failed', async () => {

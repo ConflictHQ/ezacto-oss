@@ -747,7 +747,7 @@ export type EmailQueueDisposition =
 const providerCall = async (
   provider: HttpEmailProvider,
   message: EmailMessage,
-  deliveryId: number,
+  correlationKey: string,
   timeoutMs: number,
 ): Promise<EmailProviderReceipt> => {
   const controller = new AbortController()
@@ -762,7 +762,7 @@ const providerCall = async (
     return await Promise.race([
       provider.send(message, {
         signal: controller.signal,
-        idempotencyKey: `ezacto-email-${deliveryId}`,
+        idempotencyKey: correlationKey,
       }),
       timedOut,
     ])
@@ -888,6 +888,12 @@ export const processQueuedEmail = async (
     'email delivery attempt id',
     128,
   )
+  // Reminder attempts must be globally distinct across tenant databases. The
+  // persisted claim token is also sent as provider correlation data; it is not
+  // a claim that the provider deduplicates on that value.
+  if (message.template.startsWith('reminder:') && !/^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/u.test(attemptId)) {
+    throw new TypeError('reminder attempt id must be a random UUID')
+  }
   // The queue's delivery counter includes lease contention and persistence
   // redeliveries. Only the atomically persisted provider-attempt count may
   // consume the provider retry budget or select its backoff interval.
@@ -921,7 +927,7 @@ export const processQueuedEmail = async (
     delivered = await providerCall(
       provider,
       message,
-      job.deliveryId,
+      message.template.startsWith('reminder:') ? `ezacto-reminder-${job.deliveryId}-${attemptId}` : `ezacto-email-${job.deliveryId}`,
       providerTimeoutMs,
     )
   } catch (error) {
