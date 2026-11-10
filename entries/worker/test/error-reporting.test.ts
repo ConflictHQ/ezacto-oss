@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 import * as Sentry from '@sentry/cloudflare'
 import { ApiError } from '@ezacto/api'
+import { BillApiError, BillAuthError } from '@ezacto/integrations'
 import { captureWorkerError, reportWorkerError, scrubWorkerEvent } from '../src/error-reporting.js'
 import type { ErrorEvent } from '@sentry/cloudflare'
 import type { WorkerErrorContext } from '../src/error-reporting.js'
@@ -237,7 +238,6 @@ it('never reads a plain cause or child stack and prefers a nested initiating Err
   expect(JSON.stringify(scrubWorkerEvent({}, { originalException: captured[0] }))).not.toContain('SECRET')
 })
 
-
 it.each([
   ['D1_ERROR: D1 DB is overloaded. Requests queued for too long.', 'd1_overloaded'],
   ['D1_ERROR: D1 DB is overloaded. Too many requests queued.', 'd1_overloaded'],
@@ -273,4 +273,43 @@ it('classifies the observed readiness exec overload without parsing arbitrary SQ
   }
   const query = new Error(`D1_EXEC_ERROR: Error in line 1: SELECT '${platform}': syntax error`)
   expect(scrubWorkerEvent({}, { originalException: query })!.tags?.failure_code).toBe('unknown')
+})
+
+it.each([
+  [new BillApiError(401, 'PRIVATE_CODE', 'PRIVATE_PROVIDER_BODY'), 'bill_http_401'],
+  [new BillApiError(403, 'PRIVATE_CODE', 'PRIVATE_PROVIDER_BODY'), 'bill_http_403'],
+  [new BillApiError(429, 'PRIVATE_CODE', 'PRIVATE_PROVIDER_BODY'), 'bill_http_429'],
+  [new BillApiError(422, 'PRIVATE_CODE', 'PRIVATE_PROVIDER_BODY'), 'bill_http_4xx'],
+  [new BillApiError(503, 'PRIVATE_CODE', 'PRIVATE_PROVIDER_BODY'), 'bill_http_5xx'],
+  [new BillAuthError(401, 'PRIVATE_PROVIDER_BODY'), 'bill_http_401'],
+] as const)('reports only the bounded BILL response category for scheduled reconciliation', (original, expected) => {
+  const captured: Error[] = []
+  vi.mocked(Sentry.captureException).mockImplementation(error => { captured.push(error as Error); return 'e'.repeat(32) })
+  captureWorkerError(original, { phase: 'scheduled', operation: 'BILL reconciliation' })
+  const clean = scrubWorkerEvent({}, { originalException: captured[0] })!
+  expect(clean.tags?.failure_code).toBe(expected)
+  expect(JSON.stringify(clean)).not.toContain('PRIVATE_')
+  captureWorkerError(original, { phase: 'scheduled', operation: 'QuickBooks catch-up' })
+  const other = scrubWorkerEvent({}, { originalException: captured[1] })!
+  expect(other.tags?.failure_code).toBe('unknown')
+})
+
+it('does not trust an untyped error or getter as a BILL status', () => {
+  const fake = new Error('PRIVATE_')
+  let reads = 0
+  Object.defineProperty(fake, 'status', { get: () => { reads++; return 401 } })
+  const captured: Error[] = []
+  vi.mocked(Sentry.captureException).mockImplementation(error => { captured.push(error as Error); return 'e'.repeat(32) })
+  captureWorkerError(fake, { phase: 'scheduled', operation: 'BILL reconciliation' })
+  expect(scrubWorkerEvent({}, { originalException: captured[0] })!.tags?.failure_code).toBe('unknown')
+  expect(reads).toBe(0)
+})
+
+it('ignores hostile nested prototypes without losing the scheduled report', () => {
+  const hostile = new Proxy({}, { getPrototypeOf: () => { throw new Error('PRIVATE_') } })
+  const original = new Error('PRIVATE_', { cause: hostile })
+  const captured: Error[] = []
+  vi.mocked(Sentry.captureException).mockImplementation(error => { captured.push(error as Error); return 'e'.repeat(32) })
+  expect(() => captureWorkerError(original, { phase: 'scheduled', operation: 'BILL reconciliation' })).not.toThrow()
+  expect(scrubWorkerEvent({}, { originalException: captured[0] })!.tags?.failure_code).toBe('unknown')
 })
