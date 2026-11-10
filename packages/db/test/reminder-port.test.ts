@@ -7,7 +7,7 @@ import { executeInvoiceLifecycleCommand, recordInvoicePayment } from '../src/inv
 import { createContainerOutboxService } from '../src/outbox.js'
 import { createContainerReminderScheduler } from '../src/reminders.js'
 import { createReminderPort, listReminderDeliveries } from '../src/reminder-port.js'
-import { readThankYouRecipients } from '../src/automatic-thank-you.js'
+import { hasRetryableFollowUpDelivery, readThankYouRecipients } from '../src/automatic-thank-you.js'
 import {
   readOrganizationReminderPolicy,
   setOrganizationReminderPolicy,
@@ -271,6 +271,19 @@ describe('an overdue invoice is reminded', () => {
     expect(await readThankYouRecipients(orm, 1)).toEqual([])
     await sendTo(orm, [{ name: 'AP', email: 'ap@example.test' }], null, { messageId: 2, expectedVersion: 1 })
     expect(await readThankYouRecipients(orm, 1)).toEqual([{ name: 'AP', email: 'ap@example.test', role: 'to' }])
+  })
+
+  it('[money #1352] retries a follow-up while matched terminal feedback is unfinished', async () => {
+    const { database, orm } = await fixture()
+    await sendTo(orm, [{ name: 'AP', email: 'ap@example.test' }])
+    database.prepare(`INSERT INTO email_feedback_events(event_id, signature_token, event_type, severity, recipient,
+      provider_message_id, delivery_id, received_at) VALUES ('pending-bounce', 'pending-token', 'failed', 'permanent',
+      'ap@example.test', 'fixture-70', 700, ?)`).run(sentAt)
+    database.prepare(`UPDATE email_log SET status = 'bounced' WHERE id = 700`).run()
+    expect(await readThankYouRecipients(orm, 1)).toEqual([])
+    expect(await hasRetryableFollowUpDelivery(orm, 1)).toBe(true)
+    database.prepare(`UPDATE email_feedback_events SET processed_at = ?, outcome = 'bounced' WHERE event_id = 'pending-bounce'`).run(sentAt)
+    expect(await hasRetryableFollowUpDelivery(orm, 1)).toBe(false)
   })
 
   it('[money #1352] does not fall back to an old address while a corrected resend is pending', async () => {

@@ -350,7 +350,12 @@ export const readThankYouRecipients = async (
 export const hasRetryableFollowUpDelivery = async (database: InvoiceStateDatabase, invoiceId: number): Promise<boolean> => {
   const rows = await database.all<{ present: number }>(sql`SELECT 1 AS present
     FROM invoice_email_recipients recipient JOIN email_log delivery ON delivery.id = recipient.delivery_id
-    WHERE delivery.status IN ('queued', 'sent') AND recipient.invoice_message_id = (
+    WHERE (delivery.status IN ('queued', 'sent') OR (delivery.status IN ('bounced', 'complained')
+      AND delivery.provider = 'mailgun' AND EXISTS (SELECT 1 FROM email_feedback_events pending
+        WHERE pending.delivery_id = delivery.id AND pending.provider_message_id = delivery.provider_message_id
+          AND pending.processed_at IS NULL AND (pending.event_type = 'complained'
+            OR (pending.event_type = 'failed' AND pending.severity = 'permanent')))))
+    AND recipient.invoice_message_id = (
       SELECT message.id FROM invoice_messages message
       JOIN invoice_email_intents intent ON intent.invoice_message_id = message.id
       JOIN event_outbox event ON event.id = intent.event_id
