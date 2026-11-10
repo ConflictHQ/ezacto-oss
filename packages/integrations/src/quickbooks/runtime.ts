@@ -441,6 +441,8 @@ export interface QuickBooksRuntimeOptions {
   /** Durable managed ownership, composed outside replayable hosted SQL. */
   readonly managedRefresh?: ManagedQuickBooksRefresh;
   readonly managedWrites?: ManagedQuickBooksWrites;
+  /** Trusted host coordinator, bound to the authenticated request and durable revocation custody. */
+  readonly managedDisconnect?: () => Promise<void>;
   readonly config: QuickBooksConfig;
   readonly store: QuickBooksConnectionStore;
   readonly source: QuickBooksMirrorSource;
@@ -1250,6 +1252,10 @@ export const createQuickBooksRuntime = (
     },
 
     disconnect: async () => {
+      if (options.managedDisconnect !== undefined) return options.managedDisconnect();
+      if (options.managedRefresh !== undefined || options.managedWrites !== undefined) {
+        throw new ManagedQuickBooksRefreshUnavailableError();
+      }
       const connection = await store.readConnection();
       await store.disconnect({ now: options.now().toISOString() });
       // Told to Intuit as well as forgotten here. A local-only disconnect

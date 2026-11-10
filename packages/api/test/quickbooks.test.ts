@@ -193,6 +193,16 @@ describe('the connect button', () => {
     expect(response.status).toBe(409)
   })
 
+  it('reports unavailable managed disconnect without a false success', async () => {
+    const error = new Error('private coordinator detail')
+    error.name = 'ManagedQuickBooksRefreshUnavailableError'
+    const response = await app(service({ disconnect: vi.fn(async () => { throw error }) })).request('/integrations/quickbooks', { method: 'DELETE' })
+    expect(response.status).toBe(409)
+    const body = await response.json() as { error: { code: string; message: string } }
+    expect(body.error.code).toBe('quickbooks_authorization_unavailable')
+    expect(JSON.stringify(body)).not.toContain('private coordinator detail')
+  })
+
   it('[security] only an administrator may connect or disconnect', async () => {
     // Connecting an accounting system is a grant over the whole book, not a
     // per-user preference.

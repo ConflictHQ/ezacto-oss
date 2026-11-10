@@ -420,7 +420,7 @@ export const installQuickBooksRoutes = <Bindings extends object>(
 
   api.delete('/integrations/quickbooks', async (context) => {
     requireAdministrator(context)
-    await service.disconnect()
+    await quickBooksOperation(() => service.disconnect())
     return context.body(null, 204)
   })
 
