@@ -1,4 +1,4 @@
-import { managedQuickBooksAvailable, type WorkerManagedQuickBooks } from './managed-providers.js'
+import { managedQuickBooksAvailable, managedDeelAvailable, type WorkerManagedQuickBooks, type WorkerManagedDeel } from './managed-providers.js'
 import { createCalendarOperatorCleanupStore } from '@ezacto/db/d1'
 import { createConfiguredCalendarServices } from '@ezacto/integrations'
 import { createCalendarOAuthStore } from '@ezacto/db/d1'
@@ -719,6 +719,7 @@ export const createRuntimeServices = async (
   options: {
     /** Trusted tenant runtime; an explicit null never falls back to environment credentials. */
     managedQuickBooks?: WorkerManagedQuickBooks;
+    managedDeel?: WorkerManagedDeel;
     calendarSources?: Parameters<typeof createCalendarSyncService>[0]['sources'];
     emailProvider?: HttpEmailProvider;
     ses?: SesMailerOptions;
@@ -736,7 +737,9 @@ export const createRuntimeServices = async (
   // Stable per binding, so the readiness cache below still keys on it.
   const database = createIdempotentD1(binding);
   const demo = demoDeployment(env);
-  const credentials = providerCredentials(env);
+  const credentials = options.managedDeel === undefined ? providerCredentials(env) : {
+    ...providerCredentials(env), DEEL_TOKEN: undefined, DEEL_SYNC_START_DATE: undefined,
+  };
   const cursorSigningKey = parseCursorSigningKey(env.API_CURSOR_SIGNING_KEY);
   const csv = !demo && csvWorkerConfigured(env) ? createCsvWorkerRuntime(binding,env.ATTACHMENTS!,env.CSV_IMPORT_QUEUE!,cursorSigningKey,error=>reportWorkerError(options.reportError,error,{phase:'queue',traceId:runtimeTraceId()})) : undefined;
   // Portal magic-link auth is opt-in on the presence of its key. An install
@@ -1774,7 +1777,11 @@ export const createRuntimeServices = async (
       settings: createDeelSyncSettingsStore(drizzle),
       recentRuns: createDeelSyncStore(drizzle).recentRuns,
     },
-    deelSync: createDeelSyncRuntime({
+    deelSync: options.managedDeel !== undefined
+      ? managedDeelAvailable(options.managedDeel, env, binding)
+        ? (await options.managedDeel.compose({ scope: binding, database })) ?? undefined
+        : undefined
+      : createDeelSyncRuntime({
       config: {
         token: credentials.DEEL_TOKEN,
         startDate: credentials.DEEL_SYNC_START_DATE,

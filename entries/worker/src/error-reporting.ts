@@ -1,4 +1,4 @@
-import type { WorkerManagedQuickBooks } from './managed-providers.js'
+import type { WorkerManagedQuickBooks, WorkerManagedDeel } from './managed-providers.js'
 import * as Sentry from '@sentry/cloudflare'
 import { ApiError } from '@ezacto/api'
 import type { ErrorEvent, Event, EventHint, StackFrame } from '@sentry/cloudflare'
@@ -31,6 +31,7 @@ export type WorkerErrorReporter = (error: Error, context: WorkerErrorContext) =>
 export interface WorkerOptions {
   readonly reportError?: WorkerErrorReporter
   readonly managedQuickBooks?: WorkerManagedQuickBooks
+  readonly managedDeel?: WorkerManagedDeel
 }
 
 const phases = new Set<unknown>(['api', 'bootstrap', 'readiness', 'idempotency', 'scheduled', 'queue', 'payment'])

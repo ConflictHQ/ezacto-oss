@@ -7,10 +7,11 @@ time sync. They never initiate a payout or payment, and nothing here calls Deel
 unless a tenant has connected and a person confirms a run. Paid-plan decisions
 and entitlements stay hosted policy; there is no billing in this repository.
 
-Not covered, and still separate gates: composing this runtime in the container
-(the sync routes stay Worker-only, see `WORKER_ONLY_ROUTES`), a public HTTP route
-for connect/disconnect, the hosted adapter that consumes these exports, and the
-real provider/API permission and owned acceptance run (hosted#237).
+Separate gates remain: a public HTTP route for connect/disconnect, the hosted
+adapter consuming an actually published pin with durable per-command admission,
+and real provider/API permission and owned acceptance (hosted#237). The container
+explicitly refuses a managed Deel capability before storage access; sync routes
+remain Worker-only (`WORKER_ONLY_ROUTES`).
 
 ## Public composition
 
@@ -25,6 +26,35 @@ real provider/API permission and owned acceptance run (hosted#237).
 - `@ezacto/integrations`: `createManagedDeelSyncRuntime(options)` returns the
   existing `DeelSyncRuntime`, so `installDeelSyncRoutes` serves preview and
   manual sync from it unchanged. `DeelSyncRuntime.status()` may now be async.
+- Worker entry: `createWorker({ managedDeel })` takes a trusted process-local
+  `WorkerManagedDeel` factory. `configured(scope)` is pure availability metadata;
+  `compose({scope,database})` uses the original tenant binding's object identity
+  and the native idempotency-aware database. Bind trusted tenant/incarnation
+  metadata through a private WeakMap, never request parameters or WorkerEnv.
+  Fetch, queue and scheduled paths propagate the same port. HTML reads only
+  pure availability, without constructing services or reading custody.
+
+## Entry capability boundary
+
+With an explicit managed port, the Worker never supplies deployment DEEL_TOKEN
+or DEEL_SYNC_START_DATE to any Deel consumer. An unavailable/null managed result
+does not fall back to another company. Only time sync is composed: auxiliary
+staging and payment-status runtimes remain unconfigured. Demo, disabled
+accounting capability, suspended and erased tenants must not invoke the factory
+or send provider requests. The ordinary self-host deployment path is unchanged
+when no managed option is supplied.
+
+The factory reuses `createManagedDeelSyncRuntime` and the canonical tenant
+credential/settings/transfer stores. Its credential source must recheck current
+host availability on every read and reject lifecycle checks after suspension or
+erasure, including in an already-composed run. The host must make native intent
+and log operations durable individually, outside any transaction that can replay
+the entire API request or subscriber. Wiring the port alone does not provide
+that host admission or prove recovery after an unknown provider result.
+
+Container `createContainerRuntime(config,{managedDeel})` throws
+`ManagedDeelUnsupportedRuntimeError` with `code=capability_unsupported` before
+opening a database, invoking the factory or using environment credentials.
 
 ## Tenant binding
 
@@ -55,6 +85,13 @@ request the store for the current tenant incarnation.
   custody as other provider credentials. It is erased on disconnect; the
   immutable transfer log remains by design. Account closure and suspension are
   the host's: a suspended or erased tenant's credential source returns null.
+- Native account-closure review explicitly inventories
+  `deel_connection.connected_by_user_id`, including the original schema without
+  a user foreign key. The operator must cover this retained custody in the
+  reviewed policy or disconnect it before closing that administrator's account.
+  The inventory exposes only a count. Tenant-wide drain still has to inspect
+  transfer intents/logs, lifecycle generation and uncertain provider custody;
+  local disconnect does not prove remote token revocation or erasure.
 
 ## Runtime
 

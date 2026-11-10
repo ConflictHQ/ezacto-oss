@@ -170,6 +170,13 @@ export function createAccountClosureRepository(database: Database): AccountClosu
     entries.push(
       `json_object('location','event_outbox.account_or_actor','count',(SELECT count(*) FROM event_outbox WHERE (aggregate_type='user_account' AND aggregate_id=(SELECT id FROM subject)) OR json_extract(payload_json,'$.actor.id')=(SELECT id FROM subject)),'category','audit_and_security')`,
     )
+    // Deel's original custody schema predates the FK-driven inventory. Its
+    // administrator attribution must remain visible while the token is held;
+    // a local account closure must not silently imply provider revocation.
+    if (tables.some(({ name }) => name === 'deel_connection'))
+      entries.push(`json_object('location','deel_connection.connected_by_user_id','count',
+        (SELECT count(*) FROM deel_connection WHERE connected_by_user_id=(SELECT id FROM subject)),
+        'category','billing_and_payments')`)
     entries.push(
       `json_object('location','email_log.recipients','count',(SELECT count(*) FROM email_log WHERE EXISTS (SELECT 1 FROM json_each(to_json) recipient JOIN user_emails address ON lower(address.address)=lower(json_extract(recipient.value,'$.email')) WHERE address.user_id=(SELECT id FROM subject))),'category','audit_and_security')`,
     )

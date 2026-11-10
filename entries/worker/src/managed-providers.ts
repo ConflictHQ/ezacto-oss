@@ -1,4 +1,4 @@
-import type { QuickBooksRuntime } from '@ezacto/integrations'
+import type { QuickBooksRuntime, DeelSyncRuntime } from '@ezacto/integrations'
 import { moduleAvailability } from '@ezacto/api'
 import { demoDeployment, type AppEnv } from './app.js'
 
@@ -21,5 +21,23 @@ export interface WorkerManagedQuickBooks {
 
 export const managedQuickBooksAvailable = (
   port: WorkerManagedQuickBooks, env: AppEnv, scope: object | undefined,
+): boolean => scope !== undefined && !demoDeployment(env) &&
+  moduleAvailability(env).accounting && port.configured(scope) === true
+
+/** Tenant-owned time sync only. The existing engine owns preview, exact-entry
+ * confirmation, durable transfer intents and lifecycle checks. The host must
+ * commit those intents outside replayable request transactions before sending.
+ * No payment-status/staging or payout capability is supplied by this port.
+ */
+export interface WorkerManagedDeel {
+  configured(scope: object): boolean
+  compose(input: {
+    readonly scope: object
+    readonly database: D1Database
+  }): Promise<DeelSyncRuntime | null>
+}
+
+export const managedDeelAvailable = (
+  port: WorkerManagedDeel, env: AppEnv, scope: object | undefined,
 ): boolean => scope !== undefined && !demoDeployment(env) &&
   moduleAvailability(env).accounting && port.configured(scope) === true

@@ -3,6 +3,9 @@ import { Miniflare } from 'miniflare'
 import { sql } from 'drizzle-orm'
 import { afterEach, describe, expect, it } from 'vitest'
 import { createApiSessionService } from '../../api/src/sessions.js'
+import { createAccountClosureRepository } from '../src/account-closure.js'
+import { createAccountDeletionRequestRepository } from '../src/account-deletion-requests.js'
+import { createAccountRetentionRepository } from '../src/account-retention.js'
 import { createManagedDeelConnectionCommands } from '../../api/src/index.js'
 import { createContainerDatabase, createD1Database } from '../src/adapters.js'
 import { createDeelSyncSettingsStore, createDeelSyncStore } from '../src/deel-time-sync.js'
@@ -18,10 +21,11 @@ import { createContainerSessionStore, createD1SessionStore } from '../src/sessio
 
 const initial = '2026-10-24T18:00:00.000Z'
 const SENTINEL = 'DEEL_PRIVATE_TOKEN_SENTINEL'
-let dispose: (() => Promise<void>) | undefined
+const disposers: (() => Promise<void>)[] = []
 afterEach(async () => {
-  await dispose?.()
-  dispose = undefined
+  const results = await Promise.allSettled(disposers.splice(0).map(dispose => dispose()))
+  const failures = results.filter(result => result.status === 'rejected')
+  if (failures.length) throw new AggregateError(failures.map(result => result.reason), 'Deel fixture cleanup failed')
 })
 
 const fixture = async (runtime: 'sqlite' | 'd1') => {
@@ -31,23 +35,21 @@ const fixture = async (runtime: 'sqlite' | 'd1') => {
   let now = initial
   if (runtime === 'sqlite') {
     const native = new BetterSqlite3(':memory:')
+    disposers.push(async () => { native.close() })
     migrateContainer(native)
     db = createContainerDatabase(native)
     sessions = createContainerSessionStore(native, { now: () => now })
-    dispose = async () => {
-      native.close()
-    }
   } else {
     const mf = new Miniflare({
       modules: true,
       script: 'export default {fetch(){return new Response("ok")}}',
       d1Databases: ['DB'],
     })
+    disposers.push(() => mf.dispose())
     const binding = await mf.getD1Database('DB')
     await migrateD1(binding)
     db = createD1Database(binding)
     sessions = createD1SessionStore(binding, { now: () => now })
-    dispose = () => mf.dispose()
   }
   const execute = (text: string) => db.run(sql.raw(text))
   await execute(
@@ -108,6 +110,40 @@ const refusal = async (value: unknown, status: number) => {
 }
 
 describe.each(['sqlite', 'd1'] as const)('managed Deel connection %s', (runtime) => {
+  it('includes retained Deel custody in actual account-closure review without disclosing the token', async () => {
+    const f = await fixture(runtime)
+    data(await f.commands.connect(f.request(), connectCommand()))
+    await createAccountRetentionRepository(f.db).publish({
+      actorUserId: 1, expectedVersion: 0, now: initial,
+      policy: {
+        frameworks: [], retained_records: [{
+          category: 'audit_and_security', reason: 'Owned request and security evidence.',
+          period: 'One year then review.', review_after_days: 30,
+        }], response_target_days: 14,
+        operator_contact: 'privacy@example.test', user_notice: 'Owned closure review.',
+        backup_handling: 'Review retained custody before restored access.', acknowledged: true,
+      },
+    })
+    await createAccountDeletionRequestRepository(f.db).request({
+      userId: 2, id: 'owned-deel-closure', now: initial, expectedPolicyVersion: 1,
+    })
+    const closure = createAccountClosureRepository(f.db)
+    const before = await closure.preview(1, 'owned-deel-closure')
+    expect(before.inventory).toContainEqual({
+      location: 'deel_connection.connected_by_user_id', count: 1, category: 'billing_and_payments',
+    })
+    expect(before.uncovered_categories).toEqual(['billing_and_payments'])
+    await expect(closure.close({
+      actorUserId: 1, id: 'owned-deel-closure', expectedVersion: before.request_version,
+      reviewToken: before.review_token, expectedPolicyVersion: 1, now: initial, acknowledged: true,
+    })).rejects.toMatchObject({ code: 'retention_review_required' })
+    expect(JSON.stringify(before)).not.toContain(SENTINEL)
+    data(await f.commands.disconnect(f.request(), { expectedActorUserId: 2, expectedGeneration: 1 }))
+    const after = await closure.preview(1, 'owned-deel-closure')
+    expect(after.inventory.some(item => item.location === 'deel_connection.connected_by_user_id')).toBe(false)
+    expect(await f.credentials.current()).toBeNull()
+    expect(await f.credentials.generation()).toBe(2)
+  })
   it('connects, reports state without the token, rotates and disconnects with erasure', async () => {
     const f = await fixture(runtime)
     expect(data(await f.commands.state(f.request()))).toMatchObject({
