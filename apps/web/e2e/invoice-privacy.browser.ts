@@ -7,7 +7,7 @@ for (const viewport of [{ width: 390, height: 844 }, { width: 1440, height: 1000
     const control = (action: string) => request.post('/__ezacto_browser_fixture__/start-end', {
       data: { action }, headers: { 'x-ezacto-browser-fixture-control': 'start-end-round-trip' },
     })
-    expect((await control('invoice-generation-seed')).status()).toBe(204)
+    expect((await control('invoice-privacy-seed')).status()).toBe(204)
     try {
       expect((await control('sign-in-rate-reset')).status()).toBe(204)
       await page.route('https://fonts.googleapis.com/**', (route) => route.abort())
@@ -17,8 +17,9 @@ for (const viewport of [{ width: 390, height: 844 }, { width: 1440, height: 1000
       await page.getByRole('button', { name: 'Sign in', exact: true }).click()
       const wizard = page.locator('[data-invoice-new-dialog]')
       await expect(wizard).toBeVisible()
+      await expect(wizard.locator('input[name="project"][value="135100"]')).toBeVisible()
       for (const project of await wizard.locator('input[name="project"]').all()) {
-        await project.setChecked((await project.inputValue()) === '1')
+        await project.setChecked((await project.inputValue()) === '135100')
       }
       const expenses = wizard.locator('[data-invoice-expense-summary]')
       if (await expenses.isEnabled()) await expenses.selectOption('')
@@ -56,7 +57,7 @@ for (const viewport of [{ width: 390, height: 844 }, { width: 1440, height: 1000
       await expect(invoice.locator('[data-invoice-detail-total]')).toBeVisible()
       await page.pdf({ path: testInfo.outputPath('customer-invoice.pdf') })
     } finally {
-      expect((await control('invoice-generation-cleanup')).status()).toBe(204)
+      expect((await control('invoice-privacy-cleanup')).status()).toBe(204)
     }
   })
 }
