@@ -237,6 +237,26 @@ describe.each(['sqlite', 'd1'] as const)('managed QuickBooks lifecycle fence %s'
     expect(await f.lifecycle.nextUnresolved()).toMatchObject({ revocationId: fence(f).revocationId, status: 'pending' })
   })
 
+  it('fences the current grant with fresh authority and replays the same intent', async () => {
+    const f = await fixture(runtime)
+    const intent = { revocationId: 'd'.repeat(64), environment: 'sandbox' as const }
+    expect(data(await f.commands.fenceCurrent(f.request(), intent)).fence).toBeNull()
+    expect(status(await f.commands.fenceCurrent(f.request(f.member.token), intent))).toBe(403)
+    data(await f.commands.accept(f.request(), f.command))
+    const result = data(await f.commands.fenceCurrent(f.request(), intent))
+    expect(result.fence).toMatchObject({ outcome: 'fenced', revocation: { status: 'pending', grantId: f.command.grantId } })
+    expect(JSON.stringify(result)).not.toContain('PRIVATE_')
+    expect(data(await f.commands.fenceCurrent(f.request(), intent)).fence).toMatchObject({ outcome: 'replayed' })
+    expect(status(await f.commands.fenceCurrent(f.request(), { ...intent, environment: 'production' }))).toBe(409)
+    expect(await f.rows('quickbooks_revocations')).toHaveLength(1)
+    const guarded = createManagedQuickBooksGrantCommands({ store: f.store, lifecycle: f.lifecycle,
+      guardedUserId: async () => 2, now: f.now })
+    expect(data(await guarded.fenceCurrent(f.request(), intent)).fence).toMatchObject({ outcome: 'replayed' })
+    const denied = createManagedQuickBooksGrantCommands({ store: f.store, lifecycle: f.lifecycle,
+      guardedUserId: async () => 3, now: f.now })
+    expect(status(await denied.fenceCurrent(f.request(), intent))).toBe(403)
+  })
+
   it('discovers bounded pending and uncertain revocation work', async () => {
     const f = await fixture(runtime)
     const plan = await f.db.all<{ detail: string }>(sql.raw("EXPLAIN QUERY PLAN SELECT revocation_id FROM quickbooks_revocations WHERE status='pending' ORDER BY fenced_at,revocation_id LIMIT 1"))

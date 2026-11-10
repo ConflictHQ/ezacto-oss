@@ -70,6 +70,7 @@ export const createManagedQuickBooksGrantCommands = (
   const invoke = async <T>(
     request: Request,
     work: (authority: ManagedQuickBooksAuthority, now: string) => Promise<T>,
+    guardedProof?: (authority: ManagedQuickBooksAuthority, now: string) => Promise<unknown>,
   ) => {
     let result: (T & { actorUserId: number; setCookie?: string }) | undefined
     let original: Error | undefined
@@ -107,10 +108,9 @@ export const createManagedQuickBooksGrantCommands = (
           }
           if (userId === null || !Number.isSafeInteger(userId) || userId < 1)
             return null
-          await options.store.prepare(
-            { kind: 'guarded-session', userId },
-            clock(),
-          )
+          const authority: ManagedQuickBooksAuthority = { kind: 'guarded-session', userId }
+          if (guardedProof) await guardedProof(authority, clock())
+          else await options.store.prepare(authority, clock())
           return {
             type: 'user',
             userId,
@@ -199,6 +199,23 @@ export const createManagedQuickBooksGrantCommands = (
       const lifecycle = options.lifecycle
       if (!lifecycle) throw new Error('Managed QuickBooks lifecycle store is not configured')
       return invoke(request, async (authority, now) => ({ grant: await lifecycle.currentGrant(authority, now) }))
+    },
+    /** Atomically authorize and fence the current grant, or replay the same intent. */
+    fenceCurrent: (request: Request, command: { revocationId: string; environment: 'sandbox' | 'production' }) => {
+      const lifecycle = options.lifecycle
+      if (!lifecycle) throw new Error('Managed QuickBooks lifecycle store is not configured')
+      return invoke(request, async (authority, now) => {
+        if (!/^[a-f0-9]{64}$/.test(command.revocationId) || !['sandbox', 'production'].includes(command.environment))
+          throw new ManagedQuickBooksGrantError('invalid')
+        const current = await lifecycle.currentGrant(authority, now)
+        const previous = current === null ? await lifecycle.readRevocation(command.revocationId) : null
+        if (current === null && previous === null) return { fence: null }
+        const binding = current ?? { grantId: previous!.grantId, connectionGeneration: previous!.fencedGeneration - 1 }
+        const result = await lifecycle.fence({ revocationId: command.revocationId, grantId: binding.grantId,
+          expectedActorUserId: authority.userId, expectedConnectionGeneration: binding.connectionGeneration,
+          environment: command.environment, reason: 'disconnect' }, authority, now)
+        return { fence: result }
+      }, (authority, now) => lifecycle.currentGrant(authority, now))
     },
     /** Fresh administrator authority fences the connection and records revocation intent. */
     fence: (request: Request, command: ManagedQuickBooksFenceCommand) => {
