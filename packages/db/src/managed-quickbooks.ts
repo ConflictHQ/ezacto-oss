@@ -129,7 +129,8 @@ export const createManagedQuickBooksGrantStore = (
           (EXISTS(SELECT 1 FROM users WHERE id=? AND is_active=1 AND profile='administrator') AND
             (?=1 OR EXISTS(SELECT 1 FROM sessions WHERE id=? AND user_id=? AND revoked_at IS NULL
               AND julianday(idle_expires_at)>julianday(?) AND julianday(absolute_expires_at)>julianday(?) AND profile_snapshot='administrator'))) AS authorized,
-          EXISTS(SELECT 1 FROM migration_loads WHERE status<>'completed' AND (status<>'cancelled' OR started_at IS NOT NULL)) AS blocked
+          (EXISTS(SELECT 1 FROM migration_loads WHERE status<>'completed' AND (status<>'cancelled' OR started_at IS NOT NULL))
+            OR EXISTS(SELECT 1 FROM quickbooks_revocations WHERE status<>'revoked')) AS blocked
           FROM quickbooks_connection_generation g LEFT JOIN quickbooks_connections c ON c.id=1 WHERE g.singleton=1`,
         params: [
           authority.userId,

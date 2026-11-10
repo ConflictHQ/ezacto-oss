@@ -145,3 +145,28 @@ revoked or erased: only a recorded provider outcome sets `complete: true`.
 - Demo resets, which never hold real grants, wipe the table with the rest.
 - Real revocation, deletion and provider/account changes are not exercised here;
   that evidence belongs to hosted440's owned sandbox acceptance.
+
+## Reconnect while revocation is outstanding
+
+A fenced connection still owes provider revocation while its receipt is
+`pending` or `attempting`. A fresh administrator session and a new connection
+generation must not authorize a new OAuth flow over that unresolved obligation.
+The managed prepare/inspect/accept boundary returns its ordinary static conflict;
+read the existing safe revocation status to explain the pending work. No
+credential is exposed in that status.
+
+Migration0181 adds native SQL guards to both managed grant insertion and live
+connection insertion/update. These apply to native OAuth writes too, so a
+caller cannot bypass the pending-revocation fence by changing its entry path.
+`not_revoked` keeps the obligation pending. Only an observed, recorded `revoked`
+result permits fresh connection work; an already-completed revocation never
+hands its credential to a later worker again.
+
+The migration preserves existing custody, generations and financial records. If
+an earlier version already stored a live connection alongside an unresolved
+revocation, migration refuses atomically for explicit provider reconciliation.
+It does not erase tokens, mark revocation complete or silently hide the overlap.
+Never delete a revocation receipt or alter the migration ledger to bypass that
+refusal. Reconcile the original provider outcome and connection ownership before
+retrying the normal upgrade. Local fixture tests do not authorize an actual
+provider revocation or tenant credential change.

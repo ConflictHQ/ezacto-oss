@@ -11,7 +11,10 @@ import {
 } from '../src/migrate.js'
 import { createContainerSessionStore, createD1SessionStore } from '../src/sessions.js'
 import { createQuickBooksStore } from '../src/quickbooks.js'
-import { createManagedQuickBooksGrantStore, createManagedQuickBooksLifecycleStore } from '../src/index.js'
+import {
+  createManagedQuickBooksGrantStore,
+  createManagedQuickBooksLifecycleStore,
+} from '../src/index.js'
 import { createApiSessionService } from '../../api/src/sessions.js'
 import { createManagedQuickBooksGrantCommands } from '../../api/src/index.js'
 import type { ManagedQuickBooksGrantCommand } from '@ezacto/core'
@@ -338,6 +341,10 @@ describe.each(['sqlite', 'd1'] as const)('managed QuickBooks native %s', (runtim
     })
     await fenceManaged(f, 2)
     await f.canonical.disconnect({ now: f.now() })
+    expect(((await f.commands.prepare(f.request())) as Response).status).toBe(409)
+    expect(await f.rows('quickbooks_connection_generation')).toMatchObject([{ generation: 4 }])
+    await f.lifecycle.beginRevocation('2'.repeat(64), f.now())
+    await f.lifecycle.settleRevocation('2'.repeat(64), 'revoked', f.now())
     expect(data(await f.commands.prepare(f.request()))).toMatchObject({
       connectionGeneration: 4,
       connected: false,
