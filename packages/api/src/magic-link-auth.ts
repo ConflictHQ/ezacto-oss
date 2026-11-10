@@ -1,3 +1,4 @@
+import { confirmationScheme, magicLinkConfirmPage } from './magic-link-confirmation.js'
 import type { Hono, Context } from 'hono'
 import type { ApiContext } from './context.js'
 import {
@@ -5,7 +6,7 @@ import {
   type SessionPrincipal,
   type ApiSessionResolver,
 } from './auth.js'
-import { ApiError, readJsonBody, validationError } from './errors.js'
+import { ApiError, readJsonBody, readLimitedBody, validationError } from './errors.js'
 
 export const PORTAL_SESSION_COOKIE_NAME = '__Host-ezacto_portal'
 
@@ -233,13 +234,32 @@ export const installMagicLinkRoutes = <Bindings extends object>(
       { 'cache-control': 'no-store' },
     )
   }
-  // Legacy direct callers may still verify by GET. Emailed links and the web
-  // page use the POST exchange so credentials do not enter request URLs.
-  app.get('/portal/verify', (context) => verify(context, context.req.query('token')))
+  // Preserve old emailed URLs without spending them on scanners or previews.
+  // Only an explicit same-origin POST may consume the single-use credential.
+  app.get('/portal/verify', (context) => {
+    context.header('cache-control', 'no-store')
+    context.header('referrer-policy', 'no-referrer')
+    context.header('x-robots-tag', 'noindex')
+    context.header('content-security-policy', "default-src 'none'; style-src 'self'; form-action 'self'; frame-ancestors 'none'; base-uri 'none'")
+    const token = context.req.query('token')
+    if (!token || token.length > 8192) throw new ApiError({
+      status: 400, code: 'missing_token', message: 'A magic link token is required.',
+    })
+    return context.html(magicLinkConfirmPage(token, confirmationScheme(context.req.header('cookie')), '/portal/verify'))
+  })
   app.post('/portal/verify', async (context) => {
     context.header('cache-control', 'no-store')
     requireSameOriginForUnsafeSessionRequest(context.req.raw)
-    const body = await readJsonBody<unknown>(context, { maxBytes: 8192 })
+    const form = context.req.header('content-type')?.split(';', 1)[0]?.trim().toLowerCase() === 'application/x-www-form-urlencoded'
+    let body: unknown
+    if (form) {
+      const bytes = await readLimitedBody(context.req.raw.body, 8192)
+      const fields = new URLSearchParams(new TextDecoder().decode(bytes))
+      // Reject duplicate credentials and arbitrary redirect/form fields too.
+      body = [...fields.keys()].length === 1 ? Object.fromEntries(fields) : null
+    } else {
+      body = await readJsonBody<unknown>(context, { maxBytes: 8192 })
+    }
     if (
       typeof body !== 'object' ||
       body === null ||
@@ -252,7 +272,8 @@ export const installMagicLinkRoutes = <Bindings extends object>(
       throw validationError([
         { field: 'token', code: 'invalid', message: 'Provide one sign-in token.' },
       ])
-    return verify(context, body.token)
+    const response = await verify(context, body.token)
+    return form ? context.redirect('/portal/estimate-review', 303) : response
   })
 
   app.get('/portal/statements', async (context) => {

@@ -502,10 +502,16 @@ A contact requests a link with `POST /portal/magic-link` (`email` in JSON). Know
 unknown and recently mailed addresses receive the same 202 acknowledgement.
 Existing lookup rules refuse ambiguous addresses and archived clients. The
 queued sign-in email carries a single-use, 15-minute token in the page's URL
-fragment. The page removes it before its first request, then exchanges it in a
-same-origin JSON `POST /portal/verify`; no email or token is put in a request
-URL. Legacy direct `GET /portal/verify` callers remain compatible. The contact
-session cookie is HttpOnly, Secure and SameSite=Lax. This page loads no analytics,
+fragment. The page removes it before its first request and asks for an explicit
+Continue action before exchanging it in a same-origin JSON `POST /portal/verify`; no email or token is put in a request
+URL. Legacy `GET /portal/verify?token=...` links show a non-consuming
+confirmation page; repeated GET/HEAD requests never authenticate or spend the
+link. Its same-origin form POST redeems and redirects to `/portal/estimate-review`.
+Direct API consumers must use the existing JSON POST, whose JSON response is
+unchanged. No automatic form submission or alternate redirect is accepted.
+The separate `ezacto-portal` application owns its KV-backed `/auth/verify`
+confirmation flow and does not call this legacy native GET endpoint.
+The contact session cookie is HttpOnly, Secure and SameSite=Lax. This page loads no analytics,
 uses no-referrer/no-store, and offers a fresh-link form after sign-out or expiry.
 
 The contact can read and answer only their client's sent quotes. The existing
