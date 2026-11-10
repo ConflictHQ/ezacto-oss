@@ -41,13 +41,16 @@ it('runs reminder reconciliation on the five-minute tick even if the bank sweep 
 it('reports a reminder reconciliation error without failing a successful bank tick', async () => {
   const error = new Error('reconciliation unavailable')
   const bank = vi.fn().mockResolvedValue({ checked: 0, failed: 0 })
+  const invoiceRecovery = vi.fn().mockResolvedValue(undefined)
   vi.mocked(createRuntimeServices).mockResolvedValue({
     bankFeeds: { processDue: bank },
     reminderReconciliation: { processDue: vi.fn().mockRejectedValue(error) },
+    invoiceFeedbackRecovery: { processDue: invoiceRecovery },
   } as never)
   await worker.scheduled!({ cron: '*/5 * * * *', scheduledTime: Date.now() } as never,
     {} as never, {} as never)
   expect(bank).toHaveBeenCalledOnce()
+  expect(invoiceRecovery).toHaveBeenCalledOnce()
   const captured = vi.mocked(Sentry.captureException).mock.calls[0]![0] as Error
   expect(scrubWorkerEvent({}, { originalException: captured })?.tags).toMatchObject({ operation: 'reminder reconciliation' })
 })

@@ -6,7 +6,8 @@ import { Miniflare } from 'miniflare'
 import { migrateContainer } from '@ezacto/db'
 import { migrateD1 } from '@ezacto/db/d1'
 import { createContainerEmailLogStore, createD1EmailLogStore } from '../../../packages/db/src/email-log.js'
-import { reconcileHeldMailgunReminders, runReminderReconciliation } from '../src/reminder-reconciliation.js'
+import { reconcileHeldMailgunReminders, runInvoiceFeedbackRecovery, runReminderReconciliation } from '../src/reminder-reconciliation.js'
+import type { InvoiceFeedbackRecoveryLedger } from '@ezacto/db'
 
 const attemptId = 'b5f88b55-bc30-4bf2-94f5-350849e4b6c0'
 const record = (id: number): EmailLogRecord => ({
@@ -117,5 +118,33 @@ describe('held Mailgun reminder reconciliation', () => {
     heldReminderAttempts.mockRejectedValueOnce(new Error('database unavailable'))
     await expect(runReminderReconciliation({ store, lookup, token })).rejects.toThrow('database unavailable')
     expect(finishReminderSweep).not.toHaveBeenCalled()
+  })
+
+  it('records only verified invoice events and retains unmatched evidence for another pass', async () => {
+    const token = '7acbff11-1395-4011-a881-c299dad9e890', now = () => '2026-08-28T20:02:00.000Z'
+    const ledger = { claimInvoiceFeedbackSweep: vi.fn().mockResolvedValue(''),
+      unverifiedInvoiceFeedback: vi.fn().mockResolvedValue([
+        { eventId: 'event-a', messageId: 'message-a', recipient: 'to@example.test', eventType: 'failed', receivedAt: now() },
+        { eventId: 'event-b', messageId: 'message-b', recipient: 'cc@example.test', eventType: 'complained', receivedAt: now() },
+      ]), recordInvoiceEvidence: vi.fn(), finishInvoiceFeedbackSweep: vi.fn().mockResolvedValue(true) }
+    const lookup = { inspectInvoiceFeedback: vi.fn().mockResolvedValueOnce(true).mockRejectedValueOnce(new Error('fixture provider unavailable')) }
+    await runInvoiceFeedbackRecovery({ ledger: ledger as unknown as InvoiceFeedbackRecoveryLedger, lookup, token, now })
+    expect(ledger.recordInvoiceEvidence).toHaveBeenCalledExactlyOnceWith('event-a', now())
+    expect(ledger.finishInvoiceFeedbackSweep).toHaveBeenCalledExactlyOnceWith(token, '', false, now())
+    expect(lookup.inspectInvoiceFeedback).toHaveBeenCalledTimes(2)
+  })
+
+  it('advances one full invoice evidence page even when provider results are unavailable', async () => {
+    const token = '7acbff11-1395-4011-a881-c299dad9e890', now = () => '2026-08-28T20:02:00.000Z'
+    const ledger = { claimInvoiceFeedbackSweep: vi.fn().mockResolvedValue('old'),
+      unverifiedInvoiceFeedback: vi.fn().mockResolvedValue(Array.from({ length: 10 }, (_, index) => ({
+        eventId: `event-${String(index).padStart(2, '0')}`, messageId: 'message', recipient: 'to@example.test',
+        eventType: 'failed', receivedAt: now(),
+      }))), recordInvoiceEvidence: vi.fn(), finishInvoiceFeedbackSweep: vi.fn().mockResolvedValue(true) }
+    const lookup = { inspectInvoiceFeedback: vi.fn().mockResolvedValue(false) }
+    await runInvoiceFeedbackRecovery({ ledger: ledger as unknown as InvoiceFeedbackRecoveryLedger, lookup, token, now })
+    expect(ledger.recordInvoiceEvidence).not.toHaveBeenCalled()
+    expect(ledger.finishInvoiceFeedbackSweep).toHaveBeenCalledExactlyOnceWith(token, 'event-09', true, now())
+    expect(lookup.inspectInvoiceFeedback).toHaveBeenCalledTimes(10)
   })
 })

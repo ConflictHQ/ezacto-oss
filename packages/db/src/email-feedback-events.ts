@@ -20,7 +20,16 @@ interface PortableDatabase {
   all<T>(query: string, bindings?: readonly unknown[]): Promise<T[]>
 }
 
-const createLedger = (database: PortableDatabase): EmailFeedbackLedger => ({
+export interface InvoiceFeedbackRecoveryLedger extends EmailFeedbackLedger {
+  claimInvoiceFeedbackSweep(token: string, now: string): Promise<string | null>
+  unverifiedInvoiceFeedback(afterId: string, limit: number): Promise<Array<{
+    eventId: string; messageId: string; recipient: string; eventType: 'failed' | 'complained'; receivedAt: string
+  }>>
+  finishInvoiceFeedbackSweep(token: string, afterId: string, more: boolean, now: string): Promise<boolean>
+  recordInvoiceEvidence(eventId: string, now: string): Promise<void>
+}
+
+const createLedger = (database: PortableDatabase): InvoiceFeedbackRecoveryLedger => ({
   async claim(input): Promise<EmailFeedbackClaim> {
     // Historical migration tests can use this ledger before reconciliation was
     // introduced. On current schemas, aliases also spend a webhook token.
@@ -120,6 +129,47 @@ const createLedger = (database: PortableDatabase): EmailFeedbackLedger => ({
        ON CONFLICT(event_id) DO NOTHING RETURNING event_id`, [eventId, now],
     )
   },
+  async claimInvoiceFeedbackSweep(token, now) {
+    const seconds = Math.floor(Date.parse(now) / 1000)
+    if (!/^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/u.test(token) || !Number.isSafeInteger(seconds)) {
+      throw new TypeError('invalid invoice feedback sweep claim')
+    }
+    const row = await database.first<{ afterId: string }>(
+      `UPDATE invoice_feedback_recovery_cursor SET lease_token = ?, lease_expires_at = ?
+       WHERE id = 1 AND next_due <= ? AND (lease_token IS NULL OR lease_expires_at <= ?)
+       RETURNING after_event_id AS afterId`, [token, seconds + 180, seconds, seconds],
+    )
+    return row?.afterId ?? null
+  },
+  async unverifiedInvoiceFeedback(afterId, limit) {
+    if (typeof afterId !== 'string' || afterId.length > 255 || !Number.isSafeInteger(limit) || limit < 1 || limit > 10) {
+      throw new TypeError('invalid invoice feedback sweep page')
+    }
+    return database.all<{ eventId: string; messageId: string; recipient: string; eventType: 'failed' | 'complained'; receivedAt: string }>(
+      `SELECT f.event_id AS eventId, f.provider_message_id AS messageId, f.recipient AS recipient,
+        f.event_type AS eventType, f.received_at AS receivedAt
+       FROM email_feedback_events f JOIN email_log e ON e.id = f.delivery_id
+       WHERE f.event_id > ? AND f.processed_at IS NOT NULL AND e.provider = 'mailgun' AND e.template LIKE 'invoice:%'
+         AND e.provider_message_id = f.provider_message_id
+         AND (f.event_type = 'complained' OR (f.event_type = 'failed' AND f.severity = 'permanent'))
+         AND EXISTS (SELECT 1 FROM invoice_email_recipients r WHERE r.delivery_id = e.id AND lower(r.email) = lower(f.recipient))
+         AND NOT EXISTS (SELECT 1 FROM invoice_feedback_provider_evidence p WHERE p.event_id = f.event_id)
+       ORDER BY f.event_id LIMIT ?`, [afterId, limit],
+    )
+  },
+  async finishInvoiceFeedbackSweep(token, afterId, more, now) {
+    const seconds = Math.floor(Date.parse(now) / 1000)
+    if (!/^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/u.test(token) ||
+        typeof afterId !== 'string' || afterId.length > 255 || typeof more !== 'boolean' || !Number.isSafeInteger(seconds)) {
+      throw new TypeError('invalid invoice feedback sweep completion')
+    }
+    const row = await database.first<{ id: number }>(
+      `UPDATE invoice_feedback_recovery_cursor SET after_event_id = ?, next_due = ?, lease_token = NULL, lease_expires_at = NULL
+       WHERE id = 1 AND lease_token = ? AND lease_expires_at > ? RETURNING id`,
+      [afterId, seconds + (more ? 300 : 3600), token, seconds],
+    )
+    return row !== null
+  },
   async attemptInFlight(provider, now) {
     const row = await database.first<{ held: number }>(
       `SELECT 1 AS held FROM email_log
@@ -134,7 +184,7 @@ const createLedger = (database: PortableDatabase): EmailFeedbackLedger => ({
 
 export const createContainerEmailFeedbackLedger = (
   database: BetterSqlite3.Database,
-): EmailFeedbackLedger => {
+): InvoiceFeedbackRecoveryLedger => {
   database.pragma('foreign_keys = ON')
   return createLedger({
     first: async <T>(query: string, bindings: readonly unknown[] = []) =>
@@ -144,7 +194,7 @@ export const createContainerEmailFeedbackLedger = (
   })
 }
 
-export const createD1EmailFeedbackLedger = (database: D1Database): EmailFeedbackLedger =>
+export const createD1EmailFeedbackLedger = (database: D1Database): InvoiceFeedbackRecoveryLedger =>
   createLedger({
     first: async (query, bindings = []) =>
       database

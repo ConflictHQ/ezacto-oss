@@ -7,9 +7,11 @@ import { migrateContainer, migrateD1 } from '../src/migrate.js'
 import { createMoneyResourceRepository } from '../src/money-resources.js'
 import { followUpAudienceGuard, readThankYouRecipients } from '../src/automatic-thank-you.js'
 import { createReminderPort, recordReminderDelivery } from '../src/reminder-port.js'
+import { createContainerEmailFeedbackLedger, createD1EmailFeedbackLedger, type InvoiceFeedbackRecoveryLedger } from '../src/email-feedback-events.js'
 
 interface Harness {
   orm: InvoiceStateDatabase
+  ledger: InvoiceFeedbackRecoveryLedger
   run(sql: string, ...bindings: unknown[]): Promise<void>
   rows<T>(sql: string, ...bindings: unknown[]): Promise<T[]>
   close(): Promise<void>
@@ -22,6 +24,7 @@ const container = async (): Promise<Harness> => {
   migrateContainer(sqlite)
   return {
     orm: createContainerDatabase(sqlite),
+    ledger: createContainerEmailFeedbackLedger(sqlite),
     run: async (sql, ...bindings) => void sqlite.prepare(sql).run(...bindings),
     rows: async <T>(sql: string, ...bindings: unknown[]) =>
       sqlite.prepare(sql).all(...bindings) as T[],
@@ -39,6 +42,7 @@ const d1 = async (): Promise<Harness> => {
   await migrateD1(database)
   return {
     orm: createD1Database(database),
+    ledger: createD1EmailFeedbackLedger(database),
     run: async (sql, ...bindings) => void await database.prepare(sql).bind(...bindings).run(),
     rows: async <T>(sql: string, ...bindings: unknown[]) =>
       (await database.prepare(sql).bind(...bindings).all<T>()).results,
@@ -296,7 +300,17 @@ for (const [name, factory] of [['SQLite', container], ['real D1', d1]] as const)
       await database.run(`UPDATE email_log SET status = 'bounced' WHERE id = 700`)
       await database.run(`UPDATE email_feedback_events SET processed_at = ?, outcome = 'bounced' WHERE event_id = 'bounce-proof'`, at)
       expect(await readThankYouRecipients(database.orm, 1)).toEqual([])
-      await database.run(`INSERT INTO invoice_feedback_provider_evidence(event_id, verified_at) VALUES ('bounce-proof', ?)`, at)
+      const token = '7acbff11-1395-4011-a881-c299dad9e890'
+      const nextToken = '12345678-1234-4abc-8def-123456789abc'
+      expect(await database.ledger.claimInvoiceFeedbackSweep(token, at)).toBe('')
+      expect(await database.ledger.claimInvoiceFeedbackSweep(nextToken, at)).toBeNull()
+      expect(await database.ledger.unverifiedInvoiceFeedback('', 10)).toMatchObject([{ eventId: 'bounce-proof', recipient: 'bad@example.net' }])
+      const later = new Date(Date.parse(at) + 181_000).toISOString()
+      expect(await database.ledger.claimInvoiceFeedbackSweep(nextToken, later)).toBe('')
+      expect(await database.ledger.finishInvoiceFeedbackSweep(token, '', false, later)).toBe(false)
+      await database.ledger.recordInvoiceEvidence('bounce-proof', at)
+      expect(await database.ledger.unverifiedInvoiceFeedback('', 10)).toEqual([])
+      expect(await database.ledger.finishInvoiceFeedbackSweep(nextToken, '', false, later)).toBe(true)
       const eligible = [{ name: 'Client', email: 'client@example.net', role: 'to' },
         { name: 'Good', email: 'good@example.net', role: 'cc' }]
       expect(await readThankYouRecipients(database.orm, 1)).toEqual(eligible)

@@ -1,4 +1,5 @@
 import type { EmailLogRecord, EmailLogStore, MailgunMailer } from '@ezacto/mailer'
+import type { InvoiceFeedbackRecoveryLedger } from '@ezacto/db'
 
 interface HeldAttempt {
   record: EmailLogRecord
@@ -81,4 +82,33 @@ export const runReminderReconciliation = async (input: {
   const result = await reconcileHeldMailgunReminders({ afterId, list: input.store.heldReminderAttempts,
     lookup: input.lookup, log: input.store })
   await input.store.finishReminderSweep(token, result.nextId ?? 0, result.nextId !== null)
+}
+
+/** Revisit recorded invoice feedback without sending mail. An unsuccessful
+ * lookup is never treated as proof that the provider event did not happen. */
+export const runInvoiceFeedbackRecovery = async (input: {
+  ledger: InvoiceFeedbackRecoveryLedger
+  lookup: Pick<MailgunMailer, 'inspectInvoiceFeedback'>
+  now?: () => string
+  token?: string
+}): Promise<void> => {
+  const now = input.now ?? (() => new Date().toISOString())
+  const token = input.token ?? crypto.randomUUID()
+  const afterId = await input.ledger.claimInvoiceFeedbackSweep(token, now())
+  if (afterId === null) return
+  const page = await input.ledger.unverifiedInvoiceFeedback(afterId, 10)
+  for (const item of page) {
+    const received = Math.floor(Date.parse(item.receivedAt) / 1000)
+    if (!Number.isSafeInteger(received)) continue
+    let verified = false
+    try {
+      verified = await input.lookup.inspectInvoiceFeedback({ eventId: item.eventId, messageId: item.messageId,
+        recipient: item.recipient, eventType: item.eventType, begin: received - 86_100, end: received + 300 })
+    } catch {
+      // Keep this exact record unverified; do not log provider or recipient data.
+    }
+    if (verified) await input.ledger.recordInvoiceEvidence(item.eventId, now())
+  }
+  const more = page.length === 10
+  await input.ledger.finishInvoiceFeedbackSweep(token, more ? page[page.length - 1]!.eventId : '', more, now())
 }

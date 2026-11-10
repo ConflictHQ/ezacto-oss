@@ -277,6 +277,8 @@ export const createWorker = (options: WorkerOptions = {}): ExportedHandler<Worke
       } finally {
         try { await services.reminderReconciliation?.processDue() }
         catch (error) { report(error, { phase: 'scheduled', operation: 'reminder reconciliation' }) }
+        try { await services.invoiceFeedbackRecovery?.processDue() }
+        catch (error) { report(error, { phase: 'scheduled', operation: 'invoice feedback recovery' }) }
       }
       return
     }
