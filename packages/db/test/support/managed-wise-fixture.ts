@@ -48,7 +48,7 @@ const timedSetup = async <T>(stage: string, work: () => Promise<T>): Promise<T> 
     return await work()
   } finally {
     clearTimeout(notice)
-    if (performance.now() - started >= 30_000) console.warn(`[wise-fixture] ${stage} completed after the slow-setup threshold`)
+    if (performance.now() - started >= 30_000) console.warn(`[wise-fixture] ${stage} ended after the slow-setup threshold`)
   }
 }
 beforeAll(async () => {
