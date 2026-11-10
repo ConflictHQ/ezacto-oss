@@ -123,15 +123,18 @@ const scheduleReminder = async (
     `SELECT invoice.due_date AS "dueDate",
             COALESCE(invoice.reminder_policy, organization.reminder_policy) AS "reminderPolicy",
             invoice.invoice_extras AS "extras",
-            (SELECT message.send_reminder_on FROM invoice_messages message
-              WHERE message.invoice_id = invoice.id AND message.event_type = 'send'
-              ORDER BY message.id DESC LIMIT 1) AS "sendReminderOn"
+            (SELECT message.send_reminder_on FROM event_outbox source
+              JOIN invoice_messages message ON message.id = json_extract(source.payload_json, '$.trigger.id')
+                AND message.invoice_id = invoice.id AND message.event_type = 'send'
+              WHERE source.id = ? AND source.aggregate_type = 'invoice' AND source.aggregate_id = invoice.id
+                AND source.event_type = 'invoice.sent'
+                AND json_extract(source.payload_json, '$.trigger.type') = 'invoice_message') AS "sendReminderOn"
      FROM invoices invoice
      LEFT JOIN organizations organization ON organization.id = (
        SELECT id FROM organizations ORDER BY id LIMIT 1
      )
      WHERE invoice.id = ?`,
-    [event.aggregateId],
+    [event.id, event.aggregateId],
   )
   if (invoice === null) return
   // The invoice's own "no reminders" (issue 850) beats a policy and a named
