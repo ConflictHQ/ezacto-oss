@@ -1,3 +1,4 @@
+import { quickBooksRevocationRecoveryIndexMigration } from './migrations/0186_quickbooks_revocation_recovery_index.js'
 import { quickBooksOutboxGrantsMigration } from './migrations/0185_quickbooks_outbox_grants.js'
 import { quickBooksWriteIntentsMigration } from './migrations/0184_quickbooks_write_intents.js'
 import { quickBooksRefreshOwnershipMigration } from './migrations/0183_quickbooks_refresh_ownership.js'
@@ -1729,6 +1730,7 @@ const migrations = [
   { id: '0183_quickbooks_refresh_ownership', statements: quickBooksRefreshOwnershipMigration },
   { id: '0184_quickbooks_write_intents', statements: quickBooksWriteIntentsMigration },
   { id: '0185_quickbooks_outbox_grants', statements: quickBooksOutboxGrantsMigration },
+  { id: '0186_quickbooks_revocation_recovery_index', statements: quickBooksRevocationRecoveryIndexMigration },
 ] as const
 
 // Fixtures assert against this rather than re-listing ids: a hand-copied ledger merges

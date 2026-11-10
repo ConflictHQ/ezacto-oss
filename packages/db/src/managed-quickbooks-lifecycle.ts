@@ -220,6 +220,14 @@ export const createManagedQuickBooksLifecycleStore = (
       const row = await read(revocationId)
       return row ? receipt(row) : null
     },
+    nextUnresolved: async () => {
+      const rows = await atomic([
+        { text: `SELECT ${columns} FROM quickbooks_revocations WHERE status='pending' ORDER BY fenced_at,revocation_id LIMIT 1`, params: [] },
+        { text: `SELECT ${columns} FROM quickbooks_revocations WHERE status='attempting' ORDER BY fenced_at,revocation_id LIMIT 1`, params: [] },
+      ])
+      const row = (rows[0]?.[0] ?? rows[1]?.[0]) as Row | undefined
+      return row ? receipt(row) : null
+    },
     listUnresolved: async () =>
       (
         (

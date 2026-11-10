@@ -36,7 +36,7 @@ afterEach(async () => {
 })
 const fixture = async (
   runtime: 'sqlite' | 'd1',
-  legacy: boolean | '0180_github_publication' = false,
+  legacy: boolean | '0180_github_publication' | '0185_quickbooks_outbox_grants' = false,
 ) => {
   let upgrade!: () => Promise<void>
   let db: ReturnType<typeof createContainerDatabase> | ReturnType<typeof createD1Database>
@@ -225,6 +225,30 @@ describe.each(['sqlite', 'd1'] as const)('managed QuickBooks lifecycle fence %s'
     expect(provider).toHaveBeenCalledOnce()
     expect(await f.lifecycle.readRevocation(fence(f).revocationId)).toMatchObject({ status: 'attempting', attempts: 1 })
     expect(status(await f.commands.prepare(f.request()))).toBe(409)
+  })
+
+  it('adds the recovery index without changing existing revocation custody', async () => {
+    const f = await fixture(runtime, '0185_quickbooks_outbox_grants')
+    data(await f.commands.accept(f.request(), f.command))
+    data(await f.commands.fence(f.request(), fence(f)))
+    const before = await f.rows('quickbooks_revocations')
+    await f.upgrade()
+    expect(await f.rows('quickbooks_revocations')).toEqual(before)
+    expect(await f.lifecycle.nextUnresolved()).toMatchObject({ revocationId: fence(f).revocationId, status: 'pending' })
+  })
+
+  it('discovers bounded pending and uncertain revocation work', async () => {
+    const f = await fixture(runtime)
+    const plan = await f.db.all<{ detail: string }>(sql.raw("EXPLAIN QUERY PLAN SELECT revocation_id FROM quickbooks_revocations WHERE status='pending' ORDER BY fenced_at,revocation_id LIMIT 1"))
+    expect(plan.some(row => row.detail.includes('quickbooks_revocations_recovery'))).toBe(true)
+    expect(await f.lifecycle.nextUnresolved()).toBeNull()
+    data(await f.commands.accept(f.request(), f.command))
+    data(await f.commands.fence(f.request(), fence(f)))
+    expect(await f.lifecycle.nextUnresolved()).toMatchObject({ revocationId: fence(f).revocationId, status: 'pending' })
+    await f.lifecycle.beginRevocation(fence(f).revocationId, f.now())
+    expect(await f.lifecycle.nextUnresolved()).toMatchObject({ revocationId: fence(f).revocationId, status: 'attempting' })
+    await f.lifecycle.settleRevocation(fence(f).revocationId, 'revoked', f.now())
+    expect(await f.lifecycle.nextUnresolved()).toBeNull()
   })
 
   it('fences, retains only the refresh token, and refuses stale grant/refresh/native writes', async () => {

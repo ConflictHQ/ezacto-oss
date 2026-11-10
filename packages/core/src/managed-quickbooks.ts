@@ -118,6 +118,8 @@ export interface ManagedQuickBooksLifecycleStore {
   ): Promise<ManagedQuickBooksFenceResult>
   /** Safe status, never a credential. */
   readRevocation(revocationId: string): Promise<ManagedQuickBooksRevocationReceipt | null>
+  /** Oldest pending attempt, or oldest uncertain attempt when none is pending. */
+  nextUnresolved(): Promise<ManagedQuickBooksRevocationReceipt | null>
   /** Revocations whose provider outcome is not yet recorded. */
   listUnresolved(): Promise<ManagedQuickBooksRevocationReceipt[]>
   /** Moves pending to attempting and returns the credential once. An attempting
