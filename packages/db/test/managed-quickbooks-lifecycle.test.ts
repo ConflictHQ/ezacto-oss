@@ -160,7 +160,7 @@ const connect = async (f: Fixture) => {
   })
 }
 const status = (value: unknown) => (value instanceof Response ? value.status : 0)
-const everything = async (f: Fixture, excludeLedger = false) => {
+const everything = async (f: Fixture, excludeLedger = false, existing?: readonly string[]) => {
   const tables = await f.db.all<{ name: string }>(
     sql.raw(
       "SELECT name FROM sqlite_schema WHERE type='table' AND name NOT LIKE 'sqlite_%' AND name NOT LIKE '_cf_%'" +
@@ -168,7 +168,7 @@ const everything = async (f: Fixture, excludeLedger = false) => {
     ),
   )
   const dump: unknown[] = []
-  for (const { name } of tables) dump.push(await f.rows(`"${name}"`))
+  for (const { name } of tables) if (existing === undefined || existing.includes(name)) dump.push(await f.rows(`"${name}"`))
   return JSON.stringify(dump)
 }
 
@@ -270,14 +270,20 @@ describe.each(['sqlite', 'd1'] as const)('managed QuickBooks lifecycle fence %s'
     const f = await fixture(runtime, '0180_github_publication')
     await connect(f)
     data(await f.commands.fence(f.request(), fence(f)))
+    const existing = (await f.db.all<{ name: string }>(sql.raw("SELECT name FROM sqlite_schema WHERE type='table'"))).map(row => row.name)
     const before = await everything(f, true)
     await f.upgrade()
-    expect(await everything(f, true)).toBe(before)
+    const added = (await f.db.all<{ name: string }>(sql.raw("SELECT name FROM sqlite_schema WHERE type='table'")))
+      .map(row => row.name).filter(name => !existing.includes(name)).sort()
+    expect(added).toEqual(['wise_managed_commands','wise_managed_connection'])
+    expect(await f.rows('wise_managed_commands')).toEqual([])
+    expect(await f.rows('wise_managed_connection')).toMatchObject([{ singleton: 1, generation: 0, status: 'disconnected' }])
+    expect(await everything(f, true, existing)).toBe(before)
     expect(status(await f.commands.prepare(f.request()))).toBe(409)
     await expect(
       f.canonical.saveConnection({ ...f.command.tokens, connectedByUserId: 2, now: f.now() }),
     ).rejects.toThrow()
-    expect(await everything(f, true)).toBe(before)
+    expect(await everything(f, true, existing)).toBe(before)
   })
 
   it('[migration #1236] refuses a pre-existing live/revoking overlap without changing its custody or ledger', async () => {
